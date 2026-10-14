@@ -483,7 +483,7 @@ export const learningApi = {
       { request },
     ),
 
-  /** Rust opens the native save dialog; `request.fileName` is only its suggested name. */
+  /** Rust opens the native save dialog and suggests a file name from the course title. */
   saveLearningPackAs: (
     request: Wire.ExportLearningPackRequestDto,
   ): Promise<ApiResult<Wire.SaveLearningPackAsResultDto>> =>

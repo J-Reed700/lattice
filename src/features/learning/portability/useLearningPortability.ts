@@ -2,6 +2,7 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/
 
 import { invalidateLearningSourceDependents, refreshLearningProgramAfterImport } from '@/features/learning/api/learningInvalidation';
 import { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+import { CONFLICT_KINDS } from '@/features/learning/portability/conflictPolicies';
 import VaultAPI from '@/lib/api';
 import type {
   ApplyLearningPackImportRequestDto,
@@ -42,7 +43,7 @@ export function useLearningPortability(programId: string) {
     queryFn: async () => unwrap(await VaultAPI.getLearningPortabilityWorkspace(programId)),
     enabled: Boolean(programId), retry: false, staleTime: 3_000,
     // Nothing announces that a course finished preparing, so check while it is.
-    refetchInterval: (query) => query.state.data?.exportNotice.activeJob ? 5_000 : false,
+    refetchInterval: (query) => query.state.data?.exportNotice.blockers.some((kind) => CONFLICT_KINDS[kind].retryable) ? 5_000 : false,
   });
 }
 
@@ -121,7 +122,7 @@ export function useExportAllLearningPacks() {
     mutationFn: async (request: ExportAllLearningPacksRequestDto) => unwrap(await VaultAPI.exportAllLearningPacks(request)),
     // Every exported course gains a row in its own export history.
     onSuccess: async (result) => {
-      if (!result.cancelled) await client.invalidateQueries({ queryKey: LEARNING_PORTABILITY_PREFIX });
+      if (result.outcome === 'exported') await client.invalidateQueries({ queryKey: LEARNING_PORTABILITY_PREFIX });
     },
   });
 }

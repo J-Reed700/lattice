@@ -10,25 +10,26 @@ import VaultAPI from '@/lib/api';
 import type { ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto } from '@/lib/bindings';
 
 type Retries = { exportAll?: RetryEntry<ExportAllLearningPacksRequestDto> };
+type Exported = Extract<ExportAllLearningPacksResultDto, { outcome: 'exported' }>;
 
 /** Every course, drafts included, one file each, into a folder Rust asks for. */
 export function ExportAllCourses() {
   const exportAll = useExportAllLearningPacks();
   const retry = useRef<Retries>({});
   const [options, setOptions] = useState(MOVE_EXPORT_DEFAULTS);
-  const [result, setResult] = useState<ExportAllLearningPacksResultDto | null>(null);
+  const [result, setResult] = useState<Exported | null>(null);
   const [error, setError] = useState('');
 
   const send = async (entry: RetryEntry<ExportAllLearningPacksRequestDto>) => {
     setError('');
     try {
-      const outcome = await exportAll.mutateAsync(entry.request);
+      const response = await exportAll.mutateAsync(entry.request);
       delete retry.current.exportAll;
       // Closing the folder dialog writes and records nothing.
-      if (!outcome.cancelled) setResult(outcome);
+      if (response.outcome === 'exported') setResult(response);
     } catch (cause) { setError(failureMessage(cause, 'The courses could not be exported.')); }
   };
-  const run = () => send(idempotentEntry(retry, 'exportAll', packOptionsRequest(options), (id) => ({ operationId: id() })));
+  const run = () => send(idempotentEntry(retry, 'exportAll', { options: packOptionsRequest(options) }, (id) => ({ operationId: id() })));
   const reveal = async (path: string) => {
     const opened = await VaultAPI.showInFolder(path);
     if (!opened.ok) setError(opened.error);
@@ -49,7 +50,7 @@ export function ExportAllCourses() {
     {result && (total === 0
       ? <p role="status" className="mt-5 rounded-xl border border-dashed border-border p-4 text-sm text-text-muted">There are no courses to export yet.</p>
       : <div className="mt-5 space-y-3">
-        <p role="status" className="text-sm text-text-secondary">Exported {exported.length} of {total} {total === 1 ? 'course' : 'courses'}{result.destinationDir ? <> to <span className="break-all font-medium text-text-primary">{result.destinationDir}</span></> : null}.</p>
+        <p role="status" className="text-sm text-text-secondary">Exported {exported.length} of {total} {total === 1 ? 'course' : 'courses'} to <span className="break-all font-medium text-text-primary">{result.destinationDir}</span>.</p>
         {exported.length > 0 && <ul aria-label="Exported courses" className="space-y-2">{exported.map((item) => <li key={item.programId} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-border bg-background p-3"><div className="min-w-0"><p className="flex items-center gap-1.5 text-xs font-medium text-text-primary"><CheckCircle2 size={13} className="shrink-0 text-emerald-700" />{item.title}<span className="sr-only">: saved</span></p><p className="mt-1 break-all text-[10px] text-text-muted">{item.path}</p></div><button type="button" onClick={() => void reveal(item.path)} aria-label={`Reveal ${item.title} in folder`} className="shrink-0 rounded-full border border-border p-2 text-text-muted hover:text-text-primary"><FolderOpen size={13} /></button></li>)}</ul>}
         {failed.length > 0 && <ul aria-label="Courses that could not be exported" className="space-y-2">{failed.map((item) => <li key={item.programId} className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3"><p className="flex items-center gap-1.5 text-xs font-medium text-text-primary"><TriangleAlert size={13} className="shrink-0 text-amber-700" />{item.title}<span className="sr-only">: not exported</span></p><p className="mt-1 wrap-break-word text-[10px] leading-4 text-amber-800">{item.error}</p></li>)}</ul>}
       </div>)}

@@ -471,7 +471,7 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
     expect(await screen.findByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'All programs' })).toBeDisabled();
-    await act(async () => { exporting.resolve(ok({ cancelled: false, destinationDir: '/Volumes/USB', exported: [{ programId: 'program-1', title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
+    await act(async () => { exporting.resolve(ok({ outcome: 'exported', destinationDir: '/Volumes/USB', exported: [{ programId: 'program-1', title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
     expect(await screen.findByText(/Exported 1 of 1 course to/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'All programs' })).toBeEnabled();
   });
@@ -498,7 +498,7 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.get).not.toHaveBeenCalled();
     expect(mocks.flush).not.toHaveBeenCalled();
 
-    await act(async () => { exporting.resolve(ok({ cancelled: false, destinationDir: '/Volumes/USB', exported: [{ programId: active.summary.id, title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
+    await act(async () => { exporting.resolve(ok({ outcome: 'exported', destinationDir: '/Volumes/USB', exported: [{ programId: active.summary.id, title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
     expect(await screen.findByText(/Exported 1 of 1 course to/)).toBeVisible();
     expect(screen.queryByText(/still being exported/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Expand activity/ }));

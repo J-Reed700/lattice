@@ -25,14 +25,16 @@ const label = (value: string) => CONFLICT_POLICIES.find((option) => option.value
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 const manifest = { format: 'lattice.learning-pack', version: 4, schemaVersion: 20261013000000, packId: 'pack-1', title: 'Field biology', createdAt: 1_790_000_000_000, applicationVersion: '1.0.0', rootSha256: 'root-checksum', privacy: { includesPrivateChat: false, includesCredentials: false, includesAnswerKeys: true, includesHiddenEvaluators: false, includesLearnerEvidence: true, includesPracticalArtifacts: true, includesFullSourceBodies: false, sourceBodyRedistributionConfirmed: false, omittedItems: [] }, entries: [] };
-type Conflict = { entityKind: string; incomingId: string; incomingTitle: string; existingId: string; existingTitle: string; resolution: string };
-const conflict = (entityKind: string, overrides: Partial<Conflict> = {}): Conflict => ({ entityKind, incomingId: 'course-1', incomingTitle: 'Field biology', existingId: 'course-1', existingTitle: 'Field biology (this computer)', resolution: 'blocked', ...overrides });
+type Conflict = { kind: string; existingId: string | null; existingTitle: string | null; reason: string | null; clearsWith: string[] };
+// The choices the backend says clear each kind; every other kind clears only with a copy.
+const CLEARS_WITH: Record<string, string[]> = { program: ['replace_after_backup', 'create_copy'], pack_schema: [] };
+const conflict = (kind: string, overrides: Partial<Conflict> = {}): Conflict => ({ kind, existingId: 'course-1', existingTitle: 'Field biology (this computer)', reason: null, clearsWith: CLEARS_WITH[kind] ?? ['create_copy'], ...overrides });
 const previewOf = (request: { previewId: string; sourcePath: string; conflictPolicy: string }, overrides: Record<string, unknown> = {}) => ({
   id: request.previewId, sourcePath: request.sourcePath, manifest, incomingProgramId: 'course-1', incomingProgramTitle: 'Field biology',
   conflictPolicy: request.conflictPolicy, conflicts: [] as Conflict[], changes: [{ entityKind: 'program', entityId: 'course-1', action: 'import', description: 'Import Field biology' }],
   warnings: [], status: 'pending', canApply: true, createdAt: 1_790_000_000_000, decidedAt: null, ...overrides,
 });
-const workspace = (programId: string, importPreviews: unknown[], imports: unknown[] = []) => ({ programId, exports: [], importPreviews, imports, sourceWorkspace: { programId, sources: [] }, exportNotice: { activeJob: false, notebookNoteCount: 0, practicalDraftCount: 0 } });
+const workspace = (programId: string, importPreviews: unknown[], imports: unknown[] = []) => ({ programId, exports: [], importPreviews, imports, sourceWorkspace: { programId, sources: [] }, exportNotice: { staysBehind: [], blockers: [] } });
 
 /** Preview responses per policy; each echoes the request's preview id like the backend does. */
 function respondByPolicy(byPolicy: Record<string, Record<string, unknown>>) {
@@ -130,7 +132,7 @@ describe('Importing a course onto this computer', () => {
   it('offers only a copy when another course owns some of the incoming records', async () => {
     const user = userEvent.setup();
     // For a lesson the backend sends the lesson's local title, not a course name.
-    respondByPolicy({ merge_safe: { conflicts: [conflict('program'), conflict('lesson', { incomingId: 'lesson-1', incomingTitle: 'Reading a transect', existingTitle: 'Reading a transect' })], canApply: false } });
+    respondByPolicy({ merge_safe: { conflicts: [conflict('program'), conflict('lesson', { existingId: 'lesson-1', existingTitle: 'Reading a transect' })], canApply: false } });
     renderFlow();
     await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));
     const branch = await screen.findByRole('group', { name: /This course is already on this computer/ });
@@ -141,7 +143,7 @@ describe('Importing a course onto this computer', () => {
   it('blocks a pack from a different build with no Apply and no other choice', async () => {
     const user = userEvent.setup();
     const schemaReason = 'This pack was made by a different build of Lattice (database schema 20261001000000; this computer has 20261013000000). Install the same Lattice version on both computers, then export the course again.';
-    respondByPolicy({ merge_safe: { conflicts: [conflict('pack_schema', { existingId: '20261013000000', existingTitle: schemaReason })], canApply: false } });
+    respondByPolicy({ merge_safe: { conflicts: [conflict('pack_schema', { existingId: null, existingTitle: null, reason: schemaReason })], canApply: false } });
     renderFlow();
     await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));
     const branch = await screen.findByRole('group', { name: 'This file cannot be imported as it is' });
@@ -149,26 +151,25 @@ describe('Importing a course onto this computer', () => {
     expect(branch).toHaveTextContent('None of the import choices can bring this file in.');
     expect(within(branch).queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Apply these changes' })).not.toBeInTheDocument();
-    expect(screen.getByText(/Local: This pack was made by a different build of Lattice .* · Resolution: blocked/)).toBeVisible();
+    expect(screen.getByText('Blocked by “Move it here”')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Cancel preview' })).toBeEnabled();
   });
 
-  it('offers no choice while the course here is still being prepared, and checks again with a fresh preview', async () => {
+  it('offers a copy, or a fresh check once the course here has finished preparing', async () => {
     const user = userEvent.setup();
     const preparing = 'This course is still being prepared. Export or replace it after its lessons finish generating.';
     let replaceCalls = 0;
     mocks.preview.mockImplementation(async (request: { previewId: string; sourcePath: string; conflictPolicy: string }) => {
       if (request.conflictPolicy === 'merge_safe') return ok(workspace('course-1', [previewOf(request, { conflicts: [conflict('program')], canApply: false })]));
       replaceCalls += 1;
-      return ok(workspace('course-1', [previewOf(request, replaceCalls === 1 ? { conflicts: [conflict('program_jobs', { existingTitle: preparing })], canApply: false } : {})]));
+      return ok(workspace('course-1', [previewOf(request, replaceCalls === 1 ? { conflicts: [conflict('program_jobs', { reason: preparing })], canApply: false } : {})]));
     });
     renderFlow();
     await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));
     await user.click(await screen.findByRole('button', { name: label('replace_after_backup') }));
     const branch = await screen.findByRole('group', { name: 'This file cannot be imported as it is' });
     expect(branch).toHaveTextContent(preparing);
-    expect(within(branch).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual(['Check again']);
-    expect(screen.queryByRole('button', { name: label('create_copy') })).not.toBeInTheDocument();
+    expect(within(branch).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim())).toEqual([label('create_copy'), 'Check again']);
     expect(screen.queryByRole('button', { name: 'Apply these changes' })).not.toBeInTheDocument();
     const waiting = mocks.preview.mock.calls[1][0];
 
@@ -187,7 +188,7 @@ describe('Importing a course onto this computer', () => {
     const user = userEvent.setup();
     respondByPolicy({
       merge_safe: { conflicts: [conflict('program')], canApply: false },
-      replace_after_backup: { conflicts: [conflict('program_history', { existingTitle: 'Replace was blocked because the target has hidden practical evaluators that this pack version cannot restore.' })], canApply: false },
+      replace_after_backup: { conflicts: [conflict('program_history', { reason: 'Replace was blocked because the target has hidden practical evaluators that this pack version cannot restore.' })], canApply: false },
     });
     renderFlow();
     await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));

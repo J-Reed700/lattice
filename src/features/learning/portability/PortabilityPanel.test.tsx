@@ -5,7 +5,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CONFLICT_POLICIES } from '@/features/learning/portability/conflictPolicies';
+import { conflictPolicyOption, DEFAULT_CONFLICT_POLICY } from '@/features/learning/portability/conflictPolicies';
 import { PortabilityPanel } from '@/features/learning/portability/PortabilityPanel';
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), workspace: vi.fn(), exportPack: vi.fn(), saveAs: vi.fn(), preview: vi.fn(), apply: vi.fn(), cancel: vi.fn(), showInFolder: vi.fn(), onImported: vi.fn() }));
@@ -24,14 +24,14 @@ const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 const manifest = (overrides: Record<string, unknown> = {}) => ({ format: 'lattice.learning-pack', version: 4, schemaVersion: 20261013000000, packId: 'pack-1', title: 'Evidence basics', createdAt: 1_790_000_000_000, applicationVersion: '1.0.0', rootSha256: 'root-checksum', privacy: { includesPrivateChat: false, includesCredentials: false, includesAnswerKeys: true, includesHiddenEvaluators: false, includesLearnerEvidence: true, includesPracticalArtifacts: true, includesFullSourceBodies: true, sourceBodyRedistributionConfirmed: true, omittedItems: ['Unrelated private chat', 'Hosted runtime secrets'] }, entries: [{ path: 'program.json', kind: 'program', sha256: 'sha', bytes: 42 }], ...overrides });
 const preview = (overrides: Record<string, unknown> = {}) => ({ id: 'preview-1', sourcePath: '/tmp/evidence.lattice-learning', manifest: manifest(), incomingProgramId: 'program-1', incomingProgramTitle: 'Evidence basics', conflictPolicy: 'merge_safe', conflicts: [], changes: [{ entityKind: 'program', entityId: 'program-1', action: 'import', description: 'Import Evidence basics' }], warnings: ['A historical source was truncated.'], status: 'pending', canApply: true, createdAt: 1_790_000_000_000, decidedAt: null, ...overrides });
-const notice = (overrides: Record<string, unknown> = {}) => ({ activeJob: false, notebookNoteCount: 0, practicalDraftCount: 0, ...overrides });
+const notice = (overrides: Record<string, unknown> = {}) => ({ staysBehind: [], blockers: [], ...overrides });
 const workspace = (overrides: Record<string, unknown> = {}) => ({ programId: 'program-1', exports: [], importPreviews: [], imports: [], sourceWorkspace: { programId: 'program-1', sources: [] }, exportNotice: notice(), ...overrides });
 const exportRow = (destinationPath: string) => ({ id: 'export-1', programId: 'program-1', destinationPath, manifest: manifest(), createdAt: 1_790_000_000_000 });
 
 function renderPanel() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-  return render(<PortabilityPanel programId="program-1" programTitle="Evidence basics" onImported={mocks.onImported} />, { wrapper });
+  return render(<PortabilityPanel programId="program-1" onImported={mocks.onImported} />, { wrapper });
 }
 
 describe('Learning Studio portable packs', () => {
@@ -40,7 +40,7 @@ describe('Learning Studio portable packs', () => {
     mocks.open.mockResolvedValue('/tmp/evidence.lattice-learning');
     mocks.workspace.mockResolvedValue(ok(workspace()));
     mocks.exportPack.mockResolvedValue(ok(workspace({ exports: [exportRow('/managed/learning/evidence.lattice-learning')] })));
-    mocks.saveAs.mockResolvedValue(ok({ cancelled: false, export: exportRow('/Volumes/USB/evidence-basics.lattice-learning') }));
+    mocks.saveAs.mockResolvedValue(ok({ outcome: 'saved', export: exportRow('/Volumes/USB/evidence-basics.lattice-learning') }));
     mocks.preview.mockResolvedValue(ok(workspace({ importPreviews: [preview()] })));
     mocks.apply.mockResolvedValue(ok(workspace({ importPreviews: [preview({ status: 'applied' })], imports: [{ id: 'import-1', previewId: 'preview-1', importedProgramId: 'program-1', backupId: null, appliedChanges: [{ entityKind: 'program', entityId: 'program-1', action: 'created', description: 'Imported program.' }], importedAt: 1_790_000_000_000 }] })));
     mocks.cancel.mockResolvedValue(ok(workspace({ importPreviews: [preview({ status: 'cancelled' })] })));
@@ -71,7 +71,8 @@ describe('Learning Studio portable packs', () => {
     await user.click(exportButton);
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection interrupted');
     const request = mocks.exportPack.mock.calls[0][0];
-    expect(request).toMatchObject({ programId: 'program-1', fileName: 'evidence-basics', includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: true, sourceBodyRedistributionConfirmed: true });
+    // No file name: Rust names the file from the course title.
+    expect(request).toEqual({ operationId: expect.any(String), programId: 'program-1', options: { includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: true, sourceBodyRedistributionConfirmed: true } });
     await user.click(screen.getByRole('button', { name: 'Retry same export' }));
     await waitFor(() => expect(mocks.exportPack).toHaveBeenCalledTimes(2));
     expect(mocks.exportPack.mock.calls[1][0]).toEqual(request);
@@ -82,14 +83,14 @@ describe('Learning Studio portable packs', () => {
 
   it('saves to a file the user picks, retries a failed save with the same request, and treats a closed dialog as a no-op', async () => {
     const user = userEvent.setup();
-    mocks.saveAs.mockResolvedValueOnce(ok({ cancelled: true, export: null })).mockResolvedValueOnce(fail('The destination is read-only'));
+    mocks.saveAs.mockResolvedValueOnce(ok({ outcome: 'cancelled' })).mockResolvedValueOnce(fail('The destination is read-only'));
     renderPanel();
     await user.click(await screen.findByRole('button', { name: 'Save to…' }));
     await waitFor(() => expect(mocks.saveAs).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     const first = mocks.saveAs.mock.calls[0][0];
-    expect(first).toMatchObject({ programId: 'program-1', fileName: 'evidence-basics', includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false, operationId: expect.any(String) });
+    expect(first).toEqual({ operationId: expect.any(String), programId: 'program-1', options: { includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false } });
 
     await user.click(screen.getByRole('button', { name: 'Save to…' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The destination is read-only');
@@ -105,7 +106,7 @@ describe('Learning Studio portable packs', () => {
   });
 
   it('blocks both exports while the course is still being prepared and names what stays on this computer', async () => {
-    mocks.workspace.mockResolvedValue(ok(workspace({ exportNotice: notice({ activeJob: true, notebookNoteCount: 2, practicalDraftCount: 1 }) })));
+    mocks.workspace.mockResolvedValue(ok(workspace({ exportNotice: notice({ blockers: ['program_jobs'], staysBehind: [{ kind: 'notebook_notes', count: 2 }, { kind: 'practical_drafts', count: 1 }] }) })));
     renderPanel();
     expect(await screen.findByText(/This course is still being prepared/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Save to…' })).toBeDisabled();
@@ -116,7 +117,7 @@ describe('Learning Studio portable packs', () => {
   it('checks again while the course is being prepared and lifts the lock when it is ready', async () => {
     vi.useFakeTimers();
     try {
-      mocks.workspace.mockResolvedValueOnce(ok(workspace({ exportNotice: notice({ activeJob: true }) })));
+      mocks.workspace.mockResolvedValueOnce(ok(workspace({ exportNotice: notice({ blockers: ['program_jobs'] }) })));
       renderPanel();
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByText(/This course is still being prepared/)).toBeVisible();
@@ -136,7 +137,7 @@ describe('Learning Studio portable packs', () => {
   });
 
   it('uses the singular when one lesson note stays behind and says nothing when nothing does', async () => {
-    mocks.workspace.mockResolvedValueOnce(ok(workspace({ exportNotice: notice({ notebookNoteCount: 1 }) })));
+    mocks.workspace.mockResolvedValueOnce(ok(workspace({ exportNotice: notice({ staysBehind: [{ kind: 'notebook_notes', count: 1 }] }) })));
     const { unmount } = renderPanel();
     expect(await screen.findByText(/^1 lesson note stays on this computer\./)).toBeVisible();
     unmount();
@@ -154,8 +155,8 @@ describe('Learning Studio portable packs', () => {
     expect(await screen.findByText('Dry run · pending')).toBeVisible();
     expect(screen.getByRole('heading', { level: 4, name: 'Bring a course to this computer' })).toBeVisible();
     expect(screen.getByRole('heading', { level: 5, name: 'Evidence basics' })).toBeVisible();
-    expect(screen.getByText(CONFLICT_POLICIES[0].label)).toBeVisible();
-    expect(screen.getByText(CONFLICT_POLICIES[0].description)).toBeVisible();
+    expect(screen.getByText(conflictPolicyOption(DEFAULT_CONFLICT_POLICY).label)).toBeVisible();
+    expect(screen.getByText(conflictPolicyOption(DEFAULT_CONFLICT_POLICY).description)).toBeVisible();
     expect(screen.getByRole('region', { name: 'Pack privacy manifest' })).toHaveTextContent('Hosted runtime secrets');
     expect(screen.getByText(/A historical source was truncated/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Apply these changes' }));

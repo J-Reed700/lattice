@@ -1,9 +1,7 @@
-export type PackExportOptionsValue = {
-  includeEvidence: boolean;
-  includePracticalArtifacts: boolean;
-  includeSourceBodies: boolean;
-  sourceBodyRedistributionConfirmed: boolean;
-};
+import type { LearningPackExportOptionsDto } from '@/lib/bindings';
+
+/** The export choices exactly as every export request nests them under `options`. */
+export type PackExportOptionsValue = LearningPackExportOptionsDto;
 
 /** Defaults for moving a course: progress and lab work travel, full source text stays opt-in. */
 export const MOVE_EXPORT_DEFAULTS: PackExportOptionsValue = {
@@ -16,7 +14,7 @@ export const MOVE_EXPORT_DEFAULTS: PackExportOptionsValue = {
 /** Full source text needs the learner's explicit redistribution tick. */
 export const packOptionsReady = (value: PackExportOptionsValue) => !value.includeSourceBodies || value.sourceBodyRedistributionConfirmed;
 
-/** The request fields, with the redistribution tick only ever sent alongside full text. */
+/** The request's `options`, with the redistribution tick only ever sent alongside full text. */
 export const packOptionsRequest = (value: PackExportOptionsValue): PackExportOptionsValue => ({
   ...value,
   sourceBodyRedistributionConfirmed: value.includeSourceBodies && value.sourceBodyRedistributionConfirmed,

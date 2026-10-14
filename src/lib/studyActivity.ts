@@ -5,7 +5,9 @@ import { queryClient } from './queryClient';
 
 export type StudyTab = 'starting_point' | 'lessons' | 'sources' | 'quick-checks' | 'assess-evidence' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
 export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean };
-type TaskDescription = { title: string; detail: string; involves: string[]; tab?: StudyTab; quickStart?: boolean };
+// `withdrawsOn` names the result `outcome` tag that means the request did
+// nothing (a closed save or folder dialog), so its receipt is withdrawn.
+type TaskDescription = { title: string; detail: string; involves: string[]; tab?: StudyTab; quickStart?: boolean; withdrawsOn?: string };
 
 const model = (title: string, tab: StudyTab, ...involves: string[]): TaskDescription => ({
   title, tab, involves, quickStart: true,
@@ -38,8 +40,8 @@ const descriptions: Record<string, TaskDescription> = {
   export_learning_pack: { title: 'Exporting your study pack', tab: 'portability', quickStart: true, detail: 'Larger courses and attachments take longer to package.', involves: ['Collect the selected course material', 'Write the study pack to your chosen location'] },
   preview_learning_pack_import: { title: 'Checking your study pack', tab: 'portability', quickStart: true, detail: 'Reading the pack and checking its contents before you decide what to import.', involves: ['Read and validate the pack', 'Prepare an import preview'] },
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
-  save_learning_pack_as: { title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
-  export_all_learning_packs: { title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
+  save_learning_pack_as: { withdrawsOn: 'cancelled', title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
+  export_all_learning_packs: { withdrawsOn: 'cancelled', title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
   generate_study_deck: { ...model('Creating your flashcard deck', 'recall', 'Read the selected documents', 'Generate cited questions and answers', 'Save your deck'), tab: undefined },
   generate_conversation_study_deck: { ...model('Creating flashcards from your conversation', 'recall', 'Read the verified claims and citations', 'Create and save a deck from those claims'), tab: undefined },
 };
@@ -138,7 +140,8 @@ export function beginStudyActivity(domain: string, command: string, args?: Recor
       clearTimeout(timer);
       if (!visible) return;
       // A closed save or folder dialog wrote nothing; "completed" would say otherwise.
-      if (error === undefined && result && typeof result === 'object' && 'cancelled' in result && result.cancelled === true) {
+      const outcome = result && typeof result === 'object' && 'outcome' in result ? result.outcome : undefined;
+      if (error === undefined && description.withdrawsOn !== undefined && outcome === description.withdrawsOn) {
         withdraw(activity.id);
         return;
       }

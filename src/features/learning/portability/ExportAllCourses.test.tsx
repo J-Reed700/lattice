@@ -13,7 +13,7 @@ vi.mock('@/lib/api', () => ({ default: { exportAllLearningPacks: mocks.exportAll
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 const result = (overrides: Record<string, unknown> = {}) => ({
-  cancelled: false,
+  outcome: 'exported',
   destinationDir: '/Volumes/USB/Lattice courses',
   exported: [
     { programId: 'course-1', title: 'Field biology', path: '/Volumes/USB/Lattice courses/Field biology.lattice-learning' },
@@ -44,7 +44,7 @@ describe('Exporting every course', () => {
     expect(screen.getByText('Lesson notes and unsaved lab drafts stay on this computer. They are not part of the files.')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
     await waitFor(() => expect(mocks.exportAll).toHaveBeenCalledTimes(1));
-    expect(mocks.exportAll.mock.calls[0][0]).toEqual({ operationId: expect.any(String), includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false });
+    expect(mocks.exportAll.mock.calls[0][0]).toEqual({ operationId: expect.any(String), options: { includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false } });
     expect(await screen.findByRole('status')).toHaveTextContent('Exported 2 of 3 courses to /Volumes/USB/Lattice courses.');
     const saved = screen.getByRole('list', { name: 'Exported courses' });
     expect(within(saved).getAllByRole('listitem')).toHaveLength(2);
@@ -59,7 +59,7 @@ describe('Exporting every course', () => {
 
   it('treats a closed folder dialog as a quiet no-op', async () => {
     const user = userEvent.setup();
-    mocks.exportAll.mockResolvedValue(ok({ cancelled: true, destinationDir: null, exported: [], failed: [] }));
+    mocks.exportAll.mockResolvedValue(ok({ outcome: 'cancelled' }));
     const { invalidate } = renderExport();
     await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
     await waitFor(() => expect(mocks.exportAll).toHaveBeenCalledTimes(1));
@@ -79,7 +79,7 @@ describe('Exporting every course', () => {
 
   it('retries a failed batch with the same operation and reports a reveal failure', async () => {
     const user = userEvent.setup();
-    mocks.exportAll.mockResolvedValueOnce(fail('Connection interrupted')).mockResolvedValueOnce(ok(result({ exported: [result().exported[0]], failed: [], destinationDir: null })));
+    mocks.exportAll.mockResolvedValueOnce(fail('Connection interrupted')).mockResolvedValueOnce(ok(result({ exported: [result().exported[0]], failed: [] })));
     mocks.showInFolder.mockResolvedValue(fail('The file was moved'));
     renderExport();
     await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
@@ -87,7 +87,7 @@ describe('Exporting every course', () => {
     await user.click(screen.getByRole('button', { name: 'Retry same export' }));
     await waitFor(() => expect(mocks.exportAll).toHaveBeenCalledTimes(2));
     expect(mocks.exportAll.mock.calls[1][0]).toEqual(mocks.exportAll.mock.calls[0][0]);
-    expect(await screen.findByRole('status')).toHaveTextContent('Exported 1 of 1 course.');
+    expect(await screen.findByRole('status')).toHaveTextContent('Exported 1 of 1 course to /Volumes/USB/Lattice courses.');
     await user.click(screen.getByRole('button', { name: 'Reveal Field biology in folder' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The file was moved');
   });
@@ -99,7 +99,7 @@ describe('Exporting every course', () => {
     expect(screen.getByRole('button', { name: 'Choose folder and export' })).toBeDisabled();
     await user.click(screen.getByLabelText(/I confirm that full source bodies/));
     await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
-    await waitFor(() => expect(mocks.exportAll).toHaveBeenCalledWith(expect.objectContaining({ includeSourceBodies: true, sourceBodyRedistributionConfirmed: true })));
+    await waitFor(() => expect(mocks.exportAll).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ includeSourceBodies: true, sourceBodyRedistributionConfirmed: true }) })));
     await user.click(screen.getByLabelText(/Include full source text/));
     expect(screen.queryByLabelText(/I confirm that full source bodies/)).not.toBeInTheDocument();
   });
