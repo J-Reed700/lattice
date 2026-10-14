@@ -238,6 +238,22 @@ async cancelLearningPackImportPreview(request: CancelLearningPackImportPreviewRe
     else return { status: "error", error: e  as any };
 }
 },
+async saveLearningPackAs(request: ExportLearningPackRequestDto) : Promise<Result<SaveLearningPackAsResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_pack_as", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async exportAllLearningPacks(request: ExportAllLearningPacksRequestDto) : Promise<Result<ExportAllLearningPacksResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|export_all_learning_packs", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewLearningCurriculumRevision(request: PreviewLearningCurriculumRevisionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|preview_learning_curriculum_revision", { request }) };
@@ -5657,6 +5673,12 @@ export type ExplorerSearchResultDto = { matches: ExplorerSearchMatchDto[];
  * A bound was hit (results, files, bytes or time), so there may be more.
  */
 truncated: boolean; filesScanned: number }
+export type ExportAllLearningPacksRequestDto = { operationId: string; includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
+export type ExportAllLearningPacksResultDto = {
+/**
+ * True when the folder dialog was dismissed: nothing written or recorded.
+ */
+cancelled: boolean; destinationDir: string | null; exported: ExportedLearningPackDto[]; failed: FailedLearningPackExportDto[] }
 export type ExportJsonRequestDto = {
 /**
  * `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
@@ -5675,8 +5697,10 @@ export type ExportResultDto = { count: number;
  * guessing.
  */
 outputDir: string }
+export type ExportedLearningPackDto = { programId: string; title: string; path: string }
 export type ExtractAndResolveResponseDto = { links: ResolvedLinkDto[] }
 export type ExtractMentionsResultDto = { mentions: MentionWithContextDto[]; count: number }
+export type FailedLearningPackExportDto = { programId: string; title: string; error: string }
 /**
  * Favorite document with metadata
  */
@@ -6442,9 +6466,29 @@ export type LearningPackConflictDto = { entityKind: string; incomingId: string; 
 export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
 export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "attempt" | "evidence" | "practical_activity" | "practical_artifact"
 export type LearningPackExportDto = { id: string; programId: string; destinationPath: string; manifest: LearningPackManifest; createdAt: number }
+/**
+ * What an export of this course cannot carry, shown before exporting.
+ */
+export type LearningPackExportNoticeDto = {
+/**
+ * A pending or running generation job; export and replace wait for it.
+ */
+activeJob: boolean;
+/**
+ * Lesson notes, which stay on this computer.
+ */
+notebookNoteCount: number;
+/**
+ * Unsaved lab drafts, which stay on this computer.
+ */
+practicalDraftCount: number }
 export type LearningPackImportPreviewDto = { id: string; sourcePath: string; manifest: LearningPackManifest; incomingProgramId: string; incomingProgramTitle: string; conflictPolicy: LearningPackConflictPolicy; conflicts: LearningPackConflictDto[]; changes: LearningPackChangeDto[]; warnings: string[]; status: LearningPackPreviewStatus; canApply: boolean; createdAt: number; decidedAt: number | null }
 export type LearningPackImportResultDto = { id: string; previewId: string; importedProgramId: string; backupId: string | null; appliedChanges: LearningPackChangeDto[]; importedAt: number }
-export type LearningPackManifest = { format: string; version: number; packId: string; title: string; createdAt: number; applicationVersion: string; rootSha256: string; privacy: LearningPackPrivacyManifest; entries: LearningPackManifestEntry[] }
+export type LearningPackManifest = { format: string; version: number;
+/**
+ * Highest applied database migration on the exporting computer.
+ */
+schemaVersion: number; packId: string; title: string; createdAt: number; applicationVersion: string; rootSha256: string; privacy: LearningPackPrivacyManifest; entries: LearningPackManifestEntry[] }
 export type LearningPackManifestEntry = { path: string; kind: LearningPackEntryKind; sha256: string; bytes: number }
 export type LearningPackPreviewStatus = "pending" | "applied" | "cancelled" | "stale"
 export type LearningPackPrivacyManifest = { includesPrivateChat: boolean; includesCredentials: boolean; includesFullSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean; includesAnswerKeys: boolean; includesHiddenEvaluators: boolean; includesLearnerEvidence: boolean; includesPracticalArtifacts: boolean; omittedItems: string[] }
@@ -6453,7 +6497,7 @@ export type LearningPlanDto = { programId: string;
  * Concurrency token for program mutations; independent of curriculum revision numbers.
  */
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
-export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto }
+export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; revision: number; createdAt: number; updatedAt: number }
 export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
@@ -7340,6 +7384,11 @@ repeatPenalty: number }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
+export type SaveLearningPackAsResultDto = {
+/**
+ * True when the save dialog was dismissed: nothing written or recorded.
+ */
+cancelled: boolean; export: LearningPackExportDto | null }
 export type SaveLearningPracticalDraftRequestDto = { operationId: string; programId: string; activityId: string; activityRevision: number; expectedDraftRevision: number; files: LearningLabFile[] }
 export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
