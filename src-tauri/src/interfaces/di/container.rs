@@ -120,6 +120,9 @@ pub struct Container {
 
     /// Frozen copies of cited web pages; its captures run on `jobs`.
     pub(crate) web_page_snapshots: Arc<crate::features::web::snapshots::WebPageSnapshotService>,
+    /// Where the snapshot service sends its events; attached to the main
+    /// window in [`Container::with_app_handle`].
+    web_snapshot_events: Arc<crate::features::web::snapshots::AppEvents>,
 
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
@@ -361,9 +364,11 @@ impl Container {
             });
 
         let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+        let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
             Arc::clone(&jobs),
+            Arc::clone(&web_snapshot_events),
         )?;
 
         let turn_cancellation = Arc::new(
@@ -398,6 +403,7 @@ impl Container {
             settings_side_effects,
             jobs,
             web_page_snapshots,
+            web_snapshot_events,
             turn_cancellation,
             research_waiters,
             outline_run_registry,
@@ -415,6 +421,7 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        self.web_snapshot_events.attach(handle.clone());
         // A page that refuses the HTTP client is read in a hidden window of
         // the app's own browser engine, which exists only from here on.
         self.web_service.attach_browser(Arc::new(

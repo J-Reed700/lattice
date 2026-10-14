@@ -79,21 +79,21 @@ pub fn build(
 }
 
 /// The frozen-copy feature: the capture engine behind its trait, the
-/// snapshot directory, and the one job runtime its captures run on.
+/// snapshot directory, the one job runtime its captures run on, and the
+/// window events the app attaches once it is running.
 pub fn build_page_snapshots(
     db_pool: SqlitePool,
     jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
+    events: Arc<crate::features::web::snapshots::AppEvents>,
 ) -> Result<Arc<crate::features::web::snapshots::WebPageSnapshotService>> {
-    use crate::features::web::snapshots::{
-        store::SnapshotStore, AppEvents, WebPageSnapshotService,
-    };
+    use crate::features::web::snapshots::{store::SnapshotStore, WebPageSnapshotService};
     let capture = crate::features::web::services::snapshot::build_page_capture()?;
     Ok(Arc::new(WebPageSnapshotService::new(
         db_pool,
         SnapshotStore::default_root()?,
         capture,
         jobs,
-        Arc::new(AppEvents),
+        events,
     )))
 }
 
