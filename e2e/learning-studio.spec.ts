@@ -2294,11 +2294,22 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
 
   await openStudioSection(page, "Import & export");
   const portability = page.getByTestId("learning-portability-workspace");
-  await expect(portability.getByRole("heading", { name: "Keep a safe copy of your program" })).toBeVisible();
-  await portability.getByRole("button", { name: "Choose pack and preview" }).click();
-  const preview = portability.getByRole("heading", { name: "Imported field observations" });
+  await expect(portability.getByRole("heading", { name: "Move this course to another computer" })).toBeVisible();
+  await expect(portability.getByText("1 lesson note stays on this computer.")).toBeVisible();
+  await portability.getByRole("button", { name: "Save to…" }).click();
+  await expect(portability.getByText(/Course file saved to \/Downloads\/.+\.lattice-learning/)).toBeVisible();
+  const saved = await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string; request: Record<string, unknown> }> } }).__LATTICE_LEARNING_STATE__;
+    return state.packMutationCalls.find((item) => item.command === "save_learning_pack_as")?.request;
+  });
+  expect(saved).toMatchObject({ includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false });
+  // Moving the course back: the file is this course, so a move finds it already here.
+  await portability.getByRole("button", { name: "Choose a course file…" }).click();
+  const preview = portability.getByRole("heading", { name: "Reasoning from field observations", exact: true });
   await expect(preview).toBeVisible();
   await expect(portability.getByText("Dry run · pending")).toBeVisible();
+  const alreadyHere = portability.getByRole("group", { name: "This course is already on this computer (Reasoning from field observations)" });
+  await expect(alreadyHere).toBeVisible();
   const privacy = portability.getByRole("region", { name: "Pack privacy manifest" });
   await expect(privacy).toContainText("Answer keys included");
   await expect(privacy).toContainText("Hidden evaluators included");
@@ -2307,7 +2318,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await expect(privacy).toContainText("Full source bodies included");
   await expect(privacy).toContainText("Source redistribution confirmed");
   await expect(privacy).toContainText("hosted runtime secrets");
-  await expect(portability.getByRole("button", { name: "Apply these changes" })).toBeEnabled();
+  await expect(portability.getByRole("button", { name: "Apply these changes" })).toHaveCount(0);
   await portability.getByRole("button", { name: "Cancel preview" }).click();
   const cancelled = await page.evaluate(() => {
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string }>; portabilityWorkspace: { imports: unknown[]; importPreviews: Array<{ status: string }> } } }).__LATTICE_LEARNING_STATE__;
@@ -2315,15 +2326,29 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   });
   expect(cancelled).toMatchObject({ cancelCalls: 1, importCount: 0, status: "cancelled" });
 
-  await portability.getByRole("button", { name: "Choose pack and preview" }).click();
-  await expect(preview).toBeVisible();
+  await portability.getByRole("button", { name: "Choose a course file…" }).click();
+  await alreadyHere.getByRole("button", { name: "Replace the copy on this computer" }).click();
+  await expect(alreadyHere).toBeHidden();
   await portability.getByRole("button", { name: "Apply these changes" }).click();
   const confirm = portability.getByRole("dialog", { name: "Apply the reviewed import?" });
   await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText("“Replace the copy on this computer”");
   await expect(confirm.getByRole("button", { name: "Confirm import" })).toBeFocused();
   await confirm.getByRole("button", { name: "Confirm import" }).click();
   await expect(portability.getByText("Dry run · applied")).toBeVisible();
-  await expect(portability.getByText("Imported program program-copy-e2e.")).toBeVisible();
+  await expect(portability.getByText("“Reasoning from field observations” is ready on this computer.")).toBeVisible();
+  const movedBack = await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string; request: Record<string, unknown> }>; portabilityWorkspace: { imports: Array<{ importedProgramId: string }> } } }).__LATTICE_LEARNING_STATE__;
+    const previews = state.packMutationCalls.filter((item) => item.command === "preview_learning_pack_import").map((item) => item.request);
+    const applied = state.packMutationCalls.find((item) => item.command === "apply_learning_pack_import")?.request;
+    return {
+      policies: previews.map((item) => item.conflictPolicy),
+      cancelCalls: state.packMutationCalls.filter((item) => item.command === "cancel_learning_pack_import_preview").length,
+      appliedReplacePreview: applied?.previewId === previews.at(-1)?.previewId,
+      importedProgramId: state.portabilityWorkspace.imports[0]?.importedProgramId,
+    };
+  });
+  expect(movedBack).toEqual({ policies: ["merge_safe", "merge_safe", "replace_after_backup"], cancelCalls: 2, appliedReplacePreview: true, importedProgramId: "program-learning-1" });
 
   await workspace.getByRole("tab", { name: "Sources", exact: true }).click();
   const sources = page.getByTestId("source-maintenance");
@@ -2360,6 +2385,23 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
     return { revision: card?.contentRevision, prompt: card?.content.prompt, versionCount: card?.versions.length, scheduler: card?.scheduler, reviewCount: card?.reviewHistory.length, duplicate: state.recallV2Workspace.duplicates[0]?.status };
   });
   expect(recallState).toMatchObject({ revision: 2, prompt: "Which measure and period should be recorded?", versionCount: 2, scheduler: { reviewCount: 1 }, reviewCount: 1, duplicate: "confirmed" });
+
+  // Export every course from the programs list: one is saved, one is still being prepared.
+  await page.getByRole("button", { name: "All programs", exact: true }).click();
+  await page.getByRole("button", { name: "Export all courses…" }).click();
+  const exportAll = page.getByTestId("export-all-courses");
+  await expect(exportAll.getByRole("heading", { name: "Export all courses" })).toBeVisible();
+  await exportAll.getByRole("button", { name: "Choose folder and export" }).click();
+  await expect(exportAll.getByRole("status")).toHaveText("Exported 1 of 2 courses to /Downloads/Lattice courses.");
+  await expect(exportAll.getByRole("list", { name: "Exported courses" })).toContainText("Reasoning from field observations");
+  const notExported = exportAll.getByRole("list", { name: "Courses that could not be exported" });
+  await expect(notExported).toContainText("Statistics draft");
+  await expect(notExported).toContainText("This course is still being prepared.");
+  const exportAllRequest = await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string; request: Record<string, unknown> }> } }).__LATTICE_LEARNING_STATE__;
+    return state.packMutationCalls.find((item) => item.command === "export_all_learning_packs")?.request;
+  });
+  expect(exportAllRequest).toMatchObject({ operationId: expect.any(String), includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false });
 
   if (width === 390) {
     const overflow = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);

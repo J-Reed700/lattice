@@ -10,7 +10,9 @@ import type {
   LearningAssessmentFormSummaryDto,
   LearningRuntimePresetDto,
   LearningMemoryDto,
+  ExportAllLearningPacksResultDto,
   LearningPackChangeDto,
+  LearningPackConflictDto,
   LearningPackExportDto,
   LearningPackImportResultDto,
   LearningPackPreviewStatus,
@@ -520,7 +522,8 @@ export async function installLearningStudioBackend(page: Page) {
         importPreviews: [],
         imports: [],
         sourceWorkspace,
-      } as { programId: string; exports: Fixture<LearningPackExportDto>[]; importPreviews: Array<{ id: string; status: LearningPackPreviewStatus; manifest: { rootSha256: string }; canApply: boolean; decidedAt: number | null; changes: Fixture<LearningPackChangeDto>[] }>; imports: Fixture<LearningPackImportResultDto>[]; sourceWorkspace: SourceWorkspace },
+        exportNotice: { activeJob: false, notebookNoteCount: 1, practicalDraftCount: 0 },
+      } as { programId: string; exportNotice: { activeJob: boolean; notebookNoteCount: number; practicalDraftCount: number }; exports: Fixture<LearningPackExportDto>[]; importPreviews: Array<{ id: string; status: LearningPackPreviewStatus; manifest: { rootSha256: string }; canApply: boolean; decidedAt: number | null; changes: Fixture<LearningPackChangeDto>[] }>; imports: Fixture<LearningPackImportResultDto>[]; sourceWorkspace: SourceWorkspace },
       recallV2Workspace: {
         programId: program.summary.id,
         cards: [],
@@ -756,6 +759,8 @@ export async function installLearningStudioBackend(page: Page) {
     const getArg = <T>(args: unknown, key: string): T =>
       (args as Record<string, T>)[key];
     const getRequest = <T>(args: unknown): T => getArg<T>(args, "request");
+    // Packs carry the exporting database's migration version; both sides of a move must match.
+    const packSchemaVersion = 20261013000000;
     const copyCanvasWorkspace = () =>
       JSON.parse(JSON.stringify(canvasWorkspace));
     const copySourceWorkspace = () =>
@@ -2328,14 +2333,26 @@ export async function installLearningStudioBackend(page: Page) {
         const command = 'preview_learning_pack_import';
         const request = getRequest<Record<string, unknown>>(args);
         state.packMutationCalls.push({ command, request });
+        // The file is this course, exported on another computer and moved back:
+        // a move (merge_safe) finds it already here, and replace proceeds.
+        const alreadyHere = request.conflictPolicy === "merge_safe";
+        const existing = {
+          entityKind: "program",
+          incomingId: program.summary.id,
+          incomingTitle: program.summary.title,
+          existingId: program.summary.id,
+          existingTitle: program.summary.title,
+          resolution: "blocked",
+        } satisfies LearningPackConflictDto;
         const preview = {
           id: String(request.previewId),
           sourcePath: String(request.sourcePath),
           manifest: {
             format: "lattice-learning",
-            version: 1,
+            version: 4,
+            schemaVersion: packSchemaVersion,
             packId: "pack-e2e-1",
-            title: "Imported field observations",
+            title: program.summary.title,
             createdAt: Date.now(),
             applicationVersion: "e2e",
             rootSha256: "b".repeat(64),
@@ -2352,14 +2369,14 @@ export async function installLearningStudioBackend(page: Page) {
             },
             entries: [],
           },
-          incomingProgramId: "incoming-program-1",
-          incomingProgramTitle: "Imported field observations",
+          incomingProgramId: program.summary.id,
+          incomingProgramTitle: program.summary.title,
           conflictPolicy: String(request.conflictPolicy),
-          conflicts: [],
-          changes: [{ entityKind: "program", entityId: "incoming-program-1", action: "create_copy", description: "Create an isolated local program copy." }],
+          conflicts: alreadyHere ? [existing] : [],
+          changes: [{ entityKind: "program", entityId: program.summary.id, action: "import", description: `Import ${program.summary.title}` }],
           warnings: [],
           status: "pending" as const,
-          canApply: true,
+          canApply: !alreadyHere,
           createdAt: Date.now(),
           decidedAt: null,
         };
@@ -2383,7 +2400,8 @@ export async function installLearningStudioBackend(page: Page) {
           throw new Error("The import preview is no longer eligible.");
         preview.status = "applied";
         preview.decidedAt = Date.now();
-        state.portabilityWorkspace.imports.push({ id: "import-e2e-1", previewId: preview.id, importedProgramId: "program-copy-e2e", backupId: null, appliedChanges: preview.changes, importedAt: Date.now() });
+        // Replace keeps the course's identity, so the response is this course's own workspace.
+        state.portabilityWorkspace.imports.push({ id: "import-e2e-1", previewId: preview.id, importedProgramId: program.summary.id, backupId: "backup-e2e-1", appliedChanges: preview.changes, importedAt: Date.now() });
         return state.portabilityWorkspace;
       },
       delete_learning_source: (args) => {
@@ -2412,6 +2430,42 @@ export async function installLearningStudioBackend(page: Page) {
         item.updatedAt = Date.now();
         state.portabilityWorkspace.sourceWorkspace = copySourceWorkspace();
         return copySourceWorkspace();
+      },
+      // Rust opens the save dialog itself; this fixture stands in for the path the learner picked.
+      save_learning_pack_as: (args) => {
+        const command = 'save_learning_pack_as';
+        const request = getRequest<Record<string, unknown>>(args);
+        state.packMutationCalls.push({ command, request });
+        const exported = {
+          id: `export-e2e-${state.portabilityWorkspace.exports.length + 1}`,
+          programId: String(request.programId),
+          destinationPath: `/Downloads/${String(request.fileName)}.lattice-learning`,
+          manifest: {
+            format: "lattice-learning",
+            version: 4,
+            schemaVersion: packSchemaVersion,
+            packId: `pack-e2e-export-${state.portabilityWorkspace.exports.length + 1}`,
+            title: program.summary.title,
+            createdAt: Date.now(),
+            applicationVersion: "e2e",
+            rootSha256: "c".repeat(64),
+            entries: [],
+          },
+          createdAt: Date.now(),
+        };
+        state.portabilityWorkspace.exports.unshift(exported);
+        return { cancelled: false, export: exported };
+      },
+      export_all_learning_packs: (args) => {
+        const command = 'export_all_learning_packs';
+        const request = getRequest<Record<string, unknown>>(args);
+        state.packMutationCalls.push({ command, request });
+        return {
+          cancelled: false,
+          destinationDir: "/Downloads/Lattice courses",
+          exported: [{ programId: program.summary.id, title: program.summary.title, path: `/Downloads/Lattice courses/${program.summary.title}.lattice-learning` }],
+          failed: [{ programId: "program-draft-e2e", title: "Statistics draft", error: "This course is still being prepared. Export or replace it after its lessons finish generating." }],
+        } satisfies ExportAllLearningPacksResultDto;
       },
       'dialog|open': () => "/Downloads/studio-e2e.lattice-learning",
     };
