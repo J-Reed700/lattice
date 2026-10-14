@@ -221,6 +221,8 @@ impl ArchiveRestorer {
             .await;
         self.merge_web_archive(extracted.web_archive_dir.as_deref())
             .await;
+        self.merge_web_snapshots(extracted.web_snapshots_dir.as_deref())
+            .await;
         let vault_restored_to = self.restore_vault(extracted.vault_dir.as_deref()).await?;
         self.restore_settings_file(extracted.settings_file.as_deref())
             .await;
@@ -391,6 +393,33 @@ impl ArchiveRestorer {
             }
             Err(e) => {
                 warn!(error = %e, "web archive restore task failed");
+                0
+            }
+        }
+    }
+
+    /// Frozen web page copies go back beside the web archive, never
+    /// overwriting a file already there.
+    async fn merge_web_snapshots(&self, web_snapshots_dir: Option<&Path>) -> u64 {
+        let Some(web_snapshots_dir) = web_snapshots_dir else {
+            return 0;
+        };
+        let Some(root) = self
+            .web_archive_root
+            .as_deref()
+            .and_then(format::web_snapshots_root_beside)
+        else {
+            warn!("no web archive root; skipping frozen web snapshot restore");
+            return 0;
+        };
+        let source = web_snapshots_dir.to_path_buf();
+        match tokio::task::spawn_blocking(move || copy_missing_tree(&source, &root)).await {
+            Ok(count) => {
+                info!(count, "restored frozen web snapshots");
+                count
+            }
+            Err(e) => {
+                warn!(error = %e, "web snapshot restore task failed");
                 0
             }
         }

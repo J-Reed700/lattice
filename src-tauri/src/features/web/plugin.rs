@@ -2,12 +2,13 @@
 //!
 //! Web ingestion plugin for web content commands.
 
+use crate::features::web::snapshots::{commands as snapshots, WebPageSnapshotDto};
 use crate::{
     features::web::commands as web_ingest, interfaces::di::Container, shared::ipc::ApiError,
 };
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    Runtime, State,
+    Manager, Runtime, State,
 };
 
 #[tauri::command]
@@ -56,13 +57,65 @@ pub async fn read_web_page(
         .map_err(ApiError::from)
 }
 
+/// The frozen copy of `url` in this conversation, if one was ever requested.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_web_page_snapshot(
+    conversation_id: String,
+    url: String,
+    container: State<'_, Container>,
+) -> Result<Option<WebPageSnapshotDto>, ApiError> {
+    snapshots::get_web_page_snapshot(&container.web_page_snapshots(), &conversation_id, &url)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Capture a frozen copy now, or try a failed one again.
+#[tauri::command]
+#[specta::specta]
+pub async fn capture_web_page_snapshot(
+    conversation_id: String,
+    url: String,
+    container: State<'_, Container>,
+) -> Result<WebPageSnapshotDto, ApiError> {
+    snapshots::capture_web_page_snapshot(&container.web_page_snapshots(), &conversation_id, &url)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Every frozen copy this conversation has.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_web_page_snapshots(
+    conversation_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<WebPageSnapshotDto>, ApiError> {
+    snapshots::list_web_page_snapshots(&container.web_page_snapshots(), &conversation_id)
+        .await
+        .map_err(ApiError::from)
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
+        .setup(|app, _api| {
+            // Snapshot events go to the main window through this handle.
+            crate::features::web::snapshots::install(app.clone());
+            let container = app.state::<Container>().inner().clone();
+            // Registration settles snapshot jobs the last process left
+            // running, then starts delivering saved work.
+            tauri::async_runtime::block_on(container.web_page_snapshots().register_job())?;
+            // The scheme handler resolves the service from managed state (not the container).
+            app.manage(container.web_page_snapshots());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             ingest_web_url,
             fetch_url_preview,
             extract_article,
             read_web_page,
+            get_web_page_snapshot,
+            capture_web_page_snapshot,
+            list_web_page_snapshots,
         ])
         .build()
 }

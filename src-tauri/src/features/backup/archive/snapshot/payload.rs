@@ -2,7 +2,7 @@
 use super::{is_blob_hash, EXCLUDED_TABLES, ZSTD_LEVEL};
 use crate::features::backup::archive::format::{
     ArchiveError, Manifest, DB_ENTRY, FILES_ENTRY_PREFIX, FORMAT_VERSION, MANIFEST_ENTRY,
-    SETTINGS_ENTRY, VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX,
+    SETTINGS_ENTRY, VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX, WEB_SNAPSHOTS_ENTRY_PREFIX,
 };
 use std::collections::HashSet;
 use std::fs::File;
@@ -436,6 +436,18 @@ pub fn write_payload<W: Write>(
             total_bytes = total_bytes.saturating_add(bytes);
         } else {
             warn!(path = %root.display(), "web archive folder is missing; not archived");
+        }
+    }
+    // 4b. Frozen web page copies, beside the web archive. Absent until the
+    // first capture, so a missing folder is not worth a warning.
+    if let Some(root) = inputs
+        .web_archive_root
+        .as_deref()
+        .and_then(crate::features::backup::archive::format::web_snapshots_root_beside)
+    {
+        if root.is_dir() {
+            let (_, bytes) = scan_tree(&root, WEB_SNAPSHOTS_ENTRY_PREFIX, &excludes, &mut planned);
+            total_bytes = total_bytes.saturating_add(bytes);
         }
     }
 

@@ -6813,6 +6813,12 @@
           "markdownDescription": "Denies the rescan_vault command without any pre-configured scope."
         },
         {
+          "description": "Enables the capture_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-capture-web-page-snapshot",
+          "markdownDescription": "Enables the capture_web_page_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the extract_article command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-extract-article",
@@ -6825,16 +6831,34 @@
           "markdownDescription": "Enables the fetch_url_preview command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-get-web-page-snapshot",
+          "markdownDescription": "Enables the get_web_page_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the ingest_web_url command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-ingest-web-url",
           "markdownDescription": "Enables the ingest_web_url command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_web_page_snapshots command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-list-web-page-snapshots",
+          "markdownDescription": "Enables the list_web_page_snapshots command without any pre-configured scope."
+        },
+        {
           "description": "Enables the read_web_page command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-read-web-page",
           "markdownDescription": "Enables the read_web_page command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the capture_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-capture-web-page-snapshot",
+          "markdownDescription": "Denies the capture_web_page_snapshot command without any pre-configured scope."
         },
         {
           "description": "Denies the extract_article command without any pre-configured scope.",
@@ -6849,10 +6873,22 @@
           "markdownDescription": "Denies the fetch_url_preview command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-get-web-page-snapshot",
+          "markdownDescription": "Denies the get_web_page_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Denies the ingest_web_url command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-ingest-web-url",
           "markdownDescription": "Denies the ingest_web_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_web_page_snapshots command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-list-web-page-snapshots",
+          "markdownDescription": "Denies the list_web_page_snapshots command without any pre-configured scope."
         },
         {
           "description": "Denies the read_web_page command without any pre-configured scope.",

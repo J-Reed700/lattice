@@ -27,10 +27,10 @@ mod messages;
 mod port;
 mod pruning;
 mod tangents;
-mod workspace;
 
 #[cfg(test)]
 mod tests;
+mod workspace;
 
 use sqlx::SqlitePool;
 

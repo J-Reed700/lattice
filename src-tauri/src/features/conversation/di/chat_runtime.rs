@@ -59,6 +59,16 @@ impl ChatStorage for Container {
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
         Arc::new(ConversationRepository::new(self.db_pool().clone()))
     }
+
+    async fn ensure_page_snapshot(&self, conversation_id: &str, url: &str) {
+        if let Err(error) = self
+            .web_page_snapshots()
+            .ensure_queued(conversation_id, url, false)
+            .await
+        {
+            warn!(%error, url, "Could not queue a frozen copy of a cited page");
+        }
+    }
     fn conversation_memory(
         &self,
     ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
@@ -214,6 +224,9 @@ impl ChatPolicy for Container {
         self.conversation_service()
             .delete_conversation(conversation_id)
             .await?;
+        // Its snapshot rows went with it (cascade); their files go now.
+        self.web_page_snapshots()
+            .sweep_in_background("conversation deleted");
 
         let audit_logger = get_audit_logger();
         let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())

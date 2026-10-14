@@ -51,6 +51,17 @@ pub const VAULT_ENTRY_PREFIX: &str = "vault/";
 /// Tar directory prefix of the saved web articles (`~/.lattice/web-archive`),
 /// which web documents' `file_path` points into.
 pub const WEB_ARCHIVE_ENTRY_PREFIX: &str = "web-archive/";
+/// Tar directory prefix of the frozen web page copies
+/// (`~/.lattice/web-snapshots`), whose rows ride in the database.
+pub const WEB_SNAPSHOTS_ENTRY_PREFIX: &str = "web-snapshots/";
+
+/// The frozen web page copies live beside the saved web articles; both roots
+/// are children of `~/.lattice`, so the backup derives one from the other.
+pub fn web_snapshots_root_beside(web_archive_root: &std::path::Path) -> Option<std::path::PathBuf> {
+    web_archive_root
+        .parent()
+        .map(|lattice| lattice.join(WEB_SNAPSHOTS_ENTRY_PREFIX.trim_end_matches('/')))
+}
 /// Tar entry path of `settings.json`.
 pub const SETTINGS_ENTRY: &str = "settings.json";
 
