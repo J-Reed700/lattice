@@ -1,5 +1,10 @@
 //! Managed file and database lifecycle for portable Learning Studio packs.
+mod destinations;
+mod evidence_entries;
 mod export;
+mod export_all;
+mod guards;
+mod program_entry;
 mod provenance;
 mod remap;
 mod replacement;
@@ -13,6 +18,9 @@ use crate::features::learning::{
     source_library::LearningSourceLibraryRepository,
 };
 use crate::shared::error::{AppError, Result};
+pub(crate) use destinations::pack_file_name;
+use destinations::{atomic_write, export_dto};
+use evidence_entries::MAX_TABLE_ROWS;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Column, Row, SqlitePool, TypeInfo};
@@ -29,14 +37,14 @@ use validation::{
     validate_aggregate_id_namespaces, validate_answer_keys, validate_program, validate_source_id,
 };
 
-const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
 const PROGRAM_ENTRY: &str = "program/program.json";
+const ATTEMPTS_ENTRY: &str = "program/attempts.json";
 const KEYS_ENTRY: &str = "program/answer-keys.json";
 const PRACTICAL_ENTRY: &str = "practical/artifacts.json";
 const OUTCOMES_ENTRY: &str = "program/outcomes.json";
 const EVIDENCE_ENTRY: &str = "evidence/events.json";
 const FOLLOW_UP_ENTRY: &str = "evidence/follow-ups.json";
-const CANVAS_ENTRY: &str = "program/canvases.json";
 const LESSON_STATE_ENTRY: &str = "curriculum/lesson-state.json";
 
 fn invalid(s: impl Into<String>) -> AppError {
@@ -156,7 +164,7 @@ async fn insert_evidence_snapshot(
                 "Pack aggregate columns do not match this application version.",
             ));
         }
-        if table.rows.len() > 50_000 {
+        if table.rows.len() > MAX_TABLE_ROWS {
             return Err(invalid("Pack aggregate has too many records."));
         }
         let col_sql = table
@@ -351,17 +359,9 @@ async fn managed_path(managed: &Path, name: &str) -> Result<PathBuf> {
     } else {
         format!("{file}.lattice-learning")
     };
-    let path = root.join(file);
+    let path = destinations::next_free_path(&root, &file).await?;
     if path.parent() != Some(root.as_path()) {
         return Err(invalid("Pack path escaped its managed directory."));
-    }
-    if let Ok(meta) = tokio::fs::symlink_metadata(&path).await {
-        if meta.file_type().is_symlink() || !meta.is_file() {
-            return Err(invalid("Pack destination must be a regular managed file."));
-        }
-        return Err(invalid(
-            "That managed pack filename already exists; choose another name.",
-        ));
     }
     Ok(path)
 }
@@ -373,25 +373,10 @@ async fn read_untrusted(path: &Path) -> Result<Vec<u8>> {
         || metadata.len() > MAX_PACK_BYTES
     {
         return Err(invalid(
-            "Import must be a regular learning-pack file no larger than 64 MiB.",
+            "Import must be a regular learning-pack file no larger than 256 MiB.",
         ));
     }
     tokio::fs::read(path).await.map_err(io_error)
-}
-async fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-    let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .await
-        .map_err(io_error)?;
-    file.write_all(bytes).await.map_err(io_error)?;
-    file.sync_all().await.map_err(io_error)?;
-    drop(file);
-    tokio::fs::rename(&tmp, path).await.map_err(io_error)?;
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -422,6 +407,15 @@ struct CanvasPackSnapshot {
 #[serde(rename_all = "camelCase")]
 struct SourceHistorySnapshot {
     checks: Vec<serde_json::Value>,
+}
+
+/// What a preview found, before it is stored.
+struct PreviewRecord {
+    program_id: String,
+    title: String,
+    conflicts: Vec<LearningPackConflictDto>,
+    changes: Vec<LearningPackChangeDto>,
+    warnings: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -508,7 +502,7 @@ async fn record_external_id_conflict(
     title: &str,
     policy: LearningPackConflictPolicy,
     conflicts: &mut Vec<LearningPackConflictDto>,
-) -> Result<bool> {
+) -> Result<()> {
     // Callers pass only fixed table/column identifiers from this module.
     let sql = format!("SELECT program_id FROM {table} WHERE {column}=?");
     let owner = sqlx::query_scalar::<_, String>(&sql)
@@ -516,9 +510,9 @@ async fn record_external_id_conflict(
         .fetch_optional(pool)
         .await
         .map_err(db)?;
-    let Some(owner) = owner else { return Ok(true) };
+    let Some(owner) = owner else { return Ok(()) };
     if owner == incoming_program || policy == LearningPackConflictPolicy::CreateCopy {
-        return Ok(true);
+        return Ok(());
     }
     conflicts.push(LearningPackConflictDto {
         entity_kind: table.into(),
@@ -528,7 +522,7 @@ async fn record_external_id_conflict(
         existing_title: "Identifier is already owned by another program".into(),
         resolution: "blocked".into(),
     });
-    Ok(false)
+    Ok(())
 }
 
 async fn record_joined_id_conflict(
@@ -539,15 +533,15 @@ async fn record_joined_id_conflict(
     incoming_program: &str,
     policy: LearningPackConflictPolicy,
     conflicts: &mut Vec<LearningPackConflictDto>,
-) -> Result<bool> {
+) -> Result<()> {
     let owner = sqlx::query_scalar::<_, String>(owner_query)
         .bind(incoming_id)
         .fetch_optional(pool)
         .await
         .map_err(db)?;
-    let Some(owner) = owner else { return Ok(true) };
+    let Some(owner) = owner else { return Ok(()) };
     if owner == incoming_program || policy == LearningPackConflictPolicy::CreateCopy {
-        return Ok(true);
+        return Ok(());
     }
     conflicts.push(LearningPackConflictDto {
         entity_kind: entity.into(),
@@ -557,7 +551,7 @@ async fn record_joined_id_conflict(
         existing_title: "Identifier is already owned by another program".into(),
         resolution: "blocked".into(),
     });
-    Ok(false)
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -568,15 +562,16 @@ pub struct LearningPackRepository {
     /// the repository: the feature owns its storage location and the DI
     /// layer supplies it once at construction.
     managed_dir: PathBuf,
+    /// Packs the user saves elsewhere must not land inside this directory.
+    app_data_dir: PathBuf,
 }
 impl LearningPackRepository {
-    pub fn new(pool: SqlitePool, managed_dir: PathBuf) -> Self {
-        Self { pool, managed_dir }
-    }
-
-    async fn require_replace_is_recoverable(&self, program_id: &str) -> Result<()> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        replacement::require_recoverable_on(&mut connection, program_id).await
+    pub fn new(pool: SqlitePool, managed_dir: PathBuf, app_data_dir: PathBuf) -> Self {
+        Self {
+            pool,
+            managed_dir,
+            app_data_dir,
+        }
     }
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningPortabilityWorkspaceDto> {
@@ -594,9 +589,7 @@ impl LearningPackRepository {
             Err(error) => return Err(error),
         };
         let exports = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE program_id=? ORDER BY created_at DESC")
-            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(|r| -> Result<_> {
-                Ok(LearningPackExportDto { id:r.get("id"), program_id:r.get("program_id"), destination_path:r.get("destination_path"), manifest:parse(r.get::<String,_>("manifest_json").as_bytes())?, created_at:r.get("created_at") })
-            }).collect::<Result<Vec<_>>>()?;
+            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
         let import_previews = sqlx::query("SELECT * FROM learning_pack_import_previews WHERE program_id=? ORDER BY created_at DESC")
             .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(|r| -> Result<_> {
                 let status = match r.get::<String,_>("status").as_str() { "pending"=>LearningPackPreviewStatus::Pending,"applied"=>LearningPackPreviewStatus::Applied,"cancelled"=>LearningPackPreviewStatus::Cancelled,"stale"=>LearningPackPreviewStatus::Stale,_=>return Err(AppError::Database("Invalid pack preview status".into())) };
@@ -610,45 +603,65 @@ impl LearningPackRepository {
             }).collect::<Result<Vec<_>>>()?;
         let imports = sqlx::query("SELECT * FROM learning_pack_imports WHERE imported_program_id=? ORDER BY imported_at DESC")
             .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(|r| -> Result<_> { Ok(LearningPackImportResultDto { id:r.get("id"),preview_id:r.get("preview_id"),imported_program_id:r.get("imported_program_id"),backup_id:r.get("backup_id"),applied_changes:parse(r.get::<String,_>("applied_changes_json").as_bytes())?,imported_at:r.get("imported_at") }) }).collect::<Result<Vec<_>>>()?;
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let export_notice = guards::export_notice(&mut connection, program_id).await?;
+        drop(connection);
         Ok(LearningPortabilityWorkspaceDto {
             program_id: program_id.into(),
             exports,
             import_previews,
             imports,
             source_workspace,
+            export_notice,
         })
     }
 
+    /// Into the app's own pack folder, suffixing ` (2)`, ` (3)`, ... on a
+    /// name collision.
     pub async fn export(
         &self,
         req: &ExportLearningPackRequestDto,
     ) -> Result<LearningPortabilityWorkspaceDto> {
-        validate_uuid(&req.operation_id, "operation")?;
-        validate_uuid(&req.program_id, "program")?;
-        let payload = hash(req)?;
-        if let Some(path) = self.replay(&req.operation_id, "export", &payload).await? {
-            if !Path::new(&path).exists() {
-                return Err(invalid(
-                    "The prior pack export file is missing; choose a new operation ID.",
-                ));
-            }
-            return self.workspace(&req.program_id).await;
+        if self.replayed_export(req).await?.is_none() {
+            let path = managed_path(&self.managed_dir, &req.file_name).await?;
+            self.export_to_path(req, &path).await?;
         }
+        self.workspace(&req.program_id).await
+    }
+
+    /// Write one course's pack to `path`, replacing a file there atomically,
+    /// and record it. Shared by the managed export, save-as and export-all.
+    pub async fn export_to_path(
+        &self,
+        req: &ExportLearningPackRequestDto,
+        path: &Path,
+    ) -> Result<LearningPackExportDto> {
+        if let Some(done) = self.replayed_export(req).await? {
+            return Ok(done);
+        }
+        let payload = hash(req)?;
         let snapshot = export::snapshot(&self.pool, req).await?;
         let manifest_bytes = encode_learning_pack(snapshot)?;
-        let path = managed_path(&self.managed_dir, &req.file_name).await?;
-        atomic_write(&path, &manifest_bytes).await?;
+        atomic_write(path, &manifest_bytes).await?;
         let decoded = decode_learning_pack(&manifest_bytes)?;
         let id = uuid::Uuid::new_v4().to_string();
         let created = now();
+        let destination = path.to_string_lossy().to_string();
         let mut tx = self.pool.begin().await.map_err(db)?;
+        destinations::forget_stale_export(&mut tx, req, &payload).await?;
         sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&id).bind(&req.program_id).bind(&req.operation_id).bind(&payload).bind(decoded.manifest.version as i64).bind(&decoded.manifest.root_sha256).bind(path.to_string_lossy().to_string()).bind(json_string(&decoded.manifest.privacy)?).bind(json_string(&decoded.manifest.entries)?).bind(json_string(&decoded.manifest)?).bind(created).execute(&mut *tx).await.map_err(db)?;
+            .bind(&id).bind(&req.program_id).bind(&req.operation_id).bind(&payload).bind(decoded.manifest.version as i64).bind(&decoded.manifest.root_sha256).bind(&destination).bind(json_string(&decoded.manifest.privacy)?).bind(json_string(&decoded.manifest.entries)?).bind(json_string(&decoded.manifest)?).bind(created).execute(&mut *tx).await.map_err(db)?;
         pack_operation(&req.operation_id, "export", &payload)
-            .record(&mut *tx, &path.to_string_lossy())
+            .record(&mut *tx, &destination)
             .await?;
         tx.commit().await.map_err(db)?;
-        self.workspace(&req.program_id).await
+        Ok(LearningPackExportDto {
+            id,
+            program_id: req.program_id.clone(),
+            destination_path: destination,
+            manifest: decoded.manifest,
+            created_at: created,
+        })
     }
 
     pub async fn preview(
@@ -668,12 +681,10 @@ impl LearningPackRepository {
         let path = PathBuf::from(&req.source_path);
         let bytes = read_untrusted(&path).await?;
         let decoded = decode_learning_pack(&bytes)?;
-        let mut program: LearningProgramDto = parse(
-            decoded
-                .entries
-                .get(PROGRAM_ENTRY)
-                .ok_or_else(|| invalid("Pack is missing its program."))?,
-        )?;
+        if let Some(blocked) = self.schema_mismatch(&decoded).await? {
+            return self.record_preview(req, &payload, &decoded, blocked).await;
+        }
+        let program = program_entry::load_program(&decoded)?;
         validate_program(&program)?;
         let mut warnings = Vec::<String>::new();
         provenance::decode(&decoded, &program)?;
@@ -684,9 +695,6 @@ impl LearningPackRepository {
             }) {
                 warnings.push("Imported executable activities are restored in review-only mode without hidden evaluator files; regenerate and review the exercise before running it.".into());
             }
-        }
-        if let Some(bytes) = decoded.entries.get("program/attempts.json") {
-            program.attempts = parse(bytes)?;
         }
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(&program.summary.id)
@@ -700,7 +708,6 @@ impl LearningPackRepository {
             action: "import".into(),
             description: format!("Import {}", program.summary.title),
         }];
-        let mut can_apply = true;
         match req.conflict_policy {
             LearningPackConflictPolicy::CreateCopy => {
                 if exists.is_some() {
@@ -722,7 +729,6 @@ impl LearningPackRepository {
             }
             LearningPackConflictPolicy::MergeSafe => {
                 if exists.is_some() {
-                    can_apply = false;
                     conflicts.push(LearningPackConflictDto {
                         entity_kind: "program".into(),
                         incoming_id: program.summary.id.clone(),
@@ -744,19 +750,9 @@ impl LearningPackRepository {
                     if let Some(change) = changes.first_mut() {
                         change.action = "create".into();
                     }
-                } else if let Err(error) = self
-                    .require_replace_is_recoverable(&program.summary.id)
-                    .await
-                {
-                    can_apply = false;
-                    conflicts.push(LearningPackConflictDto {
-                        entity_kind: "program_history".into(),
-                        incoming_id: program.summary.id.clone(),
-                        incoming_title: program.summary.title.clone(),
-                        existing_id: program.summary.id.clone(),
-                        existing_title: error.to_string(),
-                        resolution: "blocked".into(),
-                    });
+                } else {
+                    let mut connection = self.pool.acquire().await.map_err(db)?;
+                    conflicts.extend(guards::replace_conflicts(&mut connection, &program).await?);
                 }
             }
         }
@@ -799,9 +795,6 @@ impl LearningPackRepository {
                         } else {
                             "blocked"
                         };
-                    if resolution == "blocked" {
-                        can_apply = false;
-                    }
                     conflicts.push(LearningPackConflictDto {
                         entity_kind: kind.into(),
                         incoming_id: id.into(),
@@ -827,7 +820,7 @@ impl LearningPackRepository {
                         .as_ref()
                         .map(|version| version.title.as_str())
                         .unwrap_or(source.origin.as_str());
-                    can_apply &= record_external_id_conflict(
+                    record_external_id_conflict(
                         &self.pool,
                         "learning_source_library",
                         "id",
@@ -845,7 +838,6 @@ impl LearningPackRepository {
                     if external_count > 0
                         && req.conflict_policy != LearningPackConflictPolicy::CreateCopy
                     {
-                        can_apply = false;
                         conflicts.push(LearningPackConflictDto {
                             entity_kind: "learning_source_versions".into(),
                             incoming_id: version.id.clone(),
@@ -862,7 +854,7 @@ impl LearningPackRepository {
             let rows: Vec<serde_json::Value> = parse(bytes)?;
             for row in rows {
                 let id = value_str(&row, "id")?;
-                can_apply &= record_external_id_conflict(
+                record_external_id_conflict(
                     &self.pool,
                     "learning_source_selectors",
                     "id",
@@ -881,7 +873,7 @@ impl LearningPackRepository {
                 for row in rows {
                     let id = value_str(&row, "operationId")?;
                     if checked_ids.insert((table.into(), id.into())) {
-                        can_apply &= record_external_id_conflict(
+                        record_external_id_conflict(
                             &self.pool,
                             table,
                             "operation_id",
@@ -899,7 +891,7 @@ impl LearningPackRepository {
         if let Some(bytes) = decoded.entries.get(PRACTICAL_ENTRY) {
             let snapshot: PracticalPackSnapshot = parse(bytes)?;
             for activity in &snapshot.activities {
-                can_apply &= record_external_id_conflict(
+                record_external_id_conflict(
                     &self.pool,
                     "learning_practical_activities",
                     "id",
@@ -912,7 +904,7 @@ impl LearningPackRepository {
                 .await?;
             }
             for run in &snapshot.runs {
-                can_apply &= record_external_id_conflict(
+                record_external_id_conflict(
                     &self.pool,
                     "learning_practical_runs",
                     "id",
@@ -929,7 +921,7 @@ impl LearningPackRepository {
                 ("learning_simulation_turns", &snapshot.simulation_turns),
             ] {
                 for row in rows {
-                    can_apply &= record_external_id_conflict(
+                    record_external_id_conflict(
                         &self.pool,
                         table,
                         "id",
@@ -944,7 +936,7 @@ impl LearningPackRepository {
             }
             for raw in &snapshot.run_snapshots {
                 let id = value_str(raw, "operationId")?;
-                can_apply &= record_external_id_conflict(
+                record_external_id_conflict(
                     &self.pool,
                     "learning_practical_runs",
                     "operation_id",
@@ -957,14 +949,13 @@ impl LearningPackRepository {
                 .await?;
             }
         }
-        if let Some(bytes) = decoded.entries.get(CANVAS_ENTRY) {
-            let snapshot: CanvasPackSnapshot = parse(bytes)?;
+        if let Some(snapshot) = evidence_entries::decode_canvases(&decoded)? {
             for (table, rows) in [
                 ("learning_canvases", &snapshot.canvases),
                 ("learning_canvas_snapshots", &snapshot.snapshots),
             ] {
                 for row in rows {
-                    can_apply &= record_external_id_conflict(
+                    record_external_id_conflict(
                         &self.pool,
                         table,
                         "id",
@@ -978,17 +969,9 @@ impl LearningPackRepository {
                 }
             }
         }
-        if let Some(bytes) = decoded.entries.get("evidence/learning-aggregate.json") {
-            let snapshot: LearningEvidenceSnapshot = parse(bytes)?;
-            if snapshot.tables.len() != EVIDENCE_TABLES.len() {
-                return Err(invalid("Pack aggregate table set is incomplete."));
-            }
+        let evidence_snapshot = evidence_entries::decode_evidence(&decoded)?;
+        if let Some(snapshot) = &evidence_snapshot {
             for (table, spec) in snapshot.tables.iter().zip(EVIDENCE_TABLES) {
-                if table.table != spec.table {
-                    return Err(invalid(
-                        "Pack aggregate contains an unknown or reordered table.",
-                    ));
-                }
                 if !table.columns.iter().any(|column| column == "program_id") {
                     continue;
                 }
@@ -996,7 +979,7 @@ impl LearningPackRepository {
                     for (column, db_column) in [("id", "id"), ("operation_id", "operation_id")] {
                         if let Some(id) = row.get(column).and_then(serde_json::Value::as_str) {
                             if checked_ids.insert((table.table.clone(), id.into())) {
-                                can_apply &= record_external_id_conflict(
+                                record_external_id_conflict(
                                     &self.pool,
                                     spec.table,
                                     db_column,
@@ -1023,7 +1006,7 @@ impl LearningPackRepository {
                 for row in rows {
                     let id = value_str(&row, "id")?;
                     if checked_ids.insert((table.into(), id.into())) {
-                        can_apply &= record_external_id_conflict(
+                        record_external_id_conflict(
                             &self.pool,
                             table,
                             "id",
@@ -1038,8 +1021,7 @@ impl LearningPackRepository {
                 }
             }
         }
-        if let Some(bytes) = decoded.entries.get("evidence/learning-aggregate.json") {
-            let snapshot: LearningEvidenceSnapshot = parse(bytes)?;
+        if let Some(snapshot) = &evidence_snapshot {
             for table in &snapshot.tables {
                 if table.table == "learning_operations" {
                     for row in &table.rows {
@@ -1048,7 +1030,7 @@ impl LearningPackRepository {
                             continue;
                         };
                         if checked_ids.insert((table.table.clone(), id.into())) {
-                            can_apply &= record_joined_id_conflict(
+                            record_joined_id_conflict(
                                 &self.pool,
                                 &table.table,
                                 id,
@@ -1074,7 +1056,7 @@ impl LearningPackRepository {
                 for row in &table.rows {
                     if let Some(id) = row.get("id").and_then(serde_json::Value::as_str) {
                         if checked_ids.insert((table.table.clone(), id.into())) {
-                            can_apply &= record_joined_id_conflict(
+                            record_joined_id_conflict(
                                 &self.pool,
                                 &table.table,
                                 id,
@@ -1089,10 +1071,29 @@ impl LearningPackRepository {
                 }
             }
         }
+        let (program_id, title) = (program.summary.id, program.summary.title);
+        let preview = PreviewRecord {
+            program_id,
+            title,
+            conflicts,
+            changes,
+            warnings,
+        };
+        self.record_preview(req, &payload, &decoded, preview).await
+    }
+    /// Store a preview and answer with the workspace of the program it would
+    /// produce; it can be applied only while none of its conflicts is blocked.
+    async fn record_preview(
+        &self,
+        req: &PreviewLearningPackImportRequestDto,
+        payload: &str,
+        decoded: &DecodedLearningPack,
+        preview: PreviewRecord,
+    ) -> Result<LearningPortabilityWorkspaceDto> {
         let result_program_id = if req.conflict_policy == LearningPackConflictPolicy::CreateCopy {
             uuid::Uuid::new_v4().to_string()
         } else {
-            program.summary.id.clone()
+            preview.program_id
         };
         let id = req.preview_id.clone();
         let timestamp = now();
@@ -1100,18 +1101,12 @@ impl LearningPackRepository {
             .map_err(|e| AppError::Serialization(e.to_string()))?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query("INSERT INTO learning_pack_import_previews(id,operation_id,payload_hash,source_path,root_sha256,program_id,program_title,conflict_policy,conflicts_json,changes_json,warnings_json,manifest_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)")
-            .bind(&id).bind(&req.operation_id).bind(&payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&program.summary.title).bind(policy_str(req.conflict_policy)).bind(json_string(&conflicts)?).bind(json_string(&changes)?).bind(json_string(&warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
-        pack_operation(&req.operation_id, "preview_import", &payload)
+            .bind(&id).bind(&req.operation_id).bind(payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&preview.title).bind(policy_str(req.conflict_policy)).bind(json_string(&preview.conflicts)?).bind(json_string(&preview.changes)?).bind(json_string(&preview.warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        pack_operation(&req.operation_id, "preview_import", payload)
             .record(&mut *tx, &id)
             .await?;
         tx.commit().await.map_err(db)?;
-        let mut w = self.workspace(&result_program_id).await?;
-        if !can_apply {
-            if let Some(p) = w.import_previews.first_mut() {
-                p.can_apply = false;
-            }
-        }
-        Ok(w)
+        self.workspace(&result_program_id).await
     }
     pub async fn cancel(
         &self,
@@ -1191,12 +1186,8 @@ impl LearningPackRepository {
                 "The pack changed after preview. Preview it again before applying.",
             ));
         }
-        let mut program: LearningProgramDto = parse(
-            decoded
-                .entries
-                .get(PROGRAM_ENTRY)
-                .ok_or_else(|| invalid("Pack is missing its program."))?,
-        )?;
+        self.require_same_schema(&decoded).await?;
+        let mut program = program_entry::load_program(&decoded)?;
         validate_program(&program)?;
         let source_workspace: Option<crate::features::learning::dto::LearningSourceWorkspaceDto> =
             decoded
@@ -1209,16 +1200,8 @@ impl LearningPackRepository {
             .get(PRACTICAL_ENTRY)
             .map(|bytes| parse(bytes))
             .transpose()?;
-        let mut canvas_snapshot: Option<CanvasPackSnapshot> = decoded
-            .entries
-            .get(CANVAS_ENTRY)
-            .map(|bytes| parse(bytes))
-            .transpose()?;
-        let evidence_snapshot: Option<LearningEvidenceSnapshot> = decoded
-            .entries
-            .get("evidence/learning-aggregate.json")
-            .map(|bytes| parse(bytes))
-            .transpose()?;
+        let mut canvas_snapshot = evidence_entries::decode_canvases(&decoded)?;
+        let evidence_snapshot = evidence_entries::decode_evidence(&decoded)?;
         let mut source_history: Option<SourceHistorySnapshot> = decoded
             .entries
             .get("sources/history.json")
@@ -1393,7 +1376,9 @@ impl LearningPackRepository {
             policy == LearningPackConflictPolicy::ReplaceAfterBackup,
         )
         .await?;
+        let mut note_links = None;
         if policy == LearningPackConflictPolicy::ReplaceAfterBackup {
+            note_links = Some(replacement::snapshot_note_links(&mut tx, &target_id).await?);
             sqlx::query("DELETE FROM study_decks WHERE id=(SELECT deck_id FROM learning_memory WHERE program_id=? AND deck_id IS NOT NULL)")
                 .bind(&target_id).execute(&mut *tx).await.map_err(db)?;
             sqlx::query("DELETE FROM learning_programs WHERE id=?")
@@ -1599,6 +1584,10 @@ impl LearningPackRepository {
                     .unwrap_or(key.question_id);
                 sqlx::query("INSERT INTO learning_answer_keys(question_id,correct_index,explanation) VALUES(?,?,?)").bind(qid).bind(key.correct_index as i64).bind(key.explanation).execute(&mut *tx).await.map_err(db)?;
             }
+        }
+        if let Some(saved) = note_links {
+            // After the pack's memory record, so the notebook link is restored onto it.
+            replacement::restore_note_links(&mut tx, &program.summary.id, saved).await?;
         }
         let result_id = uuid::Uuid::new_v4().to_string();
         provenance::restore(&mut tx, &program.summary.id, provenance, &id_map).await?;

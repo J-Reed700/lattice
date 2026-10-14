@@ -4863,6 +4863,12 @@
           "markdownDescription": "Enables the ensure_learning_lesson_note command without any pre-configured scope."
         },
         {
+          "description": "Enables the export_all_learning_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-export-all-learning-packs",
+          "markdownDescription": "Enables the export_all_learning_packs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_learning_pack command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-export-learning-pack",
@@ -5157,6 +5163,12 @@
           "markdownDescription": "Enables the save_learning_card_draft command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_learning_pack_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-pack-as",
+          "markdownDescription": "Enables the save_learning_pack_as command without any pre-configured scope."
+        },
+        {
           "description": "Enables the save_learning_practical_draft command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-save-learning-practical-draft",
@@ -5443,6 +5455,12 @@
           "type": "string",
           "const": "learning:deny-ensure-learning-lesson-note",
           "markdownDescription": "Denies the ensure_learning_lesson_note command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_all_learning_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-export-all-learning-packs",
+          "markdownDescription": "Denies the export_all_learning_packs command without any pre-configured scope."
         },
         {
           "description": "Denies the export_learning_pack command without any pre-configured scope.",
@@ -5737,6 +5755,12 @@
           "type": "string",
           "const": "learning:deny-save-learning-card-draft",
           "markdownDescription": "Denies the save_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_pack_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-pack-as",
+          "markdownDescription": "Denies the save_learning_pack_as command without any pre-configured scope."
         },
         {
           "description": "Denies the save_learning_practical_draft command without any pre-configured scope.",

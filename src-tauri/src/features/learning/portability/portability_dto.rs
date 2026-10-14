@@ -94,6 +94,63 @@ pub struct LearningPortabilityWorkspaceDto {
     pub import_previews: Vec<LearningPackImportPreviewDto>,
     pub imports: Vec<LearningPackImportResultDto>,
     pub source_workspace: LearningSourceWorkspaceDto,
+    pub export_notice: LearningPackExportNoticeDto,
+}
+
+/// What an export of this course cannot carry, shown before exporting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningPackExportNoticeDto {
+    /// A pending or running generation job; export and replace wait for it.
+    pub active_job: bool,
+    /// Lesson notes, which stay on this computer.
+    pub notebook_note_count: i64,
+    /// Unsaved lab drafts, which stay on this computer.
+    pub practical_draft_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLearningPackAsResultDto {
+    /// True when the save dialog was dismissed: nothing written or recorded.
+    pub cancelled: bool,
+    pub export: Option<LearningPackExportDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAllLearningPacksRequestDto {
+    pub operation_id: String,
+    pub include_evidence: bool,
+    pub include_practical_artifacts: bool,
+    pub include_source_bodies: bool,
+    pub source_body_redistribution_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedLearningPackDto {
+    pub program_id: String,
+    pub title: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedLearningPackExportDto {
+    pub program_id: String,
+    pub title: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAllLearningPacksResultDto {
+    /// True when the folder dialog was dismissed: nothing written or recorded.
+    pub cancelled: bool,
+    pub destination_dir: Option<String>,
+    pub exported: Vec<ExportedLearningPackDto>,
+    pub failed: Vec<FailedLearningPackExportDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
