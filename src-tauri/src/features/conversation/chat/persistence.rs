@@ -584,6 +584,7 @@ mod cited_web_source_tests {
             section: None,
             chunk_index: None,
             page_number: None,
+            from_ocr: false,
             chunk_excerpts: None,
             citation_id: None,
 
@@ -610,6 +611,7 @@ mod cited_web_source_tests {
             section: None,
             chunk_index: None,
             page_number: None,
+            from_ocr: false,
             chunk_excerpts: None,
             citation_id: None,
 

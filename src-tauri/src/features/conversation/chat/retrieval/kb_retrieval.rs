@@ -139,6 +139,9 @@ pub(super) async fn run_kb_retrieval(
         },
         None,
     );
+    // One turn's use of the planner: the shortlist search runs once, and a
+    // turn that already waited out a planner timeout does not wait again.
+    let mut planner_turn = super::corpus_plan::PlannerTurn::new();
     let (mut plan, catalog) = match repository.retrieval_catalog(&scope.document_ids).await {
         Ok(catalog) => {
             let plan = if let Some(plan) =
@@ -157,25 +160,20 @@ pub(super) async fn run_kb_retrieval(
                 );
                 plan
             } else if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
-                let history = super::build_hyde_context_window_for_conversation(
+                // The planner runs only when a utility model is assigned.
+                planned(
+                    container,
                     conv_service,
                     conversation_id,
                     validated_message,
-                )
-                .await;
-                super::corpus_plan::plan(
                     utility.as_ref(),
-                    validated_message,
-                    history.as_deref(),
                     &catalog,
+                    &scope,
                     &summaries.summaries,
+                    &mut planner_turn,
                     cancel,
                 )
                 .await
-                .unwrap_or_else(|error| {
-                    warn!(%error, "Corpus planning failed; using local retrieval plan");
-                    super::corpus_plan::fallback_with_catalog(validated_message, &catalog)
-                })
             } else {
                 info!("Utility planner unavailable; using immediate local retrieval plan");
                 super::corpus_plan::fallback_with_catalog(validated_message, &catalog)
@@ -320,6 +318,7 @@ pub(super) async fn run_kb_retrieval(
             &scope,
             &correction,
             candidate_limit,
+            &mut planner_turn,
             cancel,
         )
         .await;
@@ -506,6 +505,77 @@ fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
         .collect()
 }
 
+/// The planner's plan for the first pass, or the local plan when the planner
+/// should not be asked or does not answer.
+#[allow(clippy::too_many_arguments)]
+async fn planned(
+    container: &dyn ChatRuntime,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    validated_message: &str,
+    utility: &dyn crate::application::ports::LLMPort,
+    catalog: &[CorpusDocument],
+    scope: &super::SpaceDocumentScope,
+    summaries: &std::collections::HashMap<String, String>,
+    planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> super::corpus_plan::CorpusSearchPlan {
+    if let Some(reason) = planner_turn.unavailable() {
+        info!(%reason, "Corpus planning skipped; using local retrieval plan");
+        return super::corpus_plan::fallback_with_catalog(validated_message, catalog);
+    }
+    let history = super::build_hyde_context_window_for_conversation(
+        conv_service,
+        conversation_id,
+        validated_message,
+    )
+    .await;
+    shortlist_candidates(
+        container,
+        validated_message,
+        history.as_deref(),
+        scope,
+        planner_turn,
+    )
+    .await;
+    super::corpus_plan::plan(
+        utility,
+        validated_message,
+        history.as_deref(),
+        catalog,
+        summaries,
+        planner_turn,
+        cancel,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        warn!(%error, "Corpus planning failed; using local retrieval plan");
+        super::corpus_plan::fallback_with_catalog(validated_message, catalog)
+    })
+}
+
+/// Rank the documents the planner is shown, once per turn.
+async fn shortlist_candidates(
+    container: &dyn ChatRuntime,
+    validated_message: &str,
+    history: Option<&str>,
+    scope: &super::SpaceDocumentScope,
+    planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
+) {
+    if planner_turn.candidates.is_some() {
+        return;
+    }
+    planner_turn.candidates = Some(
+        super::corpus_plan::candidate_documents(
+            container.library_search().as_ref(),
+            validated_message,
+            history,
+            &scope.document_ids,
+        )
+        .await,
+    );
+}
+
 /// The one replanned retry. Returns `None` whenever it cannot improve on the
 /// first pass — no planner, a plan that only repeats failed queries, or a
 /// failed search — so the caller keeps the evidence it already has.
@@ -520,16 +590,29 @@ async fn corrective_pass(
     scope: &super::SpaceDocumentScope,
     correction: &super::corpus_plan::CorrectionRequest,
     limit: usize,
+    planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<(SearchResponseDto, Vec<String>)> {
     let Ok(Some(utility)) = (container.utility_llm_loader())().await else {
         info!("Corrective retrieval skipped: no utility planner is available");
         return None;
     };
+    if let Some(reason) = planner_turn.unavailable() {
+        info!(%reason, "Corrective retrieval skipped; keeping first-pass evidence");
+        return None;
+    }
     let history = super::build_hyde_context_window_for_conversation(
         conv_service,
         conversation_id,
         validated_message,
+    )
+    .await;
+    shortlist_candidates(
+        container,
+        validated_message,
+        history.as_deref(),
+        scope,
+        planner_turn,
     )
     .await;
     let retry_plan = match super::corpus_plan::plan_correction(
@@ -538,6 +621,7 @@ async fn corrective_pass(
         history.as_deref(),
         catalog,
         correction,
+        planner_turn,
         cancel,
     )
     .await

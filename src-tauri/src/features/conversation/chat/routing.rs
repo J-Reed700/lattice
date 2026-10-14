@@ -3,7 +3,15 @@ use super::*;
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct SearchFlags {
     pub(super) force_kb_search: bool,
+    /// The user asked for the web: the web-search toggle, or the query turn
+    /// mode. Searched whatever the vault holds, and beside it.
     pub(super) force_web_search: bool,
+    /// The intent step guessed the turn may need the web. Not a search of its
+    /// own: the vault is searched first, and the web only when the vault came
+    /// back empty or the sufficiency check judged its evidence too weak. Only
+    /// `apply_turn_intent` sets it, so it lives for one turn and no later turn
+    /// inherits it.
+    pub(super) web_fallback: bool,
     pub(super) force_wiki_search: bool,
     pub(super) deep_research_mode: bool,
     pub(super) force_followup_mode: bool,
@@ -35,6 +43,7 @@ impl SearchFlags {
             return Self {
                 force_kb_search: false,
                 force_web_search: false,
+                web_fallback: false,
                 force_wiki_search: false,
                 deep_research_mode: false,
                 force_followup_mode: tool_preferences.followup_mode || turn_mode_is_followup,
@@ -44,11 +53,19 @@ impl SearchFlags {
         Self {
             force_kb_search: tool_preferences.knowledge_base || turn_mode_is_query,
             force_web_search: tool_preferences.web_search || turn_mode_is_query,
+            web_fallback: false,
             force_wiki_search,
             deep_research_mode: tool_preferences.deep_research_mode,
             force_followup_mode: tool_preferences.followup_mode || turn_mode_is_followup,
             closed_book: false,
         }
+    }
+
+    /// Whether the web is in this turn's plan at all, asked for or as the
+    /// intent step's fallback. Routing reads this; the gate after the vault
+    /// search decides whether a fallback search actually runs.
+    pub(super) fn web_planned(&self) -> bool {
+        self.force_web_search || self.web_fallback
     }
 }
 
@@ -100,15 +117,18 @@ pub(super) async fn infer_turn_intent_flags(
         })
         .await;
 
+    let merged = apply_turn_intent(search_flags, &intent);
+    // `web_fallback` is what the turn does with `needs_web`: the web is asked
+    // only if the vault falls short, and the turn record says when it was.
     info!(
         needs_knowledge_base = intent.needs_knowledge_base,
         needs_web = intent.needs_web,
         is_followup = intent.is_followup,
         confidence = intent.confidence,
+        web_fallback = merged.web_fallback,
         "chat_with_conversation: inferred turn intent"
     );
-
-    apply_turn_intent(search_flags, &intent)
+    merged
 }
 
 /// Inference runs only when every routing control is on its default. Any
@@ -135,16 +155,22 @@ pub(super) fn should_infer_turn_intent(
     matches!(turn_mode.as_deref(), None | Some("auto"))
 }
 
-/// Enable-only: inference may add retrieval to a turn, never take away what
-/// the user or the focus scope asked for. A closed book stays closed — the
-/// gate already skips it, and the merge refuses to reopen it.
+/// Inference may add a vault search and follow-up mode to a turn, and never
+/// takes away what the user or the focus scope asked for. It never forces the
+/// web. `needs_web` becomes `web_fallback`: the vault is searched first, and
+/// the web only if the vault comes back empty or too weak to answer from. A
+/// question about the user's own files then stays on the machine whenever the
+/// files answer it. The fallback comes from this turn's intent alone, never
+/// from the flags passed in, so a follow-up has to be judged again to reach
+/// the web. A closed book stays closed: the gate already skips it, and the
+/// merge refuses to reopen it.
 pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) -> SearchFlags {
     if search_flags.closed_book {
         return search_flags;
     }
     SearchFlags {
         force_kb_search: search_flags.force_kb_search || intent.needs_knowledge_base,
-        force_web_search: search_flags.force_web_search || intent.needs_web,
+        web_fallback: intent.needs_web && !search_flags.force_web_search,
         force_followup_mode: search_flags.force_followup_mode || intent.is_followup,
         ..search_flags
     }
@@ -171,8 +197,10 @@ pub(super) async fn resolve_router_decision(
     let router_may_search = !explorer;
     // A closed-book turn has nothing to route: the pipeline returns before it
     // reads this, and asking the router model would only spend time. Nor does
-    // an Explorer turn the user did not point at the library.
-    if search_flags.force_web_search
+    // an Explorer turn the user did not point at the library. A turn with the
+    // web in its plan, asked for or as a fallback, searches the vault afresh
+    // so the fallback has a verdict on the vault to go by.
+    if search_flags.web_planned()
         || search_flags.closed_book
         || (explorer && !search_flags.force_kb_search)
     {

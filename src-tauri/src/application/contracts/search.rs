@@ -44,6 +44,8 @@ pub struct CorpusPassage {
     pub chunk_index: usize,
     pub section: Option<String>,
     pub page_number: Option<u32>,
+    /// Read off a scanned page by OCR.
+    pub from_ocr: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -36,6 +36,8 @@ export interface SourceWithMetadata {
   section?: string;
   chunkIndex?: number;
   pageNumber?: number;
+  /** Read off a scanned page by OCR, so it may hold recognition errors. */
+  fromOcr?: boolean;
   chunkExcerpts?: SourceChunkExcerpt[];
   score: number;
   fileSizeBytes: number;
@@ -87,6 +89,7 @@ export const SourceWithMetadataSchema = z.object({
   section: z.string().optional(),
   chunkIndex: z.number().min(0).optional(),
   pageNumber: z.number().int().min(1).optional(),
+  fromOcr: z.boolean().optional(),
   chunkExcerpts: z.array(z.object({
     chunkId: z.string().min(1),
     excerpt: z.string().min(1),

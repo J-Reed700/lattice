@@ -1,0 +1,11 @@
+-- Marks a chunk whose text was read off a scanned page by OCR rather than
+-- taken from the PDF's text layer, so the prompt and the evidence card can say
+-- that odd characters in it may be recognition errors.
+--
+-- The flag is per chunk, not per document: `embedding_input::structure_spans`
+-- never lets a span cross a page boundary, so every chunk belongs to exactly
+-- one page, and a mixed PDF marks only the chunks cut from its scanned pages.
+--
+-- Re-indexing replaces a document's chunks (`save_chunks` deletes them first),
+-- so the flag is written fresh from each extraction and needs no reset step.
+ALTER TABLE text_chunks ADD COLUMN from_ocr BOOLEAN NOT NULL DEFAULT 0 CHECK (from_ocr IN (0, 1));

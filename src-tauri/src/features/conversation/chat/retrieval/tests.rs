@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::HashSet;
 
+mod web_fallback;
+
 #[test]
 fn clarify_response_without_recent_document_is_generic() {
     let settings = RouterSettingsDto::default();
@@ -23,6 +25,7 @@ fn retrieval_plan_does_not_short_circuit_clarify_without_recent_document() {
     let flags = SearchFlags {
         force_kb_search: false,
         force_web_search: false,
+        web_fallback: false,
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
@@ -59,6 +62,7 @@ fn followup_with_forced_web_prefers_kb_first_without_external_intent() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
+        web_fallback: false,
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
@@ -78,6 +82,7 @@ fn question_with_forced_web_keeps_web_enabled() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
+        web_fallback: false,
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
@@ -96,6 +101,7 @@ fn flags(kb: bool, web: bool, wiki: bool, followup: bool) -> SearchFlags {
     SearchFlags {
         force_kb_search: kb,
         force_web_search: web,
+        web_fallback: false,
         force_wiki_search: wiki,
         deep_research_mode: false,
         force_followup_mode: followup,
@@ -137,8 +143,11 @@ fn kb_runs_first_when_external_search_is_its_fallback_or_absent() {
 fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
     // KB retrieval classifies a turn as a follow-up only in follow-up mode, so
     // whenever the pipeline runs KB concurrently, the post-KB gate stays open.
-    for bits in 0u8..16 {
-        let flags = flags(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+    for bits in 0u8..32 {
+        let flags = SearchFlags {
+            web_fallback: bits & 16 != 0,
+            ..flags(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
+        };
         let kb_query_type = if flags.force_followup_mode {
             QueryType::Followup
         } else {
@@ -593,12 +602,12 @@ fn web_query_strips_tracking_even_for_a_short_product_link() {
     assert!(!query.contains("unrelated"), "{query}");
 }
 
-/// The intent classifier wanting the web used to switch the vault off: its
-/// `needs_web` became `force_web_search`, and the plan read that as "web
-/// instead of the library". Web now adds to the vault, and the two run side by
-/// side so both sets of sources reach the answer.
+/// The intent classifier wanting the web used to switch the vault off, then
+/// ran the web beside it, so a question about the user's own policy went out
+/// as a public search and the pages joined the answer. Now `needs_web` is a
+/// fallback: the plan still searches the vault, and never beside the web.
 #[test]
-fn an_intent_that_needs_the_web_still_searches_the_vault() {
+fn an_intent_that_needs_the_web_searches_the_vault_first() {
     let intent = crate::features::conversation::chat::intent::TurnIntent {
         needs_knowledge_base: false,
         needs_web: true,
@@ -606,7 +615,8 @@ fn an_intent_that_needs_the_web_still_searches_the_vault() {
         confidence: 0.9,
     };
     let merged = super::super::apply_turn_intent(SearchFlags::from_preferences(None), &intent);
-    assert!(merged.force_web_search);
+    assert!(!merged.force_web_search);
+    assert!(merged.web_fallback);
     assert!(!merged.force_kb_search);
 
     let decision = RouterDecisionOutcome {
@@ -620,7 +630,66 @@ fn an_intent_that_needs_the_web_still_searches_the_vault() {
 
     assert!(plan.should_search_kb);
     assert!(plan.should_search_web);
-    assert!(kb_can_run_alongside_external(merged));
+    assert!(!kb_can_run_alongside_external(merged));
+}
+
+/// The user's own toggle keeps what it always had: the web beside the vault.
+#[test]
+fn a_web_search_the_user_asked_for_still_runs_beside_the_vault() {
+    let toggled = flags(false, true, false, false);
+    let query_turn = flags(true, true, false, false);
+
+    assert!(kb_can_run_alongside_external(toggled));
+    assert!(kb_can_run_alongside_external(query_turn));
+    let question = crate::domain::qa::hyde::HyDEInterpretation::raw_only("q", QueryType::Question);
+    assert!(!should_use_external_as_fallback(toggled, &question));
+}
+
+/// The fallback asks the web only after the vault has been searched, and only
+/// when the vault found nothing or its passages were judged too weak.
+#[test]
+fn an_intent_web_search_waits_for_the_vault_and_its_verdict() {
+    // Never before the vault has been tried.
+    assert_eq!(intent_web_fallback(false, false, None), None);
+    assert_eq!(intent_web_fallback(false, true, Some(false)), None);
+    // Nothing came back.
+    assert_eq!(
+        intent_web_fallback(true, false, None),
+        Some(WebSearchReason::VaultEmpty)
+    );
+    assert_eq!(
+        intent_web_fallback(true, false, Some(false)),
+        Some(WebSearchReason::VaultEmpty)
+    );
+    // Passages, judged too weak to answer from.
+    assert_eq!(
+        intent_web_fallback(true, true, Some(false)),
+        Some(WebSearchReason::VaultInsufficient)
+    );
+    // Passages that answer keep the question on the machine.
+    assert_eq!(intent_web_fallback(true, true, Some(true)), None);
+    assert_eq!(intent_web_fallback(true, true, None), None);
+}
+
+/// The turn record says why the question left the machine, in words a
+/// reader can tell apart from a search the model ran on its own.
+#[test]
+fn a_web_search_step_says_why_it_ran() {
+    let labels = [
+        WebSearchReason::Requested.step_label(),
+        WebSearchReason::VaultEmpty.step_label(),
+        WebSearchReason::VaultInsufficient.step_label(),
+    ];
+    assert!(labels[0].contains("as you asked"));
+    assert!(labels[1].contains("your documents had nothing"));
+    assert!(labels[2].contains("your documents fell short"));
+    for label in labels {
+        assert!(label.starts_with("Searching the web"), "{label}");
+        assert_ne!(
+            label, "Searching the web",
+            "a pipeline search names its reason"
+        );
+    }
 }
 
 /// An Explorer turn is about the folder on screen. The router's default "new

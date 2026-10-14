@@ -51,6 +51,22 @@ describe('EvidenceMargin', () => {
     expect(screen.getByText(/2 passages · 2 documents/)).toBeInTheDocument();
   });
 
+  it('marks a passage read off a scanned page as OCR text, and only that one', () => {
+    renderMargin({
+      citationMap: new Map([
+        [1, { ...source(1, 'Scan.pdf', 'Tbe pooled estimate was 1.2 °C.', 3), fromOcr: true }],
+        [2, source(2, 'Halvorsen.pdf', 'The pooled estimate was 1.2 °C.', 14)],
+      ]),
+    });
+
+    expect(
+      within(screen.getByRole('button', { name: /Open passage 1/ })).getByText('PDF p. 3 · OCR text')
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('button', { name: /Open passage 2/ })).queryByText(/OCR/)
+    ).not.toBeInTheDocument();
+  });
+
   it('says what the checked sentences citing a passage came to', () => {
     renderMargin({
       claimVerdicts: [verdict([1], 'supported'), verdict([1], 'supported'), verdict([2], 'unsupported'), verdict([2], 'contradicted')],

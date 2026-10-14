@@ -252,6 +252,7 @@ fn build_followup_sources(
 
     vec![SourceDto {
         page_number: None,
+        from_ocr: false,
         document_id: document.id().as_str().to_string(),
         chunk_id,
         content: chunk_content,
@@ -286,6 +287,7 @@ mod followup_label_tests {
     fn source(document_id: &str) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: document_id.to_string(),
             chunk_id: format!("{document_id}-chunk"),
             content: String::new(),

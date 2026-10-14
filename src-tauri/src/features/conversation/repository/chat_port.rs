@@ -51,7 +51,7 @@ impl ChatRecords for ConversationRepository {
     async fn retrieval_locations(
         &self,
         chunk_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>)>> {
+    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>, bool)>> {
         ConversationRepository::retrieval_locations(self, chunk_ids).await
     }
 

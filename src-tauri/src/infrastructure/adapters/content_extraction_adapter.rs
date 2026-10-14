@@ -122,6 +122,7 @@ impl ContentExtractionAdapter {
             mime_type,
             page_count: None,
             page_ranges: Vec::new(),
+            ocr_pages: Vec::new(),
         })
     }
 }
@@ -173,6 +174,7 @@ impl ContentExtractionPort for ContentExtractionAdapter {
             mime_type: extracted.mime_type,
             page_count: extracted.metadata.page_count,
             page_ranges: extracted.page_ranges,
+            ocr_pages: extracted.ocr_pages,
             word_count: extracted.metadata.word_count,
             char_count: extracted.metadata.char_count,
         })

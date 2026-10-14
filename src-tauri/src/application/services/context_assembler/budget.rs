@@ -110,7 +110,9 @@ fn safety_margin(capacity: usize) -> usize {
 ///
 /// The system policy, the tool schemas and the current input are never cut:
 /// a request whose fixed parts do not fit is refused with
-/// [`PromptBudgetExceeded`] rather than sent clipped.
+/// [`PromptBudgetExceeded`] rather than sent clipped. Evidence is never one
+/// of them, even when a caller renders it into the input: charged as fixed,
+/// it could only refuse the turn, where charged as evidence it can give way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BudgetRequest {
     pub system: usize,

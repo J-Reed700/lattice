@@ -68,6 +68,10 @@ pub struct Chunk {
     end_char: Option<usize>,
     #[serde(default)]
     page_number: Option<u32>,
+    /// The text was read off a scanned page by OCR and may hold recognition
+    /// errors.
+    #[serde(default)]
+    from_ocr: bool,
 }
 
 impl Chunk {
@@ -82,6 +86,12 @@ impl Chunk {
     }
     pub fn page_number(&self) -> Option<u32> {
         self.page_number
+    }
+    pub fn from_ocr(&self) -> bool {
+        self.from_ocr
+    }
+    pub fn set_from_ocr(&mut self, from_ocr: bool) {
+        self.from_ocr = from_ocr;
     }
     pub fn set_provenance(
         &mut self,
@@ -135,6 +145,7 @@ impl Chunk {
             start_char: None,
             end_char: None,
             page_number: None,
+            from_ocr: false,
         }
     }
 
@@ -156,6 +167,7 @@ impl Chunk {
             start_char: None,
             end_char: None,
             page_number: None,
+            from_ocr: false,
         }
     }
 

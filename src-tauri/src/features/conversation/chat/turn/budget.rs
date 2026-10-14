@@ -1,8 +1,11 @@
 //! The turn's share of the model's window, planned once by the context
 //! assembler before retrieval decides how much to read.
+use std::sync::Arc;
+
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
-    BudgetAllocation, BudgetRequest, EvidenceBudget, HistoryCharge, ModelCapacity,
+    render, BudgetAllocation, BudgetRequest, ContextAssembler, EvidenceBudget, HistoryCharge,
+    ModelCapacity, TokenCounter,
 };
 use tracing::warn;
 
@@ -20,23 +23,33 @@ pub(super) struct TurnBudget {
 }
 
 impl TurnBudget {
-    /// Plan against the question, the system prompt and the history.
+    /// Plan against the message, the system prompt, the tools and the history.
     ///
-    /// With bounded memory on, the memory plan carries the history and spends
-    /// at most its own pools on it, so evidence is charged only what the
-    /// history actually needs up to those pools. With it off, the string
-    /// history is sent whole and charged whole.
+    /// `message` is what the evidence will travel in: the question inside the
+    /// turn's template, with no evidence in it. `tool_schema_tokens` is what
+    /// the tools a grounded turn is offered cost. Both are paid before any
+    /// evidence is, since evidence that leaves no room for them is evidence
+    /// the request cannot carry.
+    ///
+    /// With bounded memory on, the fixed parts are priced exactly as the
+    /// context assembler prices them, memory rules and date line included, and
+    /// the memory plan carries the history and spends at most its own pools on
+    /// it, so evidence is charged only what the history actually needs up to
+    /// those pools. With it off, the string history is sent whole and charged
+    /// whole.
     ///
     /// A question the window cannot hold is not refused here: the request is
     /// checked whole when it is assembled, after the user's message is saved,
     /// so the refusal leaves a retryable message. Until then the turn simply
     /// has no room for evidence.
     pub(super) fn plan(
-        llm: &dyn LLMPort,
+        llm: &Arc<dyn LLMPort>,
         system_prompt: &str,
-        question: &str,
+        message: &str,
         context: &[String],
         bounded_memory: bool,
+        tool_schema_tokens: usize,
+        today: chrono::NaiveDate,
     ) -> Self {
         let (system_entries, history_entries): (Vec<&String>, Vec<&String>) = context
             .iter()
@@ -45,23 +58,28 @@ impl TurnBudget {
             .iter()
             .map(|entry| llm.count_tokens(entry))
             .sum();
-        let (system, charge) = if bounded_memory {
-            (
-                llm.count_tokens(system_prompt),
-                HistoryCharge::Measured(history),
-            )
+        let request = if bounded_memory {
+            let counter: TokenCounter = {
+                let llm = Arc::clone(llm);
+                Arc::new(move |text: &str| llm.count_tokens(text))
+            };
+            ContextAssembler::new(counter)
+                .fixed_parts(system_prompt, message, tool_schema_tokens, today)
+                .with_history(HistoryCharge::Measured(history))
         } else {
-            (
+            // The string path sends the date line ahead of the message.
+            let current_input = format!("{}\n\n{message}", render::render_date_line(today));
+            BudgetRequest::new(
                 system_entries
                     .iter()
                     .map(|entry| llm.count_tokens(entry))
                     .sum(),
-                HistoryCharge::Carried(history),
+                tool_schema_tokens,
+                llm.count_tokens(&current_input),
             )
+            .with_history(HistoryCharge::Carried(history))
         };
         let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens());
-        let request =
-            BudgetRequest::new(system, 0, llm.count_tokens(question)).with_history(charge);
         match BudgetAllocation::plan(&capacity, &request) {
             Ok(allocation) => Self {
                 evidence: allocation.evidence_budget(),
@@ -92,7 +110,36 @@ impl TurnBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::features::llm::engine::factory::MockLLMPort;
+    use crate::shared::error::Result;
+
+    fn mock() -> Arc<dyn LLMPort> {
+        Arc::new(MockLLMPort::new())
+    }
+
+    fn today() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 13).expect("a real date")
+    }
+
+    /// A model with a window of the given size that is never asked anything.
+    struct Window(usize);
+
+    #[async_trait::async_trait]
+    impl LLMPort for Window {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text(String::new()))
+        }
+        fn model_name(&self) -> &str {
+            "window"
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.0
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
 
     /// A long chat whose string history fills the window.
     fn long_history(llm: &dyn LLMPort) -> Vec<String> {
@@ -108,13 +155,25 @@ mod tests {
         context
     }
 
+    fn plan(llm: &Arc<dyn LLMPort>, context: &[String], bounded: bool, tools: usize) -> TurnBudget {
+        TurnBudget::plan(
+            llm,
+            "You are helpful.",
+            "question",
+            context,
+            bounded,
+            tools,
+            today(),
+        )
+    }
+
     #[test]
     fn bounded_memory_leaves_retrieval_room_in_a_chat_that_fills_the_window() {
-        let llm = MockLLMPort::new();
-        let context = long_history(&llm);
+        let llm = mock();
+        let context = long_history(llm.as_ref());
 
-        let bounded = TurnBudget::plan(&llm, "You are helpful.", "question", &context, true);
-        let carried = TurnBudget::plan(&llm, "You are helpful.", "question", &context, false);
+        let bounded = plan(&llm, &context, true, 0);
+        let carried = plan(&llm, &context, false, 0);
 
         assert!(bounded.evidence.total() > 0, "{bounded:?}");
         assert_eq!(
@@ -133,14 +192,13 @@ mod tests {
 
     #[test]
     fn a_short_chat_gives_evidence_what_its_history_does_not_use() {
-        let llm = MockLLMPort::new();
-        let empty = TurnBudget::plan(&llm, "You are helpful.", "question", &[], true);
-        let short = TurnBudget::plan(
+        let llm = mock();
+        let empty = plan(&llm, &[], true, 0);
+        let short = plan(
             &llm,
-            "You are helpful.",
-            "question",
             &["User: hello".to_string(), "Assistant: hi".to_string()],
             true,
+            0,
         );
 
         let history = llm.count_tokens("User: hello") + llm.count_tokens("Assistant: hi");
@@ -150,10 +208,49 @@ mod tests {
 
     #[test]
     fn a_question_larger_than_the_window_leaves_no_evidence_but_keeps_the_reservation() {
-        let llm = MockLLMPort::new();
-        let budget = TurnBudget::plan(&llm, "", &"word ".repeat(50_000), &[], true);
+        let llm = mock();
+        let budget = TurnBudget::plan(&llm, "", &"word ".repeat(50_000), &[], true, 0, today());
         assert_eq!(budget.evidence.total(), 0);
         assert!(budget.output_tokens > 0);
         assert!(budget.input_budget < llm.max_context_tokens());
+    }
+
+    /// The 2026-10-13 shipped-path run at `--ctx-size 8192`: the tools and the
+    /// policy came to about 2,100 tokens, the evidence pool was sized as if
+    /// they cost nothing, and 31 of 34 turns were refused before generation.
+    #[test]
+    fn at_8k_the_evidence_pool_leaves_room_for_the_tools_and_the_policy() {
+        let llm: Arc<dyn LLMPort> = Arc::new(Window(8_192));
+        let system = "You answer from the user's documents. ".repeat(40);
+        let tools = 1_400;
+        let budget = TurnBudget::plan(&llm, &system, "question", &[], true, tools, today());
+        let unreserved = TurnBudget::plan(&llm, &system, "question", &[], true, 0, today());
+
+        // The tool schemas come out of the evidence, token for token.
+        assert_eq!(unreserved.evidence.total() - budget.evidence.total(), tools);
+        // Every fixed part the assembler will charge, priced as it prices
+        // them, plus all the evidence, fits what the request may occupy.
+        let counter: TokenCounter = {
+            let llm = Arc::clone(&llm);
+            Arc::new(move |text: &str| llm.count_tokens(text))
+        };
+        let fixed = ContextAssembler::new(counter).fixed_parts(&system, "question", tools, today());
+        assert_eq!(budget.input_budget, 5_734, "70% of 8,192");
+        assert!(
+            fixed.system > llm.count_tokens(&system),
+            "the memory rules are charged"
+        );
+        assert_eq!(
+            fixed.system + fixed.tools + fixed.current_input + budget.evidence.total(),
+            budget.input_budget
+        );
+    }
+
+    #[test]
+    fn the_string_path_also_pays_for_its_tools_before_evidence() {
+        let llm: Arc<dyn LLMPort> = Arc::new(Window(8_192));
+        let without = plan(&llm, &[], false, 0);
+        let with = plan(&llm, &[], false, 1_000);
+        assert_eq!(without.evidence.total() - with.evidence.total(), 1_000);
     }
 }

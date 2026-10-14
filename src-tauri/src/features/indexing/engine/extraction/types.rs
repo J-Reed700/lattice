@@ -20,6 +20,11 @@ pub struct ExtractedContent {
     /// once a vision model is installed. Empty for every non-paged format.
     #[serde(default)]
     pub needs_ocr: Vec<u32>,
+    /// One-based pages whose text came from OCR rather than the text layer.
+    /// Their chunks are marked so a reader knows the passage may hold
+    /// recognition errors. Empty for every non-paged format.
+    #[serde(default)]
+    pub ocr_pages: Vec<u32>,
 }
 
 /// Metadata about extracted content.

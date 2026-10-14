@@ -444,6 +444,20 @@ impl Document {
         }
     }
 
+    /// Mark the chunks cut from `pages`, the one-based pages OCR read, and
+    /// clear the mark on every other chunk.
+    ///
+    /// A chunk never crosses a page, so its page number decides it. A chunk
+    /// with no page is never OCR text.
+    pub fn mark_ocr_pages(&mut self, pages: &[u32]) {
+        for chunk in &mut self.chunks {
+            let from_ocr = chunk
+                .page_number()
+                .is_some_and(|page| pages.contains(&page));
+            chunk.set_from_ocr(from_ocr);
+        }
+    }
+
     /// Mark document for reindexing with new content.
     ///
     /// Resets the document status to Pending and updates the modified timestamp.

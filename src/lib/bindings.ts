@@ -7712,6 +7712,11 @@ chunkIndex?: number | null;
  */
 pageNumber?: number | null;
 /**
+ * The passage was read off a scanned page by OCR, so odd characters in it
+ * may be recognition errors.
+ */
+fromOcr?: boolean;
+/**
  * Optional chunk excerpts grouped under this source document.
  * Includes the primary chunk and any additional supporting chunks.
  */

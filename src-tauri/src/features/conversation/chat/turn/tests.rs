@@ -34,6 +34,7 @@ impl LLMPort for Unanswering {
 fn prompt() -> RenderedPrompt {
     RenderedPrompt {
         enhanced_message: "question".into(),
+        message: None,
         sources: Vec::new(),
         retrieval_trace: None,
         short_circuit_response: None,
@@ -151,6 +152,50 @@ async fn a_router_answer_skips_the_model_entirely() {
 
     assert_eq!(generated.response, "Hello!");
     assert!(metrics.generation_subtimings.is_some());
+}
+
+/// The intent step's answer, as the utility model gives it.
+fn intent_reply(needs_web: bool) -> CompletionResponse {
+    CompletionResponse::from_text(format!(
+        r#"{{"needsKnowledgeBase":false,"needsWeb":{needs_web},"isFollowup":false,"confidence":0.9}}"#
+    ))
+}
+
+/// Each turn is classified afresh. A turn the intent step sends to the web
+/// gets a fallback, never a forced search, and the next turn starts from its
+/// own preferences: an earlier turn's fallback does not carry over.
+#[tokio::test]
+async fn each_turn_decides_its_own_web_fallback() {
+    let llm = Scripted::new([intent_reply(true), intent_reply(false)]);
+    let runtime = FakeRuntime::default();
+
+    let first = PreparedTurn::for_test(
+        "intent-fallback-conversation",
+        "intent-fallback-turn-1",
+        llm.clone(),
+        runtime.conversations.clone(),
+    )
+    .unwrap();
+    let flags = classify::classify_turn(&runtime, &first, None).await;
+    assert!(flags.web_fallback);
+    assert!(!flags.force_web_search);
+    drop(first);
+
+    let second = PreparedTurn::for_test(
+        "intent-fallback-conversation",
+        "intent-fallback-turn-2",
+        llm.clone(),
+        runtime.conversations.clone(),
+    )
+    .unwrap();
+    let flags = classify::classify_turn(&runtime, &second, None).await;
+    assert!(!flags.web_fallback);
+    assert!(!flags.web_planned());
+    assert_eq!(
+        llm.requests().len(),
+        2,
+        "each turn asked the intent step once"
+    );
 }
 
 fn deep_research() -> SearchFlags {

@@ -78,6 +78,8 @@ struct PageText {
     text: String,
     /// The page draws an image and yielded almost no text: a scan.
     needs_ocr: bool,
+    /// OCR read this page's text, so it may hold recognition errors.
+    from_ocr: bool,
 }
 
 /// Extract content from PDF files with page tracking.
@@ -133,6 +135,11 @@ pub async fn extract_pdf(
         .filter(|page| page.needs_ocr)
         .map(|page| page.page)
         .collect();
+    let ocr_pages: Vec<u32> = pages
+        .iter()
+        .filter(|page| page.from_ocr)
+        .map(|page| page.page)
+        .collect();
 
     if !needs_ocr.is_empty() {
         warn!(
@@ -155,6 +162,7 @@ pub async fn extract_pdf(
         metadata,
         page_ranges,
         needs_ocr,
+        ocr_pages,
     })
 }
 
@@ -212,6 +220,7 @@ fn extract_pdf_pages(path: &Path, cancel: &CancellationToken) -> Result<Vec<Page
         .map(|(text, layout)| PageText {
             page: layout.page,
             needs_ocr: layout.has_image && body_alphanumerics(&text) < MIN_PAGE_ALPHANUMERICS,
+            from_ocr: false,
             text,
         })
         .collect())
@@ -338,6 +347,7 @@ async fn recognize_scanned_pages(
             Ok(text) if !text.trim().is_empty() => {
                 page.text = splice(&page.text, text.trim());
                 page.needs_ocr = false;
+                page.from_ocr = true;
                 recognized += 1;
             }
             Ok(_) => debug!(page = page.page, "OCR recognized no text on this page"),

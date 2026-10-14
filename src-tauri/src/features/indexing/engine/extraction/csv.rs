@@ -66,6 +66,7 @@ pub async fn extract_csv_file(
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
+        ocr_pages: Vec::new(),
     })
 }
 

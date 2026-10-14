@@ -60,11 +60,27 @@ impl WebContextItem {
 ///
 /// A result whose URL has no numbered source is left out rather than shown
 /// under a number nothing in the list answers to; a URL the wiki and web
-/// searches both returned is shown once.
+/// searches both returned is shown once. The turn renders them through
+/// [`web_context_entries`], one item each, so it can cut them one at a time;
+/// this is the section they make whole.
+#[cfg(test)]
 pub(in crate::features::conversation::chat) fn render_web_context(
     items: &[WebContextItem],
     sources: &[SourceDto],
 ) -> Option<String> {
+    let rendered = web_context_entries(items, sources)
+        .into_iter()
+        .map(|(_, page)| page)
+        .collect::<Vec<_>>();
+    (!rendered.is_empty()).then(|| rendered.join("\n\n"))
+}
+
+/// Each web or wiki result [`render_web_context`] would show, beside its
+/// citation number, in the order the turn ranked them.
+pub(in crate::features::conversation::chat) fn web_context_entries(
+    items: &[WebContextItem],
+    sources: &[SourceDto],
+) -> Vec<(u32, String)> {
     let labels: HashMap<&str, u32> = sources
         .iter()
         .filter_map(|source| {
@@ -73,15 +89,14 @@ pub(in crate::features::conversation::chat) fn render_web_context(
         })
         .collect();
     let mut shown = HashSet::new();
-    let rendered = items
+    items
         .iter()
         .filter_map(|item| {
             let url = item.url.trim();
             let label = *labels.get(url)?;
-            shown.insert(url).then(|| item.render(label))
+            shown.insert(url).then(|| (label, item.render(label)))
         })
-        .collect::<Vec<_>>();
-    (!rendered.is_empty()).then(|| rendered.join("\n\n"))
+        .collect()
 }
 
 /// Drop the KB sources whose passage the prompt budget cut.
@@ -293,6 +308,7 @@ pub(super) async fn build_source_citations(
 
         sources.push(SourceDto {
             page_number: chunk_meta.and_then(|c| c.page_number()),
+            from_ocr: chunk_meta.is_some_and(|c| c.from_ocr()),
             document_id: doc_id.to_string(),
             chunk_id: result.id.clone(),
             content: result.content.clone(),
@@ -369,6 +385,7 @@ pub(super) fn build_web_source_citations(
 
         sources.push(SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: format!("{WEB_SOURCE_PREFIX}{url}"),
             chunk_id: format!("web-result-{}", idx + 1),
             content,
@@ -431,6 +448,7 @@ mod merge_tool_sources_tests {
     fn source(document_id: &str, chunk_id: &str, content: &str) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: document_id.to_string(),
             chunk_id: chunk_id.to_string(),
             content: content.to_string(),
@@ -557,6 +575,7 @@ mod web_context_label_tests {
     fn kb_source(chunk_id: &str) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: "doc-kb".to_string(),
             chunk_id: chunk_id.to_string(),
             content: "passage".to_string(),
