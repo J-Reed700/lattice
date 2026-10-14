@@ -331,3 +331,8 @@ Live run `wp1-1` (2026-10-14, Josh's request, WP1 code): 31 relevant references 
 5. Items with no qualifying passage stay uncited (not a finding). The review note reports "{n} of {m} outline items linked to references".
 6. `OUTLINE_REFERENCE_INSTRUCTIONS` changes to: cite where a passage directly addresses the item; otherwise null. Drop "most plan items need no citation".
 7. Live pass criterion added: at least half of outcomes and lesson objectives carry a verified citation when ≥ 10 references were gathered.
+
+## 14. Lead amendments after WP2 (binding)
+
+1. **Sources are not part of the module review receipt.** `ReviewReceipt.context_hash` covers reviewer version, model and learner request only. A module that passed review and has not changed is never reviewed again because targeted research added pages for a different finding. (Today `outline_review_scope.rs:44` hashes `sources`, so every research step forces a full pass that re-litigates passed modules.) Update the `reviewScope.rule` wording to match.
+2. **The reviewer cannot raise course-wide findings.** `allowed_paths` no longer includes `""`; every new finding is anchored to the module or item whose text must change (a cross-module problem belongs to the module that must be edited). `REVIEW_SYSTEM` wording changes accordingly. The only course-wide finding is the code-generated `References` one, which is resolved by gathering, never by module rewrites. This removes the "one course-wide plan finding rewrites every module" cost.
