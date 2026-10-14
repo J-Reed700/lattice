@@ -5,9 +5,10 @@ import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
-import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
+import type { ExportAllLearningPacksResultDto, LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
 import { queryClient as activityClient } from '@/lib/queryClient';
 import { STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
+import { deferred } from '@/tests/deferred';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 
@@ -18,10 +19,11 @@ vi.mock('@/features/learning/portability/PortabilityPanel', () => ({ Portability
   <button onClick={() => onImported(programId)}>Complete test replacement</button>
   <button onClick={() => onImported('copy')}>Complete test copy</button>
 </> }));
+vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCourseFlow: ({ onImported }: { onImported: (id: string, title: string) => void }) => <button onClick={() => onImported('imported-1', 'Imported course')}>Complete test import</button> }));
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), submit: vi.fn(),
-  documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(),
+  documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(), exportAll: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/pendingSaves')>(),
@@ -48,6 +50,7 @@ vi.mock('@/lib/api', () => ({ default: {
   // Flashcards share the landing page; an unconfigured mock means "no decks".
   listStudyDecks: (...args: unknown[]) => mocks.decks(...args) ?? Promise.resolve({ ok: true, data: [] }),
   getStudyDeck: mocks.deck,
+  exportAllLearningPacks: mocks.exportAll,
 } }));
 
 
@@ -86,6 +89,10 @@ function program(status: 'draft' | 'active' = 'draft', firstReady = false): Lear
 }
 
 function summary(value: LearningProgramDto): LearningProgramSummaryDto { return value.summary; }
+/** The same course under another id, resuming at lesson 3 (where it was left off). */
+function imported(value: LearningProgramDto, id: string, title: string): LearningProgramDto {
+  return { ...value, summary: { ...value.summary, id, title, currentLessonId: 'lesson-3' } };
+}
 function ok<T>(data: T) { return { ok: true as const, data }; }
 function fail(error: string) { return { ok: false as const, error }; }
 
@@ -380,7 +387,7 @@ describe('Learning Studio program workflow', () => {
     await waitFor(() => expect(lessonSelect).toHaveValue('lesson-2'));
   });
 
-  it.each(['replacement', 'copy'])('resets retained editors and quiz answers only for a same-program import (%s)', async (kind) => {
+  it('resets retained editors and quiz answers after a same-program import', async () => {
     const user = userEvent.setup();
     const active = program('active', true);
     mocks.list.mockResolvedValue(ok([summary(active)]));
@@ -396,14 +403,121 @@ describe('Learning Studio program workflow', () => {
     await user.type(screen.getByRole('textbox', { name: 'Lab scratchpad' }), 'before import');
     await user.click(screen.getByRole('button', { name: 'More' }));
     await user.click(screen.getByRole('menuitem', { name: 'Import & export' }));
-    await user.click(screen.getByRole('button', { name: `Complete test ${kind}` }));
+    await user.click(screen.getByRole('button', { name: 'Complete test replacement' }));
     await user.click(screen.getByRole('tab', { name: 'Practice' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
-    expect(screen.getByRole('textbox', { name: 'Lab scratchpad' })).toHaveValue(kind === 'replacement' ? '' : 'before import');
+    expect(screen.getByRole('textbox', { name: 'Lab scratchpad' })).toHaveValue('');
     await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
-    const answer = screen.getByRole('radio', { name: 'First principle' });
-    if (kind === 'replacement') expect(answer).not.toBeChecked();
-    else expect(answer).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'First principle' })).not.toBeChecked();
+  });
+
+  it('opens the copy an import creates from inside another course', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    const copy = imported(active, 'copy', 'A thoughtful course (copy)');
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockImplementation(async (id: string) => ok(id === 'copy' ? copy : active));
+    mocks.plan.mockResolvedValue(ok({ programId: 'program-1', blocks: [] }));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Import & export' }));
+    await user.click(screen.getByRole('button', { name: 'Complete test copy' }));
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith('copy'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'A thoughtful course (copy)' })).toBeVisible();
+    expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-3');
+    expect(screen.queryByRole('button', { name: 'Complete test copy' })).not.toBeInTheDocument();
+  });
+
+  it('imports a course from the program list and lands on it at the lesson it left off', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    const moved = imported(active, 'imported-1', 'Moved from my laptop');
+    mocks.list.mockResolvedValueOnce(ok([summary(active)])).mockResolvedValue(ok([summary(active), summary(moved)]));
+    mocks.get.mockImplementation(async (id: string) => ok(id === 'imported-1' ? moved : active));
+    mocks.plan.mockResolvedValue(ok({ programId: 'imported-1', blocks: [] }));
+    show();
+    await user.click(await screen.findByRole('button', { name: 'Import a course…' }));
+    expect(screen.queryByRole('button', { name: /A thoughtful course/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Complete test import' }));
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith('imported-1'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Moved from my laptop' })).toBeVisible();
+    expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-3');
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('offers import beside the first program on an empty list and opens export-all in place of the list', async () => {
+    const user = userEvent.setup();
+    mocks.list.mockResolvedValue(ok([]));
+    show();
+    await user.click(await screen.findByRole('button', { name: 'Import a course' }));
+    expect(screen.getByRole('button', { name: 'Complete test import' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    expect(await screen.findByRole('button', { name: /Build your first program/ })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Export all courses…' }));
+    expect(screen.getByRole('heading', { name: 'Export all courses' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Choose folder and export' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    expect(await screen.findByRole('button', { name: 'Import a course…' })).toBeVisible();
+  });
+
+  it('keeps the export-all screen open until its results arrive', async () => {
+    const user = userEvent.setup();
+    const exporting = deferred<{ ok: true; data: ExportAllLearningPacksResultDto }>();
+    mocks.list.mockResolvedValue(ok([]));
+    mocks.exportAll.mockReturnValueOnce(exporting.promise);
+    show();
+    await user.click(await screen.findByRole('button', { name: 'Export all courses…' }));
+    await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
+    expect(await screen.findByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'All programs' })).toBeDisabled();
+    await act(async () => { exporting.resolve(ok({ cancelled: false, destinationDir: '/Volumes/USB', exported: [{ programId: 'program-1', title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
+    expect(await screen.findByText(/Exported 1 of 1 course to/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All programs' })).toBeEnabled();
+  });
+
+  it('keeps the export-all screen when another task is opened from the activity panel during the export', async () => {
+    const user = userEvent.setup();
+    const exporting = deferred<{ ok: true; data: ExportAllLearningPacksResultDto }>();
+    const active = program('active', true);
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.exportAll.mockReturnValueOnce(exporting.promise);
+    show();
+    await user.click(await screen.findByRole('button', { name: 'Export all courses…' }));
+    await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
+    expect(await screen.findByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
+    act(() => activityClient.setQueryData<StudyActivity[]>(STUDY_ACTIVITY_KEY, [{
+      id: 'activity', command: 'generate_learning_practical_activity', title: 'Building your practical activity',
+      detail: 'Waiting for the model', involves: ['Prepare an exercise'], status: 'pending', startedAt: Date.now(),
+      destination: { programId: active.summary.id, tab: 'practical', lessonId: 'lesson-2' },
+    }]));
+    await user.click(await screen.findByRole('button', { name: 'Open task' }));
+    expect(screen.getByText('Your courses are still being exported. Open the task again when the export finishes.')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Export all courses' })).toBeVisible();
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.flush).not.toHaveBeenCalled();
+
+    await act(async () => { exporting.resolve(ok({ cancelled: false, destinationDir: '/Volumes/USB', exported: [{ programId: active.summary.id, title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
+    expect(await screen.findByText(/Exported 1 of 1 course to/)).toBeVisible();
+    expect(screen.queryByText(/still being exported/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Expand activity/ }));
+    await user.click(screen.getByRole('button', { name: 'Open task' }));
+    expect(await screen.findByRole('textbox', { name: 'Lab scratchpad' })).toBeVisible();
+  });
+
+  it('gives a draft course an Import & export menu so it can be exported', async () => {
+    const user = userEvent.setup();
+    const draft = program('draft');
+    mocks.list.mockResolvedValue(ok([summary(draft)]));
+    mocks.get.mockResolvedValue(ok(draft));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
+    expect(items.map((item) => item.textContent)).toEqual(['Import & export']);
+    await user.click(items[0]);
+    expect(await screen.findByRole('button', { name: 'Complete test replacement' })).toBeVisible();
   });
 
   it('opens Canvas from More only after saves succeed and keeps the current section when a save fails', async () => {
