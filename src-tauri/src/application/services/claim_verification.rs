@@ -29,6 +29,10 @@ pub(crate) enum CheckPolicy {
     Strict,
     /// Does the extracted inventory preserve the original teaching assertions?
     /// This is representation checking, not factual publication approval.
+    /// Production coverage no longer uses this judge (lessons/content_verification/coverage.rs
+    /// has its own fidelity instructions). Kept only for the live fidelity controls in
+    /// lessons/live_lesson_tests.rs and live_small_lesson.rs; delete together with them.
+    #[cfg_attr(not(test), allow(dead_code))]
     Fidelity,
 }
 impl CheckPolicy {
@@ -107,6 +111,7 @@ impl ClaimJudgment {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 enum FidelityContext<'a> {
     Assessment(&'a str),
     Teaching(&'a str),
@@ -165,6 +170,7 @@ impl<'a> ClaimChecker<'a> {
 
     /// A question's scenario scopes its answer and explanation. It is original
     /// lesson context, never another extracted assertion or external evidence.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn check_fidelity_in_context(
         &self,
         claim: &str,
@@ -180,6 +186,7 @@ impl<'a> ClaimChecker<'a> {
 
     /// Restore a teaching passage's surrounding scope without treating the
     /// original section as evidence that its claims were extracted.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn check_fidelity_in_teaching_context(
         &self,
         claim: &str,

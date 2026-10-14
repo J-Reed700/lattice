@@ -289,7 +289,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             !coverage.units[1].complete,
             "A saved omission must remain unresolved"
         );
-        assert_eq!(coverage.units[1].unresolved_passages.len(), 1);
+        assert_eq!(coverage.units[1].missing_assertions.len(), 1);
         assert_eq!(
             coverage.units.iter().filter(|unit| unit.complete).count(),
             4

@@ -2,7 +2,6 @@
 use super::*;
 use std::collections::BTreeMap;
 
-mod corrections;
 pub(super) mod revisions;
 
 #[derive(Deserialize)]
@@ -217,34 +216,6 @@ pub(super) async fn extract_remaining(
         .filter(|index| !retained.contains_key(index))
         .collect();
     extract_scoped(llm, content, &missing, retained).await
-}
-
-pub(in crate::features::learning) async fn correct_coverage(
-    llm: &dyn LLMPort,
-    content: &[Value],
-    previous: &Inventory,
-    coverage: &Coverage,
-) -> Result<Inventory> {
-    corrections::correct(llm, content, previous, coverage).await
-}
-
-pub(super) async fn refresh_assessments(
-    llm: &dyn LLMPort,
-    content: &[Value],
-    previous: Inventory,
-) -> Result<Inventory> {
-    let indices: Vec<_> = content
-        .iter()
-        .enumerate()
-        .filter_map(|(index, unit)| (unit["kind"] == "assessment").then_some(index))
-        .collect();
-    let retained = previous
-        .units
-        .into_iter()
-        .filter(|unit| !indices.contains(&unit.index))
-        .map(|unit| (unit.index, unit))
-        .collect();
-    extract_scoped(llm, content, &indices, retained).await
 }
 
 async fn extract_scoped(
@@ -533,53 +504,6 @@ mod tests {
                 .iter()
                 .any(|p| p["field"] == "/options/0"));
         }
-    }
-
-    #[tokio::test]
-    async fn refreshing_assessments_preserves_teaching_inventory() -> Result<()> {
-        let content = vec![
-            json!({"kind":"teaching","body":"A teaching fact."}),
-            json!({"kind":"assessment","prompt":"An assessment fact.","options":["A selected answer.","A distractor."],"correctIndex":0}),
-        ];
-        let input = inputs(&content);
-        let original = resolve(
-            serde_json::from_value(answer(0, "unit-0-passage-0")).unwrap(),
-            &input,
-        )
-        .unwrap();
-        let assessment_id = input[1]["passages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["field"] == "/prompt")
-            .unwrap()["id"]
-            .as_str()
-            .unwrap();
-        let model = model(vec![fixture_response(vec![answer(1, assessment_id)])]);
-        let refreshed = refresh_assessments(
-            &model,
-            &content,
-            Inventory {
-                units: vec![
-                    original.clone(),
-                    UnitClaims {
-                        index: 1,
-                        claims: Vec::new(),
-                        non_factual_reason: "Old assessment data.".into(),
-                    },
-                ],
-            },
-        )
-        .await?;
-        assert_eq!(
-            serde_json::to_value(&refreshed.units[0])?,
-            serde_json::to_value(original)?
-        );
-        let prompts = model.prompts.lock().unwrap();
-        assert_eq!(prompts.len(), 1);
-        assert!(prompts[0].contains("\"requestedIndices\":[1]"));
-        assert!(!prompts[0].contains("A teaching fact."));
-        Ok(())
     }
 
     #[tokio::test]
