@@ -183,6 +183,12 @@ mod tests {
     use crate::features::indexing::commands::require_embedding_ready;
     use crate::features::indexing::engine::progress::IndexStatus;
     use crate::shared::error::{AppError, Result as AppResult};
+    // The fake vault must be absolute *on the host*: `/vault` has a root but
+    // no prefix, so Windows does not consider it absolute and
+    // `validate_path` resolves a note under it against the current drive,
+    // landing outside the configured root. `abs` spells the same fake vault
+    // the way the running platform spells absolute paths.
+    use crate::shared::testing::paths::{abs, abs_str};
 
     struct ReadyModel;
 
@@ -407,9 +413,7 @@ mod tests {
             Arc::new(repo),
             embedding,
             chunk_size,
-            Arc::new(FileAccessConfig::new(vec![std::path::PathBuf::from(
-                "/vault",
-            )])),
+            Arc::new(FileAccessConfig::new(vec![abs("vault")])),
             Arc::clone(&state),
         );
         Fixture {
@@ -418,6 +422,11 @@ mod tests {
             state,
             sink,
         }
+    }
+
+    /// A note inside the fake vault, as the vault writer would pass it.
+    fn vault_note() -> String {
+        abs_str("vault/notes/note.md")
     }
 
     fn unindexed() -> PathLookupRepo {
@@ -438,7 +447,7 @@ mod tests {
 
         let error = f
             .sink
-            .index("/vault/notes/note.md")
+            .index(&vault_note())
             .await
             .expect_err("must fail so the outbox entry stays deferred")
             .to_string();
@@ -476,7 +485,7 @@ mod tests {
 
         let error = f
             .sink
-            .index("/elsewhere/note.md")
+            .index(&abs_str("elsewhere/note.md"))
             .await
             .expect_err("a path the security layer rejects is deferred")
             .to_string();
@@ -498,11 +507,11 @@ mod tests {
         );
 
         f.sink
-            .index("/vault/notes/note.md")
+            .index(&vault_note())
             .await
             .expect("a ready model indexes the note");
 
-        assert_eq!(f.index.last_path().as_deref(), Some("/vault/notes/note.md"));
+        assert_eq!(f.index.last_path().as_deref(), Some(vault_note().as_str()));
         let progress = f.state.get_snapshot();
         assert_eq!(progress.status, IndexStatus::Complete);
         assert_eq!(progress.total_files, 1);
@@ -521,7 +530,7 @@ mod tests {
 
         let error = f
             .sink
-            .index("/vault/notes/note.md")
+            .index(&vault_note())
             .await
             .expect_err("a pipeline failure keeps the outbox entry deferred");
 
@@ -544,7 +553,7 @@ mod tests {
         );
 
         f.sink
-            .remove("/vault/notes/gone.md")
+            .remove(&abs_str("vault/notes/gone.md"))
             .await
             .expect("a never-indexed note is already gone");
         assert_eq!(f.delete.last_document(), None);
@@ -555,7 +564,7 @@ mod tests {
         let f = fixture(
             RecordingIndexUseCase::default(),
             PathLookupRepo {
-                path: Some("/vault/notes/note.md".to_string()),
+                path: Some(vault_note()),
                 id: Some("doc-1".to_string()),
             },
             Arc::new(ReadyModel),
@@ -563,7 +572,7 @@ mod tests {
         );
 
         f.sink
-            .remove("/vault/notes/note.md")
+            .remove(&vault_note())
             .await
             .expect("delete must succeed");
         assert_eq!(f.delete.last_document().as_deref(), Some("doc-1"));
@@ -578,7 +587,7 @@ mod tests {
             Arc::new(ReadyModel),
             Arc::new(FixedChunkSize(1_000_000)),
         );
-        f.sink.index("/vault/notes/note.md").await.unwrap();
+        f.sink.index(&vault_note()).await.unwrap();
         assert_eq!(f.index.last_max_tokens(), Some(chunk_tokens_for(1_000_000)));
 
         // Unreadable settings fall back to the command's default.
@@ -588,7 +597,7 @@ mod tests {
             Arc::new(ReadyModel),
             Arc::new(UnreadableSettings),
         );
-        f.sink.index("/vault/notes/note.md").await.unwrap();
+        f.sink.index(&vault_note()).await.unwrap();
         assert_eq!(f.index.last_max_tokens(), Some(DEFAULT_CHUNK_TOKENS));
     }
 }
