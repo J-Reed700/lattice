@@ -81,11 +81,12 @@ async fn export_without_activity(
         .export(&ExportLearningPackRequestDto {
             operation_id: id(),
             program_id: program.summary.id.clone(),
-            file_name: format!("provenance-{}.lattice-learning", id()),
-            include_evidence: false,
-            include_practical_artifacts: false,
-            include_source_bodies: false,
-            source_body_redistribution_confirmed: false,
+            options: LearningPackExportOptionsDto {
+                include_evidence: false,
+                include_practical_artifacts: false,
+                include_source_bodies: false,
+                source_body_redistribution_confirmed: false,
+            },
         })
         .await?;
     Ok(workspace.exports[0].destination_path.clone())
@@ -121,7 +122,11 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
-    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
     let (copy_id, _) = export_copy(&packs, &original.summary.id).await?;
     assert_ne!(copy_id, original.summary.id);
     let copy = LearningRepository::new(pool.clone()).get(&copy_id).await?;
@@ -188,7 +193,11 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
-    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
     let path = export_without_activity(&packs, &original).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&path).await?)?;
     assert!(
@@ -240,6 +249,7 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
 async fn variant(path: &str, edit: impl FnOnce(&mut LearningPackInput)) -> Result<String> {
     let decoded = decode_learning_pack(&tokio::fs::read(path).await?)?;
     let mut input = LearningPackInput {
+        schema_version: decoded.manifest.schema_version,
         pack_id: id(),
         title: decoded.manifest.title,
         created_at: decoded.manifest.created_at,
@@ -267,7 +277,11 @@ async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() ->
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
-    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
     let path = export_without_activity(&packs, &original).await?;
     for case in 0..6 {
         let changed = variant(&path, |input| {
@@ -331,7 +345,11 @@ async fn failed_provenance_backup_leaves_the_replacement_target_untouched() -> R
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
-    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
     let path = export_without_activity(&packs, &original).await?;
     sqlx::query("UPDATE learning_lesson_verifications SET content_sha256='mismatched-column' WHERE program_id=?")
         .bind(&original.summary.id).execute(&pool).await?;

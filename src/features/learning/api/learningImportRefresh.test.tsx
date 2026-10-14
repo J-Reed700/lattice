@@ -5,7 +5,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { learningAssessmentWorkspaceKey, learningCanvasKey, learningMemoryKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
-import { useApplyLearningPackImport } from '@/features/learning/portability/useLearningPortability';
+import { useImportCourse } from '@/features/learning/portability/useLearningPortability';
 import type { ApplyLearningPackImportRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 import { deferred } from '@/tests/deferred';
@@ -21,7 +21,8 @@ const request = { operationId: 'operation', previewId: 'preview', expectedRootSh
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  return { client, ...renderHook(() => useApplyLearningPackImport('course'), { wrapper }) };
+  // The apply step of the import flow, the one path that writes an imported course.
+  return { client, ...renderHook(() => useImportCourse().apply, { wrapper }) };
 }
 
 it.each([true, false])('refreshes all imported workspaces (mounted: %s) without resetting another course', async (mounted) => {

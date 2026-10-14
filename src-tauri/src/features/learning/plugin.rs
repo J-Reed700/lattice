@@ -84,6 +84,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             preview_learning_pack_import,
             apply_learning_pack_import,
             cancel_learning_pack_import_preview,
+            save_learning_pack_as,
+            export_all_learning_packs,
             preview_learning_curriculum_revision,
             accept_learning_curriculum_revision,
             discard_learning_curriculum_revision,

@@ -119,7 +119,7 @@ fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     prepared
 }
 
-async fn ready_program(repo: &LearningRepository) -> Result<LearningProgramDto> {
+pub(super) async fn ready_program(repo: &LearningRepository) -> Result<LearningProgramDto> {
     let mut p = fixture();
     repo.create(&p).await?;
     repo.accept(&AcceptLearningProgramRequestDto {

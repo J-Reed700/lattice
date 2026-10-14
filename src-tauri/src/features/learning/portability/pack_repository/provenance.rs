@@ -1,7 +1,7 @@
 //! Versioned course provenance, independent of optional learner activity.
 //! Kept out of the schema-dependent aggregate table dump. Private assessment
 //! findings remain backend-only and use the normal learner-safe projection.
-use super::{db, invalid, json_string, parse, remap};
+use super::{db, invalid, json_string, parse, remap::remap};
 use crate::features::learning::{
     content_verification::LessonVerificationReport, dto::LearningProgramDto,
     outline_draft::OutlineDraft, pack::DecodedLearningPack,

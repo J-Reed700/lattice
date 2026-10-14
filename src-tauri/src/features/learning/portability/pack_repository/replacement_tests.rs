@@ -29,16 +29,21 @@ async fn setup() -> Result<(tempfile::TempDir, SqlitePool, LearningProgramDto, S
     LearningRepository::new(pool.clone())
         .create(&program)
         .await?;
-    let packs = LearningPackRepository::new(pool.clone(), directory.path().join("learning-packs"));
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        directory.path().join("learning-packs"),
+        directory.path().to_path_buf(),
+    );
     let exported = packs
         .export(&ExportLearningPackRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: program.summary.id.clone(),
-            file_name: format!("replacement-test-{}.lattice-learning", uuid::Uuid::new_v4()),
-            include_evidence: true,
-            include_practical_artifacts: true,
-            include_source_bodies: true,
-            source_body_redistribution_confirmed: true,
+            options: LearningPackExportOptionsDto {
+                include_evidence: true,
+                include_practical_artifacts: true,
+                include_source_bodies: true,
+                source_body_redistribution_confirmed: true,
+            },
         })
         .await?;
     let preview_id = uuid::Uuid::new_v4().to_string();
@@ -58,7 +63,7 @@ async fn backup_program(backup: &BackupExportRecord) -> Result<LearningProgramDt
     let bytes = tokio::fs::read(&backup.destination_path).await?;
     let decoded = decode_learning_pack(&bytes)?;
     Ok(serde_json::from_slice(
-        &decoded.entries[super::super::PROGRAM_ENTRY],
+        &decoded.entries[crate::features::learning::pack::sections::PROGRAM_ENTRY],
     )?)
 }
 
