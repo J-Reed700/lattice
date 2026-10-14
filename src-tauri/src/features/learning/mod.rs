@@ -59,7 +59,7 @@ use lessons::lesson_drafts;
 use lessons::lesson_progress;
 use lessons::review_evidence;
 use lessons::teaching_review;
-use planning::outline_citation_check;
+use planning::outline_linking;
 use planning::outline_citations;
 use planning::outline_draft_repository;
 use planning::outline_evidence;

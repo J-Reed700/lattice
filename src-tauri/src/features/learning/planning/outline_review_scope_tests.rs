@@ -4,6 +4,7 @@ use super::outline_reference_tests::*;
 use crate::features::learning::{
     dto::*,
     lessons::course_generation_tests::{outline, request},
+    outline_linking,
     outline_draft::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueDto, LearningOutlineIssueKind,
         LearningOutlineReviewStatus, OutlineDraft, RepairLearningOutlineRequestDto,
@@ -14,7 +15,7 @@ use crate::features::learning::{
     service,
 };
 use crate::shared::error::Result;
-use serde_json::{json, Value};
+use serde_json::json;
 
 #[tokio::test]
 async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_connections(
@@ -29,7 +30,7 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     fixed["project"]["brief"] = json!("Extend the Experimental design module 0 project with a measurement protocol and observable outcomes.");
     let llm = model(vec![
         initial,
-        covers(&["/modules/1/summary"]),
+        links(&[("/modules/1/summary", ORIGINAL)]),
         issue(1),
         json!({"module":fixed}),
         verdicts(&[("finding-1", "resolved")], vec![]),
@@ -48,12 +49,19 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
     assert_eq!(review.citations_verified, 1);
-    let prompts = llm.prompts.lock().unwrap();
-    // Draft, coverage, full review, repair, incremental review. The repaired
-    // module kept its verified citation, so no second coverage call was made.
-    assert_eq!(prompts.len(), 5);
-    let full = payload(&prompts[2]);
-    let recheck = payload(&prompts[4]);
+    let prompts = calls(&llm);
+    // Draft, full review, repair, incremental review. The repaired module kept
+    // its verified citation and changed no item text, so every linking call
+    // precedes the first review and none follows the repair.
+    assert_eq!(prompts.len(), 4);
+    {
+        let all = llm.prompts.lock().unwrap();
+        let last_link = all.iter().rposition(|p| p.starts_with(outline_linking::LINK_SYSTEM)).unwrap();
+        let first_review = all.iter().position(|p| p.starts_with("Review instructional quality.")).unwrap();
+        assert!(last_link < first_review);
+    }
+    let full = payload(&prompts[1]);
+    let recheck = payload(&prompts[3]);
     assert_eq!(full["reviewScope"]["mode"], "full");
     // The reviewer never sees citation fields anywhere in the payload (source
     // passages are still supplied, so the text itself may appear there).
@@ -84,79 +92,89 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     assert!(recheck["courseSequence"][3]["summary"]
         .get("quote")
         .is_none());
-    drop(prompts);
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][1]["summary"]["quote"], quote);
     Ok(())
 }
 
 #[tokio::test]
-async fn review_receipts_invalidate_on_evidence_model_request_structure_or_protocol_changes(
+async fn review_receipts_survive_new_references_and_invalidate_on_model_request_structure_or_protocol_changes(
 ) -> Result<()> {
     let llm = model(vec![]);
     let mut initial = candidate();
     let sources = vec![original_source()];
     cite_at(&mut initial, "/modules/0/summary", 0, ORIGINAL);
     let mut draft = OutlineDraft::new(request(LearningCourseDepth::Course), initial, &sources);
-    assert!(!ReviewScope::new(&draft, &sources, &llm).incremental);
-    draft.completed_review = Some(ReviewReceipt::new(&draft, &sources, &llm));
+    assert!(!ReviewScope::new(&draft, &llm).incremental);
+    draft.completed_review = Some(ReviewReceipt::new(&draft, &llm));
     draft.candidate["modules"][1]["summary"]["text"] =
         json!("A corrected explanation of the prerequisite.");
-    assert!(ReviewScope::new(&draft, &sources, &llm).incremental);
+    assert!(ReviewScope::new(&draft, &llm).incremental);
     let roundtrip: OutlineDraft = serde_json::from_str(&serde_json::to_string(&draft)?)?;
-    assert!(ReviewScope::new(&roundtrip, &sources, &llm).incremental);
-    for variant in 0..8 {
+    assert!(ReviewScope::new(&roundtrip, &llm).incremental);
+    // References are not part of the receipt: pages gathered for one finding
+    // never reopen a module that passed. The draft's own source list growing
+    // or a citation being linked on an unchanged module changes nothing.
+    let mut with_more_references = draft.clone();
+    with_more_references.source_ids.push("gathered-later".into());
+    with_more_references.review.references_gathered += 1;
+    assert!(ReviewScope::new(&with_more_references, &llm).incremental);
+    let mut relinked = draft.clone();
+    cite_at(&mut relinked.candidate, "/modules/2/outcomes/0", 0, ORIGINAL);
+    relinked.candidate["modules"][0]["summary"]["sourceIndex"] = json!(null);
+    relinked.candidate["modules"][0]["summary"]["quote"] = json!("");
+    assert_eq!(
+        ReviewReceipt::new(&relinked, &llm),
+        ReviewReceipt::new(&draft, &llm)
+    );
+    for variant in 0..5 {
         let mut changed = draft.clone();
-        let mut evidence = sources.clone();
         match variant {
-            0 => evidence[0]
-                .excerpt
-                .push_str(" A correction to the reference."),
-            1 => evidence[0].id = "different-version".into(),
-            2 => changed
+            0 => changed
                 .request
                 .prior_knowledge
                 .push_str(" No algebra knowledge."),
-            3 => changed.request.minutes_per_session = 15,
-            4 => changed.candidate["modules"]
+            1 => changed.request.minutes_per_session = 15,
+            2 => changed.candidate["modules"]
                 .as_array_mut()
                 .unwrap()
                 .swap(0, 2),
-            5 => changed.candidate["modules"][2]["lessons"]
+            3 => changed.candidate["modules"][2]["lessons"]
                 .as_array_mut()
                 .unwrap()
                 .pop()
                 .map(|_| ())
                 .unwrap(),
-            6 => {
+            _ => {
                 let mut state = serde_json::to_value(&changed)?;
                 state["completed_review"]["context_hash"] = json!("an-earlier-review-protocol");
                 changed = serde_json::from_value(state)?;
             }
-            _ => evidence.push(original_source()),
         }
         assert!(
-            !ReviewScope::new(&changed, &evidence, &llm).incremental,
+            !ReviewScope::new(&changed, &llm).incremental,
             "variant {variant} must invalidate prior checks"
         );
     }
     assert!(
-        !ReviewScope::new(&draft, &sources, &outline(4, 3)).incremental,
+        !ReviewScope::new(&draft, &outline(4, 3)).incremental,
         "Changing the reviewer must invalidate previous checks"
     );
+    // Only the code-generated References finding names no module; it needs
+    // the whole course.
     draft.review.issues.push(LearningOutlineIssueDto {
-        id: "finding-9".into(),
+        id: "references".into(),
         path: String::new(),
-        kind: LearningOutlineIssueKind::Plan,
-        claim: "Course-wide contradiction".into(),
-        message: "Revisit the whole course sequence.".into(),
+        kind: LearningOutlineIssueKind::References,
+        claim: String::new(),
+        message: "No references could be gathered.".into(),
         attempts: 0,
-        exhausted: false,
+        exhausted: true,
         quote: String::new(),
         source_id: None,
         searched: vec![],
     });
-    assert!(!ReviewScope::new(&draft, &sources, &llm).incremental);
+    assert!(!ReviewScope::new(&draft, &llm).incremental);
     Ok(())
 }
 
@@ -171,11 +189,14 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     let mut fixed = initial["modules"][1].clone();
     fixed["summary"]["text"] =
         json!("Use the earlier experiment protocol to compare observable outcomes.");
+    // The rewrite changes the summary text, so that one item is linked again
+    // after the repair (nothing qualifies) before the review that fails.
     let llm = model(vec![
         initial,
-        covers(&["/modules/0/summary"]),
+        links(&[("/modules/0/summary", ORIGINAL)]),
         issue(1),
         json!({"module":fixed}),
+        no_links(),
         json!({"invalid":"unfinished review"}),
     ]);
     let drafts = DraftRunRegistry::new();
@@ -204,7 +225,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     .await
     .is_err());
     let reopened = LearningRepository::new(pool);
-    // The resumed check reuses the coverage receipt and the module receipts:
+    // The resumed check reuses the link receipts and the module receipts:
     // one incremental review call, nothing else.
     let llm = model(vec![verdicts(&[("finding-1", "resolved")], vec![])]);
     let result = repair_saved(
@@ -237,7 +258,8 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
 }
 
 #[tokio::test]
-async fn incremental_review_reports_cross_module_effects_course_wide() -> Result<()> {
+async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must_change(
+) -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let mut initial = candidate();
     let sources = vec![original_source()];
@@ -245,29 +267,25 @@ async fn incremental_review_reports_cross_module_effects_course_wide() -> Result
     let mut fixed = initial["modules"][1].clone();
     fixed["project"]["brief"] =
         json!("Revise the experiment to use an observational measurement protocol.");
-    // On the incremental pass only module 1 and the course as a whole are
-    // allowed paths, so the effect on the final project is a course-wide
-    // finding. Every module is then put to a rewrite; each comes back
+    // On the incremental pass only module 1 is an allowed path: there is no
+    // course-wide path, so the effect on the final project is reported at the
+    // edited module. Only that module is put to a rewrite; it comes back
     // unchanged, so the loop stops with the finding kept for the user.
-    let unchanged: Vec<Value> = (0..4)
-        .map(|i| json!({"module":if i == 1 { &fixed } else { &initial["modules"][i] }}))
-        .collect();
-    let mut outputs = vec![
+    let llm = model(vec![
         initial.clone(),
-        covers(&["/modules/0/summary"]),
+        links(&[("/modules/0/summary", ORIGINAL)]),
         issue(1),
         json!({"module":fixed}),
         verdicts(
             &[("finding-1", "resolved")],
             vec![plan_finding(
-                "",
-                "Interpret results and explain uncertainty.",
-                "The changed earlier project no longer supplies the randomized comparison needed by the final project. Correct that dependency.",
+                "/modules/1",
+                "Experimental design module 1",
+                "The changed project no longer supplies the randomized comparison the final project needs. Restore that dependency here.",
             )],
         ),
-    ];
-    outputs.extend(unchanged);
-    let llm = model(outputs);
+        json!({"module":fixed}),
+    ]);
     let drafts = DraftRunRegistry::new();
     let program = service::generate_with_references(
         &repo,
@@ -281,14 +299,17 @@ async fn incremental_review_reports_cross_module_effects_course_wide() -> Result
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair);
     assert_eq!(review.issues.len(), 1);
-    assert_eq!(review.issues[0].path, "");
+    assert_eq!(review.issues[0].path, "/modules/1");
     assert_eq!(review.issues[0].id, "finding-2");
     assert_eq!(review.issues[0].attempts, 1);
     assert!(review.note.contains("no usable correction"));
-    let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 9);
-    let recheck = payload(&prompts[4]);
+    let prompts = calls(&llm);
+    // Draft, full review, repair, incremental review, one repair: no other
+    // module is rewritten for a problem anchored to module 1.
+    assert_eq!(prompts.len(), 5);
+    let recheck = payload(&prompts[3]);
     assert_eq!(recheck["openFindings"][0]["id"], "finding-1");
     assert_eq!(recheck["openFindings"][0]["attempts"], 1);
+    assert_eq!(payload(&prompts[4])["moduleIndex"], 1);
     Ok(())
 }

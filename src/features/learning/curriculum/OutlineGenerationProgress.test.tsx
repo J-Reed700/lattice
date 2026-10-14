@@ -32,13 +32,13 @@ describe('outline progress', () => {
     expect(screen.queryByText(/Waiting for the model/)).not.toBeInTheDocument();
   });
 
-  it('shows gathering and citation-check progress within a stage', () => {
+  it('shows gathering and evidence-linking progress within a stage', () => {
     const view = render(<OutlineGenerationProgress progress={{ ...progress, stage: 'gathering_references', detail: 'Subtopic 3 of 8: searching for Window functions' }} deepDive />);
     expect(screen.getByRole('status')).toHaveTextContent('Gathering references');
     expect(screen.getByLabelText('Stage progress')).toHaveTextContent('Subtopic 3 of 8');
-    view.rerender(<OutlineGenerationProgress progress={{ ...progress, stage: 'checking_citations', detail: 'Checked 8 of 23 citations' }} deepDive />);
-    expect(screen.getByRole('status')).toHaveTextContent('Checking citations');
-    expect(screen.getByLabelText('Stage progress')).toHaveTextContent('Checked 8 of 23 citations');
+    view.rerender(<OutlineGenerationProgress progress={{ ...progress, stage: 'checking_citations', detail: 'Linked 5 outline items; 8 of 23 decided' }} deepDive />);
+    expect(screen.getByRole('status')).toHaveTextContent('Linking references');
+    expect(screen.getByLabelText('Stage progress')).toHaveTextContent('Linked 5 outline items; 8 of 23 decided');
     view.rerender(<OutlineGenerationProgress progress={{ ...progress, stage: 'drafting', detail: null }} deepDive />);
     expect(screen.queryByLabelText('Stage progress')).not.toBeInTheDocument();
   });

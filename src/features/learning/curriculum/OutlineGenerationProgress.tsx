@@ -9,7 +9,7 @@ const stages: Record<OutlineStage, { step: number; title: string; detail: string
   loading_model: { step: 0, title: 'Getting the model ready', detail: 'Connecting to your selected model before writing starts.' },
   gathering_references: { step: 0, title: 'Gathering references', detail: 'Planning the subtopics and saving reference pages before writing the outline.' },
   drafting: { step: 1, title: 'Writing your course outline', detail: 'Planning the modules, lesson objectives, prerequisites, and project milestones.' },
-  checking_citations: { step: 2, title: 'Checking citations', detail: 'Matching each quoted passage to its saved reference and checking that it addresses the item it is attached to.' },
+  checking_citations: { step: 2, title: 'Linking references', detail: 'Finding the saved passage that addresses each outline item. The model chooses among retrieved candidates or none; the quoted words are copied from the saved page.' },
   reviewing: { step: 2, title: 'Reviewing the teaching plan', detail: 'Checking the draft for gaps, prerequisite order, and realistic lesson workloads.' },
   researching: { step: 2, title: 'Researching an unresolved finding', detail: 'Searching for evidence on a specific finding and saving the pages before continuing review and repair.' },
   repairing: { step: 2, title: 'Revising the course outline', detail: 'Correcting affected modules and saving each edit before checking it again.' },

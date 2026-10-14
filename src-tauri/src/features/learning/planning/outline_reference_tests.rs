@@ -10,6 +10,7 @@ use crate::features::learning::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueKind, LearningOutlineReviewStatus,
         RepairLearningOutlineRequestDto,
     },
+    outline_linking,
     outline_progress::{OutlineProgress, OutlineRunRegistry, OutlineStage},
     outline_references::{self, PlannedSubtopic, ReferencePlan},
     repository::LearningRepository,
@@ -194,8 +195,37 @@ pub(super) fn plan_output(subtopics: &[(&str, &[&str])]) -> Value {
 pub(super) fn select_all(count: usize) -> Value {
     json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":true,"reason":"A primary reference for this subtopic."})).collect::<Vec<_>>()})
 }
-pub(super) fn covers(ids: &[&str]) -> Value {
-    json!({"decisions":ids.iter().map(|id| json!({"id":id,"covers":true,"reason":"The passage addresses this item."})).collect::<Vec<_>>()})
+/// The evidence-linking replies for one run: each listed item path gets the
+/// candidate whose passage is (or contains) the given text, every other item
+/// `none`. The replies are built from the prompts, so a test does not depend
+/// on how many batches retrieval produced.
+pub(super) fn links(picks: &[(&str, &str)]) -> Value {
+    json!({"@links":picks.iter().map(|(path, quote)| (path.to_string(), json!(quote))).collect::<serde_json::Map<_, _>>()})
+}
+/// An evidence-linking run that links nothing.
+pub(super) fn no_links() -> Value {
+    links(&[])
+}
+/// The model's prompts other than evidence-linking batches, whose number
+/// depends on retrieval rather than on the protocol under test.
+pub(super) fn calls(llm: &ScriptedModel) -> Vec<String> {
+    llm.prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| !p.starts_with(outline_linking::LINK_SYSTEM))
+        .cloned()
+        .collect()
+}
+/// The evidence-linking prompts, in order.
+pub(super) fn linking_prompts(llm: &ScriptedModel) -> Vec<String> {
+    llm.prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.starts_with(outline_linking::LINK_SYSTEM))
+        .cloned()
+        .collect()
 }
 pub(super) fn original_source() -> LearningSourceDto {
     LearningSourceDto {
@@ -412,6 +442,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
         select_all(1),
         candidate(),
+        no_links(),
         clean(),
     ]);
     let stages = Arc::new(Mutex::new(vec![]));
@@ -447,7 +478,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].excerpt, full.trim());
     assert!(!saved[0].excerpt.contains("SEARCH_SNIPPET"));
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = calls(&llm);
     assert_eq!(prompts.len(), 4);
     // The plan runs first, the draft retrieves by subtopic and sees the deep passage.
     assert!(prompts[0].starts_with("Plan the reference material"));
@@ -455,7 +486,12 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert_eq!(draft_context["sourceCatalog"]["totalSources"], 1);
     assert!(prompts[2].contains(deep));
     assert!(!prompts[2].contains("name the sourceIndex of the passage that supports it"));
-    assert!(prompts[2].contains("most plan items need no citation"));
+    assert!(prompts[2].contains("Where a passage directly addresses the specific topic or skill"));
+    assert!(!prompts[2].contains("most plan items need no citation"));
+    // Linking offered the saved page's own text as candidates and reported
+    // the outcome in the note.
+    assert!(!linking_prompts(&llm).is_empty());
+    assert!(review.note.contains("of 24 outline items linked to references"));
     let stages = stages.lock().unwrap();
     let position = |stage: OutlineStage| stages.iter().position(|s| *s == stage).unwrap();
     assert!(position(OutlineStage::GatheringReferences) < position(OutlineStage::Drafting));
@@ -506,10 +542,11 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     )
     .await
     .is_err());
-    // Repair reuses the saved plan: no new planning call, one selection, then
-    // the review passes and the finding is gone.
+    // Repair reuses the saved plan: no new planning call, one selection. The
+    // modules were already reviewed and references are not part of that
+    // receipt, so the finding is gone without another review call.
     let online = ResearchWeb::new(&[ADDITIONAL]);
-    let llm = model(vec![select_all(1), clean()]);
+    let llm = model(vec![select_all(1)]);
     let repaired = repair_saved(
         &repo,
         &drafts,
@@ -531,7 +568,7 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
         online.queries.lock().unwrap().as_slice(),
         ["random assignment confounding"]
     );
-    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1);
     service::accept(
         &repo,
         &drafts,
@@ -553,6 +590,7 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
         select_all(1),
         candidate(),
+        no_links(),
         clean(),
     ]);
     let program = generate_online(&repo, &llm, &web, vec![original_source()]).await?;
@@ -563,7 +601,7 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
     assert_eq!(program.sources.len(), 2);
     assert_eq!(program.sources[0].excerpt, ORIGINAL);
     assert_eq!(program.sources[1].excerpt, ADDITIONAL);
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = calls(&llm);
     let plan = payload(&prompts[0]);
     assert_eq!(plan["existingSources"]["totalSources"], 1);
     assert!(plan["existingSources"]
@@ -599,7 +637,7 @@ async fn offline_topic_drafts_still_pass_without_a_references_finding() -> Resul
 }
 
 #[tokio::test]
-async fn typography_only_mismatches_are_restored_before_coverage_is_judged() -> Result<()> {
+async fn typography_only_mismatches_are_restored_before_the_author_citation_is_offered() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let exact = "The cell’s response changes when experimental conditions differ.";
     let mut source = original_source();
@@ -611,11 +649,7 @@ async fn typography_only_mismatches_are_restored_before_coverage_is_judged() -> 
         0,
         &exact.replace('’', "'"),
     );
-    let llm = model(vec![
-        initial,
-        covers(&["/modules/0/summary"]),
-        clean(),
-    ]);
+    let llm = model(vec![initial, links(&[("/modules/0/summary", exact)]), clean()]);
     let sources = vec![source];
     let drafts = DraftRunRegistry::new();
     let program = service::generate_with_references(
@@ -632,14 +666,14 @@ async fn typography_only_mismatches_are_restored_before_coverage_is_judged() -> 
     assert_eq!(review.citations_verified, 1);
     assert_eq!(review.citations_removed, 0);
     assert_eq!(review.repair_passes, 0);
-    let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 3);
-    assert!(payload(&prompts[1])["items"][0]["passage"]
-        .as_str()
-        .unwrap()
-        .contains('’'));
+    assert_eq!(calls(&llm).len(), 2);
+    // The chooser is offered the source's own typography, never the author's.
+    let offered = linking_prompts(&llm);
+    assert!(!offered.is_empty());
+    assert!(offered.iter().all(|p| !payload(p)["passages"].to_string().contains("cell's")));
+    assert!(offered.iter().any(|p| payload(p)["passages"].to_string().contains("cell’s")));
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], exact);
-    assert_eq!(saved.citation_receipts.len(), 1);
+    assert_eq!(saved.citation_receipts.values().filter(|r| r.covers).count(), 1);
     Ok(())
 }

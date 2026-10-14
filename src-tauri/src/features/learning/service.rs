@@ -149,11 +149,11 @@ pub async fn generate_with_references_and_progress(
     .await?;
     // The author's citations are provisional. Restore typography and drop any
     // quote that does not match its source before the outline is decoded; a
-    // bad quote costs the citation, never the draft. Coverage is judged in
+    // bad quote costs the citation, never the draft. Evidence is linked in
     // `finish`, once the program row exists to hold the receipts.
     let mut candidate: serde_json::Value = super::generation::parse_json(&raw)?;
     super::outline_citations::restore_source_quotes(&mut candidate, &authoring_sources);
-    let removed = super::outline_citation_check::strip_unmatched(
+    let removed = super::outline_linking::strip_unmatched(
         &mut candidate,
         &authoring_sources,
         None,

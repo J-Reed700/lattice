@@ -3,7 +3,7 @@
 pub mod curriculum;
 pub mod curriculum_repository;
 pub mod diagnostic_generation;
-pub(crate) mod outline_citation_check;
+pub(crate) mod outline_linking;
 pub(crate) mod outline_citations;
 pub mod outline_draft;
 pub(crate) mod outline_draft_repository;

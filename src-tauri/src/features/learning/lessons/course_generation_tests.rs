@@ -499,12 +499,73 @@ impl ScriptedModel {
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
             .push(prompt.into());
-        self.outputs
+        let mut outputs = self
+            .outputs
             .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?
-            .pop_front()
-            .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?;
+        let linking =
+            prompt.starts_with(crate::features::learning::outline_linking::LINK_SYSTEM);
+        // A links sentinel answers every linking batch of one run and is spent
+        // when a call of another kind arrives.
+        if !linking {
+            while outputs
+                .front()
+                .is_some_and(|output| output.starts_with(LINKS_SENTINEL))
+            {
+                outputs.pop_front();
+            }
+        }
+        let front = outputs
+            .front()
+            .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))?;
+        if linking && front.starts_with(LINKS_SENTINEL) {
+            return Ok(link_reply(prompt, front));
+        }
+        Ok(outputs.pop_front().unwrap_or_default())
     }
+}
+
+/// Prefix of a scripted evidence-linking reply. How many batches a run makes
+/// and which items each holds depend on retrieval, so the reply is built from
+/// the prompt: the sentinel maps item paths to the passage text to choose and
+/// every other item gets `none`.
+pub(in crate::features::learning) const LINKS_SENTINEL: &str = "{\"@links\":";
+
+fn link_reply(prompt: &str, sentinel: &str) -> String {
+    let picks: serde_json::Value = serde_json::from_str(sentinel).expect("links sentinel");
+    let payload: serde_json::Value =
+        serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}")).expect("link prompt");
+    let passages = payload["passages"].as_array().cloned().unwrap_or_default();
+    let text_of = |id: &str| {
+        passages
+            .iter()
+            .find(|p| p["id"] == id)
+            .and_then(|p| p["passage"].as_str())
+            .unwrap_or_default()
+    };
+    let links: Vec<_> = payload["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let id = item["id"].as_str().unwrap_or_default();
+            let candidates: Vec<&str> = item["candidates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.as_str())
+                .collect();
+            let chosen = picks["@links"][id].as_str().and_then(|wanted| {
+                candidates
+                    .iter()
+                    .find(|c| text_of(c) == wanted)
+                    .or_else(|| candidates.iter().find(|c| text_of(c).contains(wanted)))
+                    .copied()
+            });
+            json!({"id":id,"candidate":chosen.unwrap_or("none"),"reason":if chosen.is_some() {"The passage addresses this item."} else {"No candidate addresses this item."}})
+        })
+        .collect();
+    json!({"links":links}).to_string()
 }
 
 #[tokio::test]
@@ -1185,11 +1246,13 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         captured,
     };
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    // Linking keeps the author's exact citation (offered as a candidate) and
+    // links nothing else.
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"decisions":[{"id":"/modules/0/outcomes/0","covers":true,"reason":"The passage addresses the comparison outcome."}]}).to_string(),
+                json!({"@links":{"/modules/0/outcomes/0":quote}}).to_string(),
                 json!({"newFindings":[]}).to_string(),
             ]
             .into(),
@@ -1208,24 +1271,29 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         std::slice::from_ref(&reference),
     )
     .await?;
-    let prompts = model.prompts.lock().unwrap();
+    let all = model.prompts.lock().unwrap();
+    let (linking, prompts): (Vec<&String>, Vec<&String>) = all.iter().partition(|p| {
+        p.starts_with(crate::features::learning::outline_linking::LINK_SYSTEM)
+    });
     // Authoring retrieves from the complete capture, not the 2,400-char preview.
     assert!(prompts[0].contains(quote));
-    assert_eq!(prompts.len(), 3);
-    // Only the exact-match citation reaches the coverage judge.
-    assert!(prompts[1].contains("/modules/0/outcomes/0"));
-    assert!(!prompts[1].contains("/modules/0/summary"));
+    assert_eq!(prompts.len(), 2);
+    // Only the exact-match citation is offered to the chooser; the inexact
+    // one was removed by code and never becomes a passage.
+    assert!(!linking.is_empty());
+    assert!(linking.iter().any(|p| p.contains(quote)));
+    assert!(!linking.iter().any(|p| p.contains("does not isolate")));
     // The reviewer sees no citation fields on items and no quote findings.
     let review_context: serde_json::Value =
-        serde_json::from_str(prompts[2].rsplit("\n\n").next().unwrap())?;
+        serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;
     assert!(review_context["candidate"]["modules"][0]["summary"]
         .get("sourceIndex")
         .is_none());
     assert!(review_context["candidate"]["modules"][0]["outcomes"][0]
         .get("quote")
         .is_none());
-    assert!(!prompts[2].contains("could not be matched"));
-    drop(prompts);
+    assert!(!prompts[1].contains("could not be matched"));
+    drop(all);
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(
         review.status,
@@ -1246,7 +1314,8 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
     );
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], "");
     assert_eq!(saved.candidate["modules"][0]["outcomes"][0]["quote"], quote);
-    assert_eq!(saved.citation_receipts.len(), 1);
+    assert_eq!(saved.citation_receipts.values().filter(|r| r.covers).count(), 1);
+    assert!(review.note.contains("1 of 24 outline items linked to references"));
     service::accept(
         &repo,
         &drafts,

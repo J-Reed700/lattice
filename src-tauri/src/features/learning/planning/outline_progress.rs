@@ -37,7 +37,7 @@ pub struct LearningOutlineProgressDto {
     pub program_id: Option<String>,
     pub stage: OutlineStage,
     /// Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
-    /// dive's gathering and citation checks are never a silent spinner.
+    /// dive's gathering and evidence linking are never a silent spinner.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub elapsed_seconds: u32,

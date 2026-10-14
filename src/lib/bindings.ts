@@ -6540,16 +6540,18 @@ export type LearningOutlineIssueKind =
 export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage;
 /**
  * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
- * dive's gathering and citation checks are never a silent spinner.
+ * dive's gathering and evidence linking are never a silent spinner.
  */
 detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
 /**
- * Citations in the saved candidate that passed exact match and coverage.
+ * Outline items whose citation is verified: chosen by evidence linking or
+ * attached by a supported factual repair.
  */
 citationsVerified: number;
 /**
- * Citations removed in this operation because they did not match or cover.
+ * Author citations removed in this operation because they did not match
+ * their source exactly or evidence linking did not choose them.
  */
 citationsRemoved: number;
 /**

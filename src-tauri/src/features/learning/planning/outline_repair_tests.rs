@@ -11,6 +11,7 @@ use crate::features::learning::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueKind, LearningOutlineReviewStatus,
         RepairLearningOutlineRequestDto,
     },
+    outline_linking,
     outline_progress::OutlineProgress,
     outline_repair::{CORRECT, NARROW, PLAN_SMALLEST, REMOVE},
     repository::LearningRepository,
@@ -60,8 +61,12 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
     let sources = vec![source.clone()];
+    // Linking declines the summary's candidate; the factual repair then
+    // attaches the passage the strict judge supports. The module's reviewed
+    // text is unchanged by that citation, so no further review call is made.
     let llm = model(vec![
         with_summary(ADDITIONAL),
+        no_links(),
         findings(vec![factual_finding(
             "/modules/0/summary",
             ADDITIONAL,
@@ -69,7 +74,6 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
         )]),
         judged("supported", Some(0)),
         no_questions(),
-        clean(),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -77,20 +81,19 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
     assert_eq!(review.repair_passes, 1);
     assert_eq!(review.citations_verified, 1);
     assert!(review.issues.is_empty());
-    let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 5);
+    assert!(review.note.contains("1 of 24 outline items linked"));
+    let prompts = calls(&llm);
+    assert_eq!(prompts.len(), 4);
     assert!(prompts[2].starts_with("Source passages:"));
     assert!(prompts[2].contains(&format!("Claim: {ADDITIONAL}")));
     assert!(prompts[3].starts_with("Plan independent evidence searches"));
     assert!(!prompts
         .iter()
         .any(|p| p.starts_with("Repair a saved curriculum module")));
-    assert_eq!(payload(&prompts[4])["verifiedAssertions"], json!([ADDITIONAL]));
-    drop(prompts);
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][0]["summary"]["sourceIndex"], 0);
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], ADDITIONAL);
-    assert_eq!(saved.citation_receipts.len(), 1);
+    assert_eq!(saved.citation_receipts.values().filter(|r| r.covers).count(), 1);
     let receipt = saved.claim_receipts.values().next().unwrap();
     assert_eq!(receipt.verdict, ClaimVerdict::Supported);
     assert_eq!(receipt.claim, ADDITIONAL);
@@ -108,8 +111,11 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
     source.excerpt = ADDITIONAL.into();
     let sources = vec![source.clone()];
     let initial = with_summary(wrong);
+    // The corrected summary is new text, so it is offered for linking again
+    // after the rewrite; nothing is chosen either time.
     let llm = model(vec![
         initial.clone(),
+        no_links(),
         findings(vec![factual_finding(
             "/modules/0/summary",
             wrong,
@@ -117,13 +123,14 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
         )]),
         judged("contradicted", Some(0)),
         module_with_summary(&initial, ADDITIONAL),
+        no_links(),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
     assert!(review.issues.is_empty());
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = calls(&llm);
     assert_eq!(prompts.len(), 5);
     assert!(prompts[3].starts_with("Repair a saved curriculum module"));
     let repair = payload(&prompts[3]);
@@ -135,7 +142,6 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
         .as_str()
         .unwrap()
         .starts_with("Contradicted by a saved reference"));
-    drop(prompts);
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     let receipt = saved.claim_receipts.values().next().unwrap();
     assert_eq!(receipt.verdict, ClaimVerdict::Contradicted);
@@ -157,6 +163,7 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
     let removed = "Random assignment isolates the intervention in a comparison.";
     let llm = model(vec![
         initial.clone(),
+        no_links(),
         findings(vec![factual_finding(
             "/modules/0/summary",
             claim,
@@ -164,8 +171,10 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
         )]),
         judged("unsupported", None),
         module_with_summary(&initial, narrowed),
+        no_links(),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The summary still overstates what random assignment guarantees."}],"newFindings":[]}),
         module_with_summary(&initial, removed),
+        no_links(),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The summary still presents the guarantee as a fact."}],"newFindings":[]}),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
@@ -182,7 +191,7 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
     assert!(review
         .note
         .contains("was not supported by the saved references"));
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[2].starts_with("Source passages:"));
     assert_eq!(payload(&prompts[3])["findings"][0]["instruction"], NARROW);
@@ -257,6 +266,7 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
     fixed["summary"]["quote"] = json!(ORIGINAL);
     let llm = model(vec![
         initial,
+        no_links(),
         issue(0),
         json!({"module":fixed}),
         verdicts(&[("finding-1", "resolved")], vec![]),
@@ -265,9 +275,17 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
     assert_eq!(review.citations_verified, 0);
-    // No coverage judgment was needed: the citation never reached the check.
-    assert_eq!(llm.prompts.lock().unwrap().len(), 4);
-    assert_eq!(payload(&llm.prompts.lock().unwrap()[2])["findings"][0]["kind"], "plan");
+    let prompts = calls(&llm);
+    assert_eq!(prompts.len(), 4);
+    assert_eq!(payload(&prompts[2])["findings"][0]["kind"], "plan");
+    // The rewrite changed no item text, so no item was offered for linking
+    // again: every linking call precedes the first review.
+    {
+        let all = llm.prompts.lock().unwrap();
+        let last_link = all.iter().rposition(|p| p.starts_with(outline_linking::LINK_SYSTEM)).unwrap();
+        let first_review = all.iter().position(|p| p.starts_with("Review instructional quality.")).unwrap();
+        assert!(last_link < first_review);
+    }
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][0]["summary"]["sourceIndex"], Value::Null);
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], "");
@@ -275,7 +293,7 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
         .as_str()
         .unwrap()
         .starts_with("Measure the comparison"));
-    assert!(saved.citation_receipts.is_empty());
+    assert!(saved.citation_receipts.values().all(|r| !r.covers));
     Ok(())
 }
 
@@ -324,6 +342,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let llm = model(vec![
         plan_output(&[("Random assignment", &[])]),
         initial.clone(),
+        no_links(),
         findings(vec![factual_finding("/modules/0/summary", claim, reason)]),
         json!({"queries":["random assignment confounding primary source"]}),
         select_all(1),
@@ -354,7 +373,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     );
     assert_eq!(review.references_gathered, 1);
     assert_eq!(saved.sources.len(), 2);
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[3].starts_with("Plan focused reference searches"));
     let planned = payload(&prompts[3]);
@@ -368,25 +387,29 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     // The judge saw the page captured a moment earlier, never a snippet.
     assert!(prompts[5].starts_with("Source passages:"));
     assert!(!prompts[5].contains("SEARCH_SNIPPET"));
-    drop(prompts);
     assert_eq!(
         irrelevant.queries.lock().unwrap().as_slice(),
         ["random assignment confounding primary source"]
     );
     // Repair: attempts start afresh, the planner is told what was searched,
     // the new page supports the claim and the finding closes with evidence.
+    // The page gathered in the first run offers new candidates, so linking
+    // runs again first; the module receipts still hold because references
+    // are not part of them, so the review stays incremental. Evidence closes
+    // the finding in code, the module text is unchanged, so the receipt
+    // still matches and no further review call is made.
     let relevant = ResearchWeb::with_pages(vec![Page {
         url: "https://example.org/primary-source".into(),
         text: format!("{claim} This holds because treatment and control differ only by chance."),
         truncated: false,
     }]);
     let llm = model(vec![
+        no_links(),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The summary still asserts the guarantee without support."}],"newFindings":[]}),
         json!({"queries":["random assignment confounding textbook"]}),
         select_all(1),
         judged("supported", Some(0)),
         no_questions(),
-        clean(),
     ]);
     let repaired = repair_saved(
         &repo,
@@ -404,9 +427,11 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
     assert!(review.issues.is_empty());
     assert_eq!(repaired.sources.len(), 3);
-    let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 6);
+    let prompts = calls(&llm);
+    assert_eq!(prompts.len(), 5);
     assert_eq!(payload(&prompts[0])["openFindings"][0]["attempts"], 0);
+    assert_eq!(payload(&prompts[0])["reviewScope"]["mode"], "changed_modules");
+    assert_eq!(payload(&prompts[0])["reviewScope"]["moduleIndices"], json!([0]));
     assert_eq!(
         payload(&prompts[1])["alreadySearched"],
         json!(["random assignment confounding primary source"])
@@ -415,7 +440,6 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         relevant.queries.lock().unwrap().as_slice(),
         ["random assignment confounding textbook"]
     );
-    drop(prompts);
     let draft = repo.outline_draft(&repaired.summary.id).await?.unwrap();
     assert_eq!(
         draft.research_log["finding-1"],

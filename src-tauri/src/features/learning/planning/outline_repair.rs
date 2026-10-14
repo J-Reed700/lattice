@@ -1,11 +1,11 @@
 //! Repair by finding kind. A factual finding gets targeted research and a
 //! strict entailment judgment: what the evidence supports is closed by code,
 //! what it contradicts or leaves unsupported is rewritten. A plan finding is
-//! rewritten. Repair never adds a citation of its own: the citation check
-//! strips what fails, and a rewrite keeps or drops what it was given.
+//! rewritten. Repair never adds a citation of its own: a rewrite keeps or
+//! drops what it was given, and evidence linking then runs on that module.
 use crate::application::services::claim_verification::{ClaimJudgment, ClaimVerdict, JudgeOutcome};
 use crate::features::learning::lessons::content_verification::judge_for_publication;
-use crate::features::learning::outline_citation_check::{
+use crate::features::learning::outline_linking::{
     self, CitationReceipt, CitationReceipts, ItemKind,
 };
 use crate::features::learning::outline_references::{
@@ -94,7 +94,7 @@ fn claim_key(model: &str, claim: &str, passages: &[ReferencePassage]) -> String 
 
 /// A span of the located passage short enough to cite: the passage itself
 /// when it fits, else the retrieved chunk the verification window was built
-/// around. The source's own text is the match target, as in the citation check.
+/// around. The source's own text is the match target, as in evidence linking.
 fn citable_span(
     passage: &ReferencePassage,
     base: &[ReferencePassage],
@@ -172,12 +172,12 @@ fn attach(
         .ok_or_else(|| AppError::InternalError("Evidence names an unavailable item.".into()))?;
     field.insert("sourceIndex".into(), json!(index));
     field.insert("quote".into(), json!(quote));
-    let hash = outline_citation_check::source_hashes(sources)
+    let hash = outline_linking::source_hashes(sources)
         .into_iter()
         .nth(index)
         .unwrap_or_default();
     draft.citation_receipts.insert(
-        outline_citation_check::receipt_key(model, kind, &text, &hash, quote),
+        outline_linking::receipt_key(model, kind, &text, &hash, quote),
         CitationReceipt {
             covers: true,
             reason: "The passage entails the assertion (strict claim check during repair).".into(),
@@ -360,7 +360,7 @@ async fn resolve_factual(
             if let Some((source_id, quote)) = &evidence {
                 attach(draft, sources, llm.model_name(), &issue.path, source_id, quote)?;
                 draft.review.citations_verified =
-                    outline_citation_check::cited_count(&draft.candidate);
+                    outline_linking::cited_count(&draft.candidate);
             }
             draft.review.issues.retain(|open| open.id != id);
             progress.detail(format!(
@@ -422,8 +422,8 @@ fn preserve_identities(
 
 // A module rewrite can drop or mangle a verified citation on an item it did
 // not change. Put that citation back when the item text is unchanged and the
-// old citation holds a coverage receipt. A changed item never inherits one,
-// and an unverified old citation is never restored.
+// old citation holds a link receipt. A changed item never inherits one, and
+// an unverified old citation is never restored.
 fn preserve_valid_citations(
     before: &Value,
     after: &mut Value,
@@ -431,7 +431,7 @@ fn preserve_valid_citations(
     receipts: &CitationReceipts,
     model: &str,
 ) {
-    let hashes = outline_citation_check::source_hashes(sources);
+    let hashes = outline_linking::source_hashes(sources);
     let preserve = |kind: ItemKind, before: &Value, after: &mut Value| {
         let claim = |field: &Value| {
             field
@@ -441,8 +441,8 @@ fn preserve_valid_citations(
         };
         if claim(before).is_none()
             || claim(before) != claim(after)
-            || !outline_citation_check::is_verified(receipts, model, kind, before, sources, &hashes)
-            || outline_citation_check::is_verified(receipts, model, kind, after, sources, &hashes)
+            || !outline_linking::is_verified(receipts, model, kind, before, sources, &hashes)
+            || outline_linking::is_verified(receipts, model, kind, after, sources, &hashes)
         {
             return;
         }
@@ -575,7 +575,7 @@ async fn rewrite_module(
     // What the rewrite kept is provisional: restore typography, drop what
     // does not match, then decode what remains under the same rule.
     crate::features::learning::outline_citations::restore_source_quotes(&mut candidate, sources);
-    outline_citation_check::strip_unmatched(&mut candidate, sources, Some(index));
+    outline_linking::strip_unmatched(&mut candidate, sources, Some(index));
     if candidate == draft.candidate {
         return Ok(false);
     }
@@ -583,7 +583,7 @@ async fn rewrite_module(
     let modules = preserve_identities(modules, &program.modules)?;
     draft.candidate = candidate;
     program.modules = modules;
-    let log = outline_citation_check::check(llm, draft, sources, Some(index), progress).await?;
+    let log = outline_linking::link(llm, draft, sources, Some(index), progress).await?;
     draft.record_citations(log);
     draft.review.status = LearningOutlineReviewStatus::Unchecked;
     draft.review.note = format!(
@@ -646,7 +646,7 @@ pub(in crate::features::learning) async fn repair(
         }
     }
     // Step 2: module rewrites for plan findings and the factual findings the
-    // evidence did not settle. A course-wide finding is put to every module.
+    // evidence did not settle. Every finding names the module it belongs to.
     let module_count = draft
         .candidate
         .get("modules")
@@ -662,9 +662,7 @@ pub(in crate::features::learning) async fn repair(
             .iter()
             .filter(|issue| issue.kind != LearningOutlineIssueKind::References && !issue.exhausted)
             .filter(|issue| {
-                issue.path.is_empty()
-                    || issue.path == path
-                    || issue.path.starts_with(&format!("{path}/"))
+                issue.path == path || issue.path.starts_with(&format!("{path}/"))
             })
             .filter(|issue| {
                 issue.kind == LearningOutlineIssueKind::Plan || instructions.contains_key(&issue.id)
@@ -712,7 +710,7 @@ pub(in crate::features::learning) async fn repair(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::learning::outline_citation_check::receipt_key;
+    use crate::features::learning::outline_linking::receipt_key;
 
     #[test]
     fn citation_regressions_are_reverted_only_for_unchanged_claims_with_receipted_evidence() {
@@ -725,7 +723,7 @@ mod tests {
             acquired_at: 0,
         };
         let sources = std::slice::from_ref(&source);
-        let hash = &outline_citation_check::source_hashes(sources)[0];
+        let hash = &outline_linking::source_hashes(sources)[0];
         let model = "test";
         let receipt = |kind: ItemKind, text: &str| {
             (

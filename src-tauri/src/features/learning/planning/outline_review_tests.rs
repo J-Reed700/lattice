@@ -61,8 +61,8 @@ async fn every_open_finding_needs_a_verdict_or_the_review_is_rejected() -> Resul
 async fn new_findings_outside_the_reviewed_modules_are_rejected() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let initial = candidate();
-    // Module 0 changed; the incremental pass may report on module 0 or the
-    // course as a whole, never on an unchanged module.
+    // Module 0 changed; the incremental pass may report on module 0 only,
+    // never on an unchanged module.
     let llm = model(vec![
         initial.clone(),
         issue(0),
@@ -214,47 +214,54 @@ async fn a_passed_draft_is_repaired_without_a_review_call() -> Result<()> {
 }
 
 #[tokio::test]
-async fn factual_findings_on_plan_items_or_the_whole_course_are_recorded_as_plan_findings(
-) -> Result<()> {
+async fn factual_findings_on_plan_items_are_recorded_as_plan_findings() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let initial = candidate();
-    // A "factual" finding on a lesson objective and one on the course are plan
-    // findings: never researched, never narrowed to fit a passage. The first
-    // repair call has no reply, so the reviewed state is what is saved.
+    // A "factual" finding on a lesson objective is a plan finding: never
+    // researched, never narrowed to fit a passage. The first repair call has
+    // no reply, so the reviewed state is what is saved.
     let llm = model(vec![
         initial.clone(),
-        findings(vec![
-            factual_finding(
-                "/modules/0/lessons/0",
-                "Design a controlled experiment and explain its limitations.",
-                "No single experiment design suits every question; this is overstated.",
-            ),
-            factual_finding(
-                "",
-                "The course claims to cover experimental design in four modules.",
-                "Four modules cannot cover the stated scope.",
-            ),
-        ]),
+        findings(vec![factual_finding(
+            "/modules/0/lessons/0",
+            "Design a controlled experiment and explain its limitations.",
+            "No single experiment design suits every question; this is overstated.",
+        )]),
     ]);
     let program = generate(&repo, &llm).await?;
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
-    assert_eq!(saved.review.issues.len(), 2);
-    assert!(saved
-        .review
-        .issues
-        .iter()
-        .all(|issue| issue.kind == LearningOutlineIssueKind::Plan));
-    assert_eq!(saved.review.issues[1].path, "");
-    assert_eq!(
-        saved.review.issues[1].claim,
-        "The course claims to cover experimental design in four modules."
-    );
+    assert_eq!(saved.review.issues.len(), 1);
+    assert_eq!(saved.review.issues[0].kind, LearningOutlineIssueKind::Plan);
+    assert_eq!(saved.review.issues[0].path, "/modules/0/lessons/0");
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 3);
     assert!(prompts[2].starts_with("Repair a saved curriculum module"));
     assert!(!prompts
         .iter()
         .any(|p| p.starts_with("Plan focused reference searches")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
+    let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    // The empty path is not an allowed path on any pass: the schema enum
+    // excludes it and the response is rejected as invalid, so nothing is
+    // saved from it and no module is rewritten for it.
+    let llm = model(vec![
+        candidate(),
+        findings(vec![plan_finding(
+            "",
+            "The course claims to cover experimental design in four modules.",
+            "Four modules cannot cover the stated scope.",
+        )]),
+    ]);
+    let program = generate(&repo, &llm).await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(review.status, LearningOutlineReviewStatus::Unchecked);
+    assert!(review.note.contains("invalid finding"));
+    assert!(review.issues.is_empty());
+    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
 
@@ -267,22 +274,38 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
     let sources = vec![source];
-    // The strict judge supports the summary's assertion; the reviewer then
-    // raises it again anyway, and code drops the repeat.
+    // The strict judge supports the summary's assertion and closes it in code.
+    // A plan finding on the same module forces a rewrite, so the module is
+    // reviewed again: the reviewer is told the assertion is verified, raises
+    // it anyway, and code drops the repeat.
+    let objective = "Compare the groups with an observable measurement.";
     let llm = model(vec![
-        initial,
-        findings(vec![factual_finding(
-            "/modules/0/summary",
-            ADDITIONAL,
-            "This assertion needs evidence from the saved references.",
-        )]),
+        initial.clone(),
+        no_links(),
+        findings(vec![
+            factual_finding(
+                "/modules/0/summary",
+                ADDITIONAL,
+                "This assertion needs evidence from the saved references.",
+            ),
+            plan_finding(
+                "/modules/0/lessons/0",
+                "Design a controlled experiment and explain its limitations.",
+                "Name the measurement this lesson compares.",
+            ),
+        ]),
         judged("supported", Some(0)),
         no_questions(),
-        findings(vec![factual_finding(
-            "/modules/0/summary",
-            ADDITIONAL,
-            "This assertion still needs evidence.",
-        )]),
+        changed_module(&initial, 0, objective),
+        no_links(),
+        verdicts(
+            &[("finding-2", "resolved")],
+            vec![factual_finding(
+                "/modules/0/summary",
+                ADDITIONAL,
+                "This assertion still needs evidence.",
+            )],
+        ),
     ]);
     let program = service::generate_with_references(
         &repo,
@@ -296,14 +319,16 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
     assert!(review.issues.is_empty());
-    let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 5);
-    let recheck = payload(&prompts[4]);
+    let prompts = calls(&llm);
+    assert_eq!(prompts.len(), 6);
+    assert!(prompts[4].starts_with("Repair a saved curriculum module"));
+    let recheck = payload(&prompts[5]);
     assert_eq!(recheck["verifiedAssertions"], json!([ADDITIONAL]));
-    assert_eq!(recheck["openFindings"], json!([]));
-    assert!(prompts[4].contains("do not raise them again"));
-    drop(prompts);
+    assert_eq!(recheck["openFindings"].as_array().unwrap().len(), 1);
+    assert_eq!(recheck["openFindings"][0]["id"], "finding-2");
+    assert!(prompts[5].contains("do not raise them again"));
+    // Two findings were raised by the first review; the repeat got no id.
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
-    assert_eq!(saved.findings_raised, 1);
+    assert_eq!(saved.findings_raised, 2);
     Ok(())
 }
