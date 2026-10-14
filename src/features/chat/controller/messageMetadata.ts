@@ -58,6 +58,7 @@ export const normalizeSource = (raw: unknown): Record<string, unknown> | null =>
     section: value.section ?? undefined,
     chunkIndex: value.chunkIndex ?? value.chunk_index ?? undefined,
     pageNumber: value.pageNumber ?? value.page_number ?? undefined,
+    fromOcr: value.fromOcr ?? value.from_ocr ?? undefined,
     chunkExcerpts: rawExcerpts
       .map(normalizeChunkExcerpt)
       .filter((item): item is Record<string, unknown> => item !== null),

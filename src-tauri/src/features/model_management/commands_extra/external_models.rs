@@ -1,6 +1,7 @@
 //! Discovering GGUF files in user-configured external directories and syncing
 //! them into the downloaded-model registry.
 use super::*;
+use crate::domain::models::downloaded::StoredDownloadedModel;
 
 const EXTERNAL_MODEL_SOURCE: &str = "external_directory";
 const MAX_EXTERNAL_MODEL_FILES: usize = 5000;
@@ -245,25 +246,25 @@ pub(super) async fn sync_external_model_directories(
         // External imports always come in as a single weight file —
         // we don't recursively scan into config.json/tokenizer.json
         // siblings here, so this is always a LocalFile artifact.
-        let external_model = DownloadedModel::from_db(
-            uuid::Uuid::new_v4().to_string(),
+        let external_model = DownloadedModel::from_db(StoredDownloadedModel {
+            id: uuid::Uuid::new_v4().to_string(),
             model_name,
-            model_id.clone(),
-            ModelLocation::LocalFile {
+            model_id: model_id.clone(),
+            location: ModelLocation::LocalFile {
                 path: candidate.file_path,
             },
-            candidate.file_size_bytes,
+            file_size_bytes: candidate.file_size_bytes,
             model_type,
             architecture,
-            Utc::now(),
-            None,
-            0,
-            false,
-            false,
-            Some(metadata),
-            false,
-            None,
-        );
+            downloaded_at: Utc::now(),
+            last_used_at: None,
+            use_count: 0,
+            is_active_for_chat: false,
+            is_active_for_embedding: false,
+            metadata: Some(metadata),
+            is_active_for_utility: false,
+            embedding_artifact_identity: None,
+        });
 
         if let Err(e) = repository.save(&external_model).await {
             warn!(model_id = %model_id, error = %e, "Failed to save discovered external model");

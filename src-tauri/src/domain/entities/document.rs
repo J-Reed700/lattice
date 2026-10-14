@@ -19,6 +19,7 @@ mod classification;
 mod factory;
 
 pub use classification::{Category, DocumentStatus, Language};
+pub use factory::StoredDocument;
 
 /// Document entity (aggregate root for document-related operations).
 ///
@@ -440,6 +441,20 @@ impl Document {
     pub fn set_chunk_section(&mut self, index: usize, section: Option<String>) {
         if let Some(chunk) = self.chunks.get_mut(index) {
             chunk.set_section(section);
+        }
+    }
+
+    /// Mark the chunks cut from `pages`, the one-based pages OCR read, and
+    /// clear the mark on every other chunk.
+    ///
+    /// A chunk never crosses a page, so its page number decides it. A chunk
+    /// with no page is never OCR text.
+    pub fn mark_ocr_pages(&mut self, pages: &[u32]) {
+        for chunk in &mut self.chunks {
+            let from_ocr = chunk
+                .page_number()
+                .is_some_and(|page| pages.contains(&page));
+            chunk.set_from_ocr(from_ocr);
         }
     }
 

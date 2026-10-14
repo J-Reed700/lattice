@@ -2,15 +2,16 @@
 //!
 //! Two passes. The lexical pre-filter ([`lexical`]) scores every claim sentence
 //! against the passages it cites — cheap, deterministic, and run on every turn.
-//! The claim judge ([`judge`]) then asks a model about the sentences overlap
-//! cannot settle: the ambiguous band just above threshold, anything unsupported,
-//! and anything carrying a number, date or negation, where matching vocabulary
-//! and opposite meaning look identical to a token counter.
+//! The claim judge ([`judge`]) then asks a model about every cited sentence
+//! except a near-verbatim copy of its passage that leaves nothing out. Matching
+//! vocabulary and opposite meaning look identical to a token counter, so
+//! overlap alone settles nothing.
 //!
 //! The judge is an improvement on the lexical verdict, never a precondition
 //! for one. An escalated claim the judge never reached — the budget ran out,
 //! the call failed — keeps its lexical verdict, except one carrying a number,
-//! date or negation: overlap cannot settle those, so it reads as unverified
+//! date or negation, or copying a passage sentence that carries one it left
+//! out: overlap cannot settle those, so it reads as unverified
 //! rather than borrowing a positive verdict from shared vocabulary. Unverified
 //! is its own state and never counts as unsupported: "not checked" and "not
 //! found in the source" are different findings. With no judge configured,
@@ -25,6 +26,8 @@ use crate::application::ports::LLMPort;
 use crate::features::qa::dto::SourceDto;
 
 mod background;
+#[cfg(test)]
+mod gate_tests;
 mod judge;
 mod lexical;
 
@@ -487,6 +490,7 @@ pub(super) mod test_support {
     ) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: "doc-1".to_string(),
             chunk_id: "chunk-1".to_string(),
             content: content.to_string(),
@@ -773,8 +777,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_plain_strongly_supported_claim_never_reaches_the_judge() {
-        // No digits, no negation, and near-total vocabulary overlap.
+    async fn a_plain_near_verbatim_claim_never_reaches_the_judge() {
+        // No digits, no negation, and the passage's own sentence word for word.
         let response = "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress [1].";
         let sources = vec![source(
             "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
@@ -788,6 +792,54 @@ mod tests {
         assert_eq!(llm.call_count(), 0, "the judge must not be called");
         assert_eq!(report.supported_claims, 1);
         assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
+    }
+
+    /// `cp-025` from the claim-checker pairs. Every content word is in the
+    /// passage and the claim has no "not", so the old strong-overlap rule
+    /// certified it supported without a model ever reading it.
+    #[tokio::test]
+    async fn a_claim_that_keeps_the_passage_words_and_drops_its_negation_reaches_the_judge() {
+        let pair = super::gate_tests::pair("cp-025");
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "contradicted\nReason: The passage says a manager cannot grant one.\nSource quote: a manager cannot grant one",
+        ]));
+
+        let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
+            .verify(
+                &super::gate_tests::cited_answer(&pair.claim),
+                &[source(&pair.passage)],
+            )
+            .await;
+
+        assert_eq!(llm.call_count(), 1);
+        assert_eq!(report.claims[0].method, VerificationMethod::Judge);
+        assert_eq!(report.claims[0].verdict, ClaimVerdict::Contradicted);
+        assert_eq!(report.supported_claims, 0);
+    }
+
+    /// A copy of a passage sentence that cut its "Do not" was sent to the
+    /// judge for that reason alone. If the judge never answers, the shared
+    /// wording is no evidence either way, so it is not checked rather than
+    /// supported.
+    #[tokio::test]
+    async fn an_unreached_copy_that_cut_a_negation_is_not_checked_rather_than_supported() {
+        let pair = super::gate_tests::pair("cp-013");
+        let llm = Arc::new(ScriptedLlm::new(vec!["I cannot judge this."]));
+
+        let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
+            .verify(
+                "Widen the pool on Garnetline to work around a stale lease takeover [1].",
+                &[source(&pair.passage)],
+            )
+            .await;
+
+        assert_eq!(llm.call_count(), 1, "the copy was escalated");
+        assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
+        assert_eq!(
+            report.claims[0].unverified_reason,
+            Some(UnverifiedReason::JudgeFailed)
+        );
+        assert_eq!(report.supported_claims, 0);
     }
 
     /// A judge over `llm`, behind a scheduler with `slots` slots: how many

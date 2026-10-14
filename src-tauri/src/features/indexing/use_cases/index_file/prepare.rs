@@ -133,6 +133,7 @@ impl IndexFileUseCase {
         let checksum = ChecksumFactory::from_path(library_path)?;
         let extracted = self.content_extractor.extract_content(library_path).await?;
         let page_ranges = extracted.page_ranges;
+        let ocr_pages = extracted.ocr_pages;
         let content = extracted.text;
         self.validate_text_content(source_path, &content)?;
 
@@ -190,11 +191,12 @@ impl IndexFileUseCase {
             document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
         }
 
-        let (document, spans) = super::super::embedding_input::prepare_structured_with_spans(
+        let (mut document, spans) = super::super::embedding_input::prepare_structured_with_spans(
             document,
             self.embedding_service.as_ref(),
             &page_ranges,
         )?;
+        document.mark_ocr_pages(&ocr_pages);
         let model_identity = self.embedding_service.model_identity();
         // With late chunking each structure span is embedded once and pooled
         // per chunk; otherwise this is the per-chunk batch as before. Either

@@ -1083,7 +1083,183 @@ fn an_unknown_stored_schema_is_not_read_as_empty_memory() {
         transcript_revision: 1,
         active_items: vec![item("i1", MemoryKind::Constraint, 1, "Do not deploy")],
         summary: None,
+        summary_through_sequence: None,
         latest_sequence: 1,
     };
     assert!(!snapshot.is_usable());
+}
+
+#[test]
+fn redaction_cuts_only_suppressions_that_still_apply_and_never_panics() {
+    let content = "Locker 4471, café code 9930, done.";
+    let digest = compute_digest(content);
+    let at = |needle: &str| content.find(needle).unwrap() as i64;
+    let span = |start: i64, end: i64, digest: &str| SuppressedSpan {
+        message_id: "m1".into(),
+        start_byte: start,
+        end_byte: end,
+        content_digest: digest.into(),
+    };
+    let redact = |spans: &[SuppressedSpan]| {
+        let refs: Vec<&SuppressedSpan> = spans.iter().collect();
+        redact_suppressed(content, &refs).into_owned()
+    };
+    let code = at("4471");
+    let accent = at("é");
+
+    // Nothing to apply leaves the text as it is.
+    assert_eq!(redact(&[]), content);
+
+    // Overlapping and touching ranges merge into one marker.
+    assert_eq!(
+        redact(&[
+            span(code, code + 2, &digest),
+            span(code + 1, code + 4, &digest),
+        ]),
+        "Locker [forgotten], café code 9930, done."
+    );
+    assert_eq!(
+        redact(&[
+            span(code, code + 2, &digest),
+            span(code + 2, code + 4, &digest),
+        ]),
+        "Locker [forgotten], café code 9930, done."
+    );
+    // Separate ranges, given out of order, each get a marker.
+    assert_eq!(
+        redact(&[
+            span(at("9930"), at("9930") + 4, &digest),
+            span(code, code + 4, &digest),
+        ]),
+        "Locker [forgotten], café code [forgotten], done."
+    );
+
+    // A range inside a character widens to cover all of it, at either end.
+    assert_eq!(
+        redact(&[span(accent + 1, accent + 2, &digest)]),
+        "Locker 4471, caf[forgotten] code 9930, done."
+    );
+    assert_eq!(
+        redact(&[span(at("café"), accent + 1, &digest)]),
+        "Locker 4471, [forgotten] code 9930, done."
+    );
+
+    // Recorded against other text: the offsets mean nothing here.
+    assert_eq!(
+        redact(&[span(code, code + 4, &compute_digest("other text"))]),
+        content
+    );
+
+    // Out of range is clamped to the text, or ignored when nothing is left.
+    let len = content.len() as i64;
+    assert_eq!(
+        redact(&[span(at(", done"), len + 50, &digest)]),
+        "Locker 4471, café code 9930[forgotten]"
+    );
+    assert_eq!(
+        redact(&[span(-5, at(" 4471"), &digest)]),
+        "[forgotten] 4471, café code 9930, done."
+    );
+    assert_eq!(redact(&[span(len + 1, len + 9, &digest)]), content);
+    assert_eq!(
+        redact(&[span(code + 4, code, &digest)]),
+        content,
+        "inverted"
+    );
+    assert_eq!(redact(&[span(i64::MIN, i64::MAX, &digest)]), "[forgotten]");
+}
+
+#[test]
+fn an_addition_quoting_a_forgotten_span_is_dropped_with_what_depends_on_it() {
+    let messages = vec![
+        message("m1", 1, SourceRole::User, "Use Python."),
+        message("m2", 4, SourceRole::User, "Locker 4471. Actually use Rust."),
+    ];
+    let sources = SourceIndex::new(&messages);
+    let existing = vec![item("i1", MemoryKind::Decision, 1, "Use Python")];
+    let mut validated = validate_patch(
+        &patch(
+            vec![
+                constraint(
+                    "c1",
+                    "Locker code 4471",
+                    vec![evidence("m2", "Locker 4471.", "assertion")],
+                ),
+                ProposedItem {
+                    candidate_id: "c2".into(),
+                    kind: "decision".into(),
+                    label: "Use Rust".into(),
+                    evidence: vec![evidence("m2", "Actually use Rust.", "assertion")],
+                },
+            ],
+            vec![ProposedTransition {
+                item_id: "i1".into(),
+                state: "superseded".into(),
+                replacement_candidate_id: Some("c2".into()),
+                evidence: vec![evidence("m2", "Actually use Rust.", "transition")],
+            }],
+        ),
+        &sources,
+        &existing,
+        &[],
+    )
+    .expect("valid patch");
+    let content = &messages[1].content;
+    let forgot = |needle: &str, digest: String| {
+        let start = content.find(needle).unwrap() as i64;
+        SuppressedSpan {
+            message_id: "m2".into(),
+            start_byte: start,
+            end_byte: start + needle.len() as i64,
+            content_digest: digest,
+        }
+    };
+    let digest = compute_digest(content);
+
+    // Recorded against other text, or ending where the quote starts: neither
+    // covers the quote, so nothing is dropped.
+    let stale = forgot("4471", compute_digest("other text"));
+    let before = SuppressedSpan {
+        start_byte: 0,
+        end_byte: 0,
+        ..forgot("Locker", digest.clone())
+    };
+    assert_eq!(
+        drop_forgotten_additions(&mut validated, &[stale, before]),
+        0
+    );
+    assert_eq!(validated.additions.len(), 2);
+
+    // Overlapping the quote's bytes is enough; the supersession by the other
+    // addition is untouched.
+    assert_eq!(
+        drop_forgotten_additions(&mut validated, &[forgot("4471", digest.clone())]),
+        1
+    );
+    let left: Vec<&str> = validated
+        .additions
+        .iter()
+        .map(|addition| addition.candidate_id.as_str())
+        .collect();
+    assert_eq!(left, vec!["c2"]);
+    assert_eq!(validated.transitions.len(), 1);
+
+    // Forgetting the replacement takes the transition with it, so the item it
+    // would have retired stays active.
+    assert_eq!(
+        drop_forgotten_additions(&mut validated, &[forgot("use Rust", digest)]),
+        1
+    );
+    assert!(validated.additions.is_empty());
+    assert!(validated.transitions.is_empty());
+    let commit = apply_patch(
+        "c1",
+        &validated,
+        &existing,
+        &HashMap::new(),
+        &HashMap::new(),
+        2,
+        10,
+    );
+    assert!(commit.inserts.is_empty() && commit.updates.is_empty());
 }

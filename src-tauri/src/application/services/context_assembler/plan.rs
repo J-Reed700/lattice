@@ -60,7 +60,12 @@ pub struct ContextAccounting {
     pub summary: usize,
     pub recent_history: usize,
     pub recall: usize,
+    /// Document, web and saved-memory evidence, including what the caller
+    /// rendered into the current message.
     pub document_evidence: usize,
+    /// How many of the evidence items rendered into the current message the
+    /// request carries. The caller drops the sources of the rest.
+    pub inline_evidence_kept: usize,
     /// Sum of everything above that is part of the request.
     pub total_input: usize,
     pub accounting_method: Option<TokenAccounting>,

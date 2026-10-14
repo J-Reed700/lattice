@@ -1,0 +1,22 @@
+{
+  "checker": "lattice",
+  "family": "Lattice GroundingVerifier (lexical gate + first-token logprob judge)",
+  "change": "Gate change 2026-10-13: only a near-verbatim copy that cut no negation, number, date or name skips the judge",
+  "code": "fix/grounding worktree from 90bbbcb3, uncommitted; src-tauri/examples/claim_checker_eval.rs, dev profile",
+  "judge_model": "unsloth Qwen3.5-9B Q4_K_M (~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf)",
+  "server": "bundled llama-server-aarch64-apple-darwin, pin llama/v0.6.0-r1 (llama.cpp v0.6.0), Metal",
+  "server_args": "--port 8092 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 4096 -np 1 --jinja",
+  "thinking": "no server-wide flag; the client sends chat_template_kwargs.enable_thinking=false on every judge request (PR #43); 0 of 106 calls returned reasoning text",
+  "decoding": "greedy (GroundingVerifier::new default)",
+  "pairs": 101,
+  "pairs_reaching_judge": 100,
+  "judge_calls": 106,
+  "finish_reasons": {"stop": 106},
+  "call_errors": 0,
+  "wall_seconds": 314.6,
+  "median_pair_latency_ms": 2926.5,
+  "median_call_latency_ms": 2886,
+  "machine": "Apple M3 Max, 36 GB",
+  "machine_load": "1-minute load average 38 before the run and 70 after it (other agents compiling); latency is inflated against 2026-10-12",
+  "date": "2026-10-13"
+}

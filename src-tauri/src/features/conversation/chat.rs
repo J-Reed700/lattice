@@ -95,7 +95,7 @@ use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
 };
-use self::prompting::{build_kb_context, PromptMessageBuilder};
+use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
     assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,

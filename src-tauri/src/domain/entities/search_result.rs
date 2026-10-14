@@ -67,6 +67,22 @@ pub struct SearchResult {
     token_count: Option<i32>,
 }
 
+/// An unvalidated hit on a chunk with the chunk's content metadata, for
+/// [`SearchResult::with_chunk_metadata`].
+pub struct ChunkSearchHit {
+    pub id: String,
+    pub score: f32,
+    pub snippet: Option<String>,
+    pub document_id: Option<String>,
+    pub file_path: Option<String>,
+    pub position: Option<usize>,
+    pub language: Option<String>,
+    pub word_count: Option<usize>,
+    pub has_code: Option<bool>,
+    pub section: Option<String>,
+    pub token_count: Option<i32>,
+}
+
 impl SearchResult {
     /// Create a new search result.
     ///
@@ -211,20 +227,20 @@ impl SearchResult {
     /// # Errors
     ///
     /// Returns `AppError::InvalidInput` if score is NaN or infinite.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_chunk_metadata(
-        id: String,
-        score: f32,
-        snippet: Option<String>,
-        document_id: Option<String>,
-        file_path: Option<String>,
-        position: Option<usize>,
-        language: Option<String>,
-        word_count: Option<usize>,
-        has_code: Option<bool>,
-        section: Option<String>,
-        token_count: Option<i32>,
-    ) -> Result<Self> {
+    pub fn with_chunk_metadata(hit: ChunkSearchHit) -> Result<Self> {
+        let ChunkSearchHit {
+            id,
+            score,
+            snippet,
+            document_id,
+            file_path,
+            position,
+            language,
+            word_count,
+            has_code,
+            section,
+            token_count,
+        } = hit;
         // Same validation
         if score.is_nan() {
             return Err(AppError::InvalidInput(
@@ -520,19 +536,19 @@ mod tests {
 
     #[test]
     fn test_with_chunk_metadata_validates_score() {
-        let result = SearchResult::with_chunk_metadata(
-            "id".into(),
-            f32::NAN,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let result = SearchResult::with_chunk_metadata(ChunkSearchHit {
+            id: "id".into(),
+            score: f32::NAN,
+            snippet: None,
+            document_id: None,
+            file_path: None,
+            position: None,
+            language: None,
+            word_count: None,
+            has_code: None,
+            section: None,
+            token_count: None,
+        });
         assert!(result.is_err(), "with_chunk_metadata must validate score");
     }
 }

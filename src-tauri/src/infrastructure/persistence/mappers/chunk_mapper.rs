@@ -54,6 +54,8 @@ pub struct ChunkModel {
     pub section: Option<String>,
     #[sqlx(default)]
     pub page_number: Option<i64>,
+    #[sqlx(default)]
+    pub from_ocr: bool,
 }
 
 /// Mapper for Chunk entity and database model.
@@ -103,6 +105,7 @@ impl ChunkMapper {
             has_code: if entity.has_code() { 1 } else { 0 },
             section: entity.section().map(|s| s.to_string()),
             page_number: entity.page_number().map(i64::from),
+            from_ocr: entity.from_ocr(),
         }
     }
 
@@ -173,6 +176,7 @@ impl ChunkMapper {
             model.end_char.and_then(|n| n.try_into().ok()),
             model.page_number.and_then(|n| n.try_into().ok()),
         );
+        chunk.set_from_ocr(model.from_ocr);
         Ok(chunk)
     }
 

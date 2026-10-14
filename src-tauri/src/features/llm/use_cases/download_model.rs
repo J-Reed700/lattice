@@ -13,7 +13,10 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! let use_case = DownloadModelUseCase::new(catalog_port, storage_port);
+//! let use_case = DownloadModelUseCase::new(
+//!     catalog, storage, download_manager, file_system, credentials,
+//!     checksum_service, file_system_access, uow_factory,
+//! );
 //! let request = DownloadModelRequestDto {
 //!     model_id: "phi-3-mini".to_string(),
 //! };
@@ -53,7 +56,6 @@ pub struct DownloadModelUseCase {
 }
 
 impl DownloadModelUseCase {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         catalog: Arc<dyn ModelCatalogPort>,
         storage: Arc<dyn ModelStoragePort>,

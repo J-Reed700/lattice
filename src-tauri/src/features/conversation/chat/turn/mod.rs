@@ -6,7 +6,8 @@
 //! 3. [`carry`]: the material the turn reads whole — attachments, the folder.
 //! 4. [`retrieve`]: evidence earlier turns cited, then the retrieval pipeline.
 //! 5. [`assemble`]: fit evidence to the budget, number it, render the prompt,
-//!    and plan the typed request.
+//!    and plan the typed request, which may cut the lowest-ranked evidence
+//!    when the window cannot hold all of it.
 //! 6. [`generate`]: the agentic tool loop.
 //! 7. [`finalize`]: persist the answer, then start the background check.
 //!
@@ -27,6 +28,7 @@ mod carry;
 mod classify;
 mod finalize;
 mod generate;
+mod message;
 mod prepare;
 mod research;
 mod retrieve;
@@ -191,7 +193,7 @@ pub(super) async fn run_stages(
     .await?;
     turn.ensure_not_cancelled()?;
 
-    let prompt = assemble::render_prompt(
+    let mut prompt = assemble::render_prompt(
         &turn,
         flags,
         preferences,
@@ -211,7 +213,7 @@ pub(super) async fn run_stages(
             &turn,
             flags,
             preferences,
-            &prompt,
+            &mut prompt,
             &mut metrics,
         )
         .await
@@ -243,8 +245,15 @@ pub(super) async fn run_stages(
 
     // A research turn plans before it saves the question, then saves both at
     // once: a restart between the two would otherwise ask the question twice.
-    let planned =
-        assemble::plan_request(container, &turn, flags, preferences, &prompt, &mut metrics).await?;
+    let planned = assemble::plan_request(
+        container,
+        &turn,
+        flags,
+        preferences,
+        &mut prompt,
+        &mut metrics,
+    )
+    .await?;
     let persist_start = Instant::now();
     let (user_message_id, message_tokens) = persist_question(&turn, &prompt).await?;
     metrics.persist_user_message_ms = elapsed_ms(persist_start);

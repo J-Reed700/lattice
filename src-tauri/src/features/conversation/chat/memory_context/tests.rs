@@ -645,3 +645,76 @@ async fn a_plan_the_estimate_undercounted_is_planned_again_at_the_measured_ratio
         Some(TokenAccounting::Exact)
     );
 }
+
+/// The chat turn renders its passages into the message. Charged as part of
+/// the message they could only refuse a turn whose window was too small for
+/// all of them; handed over as evidence, they are cut to fit.
+#[tokio::test]
+async fn evidence_rendered_into_the_message_is_cut_to_fit_instead_of_refusing_the_turn() {
+    let pool = database().await;
+    let id = seed(&pool, 4).await;
+    let repository = ConversationRepository::new(pool.clone());
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
+    let bare = "Question: what does the runbook say about rollbacks?";
+    let render = |keep: usize| {
+        let passages: Vec<String> = (1..=keep)
+            .map(|rank| format!("[{rank}] {}", "fact ".repeat(150)))
+            .collect();
+        format!("{}\n\n{bare}", passages.join("\n\n"))
+    };
+
+    let whole = render(20);
+    let refused = build_memory_plan_for_query(
+        &repository,
+        &repository,
+        &llm(),
+        &id,
+        "You are helpful.",
+        &whole,
+        None,
+        600,
+        Vec::new(),
+        true,
+        bare,
+        today,
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(AppError::InvalidInput(_))),
+        "{refused:?}"
+    );
+
+    let built = build_memory_plan_for_query(
+        &repository,
+        &repository,
+        &llm(),
+        &id,
+        "You are helpful.",
+        bare,
+        Some(InlineEvidence {
+            items: 20,
+            render: &render,
+        }),
+        600,
+        Vec::new(),
+        true,
+        bare,
+        today,
+    )
+    .await
+    .unwrap()
+    .expect("the switch is on");
+    let accounting = &built.plan.accounting;
+    assert!(accounting.fits(), "{accounting:?}");
+    assert!(
+        (1..20).contains(&accounting.inline_evidence_kept),
+        "{accounting:?}"
+    );
+    let Some(crate::application::ports::llm_port::CompletionInput::Message { content, .. }) =
+        built.plan.messages.last()
+    else {
+        panic!("a final message");
+    };
+    assert!(content.contains("[1] fact"));
+    assert!(content.ends_with(bare));
+}

@@ -238,8 +238,10 @@ pub struct FinalUserMessage {
     pub recalled: Option<String>,
     pub memory: Option<String>,
     pub evidence: Option<String>,
-    /// Date line, label and the current input: the part no eviction removes.
-    tail: String,
+    date_line: String,
+    /// The current input. With the date line and the label it is the part no
+    /// eviction removes, though evidence the caller rendered into it can be.
+    input: String,
 }
 
 impl FinalUserMessage {
@@ -248,27 +250,38 @@ impl FinalUserMessage {
             recalled: None,
             memory: None,
             evidence: None,
+            date_line: render_date_line(today),
             // The input goes in unmodified: surrounding whitespace is part of
             // what the user sent.
-            tail: format!(
-                "{}\n\n{CURRENT_MESSAGE_LABEL}\n{current_input}",
-                render_date_line(today)
-            ),
+            input: current_input.to_owned(),
         }
+    }
+
+    /// Replace the current input, as when evidence rendered into it is cut.
+    pub fn set_input(&mut self, input: String) {
+        self.input = input;
+    }
+
+    fn tail(&self) -> String {
+        format!(
+            "{}\n\n{CURRENT_MESSAGE_LABEL}\n{}",
+            self.date_line, self.input
+        )
     }
 
     /// The fixed part alone, as a message, for pricing it before any section
     /// is chosen.
     pub fn tail_message(&self) -> CompletionInput {
-        Self::message(self.tail.clone())
+        Self::message(self.tail())
     }
 
     pub fn render(&self) -> CompletionInput {
+        let tail = self.tail();
         let sections = [&self.recalled, &self.memory, &self.evidence]
             .into_iter()
             .flatten()
             .map(String::as_str)
-            .chain(std::iter::once(self.tail.as_str()))
+            .chain(std::iter::once(tail.as_str()))
             .collect::<Vec<_>>();
         Self::message(sections.join("\n\n"))
     }

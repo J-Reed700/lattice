@@ -7,6 +7,8 @@
 use super::branching_dto::{
     ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
 };
+use super::memory::MAX_FORGOTTEN_LABELS;
+use crate::application::ports::conversation_memory::ConversationMemoryPort;
 use crate::application::ports::llm_port::{
     chars_within_tokens, InferencePriority, SamplingOverride,
 };
@@ -14,6 +16,7 @@ use crate::application::ports::LLMPort;
 use crate::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
+use crate::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
 use crate::domain::conversation::ConversationMessage;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::shared::{error::AppError, ipc::ApiError};
@@ -161,17 +164,77 @@ fn handoff_task(title: &str, from_notes: bool) -> String {
 }
 
 const SYSTEM: &str = "You summarize conversations faithfully and concisely. You never add facts the material does not contain.";
+
+/// What the user told memory to forget in the conversation being handed on.
+///
+/// The note becomes the new conversation's only memory of this one, so a forget
+/// holds here as it does in the working summary: forgotten spans are cut out of
+/// the transcript, and the forgotten facts are named so that a later message
+/// repeating or correcting one is left out of the note too.
+#[derive(Default)]
+struct Forgotten {
+    spans: Vec<SuppressedSpan>,
+    labels: Vec<String>,
+}
+
+impl Forgotten {
+    async fn read(
+        memory: &dyn ConversationMemoryPort,
+        conversation_id: &str,
+        messages: &[ConversationMessage],
+    ) -> crate::shared::error::Result<Self> {
+        let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
+        Ok(Self {
+            spans: memory.suppressed_spans(conversation_id, &ids).await?,
+            labels: memory
+                .forgotten_labels(conversation_id, MAX_FORGOTTEN_LABELS)
+                .await?,
+        })
+    }
+
+    /// `messages` with every forgotten span replaced by a marker.
+    fn redact(&self, mut messages: Vec<ConversationMessage>) -> Vec<ConversationMessage> {
+        let forgotten = SuppressionsByMessage::new(&self.spans);
+        for message in &mut messages {
+            if let std::borrow::Cow::Owned(redacted) =
+                forgotten.redact(&message.id, &message.content)
+            {
+                message.content = redacted;
+            }
+        }
+        messages
+    }
+
+    /// The rule a summarizing call is given, when anything was forgotten.
+    fn rule(&self) -> Option<String> {
+        (!self.labels.is_empty()).then(|| {
+            std::iter::once(
+                "The user asked memory to forget the facts below. Leave each of them out, with any value, name or number it gives, even where the material repeats or corrects it. [forgotten] marks text already removed: do not guess what it was.".to_string(),
+            )
+            .chain(self.labels.iter().map(|label| format!("- {label}")))
+            .collect::<Vec<_>>()
+            .join("\n")
+        })
+    }
+}
 /// One call's wall-clock limit. A long part on a local model takes a few
 /// minutes; past this something is stuck.
 const CALL_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
 const CALL_MAX_OUTPUT_TOKENS: usize = 2_048;
 
-/// One summarizing call that carries every passage it is given whole.
+/// One summarizing call that carries every passage it is given whole, told
+/// what was forgotten. Every call and every room estimate is built here, so the
+/// rule is counted wherever the transcript is planned.
 fn summary_request(
     task: String,
+    forgotten: &Forgotten,
     evidence: Vec<EvidencePassage>,
     conversation_id: &str,
 ) -> GroundedRequest {
+    let task = match forgotten.rule() {
+        Some(rule) => format!("{task}\n\n{rule}"),
+        None => task,
+    };
     let mut request = GroundedRequest::new(SYSTEM, task);
     request.evidence = evidence;
     request.selection = EvidenceSelection::All;
@@ -266,6 +329,14 @@ pub async fn continue_in_new_conversation_impl(
         })?;
     let source_title = aggregate.title().to_string();
     let messages = aggregate.messages().to_vec();
+    let forgotten = Forgotten::read(
+        runtime.conversation_memory().as_ref(),
+        &source_id,
+        &messages,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    let messages = forgotten.redact(messages);
     let passages = transcript_passages(&messages);
     if passages.is_empty() {
         return Err(ApiError::from(AppError::InvalidInput(
@@ -294,7 +365,12 @@ pub async fn continue_in_new_conversation_impl(
     // notes are merged.
     let whole_room = grounded_generation::evidence_room(
         llm.as_ref(),
-        &summary_request(handoff_task(&source_title, false), Vec::new(), &source_id),
+        &summary_request(
+            handoff_task(&source_title, false),
+            &forgotten,
+            Vec::new(),
+            &source_id,
+        ),
     )
     .map_err(|error| ApiError::from(AppError::from(error)))?;
     let transcript_tokens: usize = passages
@@ -308,6 +384,7 @@ pub async fn continue_in_new_conversation_impl(
             llm.as_ref(),
             &summary_request(
                 notes_task(&source_title, usize::MAX, usize::MAX),
+                &forgotten,
                 Vec::new(),
                 &source_id,
             ),
@@ -353,7 +430,12 @@ pub async fn continue_in_new_conversation_impl(
     let summary = if total == 1 {
         let transcript = parts.into_iter().flatten().collect();
         ask(
-            summary_request(handoff_task(&source_title, false), transcript, &source_id),
+            summary_request(
+                handoff_task(&source_title, false),
+                &forgotten,
+                transcript,
+                &source_id,
+            ),
             "handoff",
         )
         .await?
@@ -364,6 +446,7 @@ pub async fn continue_in_new_conversation_impl(
                 ask(
                     summary_request(
                         notes_task(&source_title, index + 1, total),
+                        &forgotten,
                         part,
                         &source_id,
                     ),
@@ -381,6 +464,7 @@ pub async fn continue_in_new_conversation_impl(
         ask(
             summary_request(
                 handoff_task(&source_title, true),
+                &forgotten,
                 vec![material],
                 &source_id,
             ),
@@ -525,5 +609,62 @@ mod tests {
         }
         assert!(prompt.contains("transcript"));
         assert!(handoff_task("Tomatoes", true).contains("notes below"));
+    }
+
+    /// A forget holds in the note: the span is cut out of the transcript, and
+    /// the fact is named in every request, so the rooms planned for the
+    /// transcript count it too.
+    #[test]
+    fn forgotten_text_is_cut_and_forgotten_facts_are_named() {
+        use crate::domain::conversation::memory::compute_digest;
+        use crate::domain::conversation::MessageRole;
+        use crate::shared::types::ConversationId;
+        let message = |id: &str, content: &str| ConversationMessage {
+            id: id.into(),
+            conversation_id: ConversationId::new(),
+            role: MessageRole::User,
+            content: content.into(),
+            tokens: 0,
+            created_at: chrono::Utc::now(),
+            metadata: None,
+            status: "completed".into(),
+        };
+        let locker = "My locker code is 4471, keep it handy.";
+        let start = locker.find("4471").unwrap() as i64;
+        let forgotten = Forgotten {
+            spans: vec![SuppressedSpan {
+                message_id: "m1".into(),
+                start_byte: start,
+                end_byte: start + 4,
+                content_digest: compute_digest(locker),
+            }],
+            labels: vec!["Locker code is 4471".into()],
+        };
+
+        let passages = transcript_passages(&forgotten.redact(vec![
+            message("m1", locker),
+            message("m2", "Scratch 4471, the locker was rekeyed."),
+        ]));
+        assert_eq!(
+            passages[0].text,
+            "My locker code is [forgotten], keep it handy."
+        );
+        assert_eq!(
+            passages[1].text, "Scratch 4471, the locker was rekeyed.",
+            "a restatement is no span; the named fact covers it"
+        );
+
+        let request = summary_request(handoff_task("Lab", false), &forgotten, Vec::new(), "conv-a");
+        assert!(request.task.starts_with(&handoff_task("Lab", false)));
+        assert!(request.task.contains("asked memory to forget"));
+        assert!(request.task.ends_with("\n- Locker code is 4471"));
+
+        let plain = summary_request(
+            handoff_task("Lab", false),
+            &Forgotten::default(),
+            Vec::new(),
+            "conv-a",
+        );
+        assert_eq!(plain.task, handoff_task("Lab", false));
     }
 }

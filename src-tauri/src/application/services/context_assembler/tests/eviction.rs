@@ -92,6 +92,7 @@ fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_
             .map(|message| (message.sequence, render::render_recent(message)))
             .collect(),
         last: render::FinalUserMessage::new(QUESTION, day()),
+        inline: None,
     };
     let total_input = builder.measure(&layout, 0);
     let oldest_cost = builder.count_input(&render::render_recent(&recent[0]));

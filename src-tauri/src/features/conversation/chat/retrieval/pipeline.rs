@@ -218,6 +218,8 @@ pub(super) async fn run_retrieval_pipeline(
     // KB and the external phase overlap only when no KB result can close the
     // external-lookup gate. The low-confidence clarify below needs no wiki or
     // web search planned, so it never applies to a turn that takes this path.
+    // A web search the intent step guessed at never takes it: the vault is
+    // searched first and decides whether the web is asked at all.
     let kb_alongside_external =
         run_kb && external.is_planned() && kb_can_run_alongside_external(search_flags);
     let mut external_phase: Option<ExternalPhaseOutcome> = None;
@@ -229,8 +231,10 @@ pub(super) async fn run_retrieval_pipeline(
         // below re-checks the gate and complains if that promise ever breaks.
         let external_base = outcome.interpretation.clone();
         let interpret = external_base.hyde_text.is_none();
-        let (kb_result, phase) =
-            tokio::join!(kb_search, external.run(&external_base, interpret, true));
+        let (kb_result, phase) = tokio::join!(
+            kb_search,
+            external.run(&external_base, interpret, true, WebSearchReason::Requested)
+        );
         external_phase = Some(phase);
         Some(kb_result)
     } else if run_kb {
@@ -287,12 +291,29 @@ pub(super) async fn run_retrieval_pipeline(
 
     let should_use_external_as_fallback =
         should_use_external_as_fallback(search_flags, &outcome.interpretation);
-    let allow_external_lookup = should_execute_external_lookup(
-        should_use_external_as_fallback,
-        kb_attempted,
-        kb_has_results,
-        kb_low_confidence,
-    );
+    let kb_sufficient = outcome
+        .sufficiency
+        .as_ref()
+        .map(|verdict| verdict.sufficient);
+    // A web search the intent step guessed at answers to the vault's verdict as
+    // well as to its emptiness: passages too weak to answer from send the turn
+    // out, passages that answer keep it on the machine. Every other external
+    // search keeps the gate it always had.
+    let intent_fallback = search_flags
+        .web_fallback
+        .then(|| intent_web_fallback(kb_attempted, kb_has_results, kb_sufficient));
+    let allow_external_lookup = match intent_fallback {
+        Some(reason) => reason.is_some(),
+        None => should_execute_external_lookup(
+            should_use_external_as_fallback,
+            kb_attempted,
+            kb_has_results,
+            kb_low_confidence,
+        ),
+    };
+    let web_reason = intent_fallback
+        .flatten()
+        .unwrap_or(WebSearchReason::Requested);
     if (retrieval_plan.should_search_web || retrieval_plan.should_search_wiki)
         && !allow_external_lookup
     {
@@ -301,7 +322,17 @@ pub(super) async fn run_retrieval_pipeline(
             kb_attempted = kb_attempted,
             kb_has_results = kb_has_results,
             kb_low_confidence = kb_low_confidence,
+            kb_sufficient = ?kb_sufficient,
+            web_fallback = search_flags.web_fallback,
             "Skipping external search because KB is sufficient for this turn"
+        );
+    } else if search_flags.web_fallback {
+        info!(
+            conversation_id = conversation_id,
+            kb_has_results = kb_has_results,
+            kb_sufficient = ?kb_sufficient,
+            reason = ?web_reason,
+            "Searching the web as the intent fallback: the vault fell short"
         );
     }
 
@@ -314,7 +345,12 @@ pub(super) async fn run_retrieval_pipeline(
         let interpret = outcome.interpretation.hyde_text.is_none();
         external_phase = Some(
             external
-                .run(&outcome.interpretation, interpret, allow_external_lookup)
+                .run(
+                    &outcome.interpretation,
+                    interpret,
+                    allow_external_lookup,
+                    web_reason,
+                )
                 .await,
         );
     }
@@ -476,12 +512,14 @@ impl ExternalLookup<'_> {
 
     /// Interpret the turn and rewrite the web query side by side, then run the
     /// wiki and web searches side by side. `allow_lookup` false still runs the
-    /// interpretation, as the sequential pipeline always did.
+    /// interpretation, as the sequential pipeline always did. `web_reason` is
+    /// why the web is searched, for the turn record.
     async fn run(
         &self,
         base_interpretation: &HyDEInterpretation,
         interpret: bool,
         allow_lookup: bool,
+        web_reason: WebSearchReason,
     ) -> ExternalPhaseOutcome {
         let prep_start = Instant::now();
         let search_wiki = self.wiki_planned && allow_lookup;
@@ -614,7 +652,10 @@ impl ExternalLookup<'_> {
             },
             async {
                 let query = web_query.as_deref()?;
-                Some(self.web_search(query, &research_followups).await)
+                Some(
+                    self.web_search(query, &research_followups, web_reason)
+                        .await,
+                )
             },
         );
 
@@ -1049,15 +1090,21 @@ impl ExternalLookup<'_> {
         (outcomes, memory)
     }
 
-    async fn web_search(&self, web_query: &str, followups: &[String]) -> ExternalSearchResult {
+    async fn web_search(
+        &self,
+        web_query: &str,
+        followups: &[String],
+        reason: WebSearchReason,
+    ) -> ExternalSearchResult {
         let web_search_start = Instant::now();
         let tuning = self.tuning;
         let mut searched = ExternalSearchResult::default();
         // Held as an option because a search that succeeds is finished before
-        // its pages are read, not after.
+        // its pages are read, not after. The label says why the question left
+        // the machine: the user asked, or the vault fell short.
         let mut step = Some(self.recorder.begin_guarded(
             TurnStepKind::WebSearch,
-            "Searching the web",
+            reason.step_label(),
             Some(web_query.to_string()),
         ));
 

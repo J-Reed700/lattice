@@ -12,7 +12,7 @@
 //! - **Mapper** - Converts between the two
 
 use crate::domain::entities::document::{
-    Category, Document as DomainDocument, DocumentStatus, Language,
+    Category, Document as DomainDocument, DocumentStatus, Language, StoredDocument,
 };
 use crate::shared::error::{AppError, Result};
 use crate::shared::types::{DocumentId, ValidatedFilePath};
@@ -252,26 +252,26 @@ impl DocumentMapper {
         let checksum =
             crate::domain::value_objects::checksum::Checksum::new(model.checksum.clone())?;
 
-        let mut entity = DomainDocument::with_id(
+        let mut entity = DomainDocument::with_id(StoredDocument {
             id,
             file_path,
-            model.file_name.clone(),
-            model.file_type.clone(),
-            model.mime_type.clone(),
-            model.size_bytes,
+            file_name: model.file_name.clone(),
+            file_type: model.file_type.clone(),
+            mime_type: model.mime_type.clone(),
+            size_bytes: model.size_bytes,
             modified_at,
             indexed_at,
             checksum,
             status,
-            model.error_message.clone(),
+            error_message: model.error_message.clone(),
             language,
             category,
-            model.quality_score as f32, // Convert f64 -> f32 for domain
-            model.access_count as i32,  // Convert i64 -> i32 for domain
+            quality_score: model.quality_score as f32, // Convert f64 -> f32 for domain
+            access_count: model.access_count as i32,   // Convert i64 -> i32 for domain
             last_accessed_at,
-            model.word_count as i32, // Convert i64 -> i32 for domain
-            model.content.clone(),
-        );
+            word_count: model.word_count as i32, // Convert i64 -> i32 for domain
+            content: model.content.clone(),
+        });
 
         tracing::debug!(
             "Successfully parsed document: id={}, file_name={}",

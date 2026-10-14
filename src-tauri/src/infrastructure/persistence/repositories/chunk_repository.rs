@@ -108,7 +108,7 @@ impl ChunkRepository {
                 token_count,
                 word_count,
                 has_code,
-                section, page_number
+                section, page_number, from_ocr
             FROM text_chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
@@ -138,6 +138,7 @@ impl ChunkRepository {
                 has_code: row.get("has_code"),
                 section: row.get("section"),
                 page_number: row.get("page_number"),
+                from_ocr: row.get("from_ocr"),
             })
             .collect();
 
@@ -204,7 +205,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 token_count,
                 word_count,
                 has_code,
-                section, page_number
+                section, page_number, from_ocr
             FROM text_chunks
             WHERE id = ?
             "#,
@@ -231,6 +232,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                     has_code: r.get("has_code"),
                     section: r.get("section"),
                     page_number: r.get("page_number"),
+                    from_ocr: r.get("from_ocr"),
                 };
                 Ok(Some(ChunkMapper::to_entity(&model)?))
             }
@@ -269,7 +271,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 token_count,
                 word_count,
                 has_code,
-                section, page_number
+                section, page_number, from_ocr
             FROM text_chunks
             ORDER BY document_id, chunk_index ASC
             "#,
@@ -295,6 +297,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 has_code: row.get("has_code"),
                 section: row.get("section"),
                 page_number: row.get("page_number"),
+                from_ocr: row.get("from_ocr"),
             })
             .collect();
 
@@ -309,9 +312,9 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
             INSERT INTO text_chunks (
                 id, document_id, content, chunk_index,
                 contextualized_content, context_prefix, start_char, end_char,
-                language, token_count, word_count, has_code, section, page_number
+                language, token_count, word_count, has_code, section, page_number, from_ocr
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 content = excluded.content,
                 chunk_index = excluded.chunk_index,
@@ -323,7 +326,8 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 token_count = excluded.token_count,
                 word_count = excluded.word_count,
                 has_code = excluded.has_code,
-                section = excluded.section, page_number = excluded.page_number
+                section = excluded.section, page_number = excluded.page_number,
+                from_ocr = excluded.from_ocr
             "#,
         )
         .bind(&model.id)
@@ -340,6 +344,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         .bind(model.has_code)
         .bind(&model.section)
         .bind(model.page_number)
+        .bind(model.from_ocr)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to save chunk: {}", e)))?;
@@ -366,9 +371,9 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 INSERT INTO text_chunks (
                     id, document_id, content, chunk_index,
                     contextualized_content, context_prefix, start_char, end_char,
-                    language, token_count, word_count, has_code, section, page_number
+                    language, token_count, word_count, has_code, section, page_number, from_ocr
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     chunk_index = excluded.chunk_index,
@@ -380,7 +385,8 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                     token_count = excluded.token_count,
                     word_count = excluded.word_count,
                     has_code = excluded.has_code,
-                    section = excluded.section, page_number = excluded.page_number
+                    section = excluded.section, page_number = excluded.page_number,
+                from_ocr = excluded.from_ocr
                 "#,
             )
             .bind(&model.id)
@@ -397,6 +403,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
             .bind(model.has_code)
             .bind(&model.section)
             .bind(model.page_number)
+            .bind(model.from_ocr)
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to save chunk in batch: {}", e)))?;
@@ -524,7 +531,7 @@ impl ChunkRepositoryPort for ChunkRepository {
                     token_count,
                     word_count,
                     has_code,
-                    section, page_number
+                    section, page_number, from_ocr
                 FROM text_chunks
                 WHERE id IN ({})
                 "#,
@@ -558,6 +565,7 @@ impl ChunkRepositoryPort for ChunkRepository {
                     has_code: row.get("has_code"),
                     section: row.get("section"),
                     page_number: row.get("page_number"),
+                    from_ocr: row.get("from_ocr"),
                 })
                 .collect();
 
@@ -789,6 +797,46 @@ mod tests {
 
         let count = repo.count_by_document(doc_id.as_str()).await.unwrap();
         assert_eq!(count, 3);
+    }
+
+    /// The OCR mark survives the repository's upsert and the document
+    /// aggregate's replace, and comes back from both reads, so a citation built
+    /// from a stored chunk still knows the text was read off a scan.
+    #[tokio::test]
+    async fn an_ocr_chunk_keeps_its_mark_through_the_database() {
+        use crate::infrastructure::persistence::repositories::document::ops::{
+            fetch_chunks_for_document, save_chunks,
+        };
+        let (repo, doc_id) = create_test_repo().await;
+        let mut scanned = ChunkEntity::new(doc_id.clone(), "Recognized scan".to_string(), 0);
+        scanned.set_provenance(None, Some(0), Some(15), Some(2));
+        scanned.set_from_ocr(true);
+        let typed = ChunkEntity::new(doc_id.clone(), "Text layer".to_string(), 1);
+        let chunks = [scanned.clone(), typed.clone()];
+        let mark = |found: &[ChunkEntity], chunk: &ChunkEntity| {
+            found
+                .iter()
+                .find(|c| c.id() == chunk.id())
+                .map(|c| (c.from_ocr(), c.page_number()))
+        };
+
+        repo.save_batch(&chunks).await.unwrap();
+        let ids: Vec<String> = chunks.iter().map(|c| c.as_str().to_string()).collect();
+        let found = ChunkRepositoryPort::find_by_ids(&repo, &ids).await.unwrap();
+
+        assert_eq!(mark(&found, &scanned), Some((true, Some(2))));
+        assert_eq!(mark(&found, &typed), Some((false, None)));
+
+        let mut conn = repo.pool.acquire().await.unwrap();
+        save_chunks(&mut conn, doc_id.as_str(), &chunks)
+            .await
+            .unwrap();
+        let reloaded = fetch_chunks_for_document(&mut conn, doc_id.as_str())
+            .await
+            .unwrap();
+
+        assert_eq!(mark(&reloaded, &scanned), Some((true, Some(2))));
+        assert_eq!(mark(&reloaded, &typed), Some((false, None)));
     }
 
     #[tokio::test]

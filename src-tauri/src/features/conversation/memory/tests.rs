@@ -28,8 +28,8 @@ use crate::application::ports::LLMPort;
 use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
-    SourceRole, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES,
-    MAX_QUOTE_BYTES,
+    SourceRole, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
+    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
 };
 use crate::shared::error::{AppError, Result};
 
@@ -192,6 +192,15 @@ struct PortState {
     messages: Vec<SourceMessage>,
     items: Vec<MemoryItem>,
     summary: Option<String>,
+    /// The summary's `up_to_message_id`, so a delete can drop the summary the
+    /// way the schema's cascade and clamp trigger do.
+    summary_up_to: Option<String>,
+    /// What a user's forget wrote, as `conversation_memory_suppressions` holds it.
+    suppressions: Vec<SuppressedSpan>,
+    /// Labels of forgotten items, oldest first.
+    forgotten: Vec<String>,
+    /// Cancelled by the next commit, to stop a run between two pages.
+    cancel_on_commit: Option<CancellationToken>,
     state: ConversationMemoryState,
     transcript_revision: i64,
     committed: Vec<MemoryCommitCandidate>,
@@ -217,6 +226,10 @@ impl FakePort {
                 messages,
                 items,
                 summary: None,
+                summary_up_to: None,
+                suppressions: Vec::new(),
+                forgotten: Vec::new(),
+                cancel_on_commit: None,
                 state,
                 transcript_revision: 7,
                 committed: Vec::new(),
@@ -229,6 +242,10 @@ impl FakePort {
 
     fn conflict_once(&self) {
         self.inner.lock().conflict_next_commit = true;
+    }
+
+    fn cancel_on_commit(&self, token: CancellationToken) {
+        self.inner.lock().cancel_on_commit = Some(token);
     }
 
     fn watermark(&self) -> i64 {
@@ -254,6 +271,119 @@ impl FakePort {
     fn item(&self, id: &str) -> Option<MemoryItem> {
         self.items().into_iter().find(|item| item.id.as_str() == id)
     }
+
+    fn summary(&self) -> Option<String> {
+        self.inner.lock().summary.clone()
+    }
+
+    /// Sequence of the message the stored summary was folded through.
+    fn summary_boundary(&self) -> Option<i64> {
+        let inner = self.inner.lock();
+        let up_to = inner.summary_up_to.as_ref()?;
+        inner
+            .messages
+            .iter()
+            .find(|message| &message.id == up_to)
+            .map(|message| message.sequence)
+    }
+
+    /// The watermark every commit wrote, in order.
+    fn committed_watermarks(&self) -> Vec<i64> {
+        self.inner
+            .lock()
+            .committed
+            .iter()
+            .map(|candidate| candidate.commit.processed_through_sequence)
+            .collect()
+    }
+
+    /// The operation label of every commit, in order.
+    fn operations(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .committed
+            .iter()
+            .map(|candidate| candidate.operation.clone())
+            .collect()
+    }
+
+    /// Forget an item the way `knowledge.rs` does: its assertion spans become
+    /// suppressions, it stops being active, the summary that may repeat it is
+    /// cleared, and in-flight commits are invalidated.
+    fn forget(&self, item_id: &str) {
+        let mut inner = self.inner.lock();
+        let item = inner
+            .items
+            .iter_mut()
+            .find(|item| item.id.as_str() == item_id)
+            .expect("the item to forget");
+        item.state = MemoryState::Resolved;
+        let label = item.label.clone();
+        let spans: Vec<SuppressedSpan> = item
+            .assertions()
+            .map(|span| SuppressedSpan {
+                message_id: span.message_id.clone(),
+                start_byte: i64::from(span.start_byte),
+                end_byte: i64::from(span.end_byte),
+                content_digest: span.content_digest.clone(),
+            })
+            .collect();
+        inner.suppressions.extend(spans);
+        inner.forgotten.push(label);
+        inner.summary = None;
+        inner.summary_up_to = None;
+        inner.state.memory_revision += 1;
+    }
+
+    /// Append a message as turn completion does: the transcript moves on.
+    fn append(&self, message: SourceMessage) {
+        let mut inner = self.inner.lock();
+        inner.messages.push(message);
+        inner.transcript_revision += 1;
+    }
+
+    /// Delete a message no extracted item cites, as the schema does it.
+    ///
+    /// `up_to_message_id` cascades, and `trg_conversation_memory_clamp_ad` drops
+    /// a summary whose boundary is at or after the deleted message and clamps
+    /// the watermark to the highest remaining sequence. The ledger stays
+    /// `ready`: only a cited delete asks for a rebuild.
+    fn delete_uncited(&self, id: &str) {
+        let mut inner = self.inner.lock();
+        assert!(
+            !inner
+                .items
+                .iter()
+                .any(|item| item.evidence.iter().any(|span| span.message_id == id)),
+            "a cited delete rebuilds instead; this helper models the uncited path"
+        );
+        let index = inner
+            .messages
+            .iter()
+            .position(|message| message.id == id)
+            .expect("the message to delete");
+        let boundary = inner.summary_up_to.as_ref().and_then(|up_to| {
+            inner
+                .messages
+                .iter()
+                .find(|message| &message.id == up_to)
+                .map(|message| message.sequence)
+        });
+        let deleted = inner.messages.remove(index);
+        if boundary.is_some_and(|boundary| deleted.sequence <= boundary) {
+            inner.summary = None;
+            inner.summary_up_to = None;
+        }
+        let highest = inner
+            .messages
+            .iter()
+            .map(|message| message.sequence)
+            .max()
+            .unwrap_or(0);
+        inner.state.processed_through_sequence =
+            inner.state.processed_through_sequence.min(highest);
+        inner.transcript_revision += 1;
+    }
 }
 
 #[async_trait]
@@ -270,6 +400,13 @@ impl ConversationMemoryPort for FakePort {
                 .cloned()
                 .collect(),
             summary: inner.summary.clone(),
+            summary_through_sequence: inner.summary_up_to.as_ref().and_then(|up_to| {
+                inner
+                    .messages
+                    .iter()
+                    .find(|message| &message.id == up_to)
+                    .map(|message| message.sequence)
+            }),
             latest_sequence: inner
                 .messages
                 .iter()
@@ -394,6 +531,32 @@ impl ConversationMemoryPort for FakePort {
             .collect())
     }
 
+    async fn suppressed_spans(
+        &self,
+        _conversation_id: &str,
+        message_ids: &[String],
+    ) -> Result<Vec<SuppressedSpan>> {
+        Ok(self
+            .inner
+            .lock()
+            .suppressions
+            .iter()
+            .filter(|span| message_ids.contains(&span.message_id))
+            .cloned()
+            .collect())
+    }
+
+    async fn forgotten_labels(&self, _conversation_id: &str, limit: usize) -> Result<Vec<String>> {
+        let mut labels: Vec<String> = Vec::new();
+        for label in self.inner.lock().forgotten.iter().rev() {
+            if !labels.contains(label) {
+                labels.push(label.clone());
+            }
+        }
+        labels.truncate(limit);
+        Ok(labels)
+    }
+
     async fn commit_memory(
         &self,
         preconditions: &MemoryCommitPreconditions,
@@ -445,6 +608,7 @@ impl ConversationMemoryPort for FakePort {
         }
         if let Some(summary) = &candidate.summary {
             inner.summary = Some(summary.summary_text.clone());
+            inner.summary_up_to = Some(summary.up_to_message_id.clone());
         }
         inner.state.memory_revision += 1;
         inner.state.processed_through_sequence = candidate.commit.processed_through_sequence;
@@ -453,6 +617,9 @@ impl ConversationMemoryPort for FakePort {
         inner.state.last_error_code = None;
         inner.operations.insert(preconditions.operation_id.clone());
         inner.committed.push(candidate.clone());
+        if let Some(token) = inner.cancel_on_commit.take() {
+            token.cancel();
+        }
 
         let mandatory = inner
             .items
@@ -487,6 +654,7 @@ impl ConversationMemoryPort for FakePort {
         inner.state.last_error_code = Some(code.to_string());
         inner.items.clear();
         inner.summary = None;
+        inner.summary_up_to = None;
         Ok(())
     }
 
@@ -560,6 +728,83 @@ impl FakeLlm {
 
     fn prompts(&self) -> Vec<String> {
         self.prompts.lock().clone()
+    }
+
+    /// The prompts sent for one task, in order.
+    fn prompts_for(&self, task: Task) -> Vec<String> {
+        self.calls()
+            .into_iter()
+            .zip(self.prompts())
+            .filter(|(call, _)| *call == task)
+            .map(|(_, prompt)| prompt)
+            .collect()
+    }
+
+    /// For each summariser call, the sequences it was asked to fold.
+    fn folded_sequences(&self) -> Vec<Vec<i64>> {
+        self.prompts_for(Task::Summarize)
+            .iter()
+            .map(|prompt| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(prompt).expect("summary prompt JSON");
+                payload["new_passages"]
+                    .as_array()
+                    .expect("summary passages")
+                    .iter()
+                    .map(|passage| passage["sequence"].as_i64().expect("passage sequence"))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// For each summariser call, the text of the passages it was asked to fold.
+    fn folded_texts(&self) -> Vec<String> {
+        self.prompts_for(Task::Summarize)
+            .iter()
+            .map(|prompt| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(prompt).expect("summary prompt JSON");
+                payload["new_passages"]
+                    .as_array()
+                    .expect("summary passages")
+                    .iter()
+                    .filter_map(|passage| passage["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect()
+    }
+
+    /// For each summariser call, the facts it was told were forgotten.
+    fn forgotten_labels(&self) -> Vec<Vec<String>> {
+        self.prompts_for(Task::Summarize)
+            .iter()
+            .map(|prompt| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(prompt).expect("summary prompt JSON");
+                payload["forgotten_by_user"]
+                    .as_array()
+                    .map(|labels| {
+                        labels
+                            .iter()
+                            .filter_map(|label| label.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// For each summariser call, the summary it was asked to extend.
+    fn previous_summaries(&self) -> Vec<Option<String>> {
+        self.prompts_for(Task::Summarize)
+            .iter()
+            .map(|prompt| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(prompt).expect("summary prompt JSON");
+                payload["previous_summary"].as_str().map(str::to_string)
+            })
+            .collect()
     }
 
     fn request_limits(&self) -> Vec<(Option<String>, Option<u32>)> {
@@ -1492,4 +1737,637 @@ async fn maintenance_consolidates_the_first_completed_turn_without_waiting_for_o
     assert_eq!(outcome.status, CompactionStatus::Committed);
     assert_eq!(port.watermark(), 2);
     assert_eq!(outcome.commit.inserts.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// A summary a delete dropped is rebuilt, not abandoned
+// ---------------------------------------------------------------------------
+
+fn maintenance() -> CompactionRequest {
+    CompactionRequest {
+        trigger: super::CompactionTrigger::Maintenance,
+        ..Default::default()
+    }
+}
+
+/// Regenerate takes back the last answer. Consolidation had ended the summary
+/// on that answer, so the delete took the summary with it while the clamped
+/// watermark still covers the earlier turn. The next run must fold that turn
+/// back in, not summarise only the new answer.
+#[tokio::test]
+async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
+    let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![
+            Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS)),
+            Ok(extraction_response(vec![], vec![], &["m4b:s0"])),
+        ],
+        vec![],
+        vec![
+            Ok("Approval gate; staging allowed.".to_string()),
+            Ok("Approval gate; staging only, production blocked.".to_string()),
+        ],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+    assert_eq!(port.watermark(), 4);
+    assert_eq!(
+        port.summary_boundary(),
+        Some(4),
+        "consolidation ends the summary on the latest answer"
+    );
+
+    // Regenerate: the answer goes, and nothing in the ledger cites it.
+    port.delete_uncited("m4");
+    assert_eq!(port.summary(), None, "the summary went with its boundary");
+    assert_eq!(port.watermark(), 3);
+    port.append(message(
+        "m4b",
+        5,
+        SourceRole::Assistant,
+        "Noted again: staging only.",
+    ));
+
+    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(
+        llm.folded_sequences().last().cloned(),
+        Some(vec![1, 2, 3, 5]),
+        "the turn below the watermark is folded back in, not only the new answer"
+    );
+    assert_eq!(
+        llm.previous_summaries().last().cloned(),
+        Some(None),
+        "nothing of the dropped summary is reused"
+    );
+    // Only the new answer is extracted: the ledger already covers the rest.
+    assert_eq!(llm.count(Task::Extract), 2);
+    let second = llm.prompts_for(Task::Extract).pop().unwrap();
+    assert!(second.contains("m4b:s0"));
+    for covered in ["m1:s0", "m2:s0", "m3:s0"] {
+        assert!(
+            !second.contains(covered),
+            "{covered} must not be re-extracted"
+        );
+    }
+    assert_eq!(port.watermark(), 5);
+    assert_eq!(
+        port.summary().as_deref(),
+        Some("Approval gate; staging only, production blocked.")
+    );
+    assert_eq!(port.summary_boundary(), Some(5));
+}
+
+/// Deleting an early message drops the summary that covered it, since it may
+/// repeat the deleted text, but leaves the ledger and the watermark standing.
+/// The next run, of any trigger and with no new turn, rebuilds the summary from
+/// the messages that remain.
+#[tokio::test]
+async fn deleting_an_early_message_refolds_the_summary_from_the_messages_that_remain() {
+    let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS))],
+        vec![],
+        vec![
+            Ok("Approval gate; staging allowed.".to_string()),
+            Ok("Staging allowed.".to_string()),
+        ],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    port.delete_uncited("m1");
+    assert_eq!(port.summary(), None);
+    assert_eq!(port.watermark(), 4, "the ledger still covers what remains");
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(
+        llm.folded_sequences().last().cloned(),
+        Some(vec![2, 3, 4]),
+        "every remaining message the dropped summary covered is folded again"
+    );
+    assert_eq!(llm.count(Task::Extract), 1, "nothing is re-extracted");
+    assert_eq!(outcome.extraction_calls, 0);
+    assert!(outcome.commit.inserts.is_empty() && outcome.commit.updates.is_empty());
+    assert_eq!(port.watermark(), 4, "the watermark does not move");
+    assert_eq!(port.summary().as_deref(), Some("Staging allowed."));
+    assert_eq!(port.summary_boundary(), Some(4));
+    assert_eq!(outcome.boundary_message_id.as_deref(), Some("m4"));
+}
+
+/// A run can commit no summary when nothing it covered was eligible. A
+/// conversation left that way has nothing to refold, and must not pay for a
+/// model call each time it is asked to compact.
+#[tokio::test]
+async fn a_watermark_over_only_failed_outputs_does_not_refold() {
+    let mut failed = vec![
+        message(
+            "f1",
+            1,
+            SourceRole::Assistant,
+            "Partial answer that errored.",
+        ),
+        message("f2", 2, SourceRole::Assistant, "Another failed attempt."),
+    ];
+    for output in &mut failed {
+        output.status = "failed".to_string();
+    }
+    let port = FakePort::new(failed, Vec::new(), 2);
+    let llm = FakeLlm::new(vec![], vec![], vec![]);
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    for request in [CompactionRequest::default(), maintenance()] {
+        let outcome = job.run(CONVERSATION, request).await.unwrap();
+        assert_eq!(outcome.status, CompactionStatus::NothingToCompact);
+    }
+
+    assert_eq!(
+        llm.calls(),
+        Vec::new(),
+        "nothing eligible means no model call"
+    );
+    assert_eq!(port.commits(), 0);
+    assert_eq!(port.watermark(), 2);
+    assert_eq!(port.summary(), None);
+}
+
+/// In the ordinary state the summary ends at the watermark, so later runs fold
+/// only what is new and a run with nothing new does nothing at all.
+#[tokio::test]
+async fn a_summary_that_reaches_the_watermark_is_extended_never_refolded() {
+    let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![
+            Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS)),
+            Ok(extraction_response(vec![], vec![], &["m5:s0", "m6:s0"])),
+        ],
+        vec![],
+        vec![
+            Ok("Approval gate; staging allowed.".to_string()),
+            Ok("Approval gate; staging allowed; production blocked.".to_string()),
+        ],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    let idle = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(idle.status, CompactionStatus::NothingToCompact);
+    assert_eq!(llm.calls().len(), 2, "no call for a run with nothing new");
+
+    let turns = four_turns();
+    port.append(turns[4].clone());
+    port.append(turns[5].clone());
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    assert_eq!(
+        llm.folded_sequences(),
+        vec![vec![1, 2, 3, 4], vec![5, 6]],
+        "the second fold carries the summary forward instead of rereading"
+    );
+    assert_eq!(
+        llm.previous_summaries().last().cloned(),
+        Some(Some("Approval gate; staging allowed.".to_string()))
+    );
+    assert_eq!(port.summary_boundary(), Some(6));
+}
+
+/// `count` alternating user and assistant messages of exactly ten bytes each,
+/// so a refold byte budget maps onto a message count.
+fn uniform_messages(count: i64) -> Vec<SourceMessage> {
+    (1..=count)
+        .map(|sequence| {
+            let role = if sequence % 2 == 1 {
+                SourceRole::User
+            } else {
+                SourceRole::Assistant
+            };
+            message(
+                &format!("u{sequence}"),
+                sequence,
+                role,
+                &format!("Message {sequence:02}"),
+            )
+        })
+        .collect()
+}
+
+/// Two uniform messages per refold.
+fn two_message_refolds() -> CompactionConfig {
+    CompactionConfig {
+        max_refold_bytes_per_attempt: 20,
+        ..small_config()
+    }
+}
+
+fn summaries(count: usize) -> Vec<Result<String>> {
+    (1..=count)
+        .map(|index| Ok(format!("Summary {index}.")))
+        .collect()
+}
+
+/// A refold larger than one attempt's budget is caught up across runs when the
+/// run has someone waiting on it: a `/compact` takes one page. Each run ends the
+/// summary on the last message it folded, which is where the next one resumes,
+/// and the extracted ledger is never offered again.
+#[tokio::test]
+async fn a_long_refold_resumes_from_the_summary_boundary_across_runs() {
+    // The ledger covers all eight; a delete or a correction took the summary.
+    let port = FakePort::new(uniform_messages(8), Vec::new(), 8);
+    let llm = FakeLlm::new(vec![], vec![], summaries(4));
+    let job = job(port.clone(), llm.clone(), two_message_refolds());
+
+    let mut statuses = Vec::new();
+    for _ in 0..4 {
+        let outcome = job
+            .run(CONVERSATION, CompactionRequest::default())
+            .await
+            .unwrap();
+        statuses.push(outcome.status);
+        assert_eq!(outcome.processed_through_sequence, 8, "the watermark stays");
+    }
+
+    assert_eq!(
+        statuses,
+        vec![
+            CompactionStatus::Partial,
+            CompactionStatus::Partial,
+            CompactionStatus::Partial,
+            CompactionStatus::Committed,
+        ]
+    );
+    assert_eq!(
+        llm.folded_sequences(),
+        vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]],
+        "oldest first, each message folded exactly once"
+    );
+    assert_eq!(
+        llm.previous_summaries(),
+        vec![
+            None,
+            Some("Summary 1.".to_string()),
+            Some("Summary 2.".to_string()),
+            Some("Summary 3.".to_string()),
+        ],
+        "each run carries the partial summary forward"
+    );
+    assert_eq!(llm.count(Task::Extract), 0, "nothing is re-extracted");
+    assert_eq!(port.summary_boundary(), Some(8));
+    assert!(
+        llm.forgotten_labels().iter().all(Vec::is_empty),
+        "nothing forgotten, nothing named"
+    );
+
+    let caught_up = job.run(CONVERSATION, maintenance()).await.unwrap();
+    assert_eq!(caught_up.status, CompactionStatus::NothingToCompact);
+    assert_eq!(llm.count(Task::Summarize), 4, "a finished refold stops");
+}
+
+/// Consolidation, which no one waits on, folds the whole backlog in one run,
+/// one committed page at a time. New turns are extracted with the first page, so
+/// the ledger never waits on the summary, and their text is folded once the
+/// refold reaches them, which keeps the summary's coverage free of gaps.
+#[tokio::test]
+async fn consolidation_folds_a_long_refold_page_by_page_in_one_run() {
+    let messages = uniform_messages(8);
+    let port = FakePort::new(messages[..6].to_vec(), Vec::new(), 6);
+    port.append(messages[6].clone());
+    port.append(messages[7].clone());
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["u7:s0", "u8:s0"]))],
+        vec![],
+        summaries(4),
+    );
+    let job = job(port.clone(), llm.clone(), two_message_refolds());
+
+    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert!(!outcome.refold_pending);
+    assert_eq!(
+        port.committed_watermarks(),
+        vec![8, 8, 8, 8],
+        "the new turn is extracted with the first page"
+    );
+    assert_eq!(
+        llm.folded_sequences(),
+        vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]],
+        "oldest first, each message folded once, the new turn last"
+    );
+    assert_eq!(
+        llm.previous_summaries(),
+        vec![
+            None,
+            Some("Summary 1.".to_string()),
+            Some("Summary 2.".to_string()),
+            Some("Summary 3.".to_string()),
+        ],
+        "each page carries the one before it forward"
+    );
+    assert_eq!(llm.count(Task::Extract), 1, "u7 and u8 are extracted once");
+    assert_eq!(port.summary_boundary(), Some(8));
+    assert_eq!(port.summary(), Some("Summary 4.".to_string()));
+}
+
+/// A consolidation stopped between pages keeps the pages it committed and
+/// reports them, not a failure; the next run resumes where it stopped.
+#[tokio::test]
+async fn consolidation_stopped_between_pages_keeps_what_it_folded() {
+    let port = FakePort::new(uniform_messages(8), Vec::new(), 8);
+    let llm = FakeLlm::new(vec![], vec![], summaries(4));
+    let job = job(port.clone(), llm.clone(), two_message_refolds());
+    let cancellation = CancellationToken::new();
+    port.cancel_on_commit(cancellation.clone());
+
+    let stopped = job
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                cancellation: Some(cancellation),
+                ..maintenance()
+            },
+        )
+        .await
+        .expect("the first page's outcome, not the cancellation");
+
+    assert_eq!(stopped.status, CompactionStatus::Partial);
+    assert!(stopped.refold_pending);
+    assert_eq!(port.summary_boundary(), Some(2));
+    assert!(port.errors().is_empty(), "stopping is not an error");
+
+    let resumed = job.run(CONVERSATION, maintenance()).await.unwrap();
+    assert_eq!(resumed.status, CompactionStatus::Committed);
+    assert_eq!(
+        llm.folded_sequences(),
+        vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]]
+    );
+    assert_eq!(port.summary_boundary(), Some(8));
+}
+
+/// The one refold that cannot record progress: an ineligible output larger than
+/// the whole budget, with no summary to carry forward. Retrying it would leave
+/// the conversation with no summary for good, so the run gives that range up to
+/// the ledger and recall and summarises what it can.
+#[tokio::test]
+async fn an_unfoldable_refold_page_does_not_stall_the_summary() {
+    let mut messages = uniform_messages(4);
+    messages[0] = message(
+        "f1",
+        1,
+        SourceRole::Assistant,
+        "A failed generation far longer than the refold budget.",
+    );
+    messages[0].status = "failed".to_string();
+    let port = FakePort::new(messages[..2].to_vec(), Vec::new(), 2);
+    port.append(messages[2].clone());
+    port.append(messages[3].clone());
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["u3:s0", "u4:s0"]))],
+        vec![],
+        summaries(1),
+    );
+    let job = job(port.clone(), llm.clone(), two_message_refolds());
+
+    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(llm.folded_sequences(), vec![vec![3, 4]]);
+    assert_eq!(port.watermark(), 4);
+    assert_eq!(port.summary_boundary(), Some(4));
+}
+
+// ---------------------------------------------------------------------------
+// A forgotten span never reaches the summariser
+// ---------------------------------------------------------------------------
+
+/// Two turns, each stating something the user may later ask to forget.
+fn private_turns() -> Vec<SourceMessage> {
+    vec![
+        message(
+            "k1",
+            1,
+            SourceRole::User,
+            "My locker code is 4471, keep it handy.",
+        ),
+        message("k2", 2, SourceRole::Assistant, "Noted, I will keep it."),
+        message(
+            "k3",
+            3,
+            SourceRole::User,
+            "My badge number is 9930 for the lab.",
+        ),
+        message("k4", 4, SourceRole::Assistant, "Got it, badge noted."),
+    ]
+}
+
+const PRIVATE_SEGMENTS: [&str; 4] = ["k1:s0", "k2:s0", "k3:s0", "k4:s0"];
+
+/// An active user fact whose one assertion quotes `needle` inside `source`,
+/// labelled with it as an extracted label would be.
+fn fact_quoting(id: &str, source: &SourceMessage, needle: &str) -> MemoryItem {
+    let start = source.content.find(needle).expect("the quoted text") as u32;
+    let mut item = committed_constraint(id, source);
+    item.kind = MemoryKind::UserFact;
+    item.label = format!("The user's code is {needle}");
+    item.evidence = vec![EvidenceSpan {
+        start_byte: start,
+        end_byte: start + needle.len() as u32,
+        ..whole_span(source, EvidencePurpose::Assertion)
+    }];
+    item
+}
+
+/// Forgetting must survive every fold: the one that first summarises the
+/// message, and the refold that rebuilds the summary the forget cleared. The
+/// span never reaches the summariser; the fact is named so it is left out.
+#[tokio::test]
+async fn a_forgotten_span_never_reaches_the_summariser() {
+    let messages = private_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![
+            fact_quoting("item-locker", &messages[0], "4471"),
+            fact_quoting("item-badge", &messages[2], "9930"),
+        ],
+        0,
+    );
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PRIVATE_SEGMENTS))],
+        vec![],
+        summaries(2),
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    // Forgotten before the message was ever summarised: the normal fold.
+    port.forget("item-badge");
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+    let first = llm.folded_texts().pop().unwrap();
+    assert!(!first.contains("9930"), "the forgotten badge number leaked");
+    assert!(
+        first.contains("My badge number is [forgotten] for the lab."),
+        "the rest of the message is still summarised: {first}"
+    );
+    assert!(first.contains("4471"), "only forgotten spans are cut");
+    assert_eq!(
+        llm.forgotten_labels().pop().unwrap(),
+        vec!["The user's code is 9930".to_string()]
+    );
+
+    // Forgotten after it was summarised: the forget clears the summary and
+    // the refold rebuilds it from the original messages.
+    port.forget("item-locker");
+    assert_eq!(port.summary(), None);
+    job.run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        llm.folded_sequences().last().cloned(),
+        Some(vec![1, 2, 3, 4])
+    );
+    let refold = llm.folded_texts().pop().unwrap();
+    for forgotten in ["4471", "9930"] {
+        assert!(!refold.contains(forgotten), "{forgotten} came back");
+    }
+    assert!(refold.contains("My locker code is [forgotten], keep it handy."));
+    assert!(refold.contains("My badge number is [forgotten] for the lab."));
+    assert!(refold.contains("Noted, I will keep it."));
+    assert_eq!(
+        llm.forgotten_labels().pop().unwrap(),
+        vec![
+            "The user's code is 4471".to_string(),
+            "The user's code is 9930".to_string(),
+        ],
+        "most recently forgotten first"
+    );
+}
+
+/// A later message that repeats a forgotten value is not a forgotten span, so
+/// its words reach the summariser, with the fact named for leaving out.
+#[tokio::test]
+async fn a_restated_forgotten_value_is_named_for_the_summariser_to_leave_out() {
+    let messages = private_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![fact_quoting("item-locker", &messages[0], "4471")],
+        4,
+    );
+    port.forget("item-locker");
+    port.append(message(
+        "k5",
+        5,
+        SourceRole::User,
+        "Scratch 4471, the locker was rekeyed.",
+    ));
+    port.append(message("k6", 6, SourceRole::Assistant, "Understood."));
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["k5:s0", "k6:s0"]))],
+        vec![],
+        summaries(1),
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    assert_eq!(llm.folded_sequences(), vec![vec![1, 2, 3, 4, 5, 6]]);
+    let folded = llm.folded_texts().pop().unwrap();
+    assert!(folded.contains("My locker code is [forgotten], keep it handy."));
+    assert!(folded.contains("Scratch 4471, the locker was rekeyed."));
+    assert_eq!(
+        llm.forgotten_labels().pop().unwrap(),
+        vec!["The user's code is 4471".to_string()]
+    );
+    let prompt = llm.prompts_for(Task::Summarize).pop().unwrap();
+    assert!(prompt.contains("Leave each of them out of the summary"));
+}
+
+/// A rebuild discards the ledger and summarises from sequence zero; the
+/// user's forget outlives the items it was recorded against.
+#[tokio::test]
+async fn a_rebuild_folds_forgotten_spans_out_of_the_summary() {
+    let messages = private_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![fact_quoting("item-locker", &messages[0], "4471")],
+        4,
+    );
+    port.forget("item-locker");
+    port.mark_rebuild_required(CONVERSATION, "source_rewritten")
+        .await
+        .unwrap();
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PRIVATE_SEGMENTS))],
+        vec![],
+        summaries(1),
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    assert_eq!(port.operations(), vec!["rebuild".to_string()]);
+    let folded = llm.folded_texts().pop().unwrap();
+    assert!(!folded.contains("4471"), "the forgotten code leaked");
+    assert!(folded.contains("My locker code is [forgotten], keep it handy."));
+    assert!(folded.contains("My badge number is 9930 for the lab."));
+}
+
+/// A rebuild extracts from the original messages, forgotten words included.
+/// What it proposes from a forgotten span is dropped before review, so it is
+/// never held as active memory, named to the summariser, or stored.
+#[tokio::test]
+async fn a_rebuild_does_not_extract_a_forgotten_span_again() {
+    let messages = private_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![fact_quoting("item-locker", &messages[0], "4471")],
+        4,
+    );
+    port.forget("item-locker");
+    port.mark_rebuild_required(CONVERSATION, "source_rewritten")
+        .await
+        .unwrap();
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![
+                proposed_constraint("c1", "Locker code 4471", "k1", "My locker code is 4471"),
+                proposed_constraint(
+                    "c2",
+                    "Badge number 9930",
+                    "k3",
+                    "My badge number is 9930 for the lab.",
+                ),
+            ],
+            vec![],
+            &PRIVATE_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[("addition:c2", "supported")]))],
+        summaries(1),
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+
+    let stored: Vec<&str> = outcome
+        .commit
+        .inserts
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(stored, vec!["Badge number 9930"]);
+    let review = llm.prompts_for(Task::Review).pop().unwrap();
+    assert!(!review.contains("4471"), "the forgotten code was reviewed");
+    let summary: serde_json::Value =
+        serde_json::from_str(&llm.prompts_for(Task::Summarize).pop().unwrap()).unwrap();
+    assert_eq!(
+        summary["active_requirement_labels_supplied_separately"],
+        serde_json::json!(["Badge number 9930"])
+    );
 }

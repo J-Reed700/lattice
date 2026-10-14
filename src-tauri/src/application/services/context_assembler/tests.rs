@@ -7,6 +7,7 @@
 
 mod eviction;
 mod prefix;
+mod turn_evidence;
 
 use super::*;
 use crate::domain::conversation::memory::{
@@ -69,6 +70,7 @@ fn snapshot(items: Vec<MemoryItem>, summary: Option<&str>, watermark: i64) -> Me
         transcript_revision: 11,
         active_items: items,
         summary: summary.map(str::to_owned),
+        summary_through_sequence: summary.map(|_| watermark),
         latest_sequence: watermark,
     }
 }
@@ -82,6 +84,7 @@ fn request<'a>(
         conversation_id: "c1",
         system_policy: "You are a helpful assistant.",
         current_input: QUESTION,
+        inline_evidence: None,
         tool_schema_tokens: 0,
         snapshot,
         recent,

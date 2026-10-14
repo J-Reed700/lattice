@@ -57,6 +57,7 @@ pub(super) fn collect_tool_sources(
                 };
                 return vec![SourceDto {
                     page_number: None,
+                    from_ocr: false,
                     document_id: format!("web:{}", output.url),
                     chunk_id: "web-content-1".to_string(),
                     content: content.clone(),
@@ -131,6 +132,7 @@ pub(super) fn collect_tool_sources(
                 };
                 return vec![SourceDto {
                     page_number: None,
+                    from_ocr: false,
                     document_id: format!("wiki:{}", output.title.replace(' ', "_")),
                     chunk_id: "wiki-summary-1".to_string(),
                     content: content.clone(),

@@ -30,7 +30,9 @@ pub async fn fetch_chunks_for_document(
             token_count,
             word_count,
             has_code,
-            section
+            section,
+            page_number,
+            from_ocr
         FROM text_chunks
         WHERE document_id = ?
         ORDER BY chunk_index ASC
@@ -92,7 +94,7 @@ pub async fn save_chunks(
         let mut query_builder = QueryBuilder::new(
             "INSERT INTO text_chunks (
                 id, document_id, content, chunk_index,
-                contextualized_content, context_prefix, start_char, end_char, language, token_count, word_count, has_code, section, page_number
+                contextualized_content, context_prefix, start_char, end_char, language, token_count, word_count, has_code, section, page_number, from_ocr
             ) ",
         );
 
@@ -110,7 +112,8 @@ pub async fn save_chunks(
                 .push_bind(model.word_count)
                 .push_bind(model.has_code)
                 .push_bind(&model.section)
-                .push_bind(model.page_number);
+                .push_bind(model.page_number)
+                .push_bind(model.from_ocr);
         });
 
         query_builder

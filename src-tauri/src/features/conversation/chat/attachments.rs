@@ -379,6 +379,7 @@ fn build_attachment_source(
         section,
         chunk_index,
         page_number: None,
+        from_ocr: false,
         chunk_excerpts: None,
         citation_id: None,
 
@@ -409,6 +410,7 @@ mod tests {
             section: None,
             chunk_index: None,
             page_number: None,
+            from_ocr: false,
             chunk_excerpts: None,
             citation_id: None,
 

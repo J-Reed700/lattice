@@ -9,7 +9,12 @@ type PassageRow = (
     i64,
     Option<String>,
     Option<i64>,
+    bool,
 );
+
+/// One neighbouring chunk of a section: id, file name, file path, content, chunk
+/// index, page number, and whether OCR read it.
+type SectionNeighbourRow = (String, String, String, String, i64, Option<i64>, bool);
 
 impl ConversationRepository {
     /// Read only metadata and one bounded opening per document; never load the
@@ -87,10 +92,10 @@ impl ConversationRepository {
                 continue;
             }
             let rows: Vec<PassageRow> = sqlx::query_as(
-                "SELECT c.id, d.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? ORDER BY c.chunk_index LIMIT ?",
+                "SELECT c.id, d.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? ORDER BY c.chunk_index LIMIT ?",
             ).bind(id).bind(chunks_per_document.min(8) as i64).fetch_all(&self.pool).await?;
             passages.extend(rows.into_iter().map(
-                |(id, document_id, name, path, content, chunk_index, section, page)| {
+                |(id, document_id, name, path, content, chunk_index, section, page, from_ocr)| {
                     crate::application::contracts::search::CorpusPassage {
                         id,
                         document_id,
@@ -100,6 +105,7 @@ impl ConversationRepository {
                         chunk_index: chunk_index.max(0) as usize,
                         section,
                         page_number: page.and_then(|p| p.try_into().ok()),
+                        from_ocr,
                     }
                 },
             ));
@@ -129,7 +135,7 @@ impl ConversationRepository {
         let mut passages = Vec::new();
         let mut seen = HashSet::new();
         for identifier in identifiers {
-            let mut q = QueryBuilder::<Sqlite>::new("SELECT c.id, c.document_id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
+            let mut q = QueryBuilder::<Sqlite>::new("SELECT c.id, c.document_id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
             let mut ids: Vec<_> = allowed.iter().collect();
             ids.sort();
             for (i, id) in ids.into_iter().enumerate() {
@@ -163,7 +169,7 @@ impl ConversationRepository {
                 rows.into_iter()
                     .filter(|row| seen.insert(row.0.clone()))
                     .map(
-                        |(id, document_id, name, path, content, index, section, page)| {
+                        |(id, document_id, name, path, content, index, section, page, from_ocr)| {
                             crate::application::contracts::search::CorpusPassage {
                                 id,
                                 document_id,
@@ -173,6 +179,7 @@ impl ConversationRepository {
                                 chunk_index: index.max(0) as usize,
                                 section,
                                 page_number: page.and_then(|p| p.try_into().ok()),
+                                from_ocr,
                             }
                         },
                     ),
@@ -200,11 +207,11 @@ impl ConversationRepository {
         if !allowed.contains(&doc) {
             return Ok(Vec::new());
         }
-        let rows: Vec<(String,String,String,String,i64,Option<i64>)> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.page_number FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND c.section = ? AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
+        let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND c.section = ? AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
             .bind(&doc).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
-            .map(|(id, name, path, content, index, page)| {
+            .map(|(id, name, path, content, index, page, from_ocr)| {
                 crate::application::contracts::search::CorpusPassage {
                     id,
                     document_id: doc.clone(),
@@ -214,6 +221,7 @@ impl ConversationRepository {
                     chunk_index: index.max(0) as usize,
                     section: Some(section.clone()),
                     page_number: page.and_then(|p| p.try_into().ok()),
+                    from_ocr,
                 }
             })
             .collect())
@@ -383,28 +391,33 @@ impl ConversationRepository {
 }
 
 impl ConversationRepository {
-    /// Hydrate provenance for lexical/vector hits as well as ordered reads.
+    /// Hydrate provenance for lexical/vector hits as well as ordered reads:
+    /// section, page, and whether OCR read the text off a scan.
     pub async fn retrieval_locations(
         &self,
         chunk_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>)>, AppError> {
+    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>, bool)>, AppError>
+    {
         let mut locations = std::collections::HashMap::new();
         for batch in chunk_ids.chunks(100) {
             if batch.is_empty() {
                 continue;
             }
             let mut query = QueryBuilder::<Sqlite>::new(
-                "SELECT id, section, page_number FROM text_chunks WHERE id IN (",
+                "SELECT id, section, page_number, from_ocr FROM text_chunks WHERE id IN (",
             );
             let mut separated = query.separated(",");
             for id in batch {
                 separated.push_bind(id);
             }
             query.push(")");
-            let rows: Vec<(String, Option<String>, Option<i64>)> =
+            let rows: Vec<(String, Option<String>, Option<i64>, bool)> =
                 query.build_query_as().fetch_all(&self.pool).await?;
-            for (id, section, page) in rows {
-                locations.insert(id, (section, page.and_then(|v| v.try_into().ok())));
+            for (id, section, page, from_ocr) in rows {
+                locations.insert(
+                    id,
+                    (section, page.and_then(|v| v.try_into().ok()), from_ocr),
+                );
             }
         }
         Ok(locations)
@@ -765,5 +778,39 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    /// A search hit learns it was read off a scan from the same lookup that
+    /// gives it its section and page, which is what the prompt header reads.
+    #[tokio::test]
+    async fn a_hit_location_carries_the_ocr_mark() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE text_chunks (id TEXT, section TEXT, page_number INTEGER,
+                from_ocr BOOLEAN NOT NULL DEFAULT 0);
+            INSERT INTO text_chunks VALUES ('scan', 'Intro', 2, 1), ('typed', 'Intro', 3, 0);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let repo = ConversationRepository::new(pool);
+
+        let locations = repo
+            .retrieval_locations(&["scan".to_string(), "typed".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            locations.get("scan"),
+            Some(&(Some("Intro".to_string()), Some(2), true))
+        );
+        assert_eq!(
+            locations.get("typed"),
+            Some(&(Some("Intro".to_string()), Some(3), false))
+        );
     }
 }

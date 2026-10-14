@@ -740,6 +740,45 @@ mod late_chunking_tests {
             .unwrap();
         assert_eq!(vectors.len(), document.chunks().len());
     }
+
+    /// A chunk never crosses a page, so marking the pages OCR read marks
+    /// exactly the chunks cut from them. Marking again from an extraction with
+    /// no OCR pages clears every mark, which a re-index relies on.
+    #[test]
+    fn only_chunks_cut_from_an_ocr_page_are_marked() {
+        let pages = [
+            "Typed first page.\n",
+            "Scanned second page.\n",
+            "Typed third page.\n",
+        ];
+        let text = pages.concat();
+        let mut ranges = Vec::new();
+        let mut start = 0;
+        for (index, page) in pages.iter().enumerate() {
+            ranges.push((index + 1, start, start + page.len()));
+            start += page.len();
+        }
+        let embedder = RecordingEmbedder::new(false, 8);
+        let (mut prepared, _) =
+            prepare_structured_with_spans(document(&text), &embedder, &ranges).unwrap();
+
+        prepared.mark_ocr_pages(&[2]);
+
+        assert!(prepared.chunks().iter().any(|c| c.from_ocr()));
+        for chunk in prepared.chunks() {
+            assert_eq!(
+                chunk.from_ocr(),
+                chunk.page_number() == Some(2),
+                "{:?} on page {:?}",
+                chunk.content(),
+                chunk.page_number()
+            );
+        }
+
+        prepared.mark_ocr_pages(&[]);
+
+        assert!(prepared.chunks().iter().all(|c| !c.from_ocr()));
+    }
 }
 
 #[cfg(test)]

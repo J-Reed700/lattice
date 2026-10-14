@@ -11,7 +11,7 @@ use tracing::{info, warn};
 pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = "You classify one turn of a conversation with a \
 personal knowledge-base assistant. Decide three things about the user's latest message:
 - needsKnowledgeBase: true only if answering requires searching the user's own documents, notes, or files.
-- needsWeb: true only if answering requires current or public information from the web.
+- needsWeb: true only if the answer depends on information that cannot be in the user's own files: current events, live data such as prices or weather, or public facts about the outside world that the user did not write about. False for questions about the user's own documents, notes, policies, projects or work, including anything asked about \"our\", \"my\" or \"the company's\" rules, plans or records. When unsure, false.
 - isFollowup: true only if the message just continues the recent conversation and cannot stand alone.
 Also give a confidence between 0 and 1.
 
@@ -43,9 +43,14 @@ pub(crate) fn intent_schema() -> serde_json::Value {
 pub const DEFAULT_INTENT_CONFIDENCE_THRESHOLD: f32 = 0.5;
 const DEFAULT_INTENT_TIMEOUT_MS: u64 = 15_000;
 
-/// The utility model's guess at what a turn needs. Enable-only: the caller ORs
-/// these into the user-set flags, so a wrong `false` costs nothing and a wrong
-/// `true` costs one unneeded search — never a missing one.
+/// The utility model's guess at what a turn needs. It can add to the user-set
+/// flags and never takes anything away. `needs_knowledge_base` and
+/// `is_followup` are ORed in, so a wrong `true` costs one unneeded vault search.
+/// `needs_web` is weaker: it never forces the web. It lets the turn fall back
+/// to the web after the vault has been searched, and only when the vault came
+/// back empty or its evidence was judged insufficient. A wrong `true` then
+/// costs nothing when the user's files answer the question, and a wrong
+/// `false` costs the web lookup an outside question needed.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnIntent {
@@ -271,6 +276,34 @@ mod tests {
         let prompt = render_intent_prompt(DEFAULT_INTENT_PROMPT_TEMPLATE, &input());
         assert!(prompt.contains("What did my notes say about the launch?"));
         assert!(prompt.contains("User: hello"));
+    }
+
+    /// The v1 eval read "which HTTP failures may be retried?" as a public
+    /// question on 25 of 38 company-handbook items. The definition now says
+    /// what the web is for and what it is not.
+    #[test]
+    fn needs_web_is_for_what_the_users_files_cannot_hold() {
+        let prompt = render_intent_prompt(DEFAULT_INTENT_PROMPT_TEMPLATE, &input());
+        let definition = prompt
+            .lines()
+            .find(|line| line.starts_with("- needsWeb:"))
+            .expect("the prompt defines needsWeb");
+
+        for wanted in [
+            "cannot be in the user's own files",
+            "current events",
+            "live data",
+            "public facts about the outside world",
+            "False for questions about the user's own documents, notes, policies, projects",
+            "\"our\", \"my\" or \"the company's\"",
+            "When unsure, false.",
+        ] {
+            assert!(definition.contains(wanted), "needsWeb lost: {wanted}");
+        }
+        assert!(
+            !definition.contains("public information from the web"),
+            "the old definition sent any public-sounding question out"
+        );
     }
 
     #[test]

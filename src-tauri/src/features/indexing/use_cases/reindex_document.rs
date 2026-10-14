@@ -90,16 +90,21 @@ impl ReindexDocumentUseCase {
         self.content_extractor = Some(extractor);
         self
     }
+    /// The text, its page ranges, and the pages OCR read.
     async fn extract(
         &self,
         path: &std::path::Path,
-    ) -> Result<(String, Vec<(usize, usize, usize)>)> {
+    ) -> Result<(String, Vec<(usize, usize, usize)>, Vec<u32>)> {
         match &self.content_extractor {
             Some(extractor) => {
                 let data = extractor.extract_content(path).await?;
-                Ok((data.text, data.page_ranges))
+                Ok((data.text, data.page_ranges, data.ocr_pages))
             }
-            None => Ok((self.file_storage.read_file(path).await?, Vec::new())),
+            None => Ok((
+                self.file_storage.read_file(path).await?,
+                Vec::new(),
+                Vec::new(),
+            )),
         }
     }
 
@@ -175,7 +180,7 @@ impl ReindexDocumentUseCase {
 
         // 2. Read current file content (clone to avoid borrow conflict)
         let file_path = document.file_path().to_path_buf();
-        let (content, pages) = self.extract(&file_path).await?;
+        let (content, pages, ocr_pages) = self.extract(&file_path).await?;
         // The import path refuses a file with no text; a reindex must too, or
         // it replaces every chunk and vector with nothing and still marks the
         // document indexed. Failing here leaves the old chunks in place.
@@ -246,6 +251,9 @@ impl ReindexDocumentUseCase {
             self.embedding_service.as_ref(),
             &pages,
         )?;
+        // From this extraction alone: a page that has gained a text layer since
+        // the last run loses its mark.
+        document.mark_ocr_pages(&ocr_pages);
         let model_identity = self.embedding_service.model_identity();
 
         // Same bargain as the import path: with a sparse head and a store

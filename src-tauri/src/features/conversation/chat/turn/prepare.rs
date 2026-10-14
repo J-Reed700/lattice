@@ -205,12 +205,28 @@ pub(super) async fn prepare_turn(
     let linked_web_sources_context =
         linked_web_sources_context.filter(|_| !search_flags.closed_book);
 
+    // Sized before retrieval, so the evidence it reads leaves room for what
+    // every evidence-carrying request also sends: the tool schemas and the
+    // template the evidence travels in.
+    let tool_schema_tokens = super::assemble::grounded_tool_tokens(
+        container,
+        &llm,
+        &settings.llm.custom_tools,
+        explorer.as_ref(),
+        search_flags,
+        tool_preferences,
+    );
     let budget = TurnBudget::plan(
-        llm.as_ref(),
+        &llm,
         &system_prompt,
-        &validated_message,
+        &crate::features::conversation::chat::prompting::evidence_frame(
+            &prompt_settings,
+            &validated_message,
+        ),
         &context,
         settings.llm.bounded_conversation_memory,
+        tool_schema_tokens,
+        chrono::Local::now().date_naive(),
     );
 
     let history_len = context.len();
@@ -293,12 +309,15 @@ pub(super) async fn resume_turn(
         &request.message,
         settings.llm.tool_output.highlight_terms_max as usize,
     );
+    // Nothing is retrieved again, so no evidence is sized against this.
     let budget = TurnBudget::plan(
-        llm.as_ref(),
+        &llm,
         "",
         &request.message,
         &[],
         settings.llm.bounded_conversation_memory,
+        0,
+        chrono::Local::now().date_naive(),
     );
     Ok(PreparedTurn {
         turn_id,
@@ -348,7 +367,15 @@ impl PreparedTurn {
     ) -> Result<Self> {
         let settings = SettingsDto::default();
         Ok(Self {
-            budget: TurnBudget::plan(llm.as_ref(), "", "question", &[], true),
+            budget: TurnBudget::plan(
+                &llm,
+                "",
+                "question",
+                &[],
+                true,
+                0,
+                chrono::Local::now().date_naive(),
+            ),
             turn_id: turn_id.to_string(),
             conv_id: conv_id.to_string(),
             llm,

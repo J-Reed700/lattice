@@ -38,6 +38,7 @@ fn source(citation_id: u32, document_id: &str) -> SourceDto {
         section: Some("Heading".into()),
         chunk_index: Some(0),
         page_number: None,
+        from_ocr: false,
         chunk_excerpts: None,
         citation_id: Some(citation_id),
         web_snapshot: None,

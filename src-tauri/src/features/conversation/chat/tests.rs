@@ -21,6 +21,7 @@ fn vault_source(document_id: &str, chunk_id: &str) -> SourceDto {
         section: None,
         chunk_index: None,
         page_number: None,
+        from_ocr: false,
         chunk_excerpts: None,
         citation_id: None,
         web_snapshot: None,
@@ -532,9 +533,91 @@ fn turn_intent_merge_enables_inferred_retrieval() {
     assert!(merged.force_kb_search);
     assert!(merged.force_followup_mode);
     assert!(!merged.force_web_search);
+    assert!(!merged.web_fallback);
     assert!(!merged.force_wiki_search);
     assert!(!merged.deep_research_mode);
     assert!(!merged.closed_book);
+}
+
+/// An intent that wants the web never forces it. The web becomes a fallback
+/// the vault has to fall short for, and the turn has nothing to say about the
+/// vault itself unless the intent also asked for it.
+#[test]
+fn turn_intent_web_becomes_a_fallback_and_never_forces_the_web() {
+    let intent = TurnIntent {
+        needs_knowledge_base: false,
+        needs_web: true,
+        is_followup: false,
+        confidence: 0.9,
+    };
+
+    let merged = apply_turn_intent(SearchFlags::from_preferences(None), &intent);
+
+    assert!(!merged.force_web_search);
+    assert!(merged.web_fallback);
+    assert!(merged.web_planned());
+    assert!(!merged.force_kb_search);
+    assert!(!merged.force_wiki_search);
+}
+
+/// The user's toggle is not demoted to a fallback by an intent that agrees
+/// with it: the web still runs beside the vault, as the user asked.
+#[test]
+fn a_web_search_the_user_asked_for_stays_forced() {
+    let toggled = ToolPreferences {
+        web_search: true,
+        ..ToolPreferences::default()
+    };
+    let intent = TurnIntent {
+        needs_knowledge_base: false,
+        needs_web: true,
+        is_followup: false,
+        confidence: 0.9,
+    };
+
+    let merged = apply_turn_intent(SearchFlags::from_preferences(Some(&toggled)), &intent);
+
+    assert!(merged.force_web_search);
+    assert!(!merged.web_fallback);
+}
+
+/// Each turn's flags start from its own preferences, which never carry a
+/// fallback, and the merge reads only this turn's intent. A follow-up the
+/// intent step does not send to the web does not go there because an
+/// earlier turn did.
+#[test]
+fn a_follow_up_inherits_no_web_fallback_from_an_earlier_turn() {
+    for prefs in [
+        None,
+        Some(ToolPreferences::default()),
+        Some(ToolPreferences {
+            web_search: true,
+            ..ToolPreferences::default()
+        }),
+        Some(ToolPreferences {
+            turn_mode: Some("query".to_string()),
+            ..ToolPreferences::default()
+        }),
+    ] {
+        assert!(!SearchFlags::from_preferences(prefs.as_ref()).web_fallback);
+    }
+
+    let earlier_turn = SearchFlags {
+        web_fallback: true,
+        ..SearchFlags::from_preferences(None)
+    };
+    let follow_up = TurnIntent {
+        needs_knowledge_base: true,
+        needs_web: false,
+        is_followup: true,
+        confidence: 0.9,
+    };
+
+    let merged = apply_turn_intent(earlier_turn, &follow_up);
+
+    assert!(!merged.web_fallback);
+    assert!(!merged.web_planned());
+    assert!(merged.force_followup_mode);
 }
 
 #[test]
@@ -542,6 +625,7 @@ fn turn_intent_merge_never_clears_a_set_flag() {
     let every_flag_set = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
+        web_fallback: false,
         force_wiki_search: true,
         deep_research_mode: true,
         force_followup_mode: true,
@@ -571,4 +655,5 @@ fn turn_intent_merge_never_clears_a_set_flag() {
     assert!(merged.closed_book);
     assert!(!merged.force_kb_search);
     assert!(!merged.force_web_search);
+    assert!(!merged.web_fallback);
 }
