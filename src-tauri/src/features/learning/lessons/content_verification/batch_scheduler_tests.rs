@@ -378,7 +378,7 @@ fn coverage(count: usize) -> Coverage {
                 index,
                 complete: true,
                 reason: "Fixture coverage".into(),
-                unresolved_passages: vec![],
+                missing_assertions: vec![],
             })
             .collect(),
     }

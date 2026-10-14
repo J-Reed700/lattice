@@ -59,10 +59,7 @@ pub(in crate::features::learning) mod research;
 mod section_checkpoints;
 #[cfg(test)]
 pub(crate) mod tests;
-use inventory_checkpoint::{
-    complete_inventory, extract_audited_inventory, retain_current_assessment_checks,
-    retain_current_teaching_checks, valid_saved_coverage,
-};
+use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
 pub(in crate::features::learning) use repair_loop::verify_and_repair;
 pub(in crate::features::learning) use repair_loop::{
@@ -126,12 +123,15 @@ struct InventoryCheckpoint {
     inventory: Inventory,
     coverage: Coverage,
     /// Preserve extracted data across audit-policy changes, never approval.
-    #[serde(default)]
     coverage_policy: Option<String>,
-    #[serde(default)]
-    assessment_policy: Option<String>,
-    #[serde(default)]
-    teaching_context_policy: Option<String>,
+}
+/// An assertion of one original passage that the fidelity audit found
+/// unrepresented, located by its app-owned passage ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MissingAssertion {
+    passage_id: String,
+    statement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -139,9 +139,9 @@ struct CoverageUnit {
     index: usize,
     complete: bool,
     reason: String,
-    /// App-owned locations permit progress checks without interpreting prose.
-    #[serde(default)]
-    unresolved_passages: Vec<String>,
+    /// Empty exactly when complete. The inventory adopts these as claims before
+    /// any evidence check, so an audit finding never blocks the lesson by itself.
+    missing_assertions: Vec<MissingAssertion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,29 +521,10 @@ async fn verify_with_references(
         });
     let (inventory, coverage) = match checkpoint {
         Some(mut saved) => {
-            retain_current_teaching_checks(
-                &mut saved.coverage,
-                &content,
-                saved.teaching_context_policy.as_deref(),
-            );
-            retain_current_assessment_checks(
-                &mut saved.coverage,
-                &content,
-                saved.assessment_policy.as_deref(),
-            );
             if saved.coverage_policy.as_deref() != Some(coverage::POLICY)
                 || !valid_saved_coverage(&saved.coverage, &content)
             {
                 saved.coverage.units.clear();
-            }
-            // v3 adds original choice labels as interpretation context, without
-            // changing which assertions belong in the saved inventory.
-            if !matches!(
-                saved.assessment_policy.as_deref(),
-                Some(coverage::ASSESSMENT_POLICY) | Some("assessment-fidelity-v2")
-            ) {
-                saved.inventory =
-                    inventory::refresh_assessments(llm, &content, saved.inventory).await?;
             }
             crate::features::learning::lesson_progress::phase(
                 crate::features::learning::lesson_progress::Phase::Coverage,
@@ -568,8 +549,6 @@ async fn verify_with_references(
         inventory,
         coverage,
         coverage_policy: Some(coverage::POLICY.into()),
-        assessment_policy: Some(coverage::ASSESSMENT_POLICY.into()),
-        teaching_context_policy: Some(coverage::TEACHING_CONTEXT_POLICY.into()),
     };
     crate::features::learning::lesson_drafts::record_claim_inventory(
         &candidate_text,

@@ -283,8 +283,8 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Plan independent evidence searches") {
         return Some(json!({"queries":[]}).to_string());
     }
-    if prompt.starts_with("Audit claim fidelity.") {
-        return Some("supported\nReason: The fixture inventory faithfully represents the original assertions.\nSource passage: passage-0".into());
+    if prompt.starts_with("Audit inventory fidelity.") {
+        return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
     }
     if prompt.starts_with("Extract lesson claims.") {
         let data = context(prompt);
@@ -372,11 +372,13 @@ impl Model {
             return Ok(json!({"units":[]}).to_string());
         }
         if let Some(index) = self.coverage_gap_in {
-            if prompt.starts_with("Audit claim fidelity.")
-                && prompt.contains(&format!("Section {index}"))
-                && prompt.contains(&format!("\n\nClaim: {GOOD}\n\n"))
-            {
-                return Ok("unsupported\nReason: An additional original assertion is missing from this fixture inventory.\nSource passage: none".into());
+            if prompt.starts_with("Audit inventory fidelity.") {
+                let data = context(prompt);
+                if data["section"].to_string().contains(&format!("Section {index}"))
+                    && data["targetPassage"]["text"] == GOOD
+                {
+                    return Ok(json!({"missingAssertions":["An additional original assertion is missing from this fixture inventory."],"reason":"The fixture names one omission."}).to_string());
+                }
             }
             if prompt.starts_with("Audit claim coverage independently.") {
                 let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
@@ -443,6 +445,9 @@ mod checkpoint_tests;
 
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
+
+#[path = "coverage_adoption_tests.rs"]
+mod coverage_adoption_tests;
 
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
@@ -1066,200 +1071,18 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
     Ok(())
 }
 
-#[tokio::test]
-async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() -> Result<()> {
-    struct CoverageModel {
-        inner: Model,
-        audits: std::sync::atomic::AtomicUsize,
-        extracted: Mutex<Vec<Vec<usize>>>,
-        audited: Mutex<Vec<Vec<usize>>>,
-        pending_fidelity: Mutex<Vec<String>>,
-        resolves: bool,
-    }
-    #[async_trait::async_trait]
-    impl LLMPort for CoverageModel {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            let mut replies = Vec::new();
-            for prompt in fixture_prompts(request) {
-                replies.push(self.respond(&prompt).await?);
-            }
-            Ok(fixture_completion(request, replies))
-        }
-        fn model_name(&self) -> &str {
-            self.inner.model_name()
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.inner.max_context_tokens()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.inner.count_tokens(text)
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-    impl CoverageModel {
-        async fn respond(&self, prompt: &str) -> Result<String> {
-            if prompt.starts_with("Audit claim fidelity.")
-                && prompt.contains("\"id\":\"unit-0-passage-")
-                && self
-                    .pending_fidelity
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|text| prompt.contains(&format!("\n\nClaim: {text}\n\n")))
-            {
-                return Ok("unsupported\nReason: The asserted condition is absent from this fixture inventory.\nSource passage: none".into());
-            }
-            if prompt.starts_with("Extract lesson claims.") {
-                let data = context(prompt);
-                self.extracted.lock().unwrap().push(
-                    data["requestedIndices"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|v| v.as_u64().unwrap() as usize)
-                        .collect(),
-                );
-            }
-            if prompt.starts_with("Complete missing lesson claims.") {
-                let data = context(prompt);
-                self.extracted
-                    .lock()
-                    .unwrap()
-                    .push(vec![data["section"]["index"].as_u64().unwrap() as usize]);
-                return Ok(json!({"claims":[],"nonFactualReason":"The fixture asks the independent audit to reconsider the remaining finding."}).to_string());
-            }
-            if prompt.starts_with("Audit claim coverage independently.") {
-                self.audited.lock().unwrap().push(
-                    context(prompt)["units"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|unit| unit["index"].as_u64().unwrap() as usize)
-                        .collect(),
-                );
-            }
-            if prompt.starts_with("Audit claim coverage independently.") {
-                let pass = self
-                    .audits
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-                let remaining = if self.resolves {
-                    2_usize.saturating_sub(pass)
-                } else {
-                    2
-                };
-                let data = context(prompt);
-                let mut missing = self.pending_fidelity.lock().unwrap();
-                missing.clear();
-                for (id, check) in response
-                    .as_object_mut()
-                    .unwrap()
-                    .iter_mut()
-                    .filter(|(id, _)| id.starts_with("unit-0-"))
-                    .take(remaining)
-                {
-                    check["missingClaims"] = json!(["Include the asserted condition explicitly."]);
-                    missing.extend(
-                        data["units"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .flat_map(|unit| unit["passages"].as_array().unwrap())
-                            .filter(|passage| passage["id"] == *id)
-                            .map(|passage| passage["text"].as_str().unwrap().to_owned()),
-                    );
-                }
-                return Ok(response.to_string());
-            }
-            self.inner.respond(prompt).await
-        }
-    }
-
-    let model = CoverageModel {
-        inner: Model::new(),
-        audits: std::sync::atomic::AtomicUsize::new(0),
-        extracted: Mutex::new(Vec::new()),
-        audited: Mutex::new(Vec::new()),
-        pending_fidelity: Mutex::new(Vec::new()),
-        resolves: true,
-    };
-    let mut lesson = candidate(GOOD);
-    let block = lesson["blocks"][0].clone();
-    lesson["blocks"].as_array_mut().unwrap().push(block);
-    let original = lesson.clone();
-    let report = verify(&model, &lesson, &[source()]).await?;
-    assert!(report.issues.is_empty());
-    assert_eq!(lesson, original);
-    assert!(!*model.inner.repaired.lock().unwrap());
-    assert_eq!(
-        *model.extracted.lock().unwrap(),
-        vec![vec![0, 1], vec![0], vec![0]]
-    );
-    assert_eq!(
-        *model.audited.lock().unwrap(),
-        vec![vec![0, 1], vec![0], vec![0]]
-    );
-    assert_eq!(model.audits.load(std::sync::atomic::Ordering::Relaxed), 3);
-
-    let stalled = CoverageModel {
-        inner: Model::new(),
-        audits: std::sync::atomic::AtomicUsize::new(0),
-        extracted: Mutex::new(Vec::new()),
-        audited: Mutex::new(Vec::new()),
-        pending_fidelity: Mutex::new(Vec::new()),
-        resolves: false,
-    };
-    let error = verify(&stalled, &lesson, &[source()]).await.err().unwrap();
-    assert!(error.to_string().contains("stopped making progress"));
-    assert_eq!(stalled.audits.load(std::sync::atomic::Ordering::Relaxed), 2);
-    assert_eq!(*stalled.inner.judge_calls.lock().unwrap(), 0);
-    assert_eq!(*stalled.audited.lock().unwrap(), vec![vec![0, 1], vec![0]]);
-
-    // Resume an interrupted audit with one completed section. Only the other
-    // section is audited, then corrected until its passage count reaches zero.
-    let resume = CoverageModel {
-        inner: Model::new(),
-        audits: std::sync::atomic::AtomicUsize::new(1),
-        extracted: Mutex::new(Vec::new()),
-        audited: Mutex::new(Vec::new()),
-        pending_fidelity: Mutex::new(Vec::new()),
-        resolves: true,
-    };
-    let content = units(&lesson)?;
-    let extracted = inventory::extract(&Model::new(), &content).await?;
-    let partial = Coverage {
-        units: vec![CoverageUnit {
-            index: 1,
-            complete: true,
-            reason: "Already audited".into(),
-            unresolved_passages: Vec::new(),
-        }],
-    };
-    assert!(valid_saved_coverage(&partial, &content));
-    let (_, completed) = complete_inventory(
-        &resume,
-        &content,
-        extracted,
-        &lesson.to_string(),
-        Some(partial),
-    )
-    .await?;
-    assert!(completed.units.iter().all(|unit| unit.complete));
-    assert_eq!(*resume.audited.lock().unwrap(), vec![vec![0], vec![0]]);
-    assert_eq!(*resume.extracted.lock().unwrap(), vec![vec![0]]);
-    Ok(())
-}
-
 #[test]
 fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     let content = units(&candidate(GOOD)).unwrap();
+    let gap = |passage_id: &str| MissingAssertion {
+        passage_id: passage_id.into(),
+        statement: "Missing condition".into(),
+    };
     let valid = CoverageUnit {
         index: 0,
         complete: false,
         reason: "Missing condition".into(),
-        unresolved_passages: vec!["unit-0-passage-0".into()],
+        missing_assertions: vec![gap("unit-0-passage-0")],
     };
     assert!(valid_saved_coverage(
         &Coverage {
@@ -1283,11 +1106,19 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
             ..valid.clone()
         },
         CoverageUnit {
-            unresolved_passages: vec!["unit-1-passage-0".into()],
+            complete: false,
+            missing_assertions: Vec::new(),
             ..valid.clone()
         },
         CoverageUnit {
-            unresolved_passages: vec!["unit-0-passage-0".into(); 2],
+            missing_assertions: vec![gap("unit-1-passage-0")],
+            ..valid.clone()
+        },
+        CoverageUnit {
+            missing_assertions: vec![MissingAssertion {
+                statement: "   ".into(),
+                ..gap("unit-0-passage-0")
+            }],
             ..valid
         },
     ] {
@@ -1297,81 +1128,6 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
             },
             &content
         ));
-    }
-}
-
-#[test]
-fn assessment_policy_changes_expire_assessments_without_repeating_identical_teaching_checks() {
-    let content = vec![json!({"kind":"teaching"}), json!({"kind":"assessment"})];
-    let original = Coverage {
-        units: (0..2)
-            .map(|index| CoverageUnit {
-                index,
-                complete: true,
-                reason: "Previously checked".into(),
-                unresolved_passages: Vec::new(),
-            })
-            .collect(),
-    };
-    for policy in [None, Some("previous-assessment-protocol")] {
-        let mut saved = original.clone();
-        retain_current_assessment_checks(&mut saved, &content, policy);
-        assert_eq!(
-            saved.units.iter().map(|u| u.index).collect::<Vec<_>>(),
-            vec![0]
-        );
-    }
-    let mut compatible = original.clone();
-    retain_current_assessment_checks(&mut compatible, &content, Some("assessment-fidelity-v2"));
-    assert_eq!(compatible.units.len(), 2);
-    compatible.units[1].complete = false;
-    retain_current_assessment_checks(&mut compatible, &content, Some("assessment-fidelity-v2"));
-    assert_eq!(
-        compatible.units.iter().map(|u| u.index).collect::<Vec<_>>(),
-        vec![0]
-    );
-    let mut current = original;
-    retain_current_assessment_checks(&mut current, &content, Some(coverage::ASSESSMENT_POLICY));
-    assert_eq!(current.units.len(), 2);
-}
-
-#[test]
-fn teaching_context_receipts_preserve_only_unchanged_approvals() {
-    let content = vec![
-        json!({"kind":"teaching"}),
-        json!({"kind":"teaching"}),
-        json!({"kind":"assessment"}),
-    ];
-    let original = Coverage {
-        units: (0..3)
-            .map(|index| CoverageUnit {
-                index,
-                complete: index != 1,
-                reason: "Earlier comparison".into(),
-                unresolved_passages: if index == 1 {
-                    vec!["unit-1-passage-0".into()]
-                } else {
-                    Vec::new()
-                },
-            })
-            .collect(),
-    };
-    for (policy, expected) in [
-        (None, vec![0, 2]),
-        (Some("teaching-context-v1"), vec![0, 2]),
-        (Some("previous-context-policy"), vec![2]),
-        (Some(coverage::TEACHING_CONTEXT_POLICY), vec![0, 1, 2]),
-    ] {
-        let mut saved = original.clone();
-        retain_current_teaching_checks(&mut saved, &content, policy);
-        assert_eq!(
-            saved
-                .units
-                .iter()
-                .map(|unit| unit.index)
-                .collect::<Vec<_>>(),
-            expected
-        );
     }
 }
 
@@ -1492,7 +1248,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 index,
                 complete: true,
                 reason: "Persistence fixture".into(),
-                unresolved_passages: Vec::new(),
+                missing_assertions: Vec::new(),
             })
             .collect(),
         findings,

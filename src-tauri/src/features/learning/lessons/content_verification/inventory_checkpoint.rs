@@ -1,14 +1,6 @@
 //! Resuming, completing and checkpointing the claim inventory and its coverage audit.
 use super::*;
 
-async fn audit_coverage(
-    llm: &dyn LLMPort,
-    content: &[Value],
-    inventory: &Inventory,
-) -> Result<Coverage> {
-    coverage::audit(llm, content, inventory, None).await
-}
-
 async fn save_inventory(
     llm: &dyn LLMPort,
     candidate: &str,
@@ -23,8 +15,6 @@ async fn save_inventory(
         inventory: inventory.clone(),
         coverage: coverage.cloned().unwrap_or(Coverage { units: Vec::new() }),
         coverage_policy: coverage.map(|_| coverage::POLICY.into()),
-        assessment_policy: coverage.map(|_| coverage::ASSESSMENT_POLICY.into()),
-        teaching_context_policy: coverage.map(|_| coverage::TEACHING_CONTEXT_POLICY.into()),
     };
     crate::features::learning::lesson_drafts::record_claim_inventory(
         candidate,
@@ -67,92 +57,67 @@ pub(super) fn valid_saved_coverage(coverage: &Coverage, content: &[Value]) -> bo
             .filter_map(|passage| passage["id"].as_str())
             .collect();
         seen.insert(unit.index)
-            && (!unit.complete || unit.unresolved_passages.is_empty())
-            && unit
-                .unresolved_passages
-                .iter()
-                .all(|id| ids.contains(id.as_str()))
-            && unit
-                .unresolved_passages
-                .iter()
-                .collect::<HashSet<_>>()
-                .len()
-                == unit.unresolved_passages.len()
+            && unit.complete == unit.missing_assertions.is_empty()
+            && unit.missing_assertions.iter().all(|missing| {
+                ids.contains(missing.passage_id.as_str())
+                    && !missing.statement.trim().is_empty()
+                    && missing.statement.chars().count() <= 1000
+            })
     })
 }
 
-pub(super) fn retain_current_assessment_checks(
+/// The audit's own findings complete the inventory. Every assertion the
+/// fidelity judge named as unrepresented becomes a claim located at the judged
+/// passage, so representation closes here deterministically and the evidence
+/// check decides whether the lesson may keep each one. Nothing is approved: an
+/// adopted claim is checked, researched, corrected or removed like any other.
+fn adopt_missing_assertions(
+    inventory: &mut Inventory,
     coverage: &mut Coverage,
     content: &[Value],
-    policy: Option<&str>,
-) {
-    if policy != Some(coverage::ASSESSMENT_POLICY) {
-        // v3 adds choice references. Positive v2 comparisons remain valid;
-        // negative ones can have lacked a referent. Older/unknown assessment
-        // protocols still require rechecking. Teaching audits are unaffected.
-        coverage.units.retain(|unit| {
-            content.get(unit.index).is_some_and(|section| {
-                section["kind"] != "assessment"
-                    || (policy == Some("assessment-fidelity-v2") && unit.complete)
-            })
-        });
-    }
-}
-
-pub(super) fn retain_current_teaching_checks(
-    coverage: &mut Coverage,
-    content: &[Value],
-    policy: Option<&str>,
-) {
-    if policy != Some(coverage::TEACHING_CONTEXT_POLICY) {
-        coverage.units.retain(|unit| {
-            content.get(unit.index).is_some_and(|section| {
-                section["kind"] != "teaching"
-                    // v2 only removes normative teaching requirements from
-                    // empirical coverage. A positive comparison from v1 (or
-                    // the original context-free policy) remains valid. Redo
-                    // their negative findings, and distrust unknown policies.
-                    || (matches!(policy, None | Some("teaching-context-v1"))
-                        && unit.complete)
-            })
-        });
-    }
-}
-
-// This strictly decreasing, bounded tuple prevents correction cycles without
-// imposing a time or attempt limit. More complete sections come first, then
-// fewer unresolved passages, then more captured claims within those passages.
-fn coverage_work(
-    coverage: &Coverage,
-    inventory: &Inventory,
-    content: &[Value],
-) -> (usize, usize, std::cmp::Reverse<usize>) {
+) -> Result<usize> {
     let inputs = inventory::inputs(content);
-    let incomplete: Vec<_> = coverage
-        .units
-        .iter()
-        .filter(|unit| !unit.complete)
-        .collect();
-    let passages = incomplete
-        .iter()
-        .map(|unit| {
-            if unit.unresolved_passages.is_empty() {
-                // Older checkpoints retain their findings as data. An absent
-                // location list is never interpreted as zero unresolved work.
-                inputs
-                    .get(unit.index)
-                    .and_then(|input| input["passages"].as_array())
-                    .map_or(0, Vec::len)
-            } else {
-                unit.unresolved_passages.len()
+    let mut adopted = 0;
+    for unit in coverage.units.iter_mut().filter(|unit| !unit.complete) {
+        let passages = inputs
+            .get(unit.index)
+            .and_then(|input| input["passages"].as_array())
+            .ok_or_else(|| invalid("Unknown lesson section in coverage adoption."))?;
+        let slot = inventory
+            .units
+            .iter_mut()
+            .find(|current| current.index == unit.index)
+            .ok_or_else(|| invalid("Unknown inventory section in coverage adoption."))?;
+        let mut located = Vec::new();
+        for missing in std::mem::take(&mut unit.missing_assertions) {
+            let quote = passages
+                .iter()
+                .find(|passage| passage["id"] == missing.passage_id)
+                .and_then(|passage| passage["text"].as_str())
+                .ok_or_else(|| invalid("A coverage finding names an unknown passage."))?;
+            let claim = Claim {
+                quote: quote.into(),
+                statement: missing.statement,
+            };
+            if !slot
+                .claims
+                .iter()
+                .any(|existing| existing.quote == claim.quote && existing.statement == claim.statement)
+            {
+                slot.claims.push(claim);
+                adopted += 1;
             }
-        })
-        .sum();
-    (
-        incomplete.len(),
-        passages,
-        std::cmp::Reverse(inventory.units.iter().map(|unit| unit.claims.len()).sum()),
-    )
+            if !located.contains(&missing.passage_id) {
+                located.push(missing.passage_id);
+            }
+        }
+        unit.complete = true;
+        unit.reason = format!(
+            "Assertions the fidelity audit found missing from the inventory in {} were recorded as claims for the evidence check.",
+            located.join(", ")
+        );
+    }
+    Ok(adopted)
 }
 
 pub(super) async fn complete_inventory(
@@ -199,58 +164,120 @@ pub(super) async fn complete_inventory(
     if !pending.units.is_empty() {
         coverage
             .units
-            .extend(audit_coverage(llm, content, &pending).await?.units);
+            .extend(coverage::audit(llm, content, &pending, None).await?.units);
         coverage.units.sort_by_key(|unit| unit.index);
     }
     save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;
-    while coverage.units.iter().any(|unit| !unit.complete) {
-        let previous_work = coverage_work(&coverage, &inventory, content);
-        crate::features::learning::lesson_progress::stage(
-            "Completing missing claims identified by the coverage audit",
-        );
-        inventory = inventory::correct_coverage(llm, content, &inventory, &coverage).await?;
-        crate::features::learning::lesson_progress::stage(
-            "Rechecking the completed claim inventory",
-        );
-        // correct_coverage retains complete section inventories verbatim, and
-        // lesson content is immutable here. Recheck only corrected sections;
-        // unrelated approved inventories have not changed their audit inputs.
-        let unchanged: HashSet<_> = coverage
-            .units
-            .iter()
-            .filter(|unit| unit.complete)
-            .map(|unit| unit.index)
-            .collect();
-        let corrected = Inventory {
-            units: inventory
-                .units
-                .iter()
-                .filter(|unit| !unchanged.contains(&unit.index))
-                .cloned()
-                .collect(),
-        };
-        // Save completed, unchanged units even if the next model call fails.
-        coverage.units.retain(|unit| unit.complete);
-        save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;
-        section_checkpoints::save(llm, content, &inventory.units, &coverage.units).await?;
-        let checked = audit_coverage(llm, content, &corrected).await?;
-        coverage.units.extend(checked.units);
-        coverage.units.sort_by_key(|unit| unit.index);
-        save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;
-        if coverage.units.iter().any(|unit| !unit.complete)
-            && coverage_work(&coverage, &inventory, content) >= previous_work
-        {
-            return Err(AppError::Other(format!(
-                "Claim coverage stopped making progress: {}. The draft and completed checks are saved; no lesson was published.",
-                coverage
-                    .units
-                    .iter()
-                    .filter(|unit| !unit.complete)
-                    .map(|unit| format!("Section {}: {}", unit.index + 1, unit.reason))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )));
+    let adopted = adopt_missing_assertions(&mut inventory, &mut coverage, content)?;
+    if adopted > 0 {
+        crate::features::learning::lesson_progress::stage(format!(
+            "Recorded {adopted} assertions the coverage audit found missing; the evidence check decides them"
+        ));
+        validate_inventory(&inventory, content)?;
+    }
+    save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;
+    section_checkpoints::save(llm, content, &inventory.units, &coverage.units).await?;
+    Ok((inventory, coverage))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+
+    fn content() -> Vec<Value> {
+        vec![
+            json!({"kind":"teaching","body":"The documented result follows. Explain why in your own words."}),
+            json!({"kind":"teaching","body":"Submit a short report."}),
+        ]
+    }
+    fn inventory() -> Inventory {
+        Inventory {
+            units: vec![
+                UnitClaims {
+                    index: 0,
+                    claims: vec![Claim {
+                        quote: "The documented result follows. Explain why in your own words.".into(),
+                        statement: "The documented result follows.".into(),
+                    }],
+                    non_factual_reason: String::new(),
+                },
+                UnitClaims {
+                    index: 1,
+                    claims: Vec::new(),
+                    non_factual_reason: "A submission instruction.".into(),
+                },
+            ],
         }
     }
-    Ok((inventory, coverage))
+    fn missing(passage_id: &str, statement: &str) -> MissingAssertion {
+        MissingAssertion {
+            passage_id: passage_id.into(),
+            statement: statement.into(),
+        }
+    }
+
+    #[test]
+    fn named_gaps_become_located_claims_and_complete_their_section() {
+        let mut inventory = inventory();
+        let mut coverage = Coverage {
+            units: vec![
+                CoverageUnit {
+                    index: 0,
+                    complete: false,
+                    reason: "unit-0-passage-0: The result is documented.".into(),
+                    missing_assertions: vec![
+                        missing("unit-0-passage-0", "The result is documented."),
+                        missing("unit-0-passage-0", "The result is documented."),
+                        missing("unit-0-passage-0", "The documented result follows."),
+                    ],
+                },
+                CoverageUnit {
+                    index: 1,
+                    complete: true,
+                    reason: "Only an instruction.".into(),
+                    missing_assertions: Vec::new(),
+                },
+            ],
+        };
+        assert!(valid_saved_coverage(&coverage, &content()));
+        let adopted = adopt_missing_assertions(&mut inventory, &mut coverage, &content()).unwrap();
+        assert_eq!(adopted, 1, "duplicates and existing statements are not re-added");
+        assert_eq!(inventory.units[0].claims.len(), 2);
+        assert_eq!(inventory.units[0].claims[1].statement, "The result is documented.");
+        assert_eq!(
+            inventory.units[0].claims[1].quote,
+            "The documented result follows. Explain why in your own words."
+        );
+        assert!(coverage.units.iter().all(|unit| unit.complete));
+        assert!(coverage.units[0].missing_assertions.is_empty());
+        assert!(coverage.units[0].reason.contains("unit-0-passage-0"));
+        assert_eq!(coverage.units[1].reason, "Only an instruction.");
+        assert!(validate_inventory(&inventory, &content()).is_ok());
+        assert!(valid_saved_coverage(&coverage, &content()));
+    }
+
+    #[test]
+    fn an_unknown_passage_cannot_locate_an_adopted_claim() {
+        let mut inventory = inventory();
+        let mut coverage = Coverage {
+            units: vec![CoverageUnit {
+                index: 0,
+                complete: false,
+                reason: "unit-9-passage-9: Elsewhere.".into(),
+                missing_assertions: vec![missing("unit-9-passage-9", "Elsewhere.")],
+            }],
+        };
+        assert!(!valid_saved_coverage(&coverage, &content()));
+        assert!(adopt_missing_assertions(&mut inventory, &mut coverage, &content()).is_err());
+        let inconsistent = Coverage {
+            units: vec![CoverageUnit {
+                index: 0,
+                complete: true,
+                reason: "Claims complete but a gap remains listed.".into(),
+                missing_assertions: vec![missing("unit-0-passage-0", "A gap.")],
+            }],
+        };
+        assert!(!valid_saved_coverage(&inconsistent, &content()));
+    }
 }

@@ -256,3 +256,14 @@ Manual source selection, a shared author/checker model, exact vector scans, and
 text-only extraction are deliberate MVP limits. Automatic discovery/crawling,
 independent evaluated judges, educator-reviewed outcomes, and automatic
 re-verification of already-ready lessons are not implemented by this milestone.
+
+## Coverage completion — 2026-10-14
+
+Step 3's coverage audit no longer argues with a correction call. The fidelity
+judge answers only "which factual assertions of this passage does the inventory
+not represent?" and returns them as statements; the application records each as
+a claim at the judged passage, and step 4 decides it. Representation therefore
+closes in one deterministic pass, and the only loop that may rewrite a lesson is
+step 6's evidence-driven repair. Operational failures (an unavailable model, a
+malformed judge answer after one correction) still preserve the draft and fail
+the job; a content finding never does.

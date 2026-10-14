@@ -362,32 +362,11 @@ IDs, preventing constrained generation from pairing an index with another
 section's otherwise-valid ID. Runtime validation still enforces the same rule
 for providers that do not enforce the response schema. A
 malformed response receives a targeted correction request while valid section
-inventories are retained. Coverage correction handles one affected section at a
-time, with its original text, suspected passages, finding and current assertions.
-The model returns additions or explicit replacements using application-owned
-claim IDs; the application retains unmentioned claims and rejects foreign IDs,
-duplicate replacements and invalid passage locations. A finding may name the
-wrong passage, so correction locates the actual assertion within that section.
-It does not repeatedly regenerate complete inventories or repeat unrelated
-sections' findings without their text. Each changed inventory still requires
-a fresh coverage audit and factual verification.
+inventories are retained. The coverage audit then completes the inventory itself; there is no separate
+correction model call and no progress guard. A lesson edit still requires a
+fresh coverage audit and factual verification of the changed sections.
 Missing sections, duplicate indices and invented or
-cross-section passage IDs cannot approve a lesson. A separate coverage audit
-still checks the inventory against every complete section. Missing assertions
-receive targeted inventory correction and another coverage audit, rather than
-a lesson rewrite. The correction retains complete section inventories verbatim;
-only corrected sections need another audit while the lesson itself is unchanged.
-Correction continues while the audit reduces incomplete sections or unresolved
-passages, or captures more claims. These app-counted measures must improve on
-each pass; otherwise the draft is retained with the unresolved findings. This
-prevents an unchanged correction loop without a wall-clock or attempt cutoff.
-Completed coverage batches also save findings for sections with omissions.
-Restarting can reuse those findings instead of repeating completed reviews; an
-omission remains unresolved. These receipts bind the original section, extracted
-assertions, model and coverage policies. A corrected inventory requires a new
-audit, and an interrupted batch cannot create a completed receipt.
-The audit receives full section text and standalone claims
-without repeating the same location passage for every claim.
+cross-section passage IDs cannot approve a lesson.
 
 Coverage review separately accounts for every one of these passages, in groups
 of four sections. Its response uses required passage-ID keys, with claim IDs
@@ -397,42 +376,43 @@ decisions. The review checks qualifiers and every asserted consequence,
 including factual assertions in headings and persuasive language. It checks
 faithful representation even when an assertion is false; evidence judgment
 comes afterward. These are model judgments and can still miss errors.
-For passages mapped to claims without reported omissions, the shared claim
-checker separately compares the original wording with the extracted statements
-selected by that passage's mapping. If the selected subset fails, the checker
-also compares the passage against the complete inventory for that same section.
-This distinguishes an omitted assertion from an assertion the mapper failed to
-select. Only extracted assertions are evidence in this comparison; original
+
+Every passage the mapping treated as factual, whether it selected claims or
+reported an omission, then receives an independent fidelity judgment with its
+own instructions (`coverage.rs`, "Audit inventory fidelity"). The judge sees the
+original passage, its complete same-section inventory and the surrounding
+section (for an assessment: the question, answer index and every option, with
+distractors marked as unendorsed), and returns a schema-constrained list of
+`missingAssertions`: one self-contained statement for each externally checkable
+assertion of the passage that no inventory statement entails with the same
+scope, conditions and attribution. Represented means the list is empty. The
+judge is told it answers representation only, never truth, never sources: an
+unsourced or false assertion the inventory restates is represented, and an
+instruction, deliverable, grading level or prerequisite is a lesson choice whose
+embedded factual premises are the only assertions to record. It replaces the
+mapping's proposed omissions; a statement the inventory already contains
+verbatim is represented by construction. A malformed judge answer gets one
+correction and otherwise fails as unavailable, never as a finding.
+
+The application then adopts every named missing assertion as a claim located at
+the judged passage (`inventory_checkpoint.rs`). This closes representation
+deterministically in one pass: the audit's own finding is the repair, so no
+disagreement between models can stall the inventory or fail the job. Adoption
+approves nothing. An adopted claim goes through the same evidence gate as an
+extracted one, and an unsupported or contradicted one reaches the lesson's
+evidence research and repair path, which corrects or removes the offending
+lesson text and rechecks the revision. Before 2026-10-14 a separate correction
+call could decline the finding, and an app-counted progress guard then failed
+the whole job with "Claim coverage stopped making progress"; both are gone.
+
+Completed coverage batches save their findings, including omissions, under
+receipts bound to the original section, extracted assertions, model and
+coverage policy (`coverage-unit-v2`, `coverage-mapping-v2`,
+`coverage-fidelity-v2`). Restarting reuses them instead of repeating completed
+reviews; an interrupted batch cannot create a completed receipt. Only
+extracted assertions count as representation in the comparison; original
 section text supplies interpretation context, and other sections are excluded.
-An assertion found only in the original section text remains missing from the
-inventory; it cannot serve as its own evidence of extraction.
 Every inventory claim still goes through the separate factual-evidence gate.
-This fidelity check can reject a complete mapping when an asserted
-consequence or qualifier was lost. It treats instructor choices and stipulated
-exercise inputs as instructions while still checking empirical guarantees.
-Passing fidelity establishes representation only, never factual approval.
-If an isolated teaching passage fails this comparison, a second comparison
-receives its original section as interpretation context. This restores local
-scope and references that extraction could read but the isolated comparison
-could not. Context cannot override an explicitly broader claim or substitute
-for a consequence missing from the selected inventory statements. An unusable
-comparison still fails closed. The unchanged base comparison runs first, so
-previous positive base checks remain valid. Negative checks from before this
-fallback are reconsidered; a changed teaching-context policy expires approvals
-that could have used an earlier fallback. These receipts remain bound to the
-complete lesson content and separate from assessment-context receipts.
-For assessment passages, the comparison also receives the question's scenario,
-answer index and target field as interpretation context. A conditional answer
-must be read within its question. This original context is explicitly separate
-from the selected inventory statements and cannot supply missing assertions as
-evidence. Distractors are distinguished from endorsed answers.
-Conditional inventory statements also require the scenario to establish their
-prerequisites at the same scope. A related local property cannot silently stand
-in for an unstated condition about a surrounding structure or dependency.
-Assessment-context checks have their own policy receipt: changing those rules
-expires assessment extraction and audits while retaining teaching audits with identical inputs
-and unchanged checking instructions. A change to the common coverage policy
-still expires every coverage audit.
 The application uses the validated answer index to keep unendorsed alternatives
 as separate interpretation context, outside factual claim locations. Their bytes
 are retained, but the checker is not asked to prove deliberately incorrect choices
@@ -440,16 +420,14 @@ true. Question premises, the selected answer, and every explanatory assertion
 remain coverage targets. The independent blinded answer-key review still checks
 all alternatives; this separation cannot validate an incorrect answer key.
 Missing or invalid indices do not exempt any choice from coverage.
-An unusable fidelity response preserves the draft and blocks publication.
-Coverage-policy receipts are separate from extraction checkpoints. A policy
-change may reuse the unchanged extracted claims as data, but must audit their
-coverage again before any factual approval can publish a lesson.
-Completed extraction and corrected inventories are checkpointed before the next
-audit. Interruption or a failed audit preserves those claims as data without
-retaining an audit approval for the changed inventory.
-The checkpoint retains completed, unchanged section audits as well. Retry with
-the same content and coverage policy resumes pending sections or the remaining
-corrections; duplicate or foreign section and passage locations invalidate reuse.
+There is one coverage policy (`passage-coverage-v6`); changing it expires every
+saved coverage audit and section receipt, while unchanged extracted claims may
+be reused as data. Completed and adopted inventories are checkpointed before
+the next stage. Interruption or a failed audit preserves those claims as data
+without retaining an audit approval for the changed inventory. Retry with the
+same content and coverage policy resumes pending sections; duplicate or foreign
+section and passage locations, or a unit whose completeness disagrees with its
+missing-assertion list, invalidate reuse.
 
 Factual retrieval restores surrounding source text before judging a matching
 passage. Nearby conditions, exceptions and introductory definitions must not be
@@ -698,8 +676,8 @@ Source catalogs and outline evidence are selected within a fraction of the chose
 model's context window, while source indices still identify the complete collection.
 A partial catalog says how many entries were omitted from that prompt; it does
 not remove sources from retrieval. Claim inventories and coverage findings have
-no per-section count cutoff. Corrections retain unmentioned claims and the normal
-coverage, fidelity, and evidence gates still apply.
+no per-section count cutoff, and assertions the fidelity audit names are adopted
+without a cap; the normal coverage, fidelity, and evidence gates still apply.
 Teaching findings and valid research selections are not rejected for exceeding
 an item count. Every runnable worked example is observed, without a per-lesson
 example-count ceiling; each run retains the runtime's execution and output
@@ -809,6 +787,26 @@ and persistence behavior, not live-model factual accuracy or repair quality on
 unseen lessons; the live source-acquisition path and held-out evaluations still
 need separate evidence. See the
 [implementation scope and research plan](../design/2026-10-04-learning-content-verification.md).
+
+## Coverage completion by adoption — 2026-10-14
+
+A live first lesson ("What's New in .NET 10 & ASP.NET Core 10", 31 gathered
+references, Qwen3.8-27B) failed after 18 minutes with "Claim coverage stopped
+making progress". The recorded calls showed two defects on the path: the
+fidelity comparison reused the strict source-support judge (`supported` /
+`unsupported` over "Source passages" and a "Claim"), so it demanded inventory
+support for rubric criteria and reported "no passage mentions the feature"
+instead of naming what the inventory lacked; and the correction call declined
+the finding as instructional, leaving an app-counted loop with nothing to
+change but a terminal error. The fix gives fidelity its own representation-only
+instructions and a structured `missingAssertions` answer, and the application
+adopts those assertions as claims for the evidence check; the correction call
+and the progress guard were deleted. Deterministic regressions:
+`coverage_adoption_tests::an_assertion_named_by_the_fidelity_audit_is_adopted_checked_and_repaired`
+(the live shape, converging through the evidence repair to a publishable
+revision) and
+`coverage_adoption_tests::a_rubric_without_a_missing_assertion_is_neither_adopted_nor_repaired`
+(the correct neighbour: a proposed omission the judge rejects adopts nothing).
 
 ## Interactive teaching and placement review — 2026-10-04
 
