@@ -650,15 +650,17 @@ async fn deleted_source_snapshot_keeps_tombstone_versions_and_refresh_checks() -
     let initial_version_id = id();
     library
         .add(
-            &id(),
-            &source_id,
-            &initial_version_id,
-            &program.summary.id,
-            LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/learning-source",
-            Some("https://example.org/learning-source"),
-            LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &initial_version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/learning-source",
+                requested_url: Some("https://example.org/learning-source"),
+                freshness: LearningSourcePolicy::Manual,
+            },
             source_capture("Snapshot source", "original immutable text"),
             "initial-source-payload".into(),
         )
@@ -756,15 +758,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let hash = super::plugin::source_request_hash(&add)?;
     library
         .add(
-            &op,
-            &source_id,
-            &version_id,
-            &program.summary.id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &op,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             source_capture("Reference", &add.text),
             hash.clone(),
         )
@@ -772,15 +776,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     // Repeating the receipt after the response is lost does not create another version.
     library
         .add(
-            &op,
-            &source_id,
-            &version_id,
-            &program.summary.id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &op,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             source_capture("Reference", "changed retry text"),
             hash.clone(),
         )
@@ -836,15 +842,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let document_version_id = id();
     library
         .add(
-            &id(),
-            &document_source_id,
-            &document_version_id,
-            &program.summary.id,
-            LearningSourceKind::Document,
-            "add_document",
-            "fixture-document",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &document_source_id,
+                version_id: &document_version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Document,
+                operation_kind: "add_document",
+                origin: "fixture-document",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             source_capture("Document text", "Indexed document material"),
             "document-operation".into(),
         )
@@ -869,15 +877,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let web_op = id();
     library
         .add(
-            &web_op,
-            &web_id,
-            &web_version,
-            &program.summary.id,
-            LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/source",
-            Some("https://example.org/source"),
-            LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &web_op,
+                source_id: &web_id,
+                version_id: &web_version,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/source",
+                requested_url: Some("https://example.org/source"),
+                freshness: LearningSourcePolicy::Manual,
+            },
             source_capture("Web source", "stable words"),
             "same-payload".into(),
         )
@@ -1080,15 +1090,17 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
     let capture = source_capture("Persisted source", "A durable stored source body.");
     library1
         .add(
-            &operation_id,
-            &source_id,
-            &version_id,
-            &program1.summary.id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Persisted",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &operation_id,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program1.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Persisted",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             capture.clone(),
             "source-payload".into(),
         )
@@ -1236,15 +1248,17 @@ async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Res
     let source_id = id();
     library
         .add(
-            &id(),
-            &source_id,
-            &id(),
-            &program.summary.id,
-            LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/versioned",
-            Some("https://example.org/versioned"),
-            LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &id(),
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/versioned",
+                requested_url: Some("https://example.org/versioned"),
+                freshness: LearningSourcePolicy::Manual,
+            },
             source_capture("Versioned source", "Initial captured reference."),
             "initial".into(),
         )

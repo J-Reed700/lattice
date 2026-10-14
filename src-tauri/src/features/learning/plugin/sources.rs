@@ -109,15 +109,17 @@ pub async fn add_learning_document_source(
     .await
     .map_err(ApiError::from)?;
     repo.add(
-        &request.operation_id,
-        &request.source_id,
-        &request.version_id,
-        &request.program_id,
-        LearningSourceKind::Document,
-        "add_document",
-        &request.document_id,
-        None,
-        LearningSourcePolicy::Fixed,
+        crate::features::learning::source_library::NewLearningSource {
+            operation_id: &request.operation_id,
+            source_id: &request.source_id,
+            version_id: &request.version_id,
+            program_id: &request.program_id,
+            kind: LearningSourceKind::Document,
+            operation_kind: "add_document",
+            origin: &request.document_id,
+            requested_url: None,
+            freshness: LearningSourcePolicy::Fixed,
+        },
         captured,
         hash,
     )
@@ -153,15 +155,17 @@ pub async fn add_learning_text_source(
     };
     source_library(&container)
         .add(
-            &request.operation_id,
-            &request.source_id,
-            &request.version_id,
-            &request.program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            &request.title,
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &request.operation_id,
+                source_id: &request.source_id,
+                version_id: &request.version_id,
+                program_id: &request.program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: &request.title,
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             captured,
             hash,
         )

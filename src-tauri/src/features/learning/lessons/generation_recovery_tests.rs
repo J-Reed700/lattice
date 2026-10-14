@@ -279,15 +279,17 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     for index in 1..100 {
         library
             .add(
-                &uuid::Uuid::new_v4().to_string(),
-                &uuid::Uuid::new_v4().to_string(),
-                &uuid::Uuid::new_v4().to_string(),
-                &job.program_id,
-                LearningSourceKind::Pasted,
-                "add_text",
-                "Fixture reference",
-                None,
-                LearningSourcePolicy::Fixed,
+                crate::features::learning::source_library::NewLearningSource {
+                    operation_id: &uuid::Uuid::new_v4().to_string(),
+                    source_id: &uuid::Uuid::new_v4().to_string(),
+                    version_id: &uuid::Uuid::new_v4().to_string(),
+                    program_id: &job.program_id,
+                    kind: LearningSourceKind::Pasted,
+                    operation_kind: "add_text",
+                    origin: "Fixture reference",
+                    requested_url: None,
+                    freshness: LearningSourcePolicy::Fixed,
+                },
                 CapturedLearningSource {
                     title: format!("Reference {index}"),
                     publisher: None,
@@ -359,15 +361,17 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         .await?;
     library
         .add(
-            &uuid::Uuid::new_v4().to_string(),
-            &source,
-            &version,
-            &job.program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "New evidence",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &uuid::Uuid::new_v4().to_string(),
+                source_id: &source,
+                version_id: &version,
+                program_id: &job.program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "New evidence",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "New evidence".into(),
                 publisher: None,

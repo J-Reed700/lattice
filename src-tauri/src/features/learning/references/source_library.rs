@@ -90,6 +90,22 @@ pub struct LearningSourceLibraryRepository {
     pool: SqlitePool,
 }
 
+/// Who is adding a source and where it came from. Source capture owns this
+/// fixed provenance plus caller-supplied stable IDs; naming each field keeps
+/// replay validation auditable.
+#[derive(Debug, Clone)]
+pub struct NewLearningSource<'a> {
+    pub operation_id: &'a str,
+    pub source_id: &'a str,
+    pub version_id: &'a str,
+    pub program_id: &'a str,
+    pub kind: LearningSourceKind,
+    pub operation_kind: &'a str,
+    pub origin: &'a str,
+    pub requested_url: Option<&'a str>,
+    pub freshness: LearningSourcePolicy,
+}
+
 #[derive(Debug, Clone)]
 pub struct CapturedLearningSource {
     pub title: String,

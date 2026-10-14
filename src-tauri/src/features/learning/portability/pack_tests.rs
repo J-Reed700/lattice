@@ -191,15 +191,17 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
     let first_version_id = id();
     sources
         .add(
-            &id(),
-            &source_id,
-            &first_version_id,
-            &program.summary.id,
-            crate::features::learning::dto::LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/portable-source",
-            Some("https://example.org/portable-source"),
-            crate::features::learning::dto::LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &first_version_id,
+                program_id: &program.summary.id,
+                kind: crate::features::learning::dto::LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/portable-source",
+                requested_url: Some("https://example.org/portable-source"),
+                freshness: crate::features::learning::dto::LearningSourcePolicy::Manual,
+            },
             captured("First immutable passage. A quoted rule appears here."),
             "source-add-payload".into(),
         )
