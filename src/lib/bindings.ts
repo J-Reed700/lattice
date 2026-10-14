@@ -6491,14 +6491,48 @@ export type LearningOutlineEvidenceDto = { reviewStatus: LearningOutlineReviewSt
 unavailableCount: number }
 export type LearningOutlineIssueDto = {
 /**
+ * Stable identity assigned by code when the finding is first raised.
+ */
+id: string;
+/**
  * JSON pointer into the saved candidate. Empty means the entire curriculum.
  */
-path: string; kind: LearningOutlineIssueKind; claim: string; quote: string; sourceId: string | null; message: string }
+path: string; kind: LearningOutlineIssueKind;
+/**
+ * The item text at `path` as of the last review, refreshed by code.
+ */
+claim: string;
+/**
+ * The reviewer's current reason, refreshed on each unresolved verdict.
+ */
+message: string;
+/**
+ * Repair attempts spent on this finding in the current operation.
+ */
+attempts: number;
+/**
+ * The attempt limit or the module's rewrite budget is spent; waits for the user.
+ */
+exhausted: boolean;
+/**
+ * Evidence shown to the user: the contradicting or best passage found.
+ */
+quote: string; sourceId: string | null;
+/**
+ * Public searches already run for this finding.
+ */
+searched: string[] }
 export type LearningOutlineIssueKind =
 /**
- * A reviewer finding about the plan or an assertion in it.
+ * An assertion about the world stated as true (a version, behaviour,
+ * number, date, API fact) that the reviewer believes is wrong or unsupported.
  */
-"content" |
+"factual" |
+/**
+ * Sequencing, prerequisites, duplication, scope, session fit, project
+ * progression or a contradictory requirement.
+ */
+"plan" |
 /**
  * Course-wide: no references could be gathered, so lessons cannot be prepared.
  */

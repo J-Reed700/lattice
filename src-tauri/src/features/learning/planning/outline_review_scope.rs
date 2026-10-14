@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
-const REVIEW_VERSION: &str = "outline-incremental-review-v1";
+const REVIEW_VERSION: &str = "outline-incremental-review-v2";
 
 /// Separate from the draft's content hash: checkpoints also occur before review.
 /// Only a successfully parsed, validated semantic review creates this receipt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(in crate::features::learning) struct ReviewReceipt {
     context_hash: String,
     structure_hash: String,
@@ -103,6 +103,19 @@ impl ReviewScope {
         }
     }
 
+    /// Where this pass may report a new finding: every item of a module under
+    /// review, plus the course as a whole. An unchanged module is never
+    /// re-litigated on an incremental pass.
+    pub fn allowed_paths(&self, candidate: &Value) -> Vec<String> {
+        std::iter::once(String::new())
+            .chain(
+                self.indices
+                    .iter()
+                    .flat_map(|index| module_paths(candidate, *index)),
+            )
+            .collect()
+    }
+
     pub fn candidate(&self, candidate: &Value) -> Result<Value> {
         let modules = self
             .indices
@@ -146,6 +159,21 @@ impl ReviewScope {
         payload.insert("courseSequence".into(), sequence);
         Ok(())
     }
+}
+
+/// The finding paths inside one module: the module, its summary, each
+/// outcome and each lesson.
+pub(in crate::features::learning) fn module_paths(candidate: &Value, index: usize) -> Vec<String> {
+    let prefix = format!("/modules/{index}");
+    let Some(module) = candidate.get("modules").and_then(|modules| modules.get(index)) else {
+        return vec![];
+    };
+    let mut paths = vec![prefix.clone(), format!("{prefix}/summary")];
+    for name in ["outcomes", "lessons"] {
+        let count = module.get(name).and_then(Value::as_array).map_or(0, Vec::len);
+        paths.extend((0..count).map(|i| format!("{prefix}/{name}/{i}")));
+    }
+    paths
 }
 
 fn module_at(candidate: &Value, index: usize) -> Result<&Value> {

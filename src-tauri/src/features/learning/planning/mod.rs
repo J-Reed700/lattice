@@ -16,5 +16,10 @@ mod outline_reference_tests;
 #[cfg(test)]
 mod outline_review_scope_tests;
 pub(crate) mod outline_repair;
+#[cfg(test)]
+mod outline_repair_tests;
+pub(crate) mod outline_review;
 pub(crate) mod outline_review_scope;
+#[cfg(test)]
+mod outline_review_tests;
 pub mod plan_dto;

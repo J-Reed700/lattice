@@ -207,7 +207,7 @@ describe('Learning Studio program workflow', () => {
     const user = userEvent.setup();
     const draft = program();
     draft.summary.revision = 4;
-    draft.outlineReview = { status: 'needs_repair', repairPasses: 1, updatedAt: 0, contentHash: 'draft-hash', note: 'Draft and completed corrections saved.', citationsVerified: 0, citationsRemoved: 1, referencesGathered: 0, issues: [{ path: '/modules/0/lessons/0', kind: 'content', claim: 'The disputed claim', quote: 'A contradicting passage from the saved reference.', sourceId: source.id, message: 'The saved reference contradicts this objective.' }] };
+    draft.outlineReview = { status: 'needs_repair', repairPasses: 1, updatedAt: 0, contentHash: 'draft-hash', note: 'Draft and completed corrections saved.', citationsVerified: 0, citationsRemoved: 1, referencesGathered: 0, issues: [{ id: 'finding-1', path: '/modules/0/lessons/0', kind: 'plan', claim: 'The disputed claim', quote: 'A contradicting passage from the saved reference.', sourceId: source.id, message: 'The saved reference contradicts this objective.', attempts: 2, exhausted: true, searched: [] }] };
     const fixed = structuredClone(draft);
     fixed.summary.revision = 8;
     fixed.outlineReview = { ...draft.outlineReview, status: 'passed', issues: [], repairPasses: 2, contentHash: 'repaired-hash', note: 'Outline checks passed for this revision.' };
@@ -223,6 +223,8 @@ describe('Learning Studio program workflow', () => {
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     expect(await screen.findByText('Saved draft · 1 unresolved finding')).toBeVisible();
     expect(screen.getByText('A contradicting passage from the saved reference.')).toBeVisible();
+    expect(screen.getByText(/Plan check/)).toBeVisible();
+    expect(screen.getByText(/2 of 2 attempts used · automatic repair has stopped/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
     expect(screen.getByText(/References were gathered from public searches planned for each subtopic/)).toBeVisible();
     expect(screen.queryByRole('checkbox', { name: /Search the web/ })).not.toBeInTheDocument();

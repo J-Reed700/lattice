@@ -51,6 +51,11 @@ impl Model {
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            // The outline review names its open findings; lesson reviews
+            // keep their own response shape.
+            if context.get("openFindings").is_some() {
+                return Ok(json!({"newFindings":[]}).to_string());
+            }
             if context["candidate"].get("blocks").is_none() {
                 return Ok(json!({"issues":[]}).to_string());
             }
@@ -1102,9 +1107,9 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
             outputs: std::sync::Mutex::new(
                 vec![
                     draft.clone(),
-                    json!({"issues":[{"path":"/modules/0","claim":"First module objective","reason":"Clarify the observable first module objective."}]}).to_string(),
+                    json!({"newFindings":[{"path":"/modules/0","kind":"plan","claim":"First module objective","reason":"Clarify the observable first module objective."}]}).to_string(),
                     json!({"module":corrected["modules"][0]}).to_string(),
-                    json!({"issues":[]}).to_string(),
+                    json!({"verdicts":[{"id":"finding-1","status":"resolved","reason":"The objective now names an observable measurement."}],"newFindings":[]}).to_string(),
                 ]
                 .into(),
             ),
@@ -1137,7 +1142,8 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
     let prompts = model.inner.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 4);
     assert!(prompts[3].contains("Clarify the observable first module objective."));
-    assert!(prompts[3].contains("previousFindings"));
+    assert!(prompts[3].contains("openFindings"));
+    assert!(!prompts[3].contains("previousFindings"));
     assert_eq!(
         program.outline_review.as_ref().unwrap().status,
         crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
@@ -1184,7 +1190,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
             vec![
                 candidate.to_string(),
                 json!({"decisions":[{"id":"/modules/0/outcomes/0","covers":true,"reason":"The passage addresses the comparison outcome."}]}).to_string(),
-                json!({"issues":[]}).to_string(),
+                json!({"newFindings":[]}).to_string(),
             ]
             .into(),
         ),
@@ -1260,9 +1266,9 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    let issues = json!({"issues":[
-        {"path":"/modules/0","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."},
-        {"path":"/modules/1","claim":"Analysis objective","reason":"Distinguish observation from causal interpretation."}
+    let issues = json!({"newFindings":[
+        {"path":"/modules/0","kind":"plan","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."},
+        {"path":"/modules/1","kind":"plan","claim":"Analysis objective","reason":"Distinguish observation from causal interpretation."}
     ]});
     let mut module = candidate["modules"][0].clone();
     module["lessons"][0]["objective"] =
@@ -1399,7 +1405,7 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         crate::features::learning::outline_draft::LearningOutlineReviewStatus::Unchecked
     );
     let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![json!({"issues":[]}).to_string()].into()),
+        outputs: std::sync::Mutex::new(vec![json!({"newFindings":[]}).to_string()].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     let resumed = crate::features::learning::outline_draft::repair_saved(
@@ -1423,29 +1429,31 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
 }
 
 #[tokio::test]
-async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<()> {
+async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_afresh(
+) -> Result<()> {
+    use crate::features::learning::outline_draft::LearningOutlineReviewStatus;
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    let first = json!({"path":"/modules/0","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."});
-    let second = json!({"path":"/modules/1","claim":"Analysis objective","reason":"Distinguish observation from causal interpretation."});
-    let mut module0 = candidate["modules"][0].clone();
-    module0["lessons"][0]["objective"] =
-        json!("Measure the effect of random assignment on the group comparison.");
-    let mut module1 = candidate["modules"][1].clone();
-    module1["lessons"][0]["objective"] =
-        json!("Compare group measurements and describe the observed difference.");
-    let mut final1 = module1.clone();
-    final1["lessons"][0]["objective"]=json!("Describe the observed difference and explain why observation alone does not establish causality.");
+    let raised = json!({"newFindings":[{"path":"/modules/0/lessons/0","kind":"plan","claim":"Design a controlled experiment and explain its limitations.","reason":"Specify the measurement used in the comparison."}]});
+    let unresolved = |reason: &str| json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":reason}],"newFindings":[]});
+    let resolved = json!({"verdicts":[{"id":"finding-1","status":"resolved","reason":"The objective now names the measurement."}],"newFindings":[]});
+    let mut first = candidate["modules"][0].clone();
+    first["lessons"][0]["objective"] = json!("Measure the effect of random assignment on the group comparison.");
+    let mut second = first.clone();
+    second["lessons"][0]["objective"] = json!("Measure the group difference with a stated outcome.");
+    let mut third = second.clone();
+    third["lessons"][0]["objective"] = json!("Measure the group difference with a stated, observable outcome.");
+    // Two unresolved verdicts spend the finding's two attempts; the loop then
+    // stops with the finding exhausted instead of rewriting a third time.
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"issues":[first,second]}).to_string(),
-                json!({"module":module0}).to_string(),
-                json!({"module":module1}).to_string(),
-                json!({"issues":[second]}).to_string(),
-                json!({"module":final1}).to_string(),
-                json!({"issues":[]}).to_string(),
+                raised.to_string(),
+                json!({"module":first}).to_string(),
+                unresolved("The objective still does not name an observable measurement.").to_string(),
+                json!({"module":second}).to_string(),
+                unresolved("The outcome is named but still not observable.").to_string(),
             ]
             .into(),
         ),
@@ -1460,12 +1468,61 @@ async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<
         vec![],
     )
     .await?;
-    assert_eq!(
-        saved.outline_review.as_ref().unwrap().status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
-    );
-    assert_eq!(saved.outline_review.as_ref().unwrap().repair_passes, 2);
-    assert_eq!(model.prompts.lock().unwrap().len(), 7);
+    let review = saved.outline_review.as_ref().unwrap();
+    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair);
+    assert_eq!(review.repair_passes, 2);
+    assert_eq!(review.issues.len(), 1);
+    assert_eq!(review.issues[0].id, "finding-1");
+    assert_eq!(review.issues[0].attempts, 2);
+    assert!(review.issues[0].exhausted);
+    assert_eq!(review.issues[0].claim, "Measure the group difference with a stated outcome.");
+    assert!(review.note.starts_with("1 finding remain"));
+    assert!(review.note.contains("Module 1 · Lesson 1: The outcome is named but still not observable."));
+    assert!(review.note.contains("Use Repair to try again"));
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 6);
+    // The second rewrite carries the smallest-edit instruction; the second
+    // review was told how many attempts the finding had used.
+    assert!(prompts[4].contains("smallest edit that removes the defect"));
+    assert!(!prompts[2].contains("smallest edit that removes the defect"));
+    let second_review: serde_json::Value =
+        serde_json::from_str(prompts[3].rsplit("\n\n").next().unwrap())?;
+    assert_eq!(second_review["openFindings"][0]["attempts"], 1);
+    assert_eq!(second_review["openFindings"][0]["claim"], "Measure the effect of random assignment on the group comparison.");
+    drop(prompts);
+    // Repair starts the attempts afresh: one more rewrite, then the verdict.
+    let model = ScriptedModel {
+        outputs: std::sync::Mutex::new(
+            vec![
+                unresolved("Still not observable.").to_string(),
+                json!({"module":third}).to_string(),
+                resolved.to_string(),
+            ]
+            .into(),
+        ),
+        prompts: std::sync::Mutex::new(vec![]),
+    };
+    let repaired = crate::features::learning::outline_draft::repair_saved(
+        &repo,
+        &drafts,
+        &model,
+        &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
+            program_id: saved.summary.id.clone(),
+            expected_revision: saved.summary.revision,
+        },
+        &crate::features::learning::outline_progress::OutlineProgress::default(),
+        None,
+    )
+    .await?;
+    let review = repaired.outline_review.as_ref().unwrap();
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
+    assert!(review.issues.is_empty());
+    assert_eq!(review.repair_passes, 3);
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 3);
+    let reopened: serde_json::Value =
+        serde_json::from_str(prompts[0].rsplit("\n\n").next().unwrap())?;
+    assert_eq!(reopened["openFindings"][0]["attempts"], 0);
     Ok(())
 }
 

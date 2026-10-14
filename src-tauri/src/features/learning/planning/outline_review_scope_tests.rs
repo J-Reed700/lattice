@@ -14,7 +14,7 @@ use crate::features::learning::{
     service,
 };
 use crate::shared::error::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[tokio::test]
 async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_connections(
@@ -32,7 +32,7 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
         covers(&["/modules/1/summary"]),
         issue(1),
         json!({"module":fixed}),
-        json!({"issues":[]}),
+        verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let sources = vec![source];
     let drafts = DraftRunRegistry::new();
@@ -145,12 +145,16 @@ async fn review_receipts_invalidate_on_evidence_model_request_structure_or_proto
         "Changing the reviewer must invalidate previous checks"
     );
     draft.review.issues.push(LearningOutlineIssueDto {
+        id: "finding-9".into(),
         path: String::new(),
-        kind: LearningOutlineIssueKind::Content,
+        kind: LearningOutlineIssueKind::Plan,
         claim: "Course-wide contradiction".into(),
+        message: "Revisit the whole course sequence.".into(),
+        attempts: 0,
+        exhausted: false,
         quote: String::new(),
         source_id: None,
-        message: "Revisit the whole course sequence.".into(),
+        searched: vec![],
     });
     assert!(!ReviewScope::new(&draft, &sources, &llm).incremental);
     Ok(())
@@ -202,7 +206,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     let reopened = LearningRepository::new(pool);
     // The resumed check reuses the coverage receipt and the module receipts:
     // one incremental review call, nothing else.
-    let llm = model(vec![json!({"issues":[]})]);
+    let llm = model(vec![verdicts(&[("finding-1", "resolved")], vec![])]);
     let result = repair_saved(
         &reopened,
         &drafts,
@@ -233,7 +237,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
 }
 
 #[tokio::test]
-async fn incremental_review_can_flag_an_unchanged_dependent_module() -> Result<()> {
+async fn incremental_review_reports_cross_module_effects_course_wide() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let mut initial = candidate();
     let sources = vec![original_source()];
@@ -241,16 +245,29 @@ async fn incremental_review_can_flag_an_unchanged_dependent_module() -> Result<(
     let mut fixed = initial["modules"][1].clone();
     fixed["project"]["brief"] =
         json!("Revise the experiment to use an observational measurement protocol.");
-    let llm = model(vec![
-        initial,
+    // On the incremental pass only module 1 and the course as a whole are
+    // allowed paths, so the effect on the final project is a course-wide
+    // finding. Every module is then put to a rewrite; each comes back
+    // unchanged, so the loop stops with the finding kept for the user.
+    let unchanged: Vec<Value> = (0..4)
+        .map(|i| json!({"module":if i == 1 { &fixed } else { &initial["modules"][i] }}))
+        .collect();
+    let mut outputs = vec![
+        initial.clone(),
         covers(&["/modules/0/summary"]),
         issue(1),
         json!({"module":fixed}),
-        json!({"issues":[{
-            "path":"/modules/3", "claim":"Interpret results and explain uncertainty.",
-            "reason":"The changed earlier project no longer supplies the randomized comparison needed by the final project. Correct that dependency."
-        }]}),
-    ]);
+        verdicts(
+            &[("finding-1", "resolved")],
+            vec![plan_finding(
+                "",
+                "Interpret results and explain uncertainty.",
+                "The changed earlier project no longer supplies the randomized comparison needed by the final project. Correct that dependency.",
+            )],
+        ),
+    ];
+    outputs.extend(unchanged);
+    let llm = model(outputs);
     let drafts = DraftRunRegistry::new();
     let program = service::generate_with_references(
         &repo,
@@ -261,14 +278,17 @@ async fn incremental_review_can_flag_an_unchanged_dependent_module() -> Result<(
         &references(&sources),
     )
     .await?;
-    assert_eq!(
-        program.outline_review.as_ref().unwrap().status,
-        LearningOutlineReviewStatus::NeedsRepair
-    );
-    assert_eq!(
-        program.outline_review.as_ref().unwrap().issues[0].path,
-        "/modules/3"
-    );
-    assert_eq!(llm.prompts.lock().unwrap().len(), 5);
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair);
+    assert_eq!(review.issues.len(), 1);
+    assert_eq!(review.issues[0].path, "");
+    assert_eq!(review.issues[0].id, "finding-2");
+    assert_eq!(review.issues[0].attempts, 1);
+    assert!(review.note.contains("no usable correction"));
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 9);
+    let recheck = payload(&prompts[4]);
+    assert_eq!(recheck["openFindings"][0]["id"], "finding-1");
+    assert_eq!(recheck["openFindings"][0]["attempts"], 1);
     Ok(())
 }

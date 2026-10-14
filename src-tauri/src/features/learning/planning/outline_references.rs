@@ -203,7 +203,39 @@ pub(in crate::features::learning) async fn gather(
     existing: &[LearningSourceDto],
     progress: &OutlineProgress,
 ) -> Result<Gathered> {
-    progress.stage(OutlineStage::GatheringReferences);
+    gather_for(llm, web, plan, existing, progress, GatherPurpose::Course).await
+}
+
+/// Why references are being gathered: for the course before drafting, or for
+/// one factual finding during repair. The purpose sets the progress stage,
+/// the subject given to selection and the evidence gap it selects for.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::features::learning) enum GatherPurpose<'a> {
+    Course,
+    Finding {
+        topic: &'a str,
+        reason: &'a str,
+        position: usize,
+        total: usize,
+    },
+}
+
+pub(in crate::features::learning) async fn gather_for(
+    llm: &dyn LLMPort,
+    web: &dyn WebServiceTrait,
+    plan: &ReferencePlan,
+    existing: &[LearningSourceDto],
+    progress: &OutlineProgress,
+    purpose: GatherPurpose<'_>,
+) -> Result<Gathered> {
+    progress.stage(match purpose {
+        GatherPurpose::Course => OutlineStage::GatheringReferences,
+        GatherPurpose::Finding { .. } => OutlineStage::Researching,
+    });
+    let label = |number: usize, total: usize| match purpose {
+        GatherPurpose::Course => format!("Subtopic {number} of {total}"),
+        GatherPurpose::Finding { position, total, .. } => format!("Finding {position} of {total}"),
+    };
     let mut urls: HashSet<String> = existing.iter().filter_map(|s| s.url.clone()).collect();
     let mut hashes: HashSet<String> = existing
         .iter()
@@ -221,7 +253,8 @@ pub(in crate::features::learning) async fn gather(
         for query in &subtopic.queries {
             progress.check_cancelled()?;
             progress.detail(format!(
-                "Subtopic {number} of {total}: searching for {}",
+                "{}: searching for {}",
+                label(number, total),
                 subtopic.title
             ));
             gathered.searches += 1;
@@ -244,14 +277,24 @@ pub(in crate::features::learning) async fn gather(
         }
         progress.check_cancelled()?;
         progress.detail(format!(
-            "Subtopic {number} of {total}: choosing among {} results",
+            "{}: choosing among {} results",
+            label(number, total),
             merged.len()
         ));
-        let gaps = [json!({"claim":subtopic.title,"missingEvidence":"reference material a lesson on this subtopic can cite"})];
+        let (topic, gaps) = match purpose {
+            GatherPurpose::Course => (
+                subtopic.title.as_str(),
+                [json!({"claim":subtopic.title,"missingEvidence":"reference material a lesson on this subtopic can cite"})],
+            ),
+            GatherPurpose::Finding { topic, reason, .. } => (
+                topic,
+                [json!({"claim":subtopic.title,"missingEvidence":reason})],
+            ),
+        };
         let hint = subtopic.queries.join(" | ");
         let selected = select_references(
             llm,
-            &subtopic.title,
+            topic,
             &hint,
             &gaps,
             merged.iter().map(|(result, _)| result.clone()).collect(),
@@ -261,7 +304,8 @@ pub(in crate::features::learning) async fn gather(
             continue;
         }
         progress.detail(format!(
-            "Subtopic {number} of {total}: saving {} selected pages",
+            "{}: saving {} selected pages",
+            label(number, total),
             selected.len()
         ));
         let jobs = selected.into_iter().enumerate().map(|(order, result)| {

@@ -65,6 +65,7 @@ use planning::outline_draft_repository;
 use planning::outline_evidence;
 use planning::outline_references;
 use planning::outline_repair;
+use planning::outline_review;
 use planning::outline_review_scope;
 use practice::practical_workspace;
 use references::source_identity;

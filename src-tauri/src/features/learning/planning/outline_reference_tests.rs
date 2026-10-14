@@ -134,12 +134,57 @@ pub(super) fn cite_at(candidate: &mut Value, path: &str, index: usize, quote: &s
 pub(super) fn candidate() -> Value {
     serde_json::from_str(&outline(4, 3).0).unwrap()
 }
-pub(super) fn issue(index: usize) -> Value {
-    json!({"issues":[{"path":format!("/modules/{index}"),"claim":"The comparison needs stronger evidence.","reason":"The saved passage does not support this specific comparison. Find a supporting reference."}]})
+/// A review with nothing open and nothing new.
+pub(super) fn clean() -> Value {
+    json!({"newFindings":[]})
 }
+pub(super) fn plan_finding(path: &str, claim: &str, reason: &str) -> Value {
+    json!({"path":path,"kind":"plan","claim":claim,"reason":reason})
+}
+pub(super) fn factual_finding(path: &str, claim: &str, reason: &str) -> Value {
+    json!({"path":path,"kind":"factual","claim":claim,"reason":reason})
+}
+/// A review of a draft with no open findings that raises `items`.
+pub(super) fn findings(items: Vec<Value>) -> Value {
+    json!({"newFindings":items})
+}
+/// A review giving each open finding its verdict, then raising `items`.
+pub(super) fn verdicts(verdicts: &[(&str, &str)], items: Vec<Value>) -> Value {
+    json!({"verdicts":verdicts.iter().map(|(id, status)| json!({"id":id,"status":status,"reason":format!("Judged against the current text at the finding's path: {status}.")})).collect::<Vec<_>>(),"newFindings":items})
+}
+/// One plan finding on a whole module.
+pub(super) fn issue(index: usize) -> Value {
+    findings(vec![plan_finding(
+        &format!("/modules/{index}"),
+        "The comparison needs stronger evidence.",
+        "The project brief does not say how the comparison is measured. Name the measurement.",
+    )])
+}
+/// A strict claim-check reply in the fixture's protocol: label first, then
+/// the reason and the passage identifier the verdict rests on.
+pub(super) fn judged(label: &str, passage: Option<usize>) -> Value {
+    Value::String(format!(
+        "{label}\nReason: Every factual part of the claim was compared with the passages.\nSource passage: {}",
+        passage.map_or("none".to_owned(), |i| format!("passage-{i}"))
+    ))
+}
+/// The evidence challenge raising no questions.
+pub(super) fn no_questions() -> Value {
+    json!({"queries":[]})
+}
+/// A scripted model: JSON replies are serialized, string replies (a claim
+/// check's labelled lines) are sent as written.
 pub(super) fn model(outputs: Vec<Value>) -> ScriptedModel {
     ScriptedModel {
-        outputs: Mutex::new(outputs.into_iter().map(|v| v.to_string()).collect()),
+        outputs: Mutex::new(
+            outputs
+                .into_iter()
+                .map(|v| match v {
+                    Value::String(text) => text,
+                    other => other.to_string(),
+                })
+                .collect(),
+        ),
         prompts: Mutex::new(vec![]),
     }
 }
@@ -367,7 +412,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
         select_all(1),
         candidate(),
-        json!({"issues":[]}),
+        clean(),
     ]);
     let stages = Arc::new(Mutex::new(vec![]));
     let details = Arc::new(Mutex::new(vec![]));
@@ -436,7 +481,7 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     let llm = model(vec![
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
         candidate(),
-        json!({"issues":[]}),
+        clean(),
     ]);
     let offline = ResearchWeb::new(&[]);
     let saved = generate_online(&repo, &llm, &offline, vec![]).await?;
@@ -464,7 +509,7 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     // Repair reuses the saved plan: no new planning call, one selection, then
     // the review passes and the finding is gone.
     let online = ResearchWeb::new(&[ADDITIONAL]);
-    let llm = model(vec![select_all(1), json!({"issues":[]})]);
+    let llm = model(vec![select_all(1), clean()]);
     let repaired = repair_saved(
         &repo,
         &drafts,
@@ -508,7 +553,7 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
         select_all(1),
         candidate(),
-        json!({"issues":[]}),
+        clean(),
     ]);
     let program = generate_online(&repo, &llm, &web, vec![original_source()]).await?;
     assert_eq!(
@@ -535,7 +580,7 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
 #[tokio::test]
 async fn offline_topic_drafts_still_pass_without_a_references_finding() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
-    let llm = model(vec![candidate(), json!({"issues":[]})]);
+    let llm = model(vec![candidate(), clean()]);
     let drafts = DraftRunRegistry::new();
     let program = service::generate(
         &repo,
@@ -569,7 +614,7 @@ async fn typography_only_mismatches_are_restored_before_coverage_is_judged() -> 
     let llm = model(vec![
         initial,
         covers(&["/modules/0/summary"]),
-        json!({"issues":[]}),
+        clean(),
     ]);
     let sources = vec![source];
     let drafts = DraftRunRegistry::new();

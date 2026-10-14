@@ -21,24 +21,99 @@ pub enum LearningOutlineReviewStatus {
     NeedsRepair,
     Passed,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningOutlineIssueKind {
-    /// A reviewer finding about the plan or an assertion in it.
-    Content,
+    /// An assertion about the world stated as true (a version, behaviour,
+    /// number, date, API fact) that the reviewer believes is wrong or unsupported.
+    Factual,
+    /// Sequencing, prerequisites, duplication, scope, session fit, project
+    /// progression or a contradictory requirement.
+    Plan,
     /// Course-wide: no references could be gathered, so lessons cannot be prepared.
     References,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningOutlineIssueDto {
+    /// Stable identity assigned by code when the finding is first raised.
+    pub id: String,
     /// JSON pointer into the saved candidate. Empty means the entire curriculum.
     pub path: String,
     pub kind: LearningOutlineIssueKind,
+    /// The item text at `path` as of the last review, refreshed by code.
     pub claim: String,
+    /// The reviewer's current reason, refreshed on each unresolved verdict.
+    pub message: String,
+    /// Repair attempts spent on this finding in the current operation.
+    pub attempts: u32,
+    /// The attempt limit or the module's rewrite budget is spent; waits for the user.
+    pub exhausted: bool,
+    /// Evidence shown to the user: the contradicting or best passage found.
     pub quote: String,
     pub source_id: Option<String>,
-    pub message: String,
+    /// Public searches already run for this finding.
+    pub searched: Vec<String>,
+}
+
+/// Repair attempts a finding may consume in one operation.
+pub(in crate::features::learning) const ATTEMPT_LIMIT: u32 = 2;
+/// Rewrites one module may receive in one operation.
+pub(in crate::features::learning) const MODULE_REWRITE_BUDGET: u32 = 3;
+
+/// The module a finding's path belongs to; `None` for a course-wide finding.
+pub(in crate::features::learning) fn module_index(path: &str) -> Option<usize> {
+    path.strip_prefix("/modules/")
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|index| index.parse().ok())
+}
+
+/// Rewrites spent per module in this operation. Held in memory only: a new
+/// Repair press is a fresh budget.
+#[derive(Debug, Default)]
+pub(in crate::features::learning) struct ModuleBudgets {
+    spent: BTreeMap<usize, u32>,
+    modules: usize,
+}
+impl ModuleBudgets {
+    pub fn new(modules: usize) -> Self {
+        Self {
+            spent: BTreeMap::new(),
+            modules,
+        }
+    }
+    pub fn remaining(&self, module: usize) -> u32 {
+        MODULE_REWRITE_BUDGET.saturating_sub(self.spent.get(&module).copied().unwrap_or(0))
+    }
+    /// Whether a finding at `path` can still be addressed by a rewrite. A
+    /// course-wide finding can while any module has budget.
+    pub fn can_rewrite(&self, path: &str) -> bool {
+        match module_index(path) {
+            Some(module) => self.remaining(module) > 0,
+            None => (0..self.modules).any(|module| self.remaining(module) > 0),
+        }
+    }
+    /// Spend one rewrite on `module`; false when none is left.
+    pub fn spend(&mut self, module: usize) -> bool {
+        if self.remaining(module) == 0 {
+            return false;
+        }
+        *self.spent.entry(module).or_default() += 1;
+        true
+    }
+}
+
+impl LearningOutlineIssueDto {
+    /// Whether repair may still act on this finding in this operation. A
+    /// factual finding's first attempt is research, which needs no rewrite
+    /// budget; everything after that is a rewrite.
+    pub(in crate::features::learning) fn actionable(&self, budgets: &ModuleBudgets) -> bool {
+        if self.kind == LearningOutlineIssueKind::References || self.attempts >= ATTEMPT_LIMIT {
+            return false;
+        }
+        (self.kind == LearningOutlineIssueKind::Factual && self.attempts == 0)
+            || budgets.can_rewrite(&self.path)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -93,15 +168,23 @@ pub(in crate::features::learning) struct OutlineDraft {
     /// new queries instead of repeating.
     #[serde(default)]
     pub research_log: BTreeMap<String, Vec<String>>,
+    /// Findings raised so far; the next finding is `finding-{n+1}`.
+    #[serde(default)]
+    pub findings_raised: u32,
 }
 
 /// A strict-judge verdict on one factual assertion against saved passages.
+/// A supported receipt also records where the evidence was attached, so a
+/// later review can be told the assertion is verified rather than re-raise it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::features::learning) struct OutlineClaimReceipt {
     pub verdict: crate::application::services::claim_verification::ClaimVerdict,
     pub reason: String,
     pub supporting_quote: Option<String>,
     pub checked_at: i64,
+    pub claim: String,
+    pub path: String,
+    pub source_id: Option<String>,
 }
 impl OutlineDraft {
     pub fn new(
@@ -119,6 +202,7 @@ impl OutlineDraft {
             citation_receipts: CitationReceipts::new(),
             claim_receipts: BTreeMap::new(),
             research_log: BTreeMap::new(),
+            findings_raised: 0,
             review: LearningOutlineReviewDto {
                 status: LearningOutlineReviewStatus::Unchecked,
                 issues: vec![],
@@ -187,6 +271,21 @@ impl OutlineDraft {
                 .collect(),
         );
         Ok(())
+    }
+
+    /// A new, stable finding identity for this draft.
+    pub fn next_finding_id(&mut self) -> String {
+        self.findings_raised += 1;
+        format!("finding-{}", self.findings_raised)
+    }
+
+    /// Findings the reviewer and repair act on; the References finding is
+    /// derived from the source count, never carried.
+    pub fn open_findings(&self) -> impl Iterator<Item = &LearningOutlineIssueDto> {
+        self.review
+            .issues
+            .iter()
+            .filter(|issue| issue.kind != LearningOutlineIssueKind::References)
     }
 
     pub fn stamp(&mut self) {
@@ -282,10 +381,106 @@ async fn gather_for_draft(
     Ok(())
 }
 
+/// Where a finding sits, in learner-facing numbering.
+pub(in crate::features::learning) fn location(path: &str) -> String {
+    let Some(module) = module_index(path) else {
+        return "Course".into();
+    };
+    let mut parts = path.trim_start_matches("/modules/").split('/').skip(1);
+    let item = match (parts.next(), parts.next().and_then(|i| i.parse::<usize>().ok())) {
+        (Some("summary"), _) => " · Summary".to_owned(),
+        (Some("outcomes"), Some(index)) => format!(" · Outcome {}", index + 1),
+        (Some("lessons"), Some(index)) => format!(" · Lesson {}", index + 1),
+        _ => String::new(),
+    };
+    format!("Module {}{item}", module + 1)
+}
+
+fn short(text: &str) -> String {
+    let text = text.trim();
+    if text.chars().count() <= 160 {
+        return text.into();
+    }
+    format!("{}…", text.chars().take(159).collect::<String>().trim_end())
+}
+
+/// The note shown when findings remain after the allowed attempts: each one
+/// in plain language, with what was searched for a factual finding.
+fn remaining_note(draft: &OutlineDraft) -> String {
+    let remaining: Vec<_> = draft.open_findings().collect();
+    let details = remaining
+        .iter()
+        .map(|issue| {
+            let location = location(&issue.path);
+            match issue.kind {
+                LearningOutlineIssueKind::Factual if issue.source_id.is_some() => format!(
+                    "{location}: the claim \"{}\" is contradicted by a saved reference. {}",
+                    short(&issue.claim),
+                    issue.message
+                ),
+                LearningOutlineIssueKind::Factual if !issue.searched.is_empty() => format!(
+                    "{location}: the claim \"{}\" was not supported by any saved reference after {} {} (queries: {}).",
+                    short(&issue.claim),
+                    issue.searched.len(),
+                    if issue.searched.len() == 1 { "search" } else { "searches" },
+                    issue.searched.join("; ")
+                ),
+                LearningOutlineIssueKind::Factual => format!(
+                    "{location}: the claim \"{}\" was not supported by the saved references.",
+                    short(&issue.claim)
+                ),
+                _ => format!("{location}: {}", issue.message),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "{} {} remain after the allowed repair attempts. {details} Use Repair to try again with fresh attempts and new searches, or regenerate the outline.",
+        remaining.len(),
+        if remaining.len() == 1 { "finding" } else { "findings" }
+    )
+}
+
+/// Write the status and note that follow a completed review pass.
+fn settle(draft: &mut OutlineDraft, sources: &[LearningSourceDto], references_missing: bool) {
+    let open = draft.open_findings().count();
+    if references_missing {
+        draft.review.issues.push(LearningOutlineIssueDto {
+            id: "references".into(),
+            path: String::new(),
+            kind: LearningOutlineIssueKind::References,
+            claim: String::new(),
+            message: NO_REFERENCES.into(),
+            attempts: 0,
+            exhausted: true,
+            quote: String::new(),
+            source_id: None,
+            searched: vec![],
+        });
+    }
+    draft.review.status = if draft.review.issues.is_empty() {
+        LearningOutlineReviewStatus::Passed
+    } else {
+        LearningOutlineReviewStatus::NeedsRepair
+    };
+    draft.review.note = if open == 0 && references_missing {
+        "The plan passed review, but no references could be gathered. Lessons need saved references; use Repair to retry gathering when the web is available.".into()
+    } else if open == 0 {
+        format!("Outline checks passed. {} references saved; {} citations verified, {} removed because the passage did not match or address the item. Lesson content is checked separately when prepared.", sources.len(), draft.review.citations_verified, draft.review.citations_removed)
+    } else {
+        "Findings saved. Repair will use the remaining issues and source passages.".into()
+    };
+}
+
 /// Review and repair a saved draft. `gather_if_empty` is set by Repair: a
 /// draft that still has no references is gathered for first. Generation has
 /// already gathered once and passes false, so a failed gathering is reported
 /// as the References finding rather than retried in the same operation.
+///
+/// The loop terminates by construction: each pass either resolves findings or
+/// spends attempts (at most `ATTEMPT_LIMIT` per finding) and module rewrites
+/// (at most `MODULE_REWRITE_BUDGET` per module), and new findings can only
+/// arise at paths the last pass changed.
 pub(in crate::features::learning) async fn finish(
     repo: &LearningRepository,
     llm: &dyn LLMPort,
@@ -296,7 +491,8 @@ pub(in crate::features::learning) async fn finish(
     web: Option<&dyn crate::features::web::traits::WebServiceTrait>,
     gather_if_empty: bool,
 ) -> Result<LearningProgramDto> {
-    let mut previous_count = None;
+    use crate::features::learning::outline_progress::OutlineStage;
+    use crate::features::learning::outline_review_scope::{ReviewReceipt, ReviewScope};
     let work: Result<()> = async {
         // The course-wide References finding is re-derived each pass from the
         // actual source count, never carried over.
@@ -316,46 +512,48 @@ pub(in crate::features::learning) async fn finish(
         draft.review.status = LearningOutlineReviewStatus::Unchecked;
         repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
         let references_missing = sources.is_empty() && web.is_some();
+        let modules = draft.candidate.get("modules").and_then(Value::as_array).map_or(0, Vec::len);
+        let mut budgets = ModuleBudgets::new(modules);
         loop {
             progress.check_cancelled()?;
-            progress.stage(if draft.review.repair_passes == 0 { crate::features::learning::outline_progress::OutlineStage::Reviewing } else { crate::features::learning::outline_progress::OutlineStage::CheckingRepair });
-            let scope = crate::features::learning::outline_review_scope::ReviewScope::new(&draft, &sources, llm);
-            draft.review.status = LearningOutlineReviewStatus::Unchecked;
-            draft.review.note = if scope.incremental {
-                format!("Rechecking {} corrected or unresolved {} and connections across the course. Completed checks for unchanged material are retained; previous findings await this review.", scope.indices.len(), if scope.indices.len() == 1 { "module" } else { "modules" })
-            } else {
-                "Reviewing the full outline against the saved references. Previous findings await this review.".into()
-            };
-            repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
-            let issues = crate::features::learning::outline_repair::review(llm, &mut draft, &sources, progress, scope).await?;
-            let count = issues.len();
-            draft.review.issues = issues;
-            if references_missing {
-                draft.review.issues.push(LearningOutlineIssueDto {
-                    path: String::new(), kind: LearningOutlineIssueKind::References,
-                    claim: String::new(), quote: String::new(), source_id: None,
-                    message: NO_REFERENCES.into(),
-                });
-            }
-            draft.review.status = if draft.review.issues.is_empty() { LearningOutlineReviewStatus::Passed } else { LearningOutlineReviewStatus::NeedsRepair };
-            draft.review.note = if count == 0 && references_missing {
-                "The plan passed review, but no references could be gathered. Lessons need saved references; use Repair to retry gathering when the web is available.".into()
-            } else if count == 0 {
-                format!("Outline checks passed. {} references saved; {} citations verified, {} removed because the passage did not match or address the item. Lesson content is checked separately when prepared.", sources.len(), draft.review.citations_verified, draft.review.citations_removed)
-            } else { "Findings saved. Repair will use the remaining issues and source passages.".into() };
-            repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
-            if count == 0 { break; }
-            // Interim termination guard until per-finding attempts land: a pass
-            // that does not reduce the findings stops the loop.
-            if previous_count.is_some_and(|before| count >= before) {
-                draft.review.note = "Automatic repair stopped because the unresolved findings did not decrease. Your draft and completed edits are saved. Repair can try again.".into();
+            draft.review.issues.retain(|issue| issue.kind != LearningOutlineIssueKind::References);
+            // Skip rule: a draft whose completed review still matches and has
+            // no open findings is passed without a model call.
+            if draft.open_findings().next().is_none()
+                && draft.completed_review.as_ref() == Some(&ReviewReceipt::new(&draft, &sources, llm))
+            {
+                tracing::info!(program_id = %program.summary.id, "Outline review receipt matches; no review call needed");
+                settle(&mut draft, &sources, references_missing);
                 repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
                 break;
             }
-            previous_count = Some(count);
-            progress.stage(crate::features::learning::outline_progress::OutlineStage::Repairing);
-            let changed = crate::features::learning::outline_repair::repair(repo, llm, &mut program, &mut draft, &sources, progress).await?;
-            if !changed {
+            progress.stage(if draft.review.repair_passes == 0 { OutlineStage::Reviewing } else { OutlineStage::CheckingRepair });
+            let scope = ReviewScope::new(&draft, &sources, llm);
+            draft.review.status = LearningOutlineReviewStatus::Unchecked;
+            draft.review.note = if scope.incremental {
+                format!("Rechecking {} corrected or unresolved {} and connections across the course. Completed checks for unchanged material are retained; open findings await this review's verdict.", scope.indices.len(), if scope.indices.len() == 1 { "module" } else { "modules" })
+            } else {
+                "Reviewing the full outline against the saved references. Open findings await this review's verdict.".into()
+            };
+            repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
+            crate::features::learning::outline_review::review(llm, &mut draft, &sources, progress, scope).await?;
+            for issue in &mut draft.review.issues {
+                issue.exhausted = !issue.actionable(&budgets);
+            }
+            settle(&mut draft, &sources, references_missing);
+            repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
+            let open = draft.open_findings().count();
+            if open == 0 {
+                break;
+            }
+            if draft.open_findings().all(|issue| issue.exhausted) {
+                draft.review.note = remaining_note(&draft);
+                repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
+                break;
+            }
+            progress.stage(OutlineStage::Repairing);
+            let outcome = crate::features::learning::outline_repair::repair(repo, llm, &mut program, &mut draft, &mut sources, web, &mut budgets, progress).await?;
+            if !outcome.changed && !outcome.evidence_added {
                 draft.review.note = "The model returned no usable correction. Your draft, findings and saved references are kept; Repair can retry checking.".into();
                 repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
                 break;
@@ -407,8 +605,15 @@ pub(in crate::features::learning) async fn repair_saved(
         .ok_or_else(|| {
             AppError::InvalidInput("This course has no resumable outline draft.".into())
         })?;
-    // Removal counts describe one operation; a repair starts a new one.
+    // Removal counts describe one operation; a repair starts a new one, and
+    // the user asked for another try: every open finding gets fresh attempts.
+    // The searches already run stay in the research log, so the planner is
+    // told what was tried and explores new queries.
     draft.review.citations_removed = 0;
+    for issue in &mut draft.review.issues {
+        issue.attempts = 0;
+        issue.exhausted = false;
+    }
     let saved = repo.verification_sources(&request.program_id).await?;
     let sources = draft
         .source_ids
