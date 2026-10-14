@@ -33,6 +33,7 @@ pub struct SourceDeps {
     pub pool: SqlitePool,
 }
 
+#[derive(Debug, Clone)]
 pub struct InitialReference {
     pub source_id: String,
     pub origin: String,

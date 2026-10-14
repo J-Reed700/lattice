@@ -159,7 +159,7 @@ fn module_at(candidate: &Value, index: usize) -> Result<&Value> {
         })
 }
 
-fn strip_citations(value: &mut Value) {
+pub(in crate::features::learning) fn strip_citations(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("quote");

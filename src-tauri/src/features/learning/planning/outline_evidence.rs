@@ -19,8 +19,9 @@ pub(in crate::features::learning) fn lesson_queries(candidate: &Value) -> Vec<St
 }
 
 /// Exact provenance is checked by code, even when the model approves a quote.
-/// Field-level diagnostics let repairs copy the real punctuation and formatting
-/// instead of failing only after the final model review.
+/// Citations are optional; only a present citation can fail. Field-level
+/// diagnostics let typography restoration copy the real punctuation, and the
+/// citation check strips whatever still does not match.
 pub(in crate::features::learning) fn quote_checks(
     candidate: &Value,
     sources: &[crate::features::learning::dto::LearningSourceDto],
@@ -49,7 +50,7 @@ pub(in crate::features::learning) fn quote_checks(
                 .and_then(|i| usize::try_from(i).ok());
             let quote = field["quote"].as_str().unwrap_or_default();
             if let Err(error) =
-                crate::features::learning::generation::generated_source_ids(sources, index, quote)
+                crate::features::learning::generation::optional_citation(sources, index, quote)
             {
                 failures.push(json!({"path":format!("modules[{module_index}].{field_name}"),"sourceIndex":index,"quote":quote,"error":error.to_string()}));
             }

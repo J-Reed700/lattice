@@ -1,6 +1,11 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps.
 use super::*;
-use crate::application::contracts::web::{WebSearchInput, WebSearchResult};
+use crate::application::contracts::web::WebSearchResult;
+#[cfg(test)]
+use crate::application::contracts::web::WebSearchInput;
+use crate::features::learning::references::web_research;
+#[cfg(test)]
+use web_research::within_search_scope;
 use crate::features::web::WebServiceTrait;
 use std::sync::{Arc, Mutex};
 
@@ -15,40 +20,6 @@ struct Context {
     topic: String,
     web: Arc<dyn WebServiceTrait>,
     searched: Arc<Mutex<HashSet<String>>>,
-}
-
-/// Search providers may ignore site operators (including enrichment providers).
-/// Enforce the requested host/path ourselves, again after any fetch redirect.
-fn within_search_scope(query: &str, address: &str) -> bool {
-    let scopes: Vec<_> = query
-        .split_whitespace()
-        .filter_map(|term| term.strip_prefix("site:"))
-        .map(|scope| scope.trim_matches(['\'', '"', '(', ')']))
-        .collect();
-    if scopes.is_empty() {
-        return true;
-    }
-    let Ok(address) = url::Url::parse(address) else {
-        return false;
-    };
-    scopes.iter().any(|scope| {
-        let normalized = if scope.contains("://") {
-            scope.to_string()
-        } else {
-            format!("https://{scope}")
-        };
-        let Ok(scope) = url::Url::parse(&normalized) else {
-            return false;
-        };
-        let (Some(host), Some(expected)) = (address.host_str(), scope.host_str()) else {
-            return false;
-        };
-        let path = scope.path().trim_end_matches('/');
-        (host == expected || host.ends_with(&format!(".{expected}")))
-            && (path.is_empty()
-                || address.path() == path
-                || address.path().starts_with(&format!("{path}/")))
-    })
 }
 
 /// Discovery rankings are not evidence of topical relevance or authority.
@@ -239,10 +210,7 @@ pub(super) async fn expand<'a>(
         crate::features::learning::lesson_progress::stage(
             "Searching the web for missing lesson evidence",
         );
-        let input: WebSearchInput = serde_json::from_value(
-            json!({"query":query,"max_results":12,"depth":1,"providers":["duckduckgo","bing"],"include_wikipedia":false}),
-        )?;
-        let results = match context.web.search_web(&input).await {
+        let results = match web_research::search(context.web.as_ref(), &query).await {
             Ok(results) => results,
             Err(error) => {
                 tracing::warn!(%error,"Lesson reference search unavailable");
@@ -252,11 +220,8 @@ pub(super) async fn expand<'a>(
         let mut saved = 0;
         let mut capture_failed = false;
         let candidates = results
-            .results
             .into_iter()
-            .filter(|result| {
-                within_search_scope(&query, &result.url) && !urls.contains(&result.url)
-            })
+            .filter(|result| !urls.contains(&result.url))
             .collect();
         let selected = select_references(llm, &context.topic, &query, &gaps, candidates).await?;
         for result in selected {
@@ -266,38 +231,20 @@ pub(super) async fn expand<'a>(
             crate::features::learning::lesson_progress::stage(
                 "Saving an additional reference for lesson verification",
             );
-            let article = match context.web.fetch_reference_content(&result.url).await {
-                Ok(article) => article,
+            let captured = match web_research::capture(context.web.as_ref(), &result, &query).await {
+                Ok(Some(captured)) => captured,
+                Ok(None) => continue,
                 Err(error) => {
                     tracing::warn!(%error,"Lesson research page unavailable");
                     capture_failed = true;
                     continue;
                 }
             };
-            if !within_search_scope(&query, &article.url) {
-                continue;
-            }
-            let captured = crate::features::learning::source_library::CapturedLearningSource {
-                title: article
-                    .title
-                    .unwrap_or(result.title)
-                    .chars()
-                    .take(180)
-                    .collect(),
-                publisher: None,
-                requested_url: Some(result.url.clone()),
-                resolved_url: Some(article.url.clone()),
-                text: article.content,
-                truncated: article.content_truncated,
-                extraction_version:
-                    crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
-            };
-            if crate::features::learning::sources::validate_capture(&captured).is_err()
-                || sources.iter().any(|s| {
-                    s.url.as_deref() == Some(article.url.as_str())
-                        || s.excerpt.trim() == captured.text.trim()
-                })
-            {
+            let resolved = captured.resolved_url.clone().unwrap_or_default();
+            if sources.iter().any(|s| {
+                s.url.as_deref() == Some(resolved.as_str())
+                    || s.excerpt.trim() == captured.text.trim()
+            }) {
                 continue;
             }
             let version_id = uuid::Uuid::new_v4().to_string();
@@ -317,7 +264,7 @@ pub(super) async fn expand<'a>(
                     hash,
                 )
                 .await?;
-            urls.insert(article.url);
+            urls.insert(resolved);
             // The repository normalizes captures. Retrieve those canonical
             // bytes so the report and vectors bind to exactly what is saved.
             sources = program_repo

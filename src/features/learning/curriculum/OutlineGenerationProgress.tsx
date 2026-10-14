@@ -7,9 +7,11 @@ import type { LearningOutlineProgressDto, OutlineStage } from '@/lib/bindings';
 const stages: Record<OutlineStage, { step: number; title: string; detail: string }> = {
   reading_sources: { step: 0, title: 'Reading your references', detail: 'Capturing the selected pages and documents for this course.' },
   loading_model: { step: 0, title: 'Getting the model ready', detail: 'Connecting to your selected model before writing starts.' },
+  gathering_references: { step: 0, title: 'Gathering references', detail: 'Planning the subtopics and saving reference pages before writing the outline.' },
   drafting: { step: 1, title: 'Writing your course outline', detail: 'Planning the modules, lesson objectives, prerequisites, and project milestones.' },
+  checking_citations: { step: 2, title: 'Checking citations', detail: 'Matching each quoted passage to its saved reference and checking that it addresses the item it is attached to.' },
   reviewing: { step: 2, title: 'Reviewing the teaching plan', detail: 'Checking the draft for gaps, prerequisite order, and realistic lesson workloads.' },
-  researching: { step: 2, title: 'Finding supporting references', detail: 'Searching for missing evidence and saving reference pages before continuing review and repair.' },
+  researching: { step: 2, title: 'Researching an unresolved finding', detail: 'Searching for evidence on a specific finding and saving the pages before continuing review and repair.' },
   repairing: { step: 2, title: 'Revising the course outline', detail: 'Correcting affected modules and saving each edit before checking it again.' },
   checking_repair: { step: 2, title: 'Checking the revised outline', detail: 'Checking that the requested corrections were made. The outline is not ready yet.' },
   saving: { step: 3, title: 'Saving your outline', detail: 'Saving the syllabus, references, and review findings.' },
@@ -33,12 +35,12 @@ export function OutlineGenerationProgress({ progress, cancelling, onCancel, onOp
   }, [startedAt]);
   const stage = progress?.stage;
   const current = stage ? stages[stage] : { step: 0, title: 'Starting your course', detail: 'Waiting for the app to begin reading your references.' };
-  const modelStep = stage && ['drafting', 'reviewing', 'repairing', 'checking_repair'].includes(stage);
+  const modelStep = stage && ['drafting', 'checking_citations', 'reviewing', 'repairing', 'checking_repair'].includes(stage);
   const stopping = cancelling && stage !== 'saving' && stage !== 'completed';
 
   return <section aria-label="Course generation progress" className="mt-8 rounded-xl border border-accent/30 bg-accent/5 p-4 sm:p-5">
     <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
-      <div className="min-w-0 flex-1"><div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status"><LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />{stopping ? 'Cancelling generation…' : current.title}</div><p className="mt-2 text-sm leading-6 text-text-secondary">{stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : current.detail}</p></div>
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status"><LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />{stopping ? 'Cancelling generation…' : current.title}</div><p className="mt-2 text-sm leading-6 text-text-secondary">{stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : current.detail}</p>{!stopping && progress?.detail && <p className="mt-1 text-xs text-text-muted" aria-label="Stage progress">{progress.detail}</p>}</div>
       <span className="text-xs tabular-nums text-text-muted" aria-live="off">Elapsed <span aria-label="Elapsed time">{duration(Math.max(elapsed, progress?.elapsedSeconds ?? 0))}</span></span>
     </div>
     <ol aria-label="Generation stages" className="mt-5 grid gap-3 text-xs sm:grid-cols-4">{['Read references', 'Write outline', 'Review and revise', 'Save outline'].map((label, index) => <li key={label} aria-current={index === current.step ? 'step' : undefined} className={`flex items-center gap-2 ${index === current.step ? 'font-semibold text-accent' : 'text-text-muted'}`}><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current">{index < current.step ? <Check size={12} aria-label="Complete" /> : index + 1}</span>{label}</li>)}</ol>

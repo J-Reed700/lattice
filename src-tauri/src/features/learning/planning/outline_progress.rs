@@ -17,7 +17,9 @@ use tokio_util::sync::CancellationToken;
 pub enum OutlineStage {
     ReadingSources,
     LoadingModel,
+    GatheringReferences,
     Drafting,
+    CheckingCitations,
     Reviewing,
     Researching,
     Repairing,
@@ -34,6 +36,10 @@ pub struct LearningOutlineProgressDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub program_id: Option<String>,
     pub stage: OutlineStage,
+    /// Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
+    /// dive's gathering and citation checks are never a silent spinner.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     pub elapsed_seconds: u32,
     pub stage_seconds: u32,
     pub response_characters: u32,
@@ -42,6 +48,7 @@ pub struct LearningOutlineProgressDto {
 
 struct State {
     stage: OutlineStage,
+    detail: Option<String>,
     program_id: Option<String>,
     since: Instant,
     characters: u32,
@@ -64,6 +71,7 @@ impl Default for OutlineProgress {
             started: Instant::now(),
             state: Mutex::new(State {
                 stage: OutlineStage::ReadingSources,
+                detail: None,
                 program_id: None,
                 since: Instant::now(),
                 characters: 0,
@@ -90,9 +98,21 @@ impl OutlineProgress {
         {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.stage = stage;
+            state.detail = None;
             state.since = Instant::now();
             state.characters = 0;
         }
+        self.emit();
+    }
+
+    /// Report a step within the current stage. Cleared by the next stage.
+    pub fn detail(&self, detail: impl Into<String>) {
+        let detail = detail.into();
+        tracing::info!(operation_id = %self.id, %detail, "Learning outline stage progress");
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .detail = Some(detail);
         self.emit();
     }
 
@@ -112,6 +132,7 @@ impl OutlineProgress {
         LearningOutlineProgressDto {
             program_id: state.program_id.clone(),
             stage: state.stage,
+            detail: state.detail.clone(),
             elapsed_seconds: self.started.elapsed().as_secs().min(u32::MAX as u64) as u32,
             stage_seconds: state.since.elapsed().as_secs().min(u32::MAX as u64) as u32,
             response_characters: state.characters,

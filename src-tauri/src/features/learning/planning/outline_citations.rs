@@ -83,7 +83,7 @@ pub(in crate::features::learning) fn restore_source_quotes(
             let Some(exact) = text.exact_span(&source.excerpt, quote) else {
                 continue;
             };
-            if generation::generated_source_ids(sources, Some(index), exact).is_err() {
+            if generation::optional_citation(sources, Some(index), exact).is_err() {
                 continue;
             }
             let path = format!(

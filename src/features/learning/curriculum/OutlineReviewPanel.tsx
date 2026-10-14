@@ -3,9 +3,11 @@ import { CheckCircle2, Wrench } from 'lucide-react';
 
 import { OutlineGenerationProgress } from '@/features/learning/curriculum/OutlineGenerationProgress';
 import type { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
-import type { LearningProgramDto } from '@/lib/bindings';
+import type { LearningOutlineIssueKind, LearningProgramDto } from '@/lib/bindings';
 
 export type OutlineOperation = Pick<ReturnType<typeof useRepairLearningOutline>, 'isPending' | 'progress' | 'cancelling' | 'cancel' | 'cancelError'>;
+
+const kindLabel: Record<LearningOutlineIssueKind, string> = { content: 'Content review', references: 'References' };
 
 function location(program: LearningProgramDto, path: string) {
   const parts = path.split('/');
@@ -29,9 +31,9 @@ export function OutlineReviewPanel({ program, generation, repair }: {
         repair.mutate({ programId: program.summary.id, expectedRevision: program.summary.revision });
       }} className="inline-flex min-h-11 max-w-full shrink-0 items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg"><Wrench size={16} />Repair remaining issues</button>}
     </div>
-    {!passed && <p className="mt-4 text-xs leading-5 text-text-muted">Supporting references are researched automatically when findings remain. Searches use your learning goal and affected module titles; captured pages are saved and checked alongside your references.</p>}
+    {!passed && <p className="mt-4 text-xs leading-5 text-text-muted">References were gathered from public searches planned for each subtopic; the learner's goal text is never sent. Citations are kept only after an exact-text match and a relevance check.</p>}
     {pending && <OutlineGenerationProgress progress={operation.progress} cancelling={operation.cancelling} onCancel={() => void operation.cancel()} cancelError={operation.cancelError} deepDive={false} />}
     {repair.error && <p role="alert" className="mt-3 text-sm text-rose-700">Repair stopped: {repair.error.message}. Your saved draft remains available.</p>}
-    {review.issues.length > 0 && <details className="mt-4" open><summary className="cursor-pointer text-sm font-semibold text-text-primary">{review.status === 'unchecked' ? 'Previous findings' : 'Findings to resolve'} ({review.issues.length}){review.status === 'unchecked' ? ' · awaiting recheck' : ''}</summary>{review.status === 'unchecked' && <p className="mt-2 text-xs leading-5 text-text-muted">These findings are from the last completed review. Saved corrections are awaiting verification.</p>}<ul className="mt-3 space-y-3">{review.issues.map((issue, index) => <li key={`${issue.path}:${index}`} className="rounded-xl border border-border bg-background p-4"><p className="text-xs font-semibold text-accent">{location(program, issue.path)} · {issue.kind === 'quote' ? 'Unmatched quotation' : 'Content review'}</p>{issue.claim && <p className="mt-2 text-sm text-text-primary">{issue.claim}</p>}{issue.quote && <blockquote className="mt-2 whitespace-pre-wrap wrap-break-word border-l-2 border-accent/40 pl-3 text-sm text-text-secondary">{issue.quote}</blockquote>}<p className="mt-2 text-sm leading-6 text-text-secondary">{issue.message}</p>{issue.sourceId && <p className="mt-2 text-xs text-text-muted">Reference: {program.sources.find((source) => source.id === issue.sourceId)?.title ?? 'Saved reference'}</p>}</li>)}</ul></details>}
+    {review.issues.length > 0 && <details className="mt-4" open><summary className="cursor-pointer text-sm font-semibold text-text-primary">{review.status === 'unchecked' ? 'Previous findings' : 'Findings to resolve'} ({review.issues.length}){review.status === 'unchecked' ? ' · awaiting recheck' : ''}</summary>{review.status === 'unchecked' && <p className="mt-2 text-xs leading-5 text-text-muted">These findings are from the last completed review. Saved corrections are awaiting verification.</p>}<ul className="mt-3 space-y-3">{review.issues.map((issue, index) => <li key={`${issue.path}:${index}`} className="rounded-xl border border-border bg-background p-4"><p className="text-xs font-semibold text-accent">{location(program, issue.path)} · {kindLabel[issue.kind]}</p>{issue.claim && <p className="mt-2 text-sm text-text-primary">{issue.claim}</p>}{issue.quote && <blockquote className="mt-2 whitespace-pre-wrap wrap-break-word border-l-2 border-accent/40 pl-3 text-sm text-text-secondary">{issue.quote}</blockquote>}<p className="mt-2 text-sm leading-6 text-text-secondary">{issue.message}</p>{issue.sourceId && <p className="mt-2 text-xs text-text-muted">Reference: {program.sources.find((source) => source.id === issue.sourceId)?.title ?? 'Saved reference'}</p>}</li>)}</ul></details>}
   </section>;
 }

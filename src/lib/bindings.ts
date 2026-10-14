@@ -6494,9 +6494,34 @@ export type LearningOutlineIssueDto = {
  * JSON pointer into the saved candidate. Empty means the entire curriculum.
  */
 path: string; kind: LearningOutlineIssueKind; claim: string; quote: string; sourceId: string | null; message: string }
-export type LearningOutlineIssueKind = "quote" | "content"
-export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
-export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string }
+export type LearningOutlineIssueKind =
+/**
+ * A reviewer finding about the plan or an assertion in it.
+ */
+"content" |
+/**
+ * Course-wide: no references could be gathered, so lessons cannot be prepared.
+ */
+"references"
+export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage;
+/**
+ * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
+ * dive's gathering and citation checks are never a silent spinner.
+ */
+detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
+/**
+ * Citations in the saved candidate that passed exact match and coverage.
+ */
+citationsVerified: number;
+/**
+ * Citations removed in this operation because they did not match or cover.
+ */
+citationsRemoved: number;
+/**
+ * Reference pages gathered automatically for this program.
+ */
+referencesGathered: number }
 export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
 export type LearningPackConflictDto = { kind: LearningPackConflictKind;
@@ -7057,7 +7082,7 @@ contentPath: string;
  */
 title?: string | null }
 export type OpenLearningPracticeSourceRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; sourceId: string; versionId: string }
-export type OutlineStage = "reading_sources" | "loading_model" | "drafting" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
+export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */

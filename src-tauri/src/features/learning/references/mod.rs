@@ -5,3 +5,4 @@ pub mod source_library;
 pub mod source_selector;
 pub(crate) mod source_workflows;
 pub mod sources;
+pub(crate) mod web_research;

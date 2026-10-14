@@ -12,7 +12,7 @@ use crate::{
 };
 use serde_json::json;
 
-struct Model(String);
+pub(in crate::features::learning) struct Model(pub(in crate::features::learning) String);
 #[async_trait::async_trait]
 impl LLMPort for Model {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
@@ -61,7 +61,7 @@ impl Model {
     }
 }
 
-fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
+pub(in crate::features::learning) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
     GenerateLearningProgramRequestDto {
         goal: "Design experiments and interpret their results".into(),
         prior_knowledge: "Basic algebra".into(),
@@ -71,7 +71,7 @@ fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
         course_depth: Some(depth),
     }
 }
-fn outline(modules: usize, lessons: usize) -> Model {
+pub(in crate::features::learning) fn outline(modules: usize, lessons: usize) -> Model {
     Model(json!({"modules":(0..modules).map(|m| json!({
         "title":format!("Experimental design module {m}"),
         "prerequisiteIndices":if m == 0 {vec![]} else {vec![m-1]},
@@ -1148,29 +1148,15 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
 }
 
 #[tokio::test]
-async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Result<()> {
+async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_reported() -> Result<()> {
     let quote = "A randomized comparison isolates the intervention.";
     let mut candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    fn cite(value: &mut serde_json::Value, quote: &str) {
-        match value {
-            serde_json::Value::Object(object) => {
-                if object.contains_key("sourceIndex") {
-                    object.insert("sourceIndex".into(), json!(0));
-                    object.insert("quote".into(), json!(quote));
-                }
-                for child in object.values_mut() {
-                    cite(child, quote);
-                }
-            }
-            serde_json::Value::Array(values) => {
-                for child in values {
-                    cite(child, quote);
-                }
-            }
-            _ => {}
-        }
-    }
-    cite(&mut candidate, quote);
+    // One citation quotes the capture exactly; one does not. Neither is a finding.
+    candidate["modules"][0]["outcomes"][0]["sourceIndex"] = json!(0);
+    candidate["modules"][0]["outcomes"][0]["quote"] = json!(quote);
+    candidate["modules"][0]["summary"]["sourceIndex"] = json!(0);
+    candidate["modules"][0]["summary"]["quote"] =
+        json!("A randomized comparison does not isolate the intervention.");
     let url = "https://example.com/experimental-design";
     let captured = crate::features::learning::source_library::CapturedLearningSource {
         title: "Experimental design textbook".into(),
@@ -1193,15 +1179,11 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
         captured,
     };
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
-    let corrected = json!({"module":candidate["modules"][0]}).to_string();
-    candidate["modules"][0]["summary"]["quote"] =
-        json!("A randomized comparison does not isolate the intervention.");
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"issues":[]}).to_string(),
-                corrected,
+                json!({"decisions":[{"id":"/modules/0/outcomes/0","covers":true,"reason":"The passage addresses the comparison outcome."}]}).to_string(),
                 json!({"issues":[]}).to_string(),
             ]
             .into(),
@@ -1220,147 +1202,57 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
         std::slice::from_ref(&reference),
     )
     .await?;
-    assert!(model.prompts.lock().unwrap()[0].contains(quote));
-    assert_eq!(model.prompts.lock().unwrap().len(), 4);
-    assert!(model.prompts.lock().unwrap()[2].contains("This quotation could not be matched"));
+    let prompts = model.prompts.lock().unwrap();
+    // Authoring retrieves from the complete capture, not the 2,400-char preview.
+    assert!(prompts[0].contains(quote));
+    assert_eq!(prompts.len(), 3);
+    // Only the exact-match citation reaches the coverage judge.
+    assert!(prompts[1].contains("/modules/0/outcomes/0"));
+    assert!(!prompts[1].contains("/modules/0/summary"));
+    // The reviewer sees no citation fields on items and no quote findings.
+    let review_context: serde_json::Value =
+        serde_json::from_str(prompts[2].rsplit("\n\n").next().unwrap())?;
+    assert!(review_context["candidate"]["modules"][0]["summary"]
+        .get("sourceIndex")
+        .is_none());
+    assert!(review_context["candidate"]["modules"][0]["outcomes"][0]
+        .get("quote")
+        .is_none());
+    assert!(!prompts[2].contains("could not be matched"));
+    drop(prompts);
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
+    );
+    assert!(review.issues.is_empty());
+    assert_eq!(review.citations_verified, 1);
+    assert_eq!(review.citations_removed, 1);
     assert_eq!(program.summary.lesson_count, 12);
     assert!(!program.sources[0].excerpt.contains(quote));
     assert!(repo.verification_sources(&program.summary.id).await?[0]
         .excerpt
         .contains(quote));
-
-    // Approval cannot override a bad quote. The unresolved draft is saved,
-    // blocked from acceptance, and repairable after reopening the repository.
-    let directory = tempfile::tempdir()?;
-    let saved_database = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("outline-draft.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let rejected_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(saved_database.clone())
-        .await?;
-    sqlx::migrate!("./migrations")
-        .run(&rejected_pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
-    let rejected_repo = LearningRepository::new(rejected_pool.clone());
-    let unchanged = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                candidate.to_string(),
-                json!({"issues":[]}).to_string(),
-                json!({"module":candidate["modules"][0]}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let saved = service::generate_with_references(
-        &rejected_repo,
-        &drafts,
-        &unchanged,
-        crate::features::learning::lessons::course_generation_tests::request(
-            LearningCourseDepth::Course,
-        ),
-        vec![preview],
-        &[reference],
-    )
-    .await?;
-    assert_eq!(unchanged.prompts.lock().unwrap().len(), 3);
+    let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(
-        saved.outline_review.as_ref().unwrap().status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::NeedsRepair
+        saved.candidate["modules"][0]["summary"]["sourceIndex"],
+        serde_json::Value::Null
     );
-    assert_eq!(saved.outline_review.as_ref().unwrap().issues.len(), 1);
-    assert_eq!(rejected_repo.list().await?.len(), 1);
-    assert!(service::accept(
-        &rejected_repo,
-        &drafts,
-        AcceptLearningProgramRequestDto {
-            program_id: saved.summary.id.clone(),
-            expected_revision: saved.summary.revision,
-            title: saved.summary.title.clone()
-        }
-    )
-    .await
-    .is_err());
-    // Close every connection and reopen the actual file, as after an app restart.
-    rejected_pool.close().await;
-    let reopened = LearningRepository::new(
-        sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(saved_database)
-            .await?,
-    );
-    let retrieved = reopened.get(&saved.summary.id).await?;
-    assert_eq!(
-        retrieved.outline_review.as_ref().unwrap().issues[0].quote,
-        "A randomized comparison does not isolate the intervention."
-    );
-    candidate["modules"][0]["summary"]["quote"] = json!(quote);
-    let repair = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                json!({"issues":[]}).to_string(),
-                json!({"module":candidate["modules"][0]}).to_string(),
-                json!({"issues":[]}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let fixed = crate::features::learning::outline_draft::repair_saved(
-        &reopened,
-        &drafts,
-        &repair,
-        &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
-            program_id: saved.summary.id.clone(),
-            expected_revision: saved.summary.revision,
-        },
-        &crate::features::learning::outline_progress::OutlineProgress::default(),
-        None,
-    )
-    .await?;
-    assert_eq!(
-        fixed.outline_review.as_ref().unwrap().status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
-    );
-    assert!(fixed.outline_review.as_ref().unwrap().issues.is_empty());
-    assert_eq!(fixed.modules[0].id, saved.modules[0].id);
-    assert_eq!(
-        fixed.modules[0].lessons[0].id,
-        saved.modules[0].lessons[0].id
-    );
-    assert!(fixed.summary.revision > saved.summary.revision);
-    assert!(crate::features::learning::outline_draft::repair_saved(
-        &reopened,
-        &drafts,
-        &repair,
-        &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
-            program_id: saved.summary.id.clone(),
-            expected_revision: saved.summary.revision,
-        },
-        &crate::features::learning::outline_progress::OutlineProgress::default(),
-        None
-    )
-    .await
-    .is_err());
+    assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], "");
+    assert_eq!(saved.candidate["modules"][0]["outcomes"][0]["quote"], quote);
+    assert_eq!(saved.citation_receipts.len(), 1);
     service::accept(
-        &reopened,
+        &repo,
         &drafts,
         AcceptLearningProgramRequestDto {
-            program_id: fixed.summary.id.clone(),
-            expected_revision: fixed.summary.revision,
-            title: fixed.summary.title.clone(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            title: program.summary.title.clone(),
         },
     )
     .await?;
     Ok(())
 }
-
-#[path = "outline_research_tests.rs"]
-mod automatic_research;
 
 #[tokio::test]
 async fn outline_repair_preserves_completed_module_edits_when_later_call_fails() -> Result<()> {
@@ -1574,99 +1466,6 @@ async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<
     );
     assert_eq!(saved.outline_review.as_ref().unwrap().repair_passes, 2);
     assert_eq!(model.prompts.lock().unwrap().len(), 7);
-    Ok(())
-}
-
-#[tokio::test]
-async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_captures(
-) -> Result<()> {
-    use crate::features::{
-        function_calling::dto::{FetchUrlContentOutput, WebSearchResult},
-        web::mocks::MockWebService,
-    };
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    let issue = json!({"issues":[{"path":"/modules/0","claim":"The experimental comparison","reason":"The comparison needs evidence for its factual premise."}]});
-    let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                candidate.to_string(),
-                issue.to_string(),
-                json!({"module":candidate["modules"][0]}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
-    let mut program = service::generate(
-        &repo,
-        &drafts,
-        &model,
-        request(LearningCourseDepth::Course),
-        vec![],
-    )
-    .await?;
-    let mut draft = repo.outline_draft(&program.summary.id).await?.unwrap();
-    let web = MockWebService::new();
-    let url = "https://example.org/full-reference";
-    let truncated = "https://example.org/truncated";
-    web.set_search_results(
-        vec![url, truncated]
-            .into_iter()
-            .map(|url| WebSearchResult {
-                title: "Reference".into(),
-                url: url.into(),
-                snippet: "THIS SEARCH SNIPPET IS NOT EVIDENCE".into(),
-                published_date: None,
-                source: None,
-            })
-            .collect(),
-    );
-    let full = "A randomized comparison isolates the intervention. ".repeat(100);
-    for (url, is_truncated) in [(url, false), (truncated, true)] {
-        web.set_url_content(
-            url,
-            FetchUrlContentOutput {
-                url: url.into(),
-                title: Some("Experimental reference".into()),
-                content: full.clone(),
-                content_truncated: is_truncated,
-                word_count: 700,
-                fetch_time_ms: 1.,
-                content_type: None,
-                from_cache: false,
-            },
-        );
-    }
-    let mut sources = vec![];
-    crate::features::learning::outline_research::research(
-        &repo,
-        &web,
-        &mut program,
-        &mut draft,
-        &mut sources,
-        &crate::features::learning::outline_progress::OutlineProgress::default(),
-        &mut crate::features::learning::outline_research::ResearchAttempts::default(),
-    )
-    .await?;
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].excerpt, full);
-    let saved = repo.verification_sources(&program.summary.id).await?;
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].excerpt, full.trim());
-    assert_eq!(program.sources[0].excerpt.chars().count(), 2400);
-    assert!(!sources[0].excerpt.contains("SEARCH SNIPPET"));
-    let restored = LearningRepository::new(pool)
-        .outline_draft(&program.summary.id)
-        .await?
-        .unwrap();
-    assert_eq!(restored.source_ids, vec![sources[0].id.clone()]);
-    assert_eq!(
-        restored.review.status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Unchecked
-    );
     Ok(())
 }
 
