@@ -483,6 +483,23 @@ export const learningApi = {
       { request },
     ),
 
+  /** Rust opens the native save dialog; `request.fileName` is only its suggested name. */
+  saveLearningPackAs: (
+    request: Wire.ExportLearningPackRequestDto,
+  ): Promise<ApiResult<Wire.SaveLearningPackAsResultDto>> =>
+    learningCall<Wire.SaveLearningPackAsResultDto>('save_learning_pack_as', {
+      request,
+    }),
+
+  /** Rust opens the native folder dialog and writes one pack per course. */
+  exportAllLearningPacks: (
+    request: Wire.ExportAllLearningPacksRequestDto,
+  ): Promise<ApiResult<Wire.ExportAllLearningPacksResultDto>> =>
+    learningCall<Wire.ExportAllLearningPacksResultDto>(
+      'export_all_learning_packs',
+      { request },
+    ),
+
   deleteLearningSource: (
     request: Wire.DeleteLearningSourceRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceWorkspaceDto>> =>

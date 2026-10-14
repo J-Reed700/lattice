@@ -38,6 +38,8 @@ const descriptions: Record<string, TaskDescription> = {
   export_learning_pack: { title: 'Exporting your study pack', tab: 'portability', quickStart: true, detail: 'Larger courses and attachments take longer to package.', involves: ['Collect the selected course material', 'Write the study pack to your chosen location'] },
   preview_learning_pack_import: { title: 'Checking your study pack', tab: 'portability', quickStart: true, detail: 'Reading the pack and checking its contents before you decide what to import.', involves: ['Read and validate the pack', 'Prepare an import preview'] },
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
+  save_learning_pack_as: { title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
+  export_all_learning_packs: { title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
   generate_study_deck: { ...model('Creating your flashcard deck', 'recall', 'Read the selected documents', 'Generate cited questions and answers', 'Save your deck'), tab: undefined },
   generate_conversation_study_deck: { ...model('Creating flashcards from your conversation', 'recall', 'Read the verified claims and citations', 'Create and save a deck from those claims'), tab: undefined },
 };
@@ -91,6 +93,11 @@ function publish(activity: StudyActivity) {
   });
 }
 
+// A request that ended without doing anything leaves no receipt, pending or not.
+function withdraw(id: string) {
+  queryClient.setQueryData<StudyActivity[]>(STUDY_ACTIVITY_KEY, (current = []) => current.filter(item => item.id !== id));
+}
+
 export function dismissStudyActivity(id?: string) {
   queryClient.setQueryData<StudyActivity[]>(STUDY_ACTIVITY_KEY, (current = []) =>
     current.filter(item => item.status === 'pending' || (id !== undefined && item.id !== id)));
@@ -130,6 +137,11 @@ export function beginStudyActivity(domain: string, command: string, args?: Recor
       settled = true;
       clearTimeout(timer);
       if (!visible) return;
+      // A closed save or folder dialog wrote nothing; "completed" would say otherwise.
+      if (error === undefined && result && typeof result === 'object' && 'cancelled' in result && result.cancelled === true) {
+        withdraw(activity.id);
+        return;
+      }
       const deckId = domain === 'study' && command.startsWith('generate_') && result && typeof result === 'object' && 'id' in result && typeof result.id === 'string' ? result.id : undefined;
       publish({ ...activity, status: error === undefined ? 'completed' : 'failed', error, finishedAt: Date.now(), destination: deckId ? { ...activity.destination, deckId } : activity.destination });
     },

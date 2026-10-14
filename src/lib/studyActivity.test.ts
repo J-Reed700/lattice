@@ -108,6 +108,30 @@ describe('Study request activity', () => {
     expect(activities()[0]).toMatchObject({ status: 'completed', destination: { flashcards: true, deckId: 'deck-1' } });
   });
 
+  it('withdraws the receipt of a save or export whose dialog was closed, and keeps one that wrote a file', async () => {
+    let resolve!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const request: Parameters<typeof learningApi.saveLearningPackAs>[0] = { programId: 'course', fileName: 'course', operationId: 'operation', includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false };
+    const cancelled = learningApi.saveLearningPackAs(request);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(activities()).toMatchObject([{ status: 'pending', command: 'save_learning_pack_as', destination: { programId: 'course', tab: 'portability' } }]);
+    resolve({ cancelled: true, export: null });
+    expect(await cancelled).toEqual({ ok: true, data: { cancelled: true, export: null } });
+    expect(activities()).toEqual([]);
+
+    const exportAll = beginStudyActivity('learning', 'export_all_learning_packs', { request: { operationId: 'batch' } })!;
+    await vi.advanceTimersByTimeAsync(800);
+    expect(activities()).toMatchObject([{ status: 'pending', command: 'export_all_learning_packs' }]);
+    exportAll.finish(undefined, { cancelled: true, destinationDir: null, exported: [], failed: [] });
+    expect(activities()).toEqual([]);
+
+    const saved = beginStudyActivity('learning', 'save_learning_pack_as', { request: { programId: 'course' } })!;
+    await vi.advanceTimersByTimeAsync(800);
+    saved.finish(undefined, { cancelled: false, export: { destinationPath: '/Volumes/USB/course.lattice-learning' } });
+    expect(activities()).toMatchObject([{ status: 'completed', command: 'save_learning_pack_as' }]);
+    expect(JSON.stringify(activities())).not.toContain('/Volumes/USB');
+  });
+
   it('leaves the shared transport feature-neutral: a plain apiCall publishes no receipt', async () => {
     let resolve!: (value: unknown) => void;
     vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));

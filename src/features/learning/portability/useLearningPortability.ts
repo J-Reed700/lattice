@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { invalidateLearningSourceDependents, refreshLearningProgramAfterImport } from '@/features/learning/api/learningInvalidation';
 import { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
@@ -9,6 +9,7 @@ import type {
   CreateLearningSourceSelectorRequestDto,
   DecideLearningRecallDuplicateRequestDto,
   DeleteLearningSourceRequestDto,
+  ExportAllLearningPacksRequestDto,
   ExportLearningPackRequestDto,
   LearningPortabilityWorkspaceDto,
   LearningRecallWorkspaceDto,
@@ -18,12 +19,14 @@ import type {
   PreviewLearningPackImportRequestDto,
   ReimportLearningSourceRequestDto,
   ReviewLearningRecallCardRequestDto,
+  SaveLearningPackAsResultDto,
   SaveLearningRecallCardRequestDto,
   SearchLearningSourcesSemanticallyRequestDto,
 } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 
-export const learningPortabilityKey = (programId: string) => ['learning-portability', programId] as const;
+export const LEARNING_PORTABILITY_PREFIX = ['learning-portability'] as const;
+export const learningPortabilityKey = (programId: string) => [...LEARNING_PORTABILITY_PREFIX, programId] as const;
 export { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 export const semanticSourcesKey = (request: SearchLearningSourcesSemanticallyRequestDto | null) =>
   ['learning-semantic-sources', request?.programId, request?.query, request?.limit] as const;
@@ -38,6 +41,8 @@ export function useLearningPortability(programId: string) {
     queryKey: learningPortabilityKey(programId),
     queryFn: async () => unwrap(await VaultAPI.getLearningPortabilityWorkspace(programId)),
     enabled: Boolean(programId), retry: false, staleTime: 3_000,
+    // Nothing announces that a course finished preparing, so check while it is.
+    refetchInterval: (query) => query.state.data?.exportNotice.activeJob ? 5_000 : false,
   });
 }
 
@@ -52,25 +57,17 @@ export function useLearningRecallV2(programId: string) {
 function usePortabilityMutation<TRequest, TResult>(
   mutation: (request: TRequest) => Promise<{ ok: true; data: TResult } | { ok: false; error: string }>,
   programId: string,
-  replacesProgram = false,
 ) {
   const client = useQueryClient();
   return useMutation({
     retry: false,
-    mutationFn: async (request: TRequest) => {
-      if (replacesProgram && !await flushPendingSaves()) {
-        throw new Error('Your work could not be saved before importing. Resolve the save error and retry the import.');
-      }
-      return unwrap(await mutation(request));
-    },
+    mutationFn: async (request: TRequest) => unwrap(await mutation(request)),
     onSuccess: async (data) => {
-      if (data && typeof data === 'object' && 'programId' in data && typeof data.programId === 'string'
-        && (replacesProgram || 'sources' in data)) {
-        if ('sources' in data) client.setQueryData(['learning-sources', data.programId], data);
-        if (replacesProgram) await refreshLearningProgramAfterImport(client, data.programId);
-        else await invalidateLearningSourceDependents(client, data.programId);
-      }
       if (data && typeof data === 'object' && 'programId' in data && typeof data.programId === 'string') {
+        if ('sources' in data) {
+          client.setQueryData(['learning-sources', data.programId], data);
+          await invalidateLearningSourceDependents(client, data.programId);
+        }
         if ('exports' in data) client.setQueryData(learningPortabilityKey(data.programId), data);
         if ('cards' in data) client.setQueryData(learningRecallKey(data.programId), data);
       }
@@ -80,9 +77,57 @@ function usePortabilityMutation<TRequest, TResult>(
 }
 
 export const useExportLearningPack = (programId: string) => usePortabilityMutation<ExportLearningPackRequestDto, LearningPortabilityWorkspaceDto>(VaultAPI.exportLearningPack, programId);
-export const usePreviewLearningPackImport = (programId: string) => usePortabilityMutation<PreviewLearningPackImportRequestDto, LearningPortabilityWorkspaceDto>(VaultAPI.previewLearningPackImport, programId);
-export const useApplyLearningPackImport = (programId: string) => usePortabilityMutation<ApplyLearningPackImportRequestDto, LearningPortabilityWorkspaceDto>(VaultAPI.applyLearningPackImport, programId, true);
-export const useCancelLearningPackImportPreview = (programId: string) => usePortabilityMutation<CancelLearningPackImportPreviewRequestDto, LearningPortabilityWorkspaceDto>(VaultAPI.cancelLearningPackImportPreview, programId);
+export const useSaveLearningPackAs = (programId: string) => usePortabilityMutation<ExportLearningPackRequestDto, SaveLearningPackAsResultDto>(VaultAPI.saveLearningPackAs, programId);
+
+/** Import with no course open: preview, apply and cancel are not keyed by a program. */
+export function useImportCourse() {
+  const client = useQueryClient();
+  const remember = (data: LearningPortabilityWorkspaceDto) => { client.setQueryData(learningPortabilityKey(data.programId), data); };
+  const preview = useMutation({
+    retry: false,
+    mutationFn: async (request: PreviewLearningPackImportRequestDto) => unwrap(await VaultAPI.previewLearningPackImport(request)),
+    onSuccess: remember,
+  });
+  const cancel = useMutation({
+    retry: false,
+    mutationFn: async (request: CancelLearningPackImportPreviewRequestDto) => unwrap(await VaultAPI.cancelLearningPackImportPreview(request)),
+    onSuccess: remember,
+  });
+  const apply = useMutation({
+    retry: false,
+    mutationFn: async (request: ApplyLearningPackImportRequestDto) => {
+      if (!await flushPendingSaves()) {
+        throw new Error('Your work could not be saved before importing. Resolve the save error and retry the import.');
+      }
+      return unwrap(await VaultAPI.applyLearningPackImport(request));
+    },
+    // The response's programId is the imported course. The refresh also
+    // invalidates LEARNING_PROGRAMS_KEY and that course's detail query.
+    onSuccess: async (data) => {
+      remember(data);
+      await refreshLearningProgramAfterImport(client, data.programId);
+    },
+  });
+  return { preview, apply, cancel };
+}
+
+const EXPORT_ALL_MUTATION_KEY = ['learning-export-all'] as const;
+
+export function useExportAllLearningPacks() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationKey: EXPORT_ALL_MUTATION_KEY,
+    retry: false,
+    mutationFn: async (request: ExportAllLearningPacksRequestDto) => unwrap(await VaultAPI.exportAllLearningPacks(request)),
+    // Every exported course gains a row in its own export history.
+    onSuccess: async (result) => {
+      if (!result.cancelled) await client.invalidateQueries({ queryKey: LEARNING_PORTABILITY_PREFIX });
+    },
+  });
+}
+
+/** True while an export of every course runs, wherever it was started; its results arrive only at the end. */
+export const useExportAllPending = () => useIsMutating({ mutationKey: EXPORT_ALL_MUTATION_KEY }) > 0;
 export const useDeleteLearningSourceV2 = (programId: string) => usePortabilityMutation<DeleteLearningSourceRequestDto, LearningSourceWorkspaceDto>(VaultAPI.deleteLearningSource, programId);
 export const useReimportLearningSource = (programId: string) => usePortabilityMutation<ReimportLearningSourceRequestDto, LearningSourceWorkspaceDto>(VaultAPI.reimportLearningSource, programId);
 export const useCreateLearningSourceSelector = (programId: string) => usePortabilityMutation<CreateLearningSourceSelectorRequestDto, LearningSourceSelectorDto>(VaultAPI.createLearningSourceSelector, programId);
