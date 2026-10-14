@@ -25,11 +25,11 @@ use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools,
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::features::settings::di::ContainerSettingsSideEffects;
 use crate::features::web::services::web::WebService;
 use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 use crate::infrastructure::storage::ContentAddressedStorage;
+use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
 use crate::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -724,10 +724,78 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
             &crate::features::daily_notes::repository::DailyNotesRepository::new(
                 self.db_pool().clone(),
             ),
-            &crate::features::conversation::repository::ConversationRepository::new(
-                self.db_pool().clone(),
-            ),
+            self,
             row,
+        )
+        .await
+    }
+}
+
+/// The conversation archive a journal page recovers its web citations from,
+/// read through the conversation repository. Daily notes is the record and
+/// conversations are built on it, so the port is daily notes' and is bound
+/// here, where both may be named.
+#[async_trait::async_trait]
+impl crate::features::daily_notes::ports::LinkedConversationArchive for Container {
+    async fn archived_web_page(
+        &self,
+        conversation_id: &str,
+        url: &str,
+    ) -> Result<Option<crate::features::daily_notes::ports::ArchivedWebPage>> {
+        let snapshot = crate::features::conversation::repository::ConversationRepository::new(
+            self.db_pool().clone(),
+        )
+        .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())
+        .await?;
+        // Field for field, so a field added to the archive fails to compile here.
+        Ok(snapshot.map(|snapshot| {
+            let crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto {
+                title,
+                content,
+                fetched_at,
+                truncated,
+            } = snapshot;
+            crate::features::daily_notes::ports::ArchivedWebPage {
+                title,
+                content,
+                fetched_at,
+                truncated,
+            }
+        }))
+    }
+}
+
+/// The vault's markdown mirror as daily notes' projection. The vault is a
+/// projection of the journal onto files, so it serves daily notes' port
+/// rather than daily notes calling into the vault; the binding sits here
+/// because the container owns the writer.
+impl crate::features::daily_notes::ports::NoteProjection for Container {
+    fn note_saved(&self) {
+        crate::features::vault::writeback::spawn_sync_workspace_note(self.vault_writer());
+    }
+
+    fn note_deleted(&self) {
+        crate::features::vault::writeback::spawn_delete_workspace_note(self.vault_writer());
+    }
+}
+
+/// Explorer's folder threads, deleted through the chat's conversation delete.
+/// Conversations are built on Explorer, so the port is Explorer's and is bound
+/// here, where both may be named.
+#[async_trait::async_trait]
+impl crate::features::explorer::folders::FolderThreads for Container {
+    async fn check_delete_limit(&self) -> Result<()> {
+        crate::features::conversation::chat::ports::ChatPolicy::check_delete_rate_limit(
+            self,
+            "delete_conversation",
+        )
+        .await
+    }
+
+    async fn delete_thread(&self, conversation_id: &str) -> Result<()> {
+        crate::features::conversation::chat::ports::ChatPolicy::delete_conversation_unmetered(
+            self,
+            conversation_id,
         )
         .await
     }

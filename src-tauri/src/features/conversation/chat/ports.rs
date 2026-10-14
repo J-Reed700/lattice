@@ -5,6 +5,7 @@
 pub(crate) use super::dto::ExplorerFocusDto;
 pub(crate) use super::ExplorerTurn;
 use crate::application::contracts::search::{CorpusDocument, CorpusPassage};
+pub(crate) use crate::application::contracts::web::FetchUrlContentOutput;
 use crate::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort,
 };
@@ -14,7 +15,6 @@ use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotD
 pub(crate) use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, ToolDefinition,
 };
-pub(crate) use crate::features::function_calling::dto::FetchUrlContentOutput;
 pub(crate) use crate::features::settings::dto::SettingsDto;
 use crate::shared::error::Result;
 use async_trait::async_trait;

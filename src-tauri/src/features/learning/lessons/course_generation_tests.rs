@@ -1580,10 +1580,8 @@ async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<
 #[tokio::test]
 async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_captures(
 ) -> Result<()> {
-    use crate::features::{
-        function_calling::dto::{FetchUrlContentOutput, WebSearchResult},
-        web::mocks::MockWebService,
-    };
+    use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
+    use crate::features::web::mocks::MockWebService;
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;

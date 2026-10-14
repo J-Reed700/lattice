@@ -17,7 +17,7 @@ fn overlap_ratio(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
 }
 
 fn dominant_result_terms(
-    results: &[crate::features::function_calling::dto::WebSearchResult],
+    results: &[crate::application::contracts::web::WebSearchResult],
     limit: usize,
 ) -> (Vec<(String, usize)>, usize) {
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -871,7 +871,7 @@ impl ExternalLookup<'_> {
     async fn fetch_one_page(
         &self,
         url: String,
-    ) -> std::result::Result<crate::features::function_calling::dto::FetchUrlContentOutput, String>
+    ) -> std::result::Result<crate::application::contracts::web::FetchUrlContentOutput, String>
     {
         // Named by host, because "Reading thereviewgeek.com" is the difference
         // between visible progress and a spinner, and a blocked site is then
@@ -916,7 +916,7 @@ impl ExternalLookup<'_> {
     async fn fetch_one_page_inner(
         &self,
         url: String,
-    ) -> std::result::Result<crate::features::function_calling::dto::FetchUrlContentOutput, String>
+    ) -> std::result::Result<crate::application::contracts::web::FetchUrlContentOutput, String>
     {
         let timeout = Duration::from_secs(self.tuning.web_page_fetch_timeout_secs.max(1) as u64);
         let call = crate::features::function_calling::domain::FunctionCall::new(
@@ -939,7 +939,7 @@ impl ExternalLookup<'_> {
             .data
             .ok_or_else(|| "the fetch returned no content".to_string())?;
         let output = serde_json::from_value::<
-            crate::features::function_calling::dto::FetchUrlContentOutput,
+            crate::application::contracts::web::FetchUrlContentOutput,
         >(data)
         .map_err(|error| format!("the fetched page could not be parsed: {error}"))?;
         // Extraction can succeed on a page that is all navigation, a cookie
@@ -966,7 +966,7 @@ impl ExternalLookup<'_> {
     /// is index-aligned with `results`; `None` is a result that was never tried.
     async fn fetch_page_texts(
         &self,
-        results: &[crate::features::function_calling::dto::WebSearchResult],
+        results: &[crate::application::contracts::web::WebSearchResult],
     ) -> (Vec<Option<PageOutcome>>, FetchMemory) {
         let mut outcomes: Vec<Option<PageOutcome>> = (0..results.len()).map(|_| None).collect();
         let mut memory = FetchMemory::default();
@@ -986,7 +986,7 @@ impl ExternalLookup<'_> {
         let started = Instant::now();
         let mut read: Vec<(
             usize,
-            crate::features::function_calling::dto::FetchUrlContentOutput,
+            crate::application::contracts::web::FetchUrlContentOutput,
         )> = Vec::new();
         let mut next = 0usize;
         let mut attempted = 0usize;
@@ -1156,7 +1156,7 @@ impl ExternalLookup<'_> {
             Ok(result) if result.success => {
                 if let Some(data) = result.data {
                     match serde_json::from_value::<
-                        crate::features::function_calling::dto::WebSearchOutput,
+                        crate::application::contracts::web::WebSearchOutput,
                     >(data)
                     {
                         Ok(output) => {

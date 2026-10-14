@@ -46,7 +46,7 @@ feature-edge features::compare features::search 1
 feature-edge features::conversation features::daily_notes 1
 feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
-feature-edge features::conversation features::function_calling 51
+feature-edge features::conversation features::function_calling 34
 feature-edge features::conversation features::llm 2
 feature-edge features::conversation features::qa 17
 feature-edge features::conversation features::references 1
@@ -55,11 +55,8 @@ feature-edge features::conversation features::settings 17
 feature-edge features::conversation features::summaries 4
 feature-edge features::conversation features::web 2
 feature-edge features::corpus_shape features::embedding 1
-feature-edge features::daily_notes features::conversation 1
 feature-edge features::daily_notes features::qa 6
-feature-edge features::daily_notes features::vault 1
 feature-edge features::embedding features::download 2
-feature-edge features::explorer features::conversation 1
 feature-edge features::explorer features::function_calling 4
 feature-edge features::explorer features::search 3
 feature-edge features::file features::indexing 8
@@ -78,7 +75,6 @@ feature-edge features::indexing features::search 7
 feature-edge features::indexing features::summaries 2
 feature-edge features::indexing features::transcription 1
 feature-edge features::initialization features::download 1
-feature-edge features::learning features::conversation 1
 feature-edge features::learning features::daily_notes 5
 feature-edge features::learning features::vault 1
 feature-edge features::learning features::web 14
@@ -98,10 +94,3 @@ feature-edge features::vault features::daily_notes 4
 feature-edge features::vault features::settings 2
 feature-edge features::web features::embedding 4
 feature-edge features::web features::indexing 7
-
-feature-cycle features::conversation features::daily_notes 4
-feature-cycle features::conversation features::explorer 4
-feature-cycle features::daily_notes features::conversation 4
-feature-cycle features::daily_notes features::vault 4
-feature-cycle features::explorer features::conversation 4
-feature-cycle features::vault features::daily_notes 4

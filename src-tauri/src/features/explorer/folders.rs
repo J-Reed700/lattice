@@ -10,7 +10,6 @@
 use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
-use crate::features::conversation::chat::ports::ChatPolicy;
 use crate::shared::Result;
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::SqlitePool;
@@ -211,6 +210,19 @@ pub async fn delete_index(manager: &FolderIndexManager, root: &str) -> Result<()
     manager.delete_index(root).await
 }
 
+/// What removing a folder needs from the threads bound to it. A thread is a
+/// conversation, and conversations are built on Explorer rather than under
+/// it, so Explorer names this port instead of the chat's; the composition root
+/// binds it to the app's conversation delete.
+#[async_trait::async_trait]
+pub trait FolderThreads: Send + Sync {
+    /// Spends the rate limit a user-initiated delete spends.
+    async fn check_delete_limit(&self) -> Result<()>;
+    /// Deletes a thread with its in-flight turn, messages and attachments,
+    /// without spending the rate limit again.
+    async fn delete_thread(&self, conversation_id: &str) -> Result<()>;
+}
+
 /// Removes a folder from the list: its own index, then, when asked, its
 /// threads, then its row. Threads go through the app's conversation delete,
 /// which takes their messages and attachments with them; one removal spends
@@ -219,7 +231,7 @@ pub async fn delete_index(manager: &FolderIndexManager, root: &str) -> Result<()
 /// how many threads were deleted.
 pub async fn remove(
     pool: &SqlitePool,
-    policy: &dyn ChatPolicy,
+    conversations: &dyn FolderThreads,
     manager: &FolderIndexManager,
     root: &str,
     delete_threads: bool,
@@ -230,16 +242,12 @@ pub async fn remove(
         Vec::new()
     };
     if !threads.is_empty() {
-        policy
-            .check_delete_rate_limit("delete_conversation")
-            .await?;
+        conversations.check_delete_limit().await?;
     }
     manager.delete_index(root).await?;
     let deleted = threads.len();
     for conversation_id in threads {
-        policy
-            .delete_conversation_unmetered(&conversation_id)
-            .await?;
+        conversations.delete_thread(&conversation_id).await?;
     }
     repository::delete_folder(pool, root).await?;
     info!(root, threads_deleted = deleted, "Explorer folder removed");

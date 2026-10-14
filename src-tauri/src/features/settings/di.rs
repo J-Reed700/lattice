@@ -89,6 +89,3 @@ impl Container {
         Arc::clone(self.system.validate_settings_use_case())
     }
 }
-
-// immaculate-phase-2: drop once interfaces/di/container.rs imports crate::interfaces::settings_side_effects::ContainerSettingsSideEffects
-pub(crate) use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;

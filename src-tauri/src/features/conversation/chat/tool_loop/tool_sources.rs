@@ -3,12 +3,11 @@
 //! answer can point at.
 
 use super::ToolOutputSettingsDto;
+use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult};
 use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::ports::FunctionResult;
 use crate::features::conversation::chat::retrieval::build_web_source_citations;
-use crate::features::function_calling::dto::{
-    FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
-};
+use crate::features::function_calling::dto::{WikiSearchOutput, WikiSummaryOutput};
 use crate::shared::text::{build_excerpt, safe_truncate};
 
 /// Preview length for a page the model fetched itself, matching the preview a
@@ -101,15 +100,13 @@ pub(super) fn collect_tool_sources(
                 let as_web_results: Vec<_> = output
                     .results
                     .into_iter()
-                    .map(
-                        |item| crate::features::function_calling::dto::WebSearchResult {
-                            title: item.title,
-                            url: item.url,
-                            snippet: item.snippet,
-                            published_date: None,
-                            source: Some("wikipedia".to_string()),
-                        },
-                    )
+                    .map(|item| WebSearchResult {
+                        title: item.title,
+                        url: item.url,
+                        snippet: item.snippet,
+                        published_date: None,
+                        source: Some("wikipedia".to_string()),
+                    })
                     .collect();
                 return build_web_source_citations(
                     &as_web_results,

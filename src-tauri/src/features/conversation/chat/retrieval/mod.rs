@@ -1,8 +1,9 @@
+use crate::application::contracts::web::WebSearchResult;
 use crate::application::services::context_assembler::EvidenceBudget;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::router::RouterAction;
-use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
+use crate::features::function_calling::dto::WikiSearchOutput;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;

@@ -1,8 +1,8 @@
 use super::*;
+use crate::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
+};
 use crate::features::{
-    function_calling::dto::{
-        FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-    },
     learning::{
         outline_draft::LearningOutlineReviewStatus,
         outline_progress::{OutlineProgress, OutlineRunRegistry, OutlineStage},
