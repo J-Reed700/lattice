@@ -229,10 +229,17 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       await browser.setWindowSize(800, 600);
       const journal = await browser.$('button[aria-label="Journal"]');
       await journal.click();
-      const create = await browser.$('button=New journal');
       const titleSelector = 'textarea[aria-label="Page title"]';
-      await browser.waitUntil(async () => (await (await browser.$(titleSelector)).isExisting()) || (await create.isExisting()), { timeout: 30_000 });
-      if (!(await (await browser.$(titleSelector)).isExisting())) await create.click();
+      // The workspace creates the first journal itself on mount, so the
+      // empty state's "New journal" button can vanish between a check and a
+      // click. Wait for the editor and only press the button while it exists;
+      // a press during the automatic creation shares that creation.
+      await browser.waitUntil(async () => {
+        if (await (await browser.$(titleSelector)).isExisting()) return true;
+        const create = await browser.$('button=New journal');
+        if (await create.isExisting()) await create.click().catch(() => undefined);
+        return false;
+      }, { timeout: 30_000, timeoutMsg: 'The journal editor never appeared' });
       const title = await displayedElement(titleSelector);
       await (await browser.$('.ProseMirror[contenteditable="true"]')).waitForDisplayed({ timeout: 15_000 });
       const writingWidth = await title.getSize('width');
