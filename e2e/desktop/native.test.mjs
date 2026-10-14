@@ -80,12 +80,28 @@ async function launch() {
     assert.ok(Date.now() < deadline, 'Native startup timed out');
     await delay(100);
   }
-  browser = await remote({
-    hostname: '127.0.0.1', port, logLevel: 'error',
-    connectionRetryCount: 0,
-    connectionRetryTimeout: process.env.LATTICE_NATIVE_LEAK_SCAN === '1' ? 45_000 : 15_000,
-    capabilities: { browserName: 'wry', 'wdio:tauriServiceOptions': { windowLabel: 'main' } },
-  });
+  // The WebDriver port answers before the main window exists, and on a fresh
+  // Windows runner the window can take longer than one session request to
+  // appear. Keep asking while the app is alive, up to the startup deadline.
+  const attachDeadline = Date.now() + 90_000;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      browser = await remote({
+        hostname: '127.0.0.1', port, logLevel: 'error',
+        connectionRetryCount: 0,
+        connectionRetryTimeout: process.env.LATTICE_NATIVE_LEAK_SCAN === '1' ? 45_000 : 15_000,
+        capabilities: { browserName: 'wry', 'wdio:tauriServiceOptions': { windowLabel: 'main' } },
+      });
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.equal(app.exitCode, null, `Native app exited while WebDriver was attaching: ${message}`);
+      if (!/No window could be found/.test(message)) throw error;
+      assert.ok(Date.now() < attachDeadline,
+        `The main window never appeared for WebDriver after ${attempt} attempts: ${message}`);
+      await delay(1000);
+    }
+  }
   await browser.setTimeout({ script: 30_000, implicit: 0 });
   await browser.waitUntil(async () => browser.execute(() => Boolean(window.__TAURI__?.core)), { timeout: 30_000 });
   assert.equal(await invoke('plugin:app|identifier'), manifest.identifier);
