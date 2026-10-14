@@ -13,7 +13,7 @@ use crate::features::learning::{
 };
 use crate::{
     application::ports::LLMPort,
-    shared::error::{AppError, Result},
+    shared::error::Result,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -170,15 +170,12 @@ fn review_schema(open_ids: &[String], allowed: &[String]) -> Value {
     }})
 }
 
-fn invalid() -> AppError {
-    AppError::InvalidInput(
-        "The outline review returned an invalid finding. The draft remains unchecked.".into(),
-    )
-}
-
 /// Apply a parsed review to the draft: close resolved findings, refresh
-/// unresolved ones, convert and dedupe new ones. Every open finding needs
-/// exactly one verdict; a new finding outside `allowed` is rejected.
+/// unresolved ones, convert and dedupe new ones. A model answer that strays
+/// from the schema never stops the outline: an unknown or repeated verdict is
+/// ignored (the first counts), an open finding without a verdict stays open
+/// unchanged and is asked about on the next pass, and a new finding outside
+/// `allowed` is dropped, because unchanged modules are not re-litigated.
 fn apply(
     draft: &mut OutlineDraft,
     review: Review,
@@ -188,15 +185,12 @@ fn apply(
     let open_ids: Vec<String> = draft.open_findings().map(|issue| issue.id.clone()).collect();
     let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
     for verdict in review.verdicts {
-        if !open_ids.contains(&verdict.id)
-            || !(10..=600).contains(&verdict.reason.chars().count())
-            || verdicts.insert(verdict.id.clone(), verdict).is_some()
-        {
-            return Err(invalid());
+        if open_ids.contains(&verdict.id) && !verdicts.contains_key(&verdict.id) {
+            verdicts.insert(verdict.id.clone(), verdict);
         }
     }
     if verdicts.len() != open_ids.len() {
-        return Err(invalid());
+        tracing::warn!(missing = open_ids.len() - verdicts.len(), "The outline review omitted verdicts; those findings stay open for the next pass");
     }
     let candidate = draft.candidate.clone();
     let mut kept = Vec::new();
@@ -205,7 +199,10 @@ fn apply(
             kept.push(issue);
             continue;
         }
-        let verdict = verdicts.remove(&issue.id).ok_or_else(invalid)?;
+        let Some(verdict) = verdicts.remove(&issue.id) else {
+            kept.push(issue);
+            continue;
+        };
         match verdict.status {
             VerdictStatus::Resolved => {
                 tracing::info!(id = %issue.id, path = %issue.path, "Outline finding resolved");
@@ -225,11 +222,9 @@ fn apply(
         .map(|claim| normalized(claim))
         .collect();
     for finding in review.new_findings {
-        if !allowed.contains(&finding.path)
-            || !(10..=1200).contains(&finding.reason.chars().count())
-            || finding.claim.chars().count() > 1200
-        {
-            return Err(invalid());
+        if !allowed.contains(&finding.path) {
+            tracing::info!(path = %finding.path, "Dropped a new finding outside the modules under review");
+            continue;
         }
         let kind = match finding.kind {
             NewKind::Plan => LearningOutlineIssueKind::Plan,

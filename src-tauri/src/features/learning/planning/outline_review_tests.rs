@@ -36,29 +36,33 @@ async fn generate(
 }
 
 #[tokio::test]
-async fn every_open_finding_needs_a_verdict_or_the_review_is_rejected() -> Result<()> {
+async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let initial = candidate();
-    // The second review ignores the open finding: no verdict for finding-1.
+    // The second review omits finding-1's verdict. That never stops the
+    // outline: the finding stays open, gets its second attempt, and the third
+    // review resolves it.
     let llm = model(vec![
         initial.clone(),
         issue(0),
         changed_module(&initial, 0, "Compare the groups with an observable measurement."),
         clean(),
+        changed_module(&initial, 0, "Compare the groups with one stated, observable measurement."),
+        verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Unchecked);
-    assert!(review.note.contains("invalid finding"));
-    assert_eq!(review.issues.len(), 1);
-    assert_eq!(review.issues[0].id, "finding-1");
-    assert_eq!(review.issues[0].attempts, 1);
-    assert_eq!(llm.prompts.lock().unwrap().len(), 4);
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert!(review.issues.is_empty());
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 6);
+    // The third review still asked about finding-1.
+    assert_eq!(payload(&prompts[5])["openFindings"][0]["id"], "finding-1");
     Ok(())
 }
 
 #[tokio::test]
-async fn new_findings_outside_the_reviewed_modules_are_rejected() -> Result<()> {
+async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let initial = candidate();
     // Module 0 changed; the incremental pass may report on module 0 only,
@@ -78,8 +82,9 @@ async fn new_findings_outside_the_reviewed_modules_are_rejected() -> Result<()> 
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Unchecked);
-    assert!(review.note.contains("invalid finding"));
+    // The unchanged module is not re-litigated: its finding is dropped.
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert!(review.issues.is_empty());
     let prompts = llm.prompts.lock().unwrap();
     let schema_paths = |prompt: &str| -> Vec<String> {
         // The reviewer's allowed paths are the enum in the response schema; the
@@ -246,7 +251,7 @@ async fn factual_findings_on_plan_items_are_recorded_as_plan_findings() -> Resul
 async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     // The empty path is not an allowed path on any pass: the schema enum
-    // excludes it and the response is rejected as invalid, so nothing is
+    // excludes it and a finding that uses it anyway is dropped, so nothing is
     // saved from it and no module is rewritten for it.
     let llm = model(vec![
         candidate(),
@@ -258,8 +263,7 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Unchecked);
-    assert!(review.note.contains("invalid finding"));
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
     assert!(review.issues.is_empty());
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     Ok(())

@@ -375,12 +375,13 @@ struct Link {
     reason: String,
 }
 
-/// The prompt, schema and output budget for one batch. Passages are listed
-/// once per batch with stable ids; each item names the ids it may choose.
+/// The prompt, schema and output budget for one batch, and the passages in id
+/// order. Passages are listed once per batch with stable ids; each item names
+/// the ids retrieved for it.
 fn request(
     group: &[Pending],
     sources: &[LearningSourceDto],
-) -> (String, Value, usize, Vec<Vec<String>>) {
+) -> (String, Value, usize, Vec<Candidate>) {
     let mut passages: Vec<&Candidate> = Vec::new();
     let mut per_item: Vec<Vec<String>> = Vec::new();
     for item in group {
@@ -424,19 +425,14 @@ fn request(
             "id":{"type":"string","enum":ids},"candidate":{"type":"string","enum":choices},"reason":{"type":"string","minLength":1,"maxLength":300}
         }}}
     }});
-    (prompt, schema, 200 + 120 * group.len(), per_item)
+    let listed = passages.into_iter().cloned().collect();
+    (prompt, schema, 200 + 120 * group.len(), listed)
 }
 
 fn fits(llm: &dyn LLMPort, prompt: &str, output_tokens: usize) -> bool {
     let mut request = GroundedRequest::new(LINK_SYSTEM, prompt);
     request.output_tokens = output_tokens;
     crate::features::learning::model_call::fits(llm, &request)
-}
-
-fn invalid() -> AppError {
-    AppError::InvalidInput(
-        "The evidence linking returned an invalid decision. The draft remains unchecked.".into(),
-    )
 }
 
 /// Record one chooser decision on the draft. The chosen passage, if any,
@@ -586,7 +582,7 @@ pub(in crate::features::learning) async fn link(
     let mut done = 0;
     while let Some(mut group) = groups.pop() {
         progress.check_cancelled()?;
-        let (prompt, schema, output_tokens, per_item) = request(&group, sources);
+        let (prompt, schema, output_tokens, listed) = request(&group, sources);
         if !fits(llm, &prompt, output_tokens) {
             if group.len() == 1 {
                 return Err(AppError::InvalidInput(
@@ -612,37 +608,54 @@ pub(in crate::features::learning) async fn link(
             },
         )
         .await?;
-        let links: Links = generation::parse_json(&raw)?;
-        if links.links.len() != group.len() {
-            return Err(invalid());
-        }
-        let mut decisions: BTreeMap<String, (Option<usize>, String)> = BTreeMap::new();
-        for link in links.links {
-            let position = group
-                .iter()
-                .position(|item| item.path == link.id)
-                .ok_or_else(invalid)?;
+        // Linking is optional evidence, never a gate. An unusable answer leaves
+        // the affected items unlinked, without a receipt, so a later linking
+        // run asks again; it never stops the outline.
+        let links = match generation::parse_json::<Links>(&raw) {
+            Ok(links) => links.links,
+            Err(error) => {
+                tracing::warn!(%error, items = group.len(), "Evidence linking answer was unreadable; these items stay unlinked for now");
+                Vec::new()
+            }
+        };
+        let mut decisions: BTreeMap<String, (Option<Candidate>, String)> = BTreeMap::new();
+        for link in links {
+            // The first decision for a known item counts.
+            if decisions.contains_key(&link.id) || !group.iter().any(|item| item.path == link.id) {
+                continue;
+            }
+            // Any passage listed in this batch is the app's own exact text; a
+            // choice retrieved for a neighbouring item is still a real passage
+            // the model judged to address this one.
             let chosen = if link.candidate == "none" {
                 None
             } else {
-                Some(
-                    per_item[position]
-                        .iter()
-                        .position(|id| *id == link.candidate)
-                        .ok_or_else(invalid)?,
-                )
+                match link
+                    .candidate
+                    .strip_prefix('p')
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|i| listed.get(i))
+                {
+                    Some(candidate) => Some(candidate.clone()),
+                    None => continue,
+                }
             };
-            if !(1..=300).contains(&link.reason.chars().count())
-                || decisions
-                    .insert(link.id, (chosen, link.reason))
-                    .is_some()
-            {
-                return Err(invalid());
-            }
+            decisions.insert(link.id, (chosen, link.reason.chars().take(300).collect()));
         }
         for item in &group {
-            let (chosen, reason) = decisions.remove(&item.path).ok_or_else(invalid)?;
-            let chosen = chosen.map(|i| &item.candidates[i]);
+            let Some((chosen, reason)) = decisions.remove(&item.path) else {
+                // Undecided: an unverified author citation never stays.
+                if item.author.is_some() {
+                    if let Some(field) = draft.candidate.pointer_mut(&item.path) {
+                        strip(field);
+                    }
+                    log.removed_unchosen += 1;
+                }
+                tracing::info!(path = %item.path, "Evidence linking gave no usable decision; the item stays unlinked for now");
+                continue;
+            };
+            let chosen = chosen.as_ref();
             apply(draft, &model, item, chosen, reason, &mut log);
             match chosen {
                 Some(candidate) => tracing::info!(path = %item.path, kind = item.kind.name(), source = candidate.source_index, "Linked an outline item to a saved reference"),
@@ -845,32 +858,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_choice_outside_the_items_candidates_or_a_missing_id_is_rejected() {
+    async fn an_unusable_decision_leaves_only_that_item_unlinked_and_never_fails() {
+        // A repeated id (first counts) and a missing id (outcomes/0) in one answer.
         let mut draft = draft(candidate());
         let llm = model(vec![json!({"links":[
             {"id":"/modules/0/summary","candidate":"p1","reason":"ok"},
-            {"id":"/modules/0/summary","candidate":"p1","reason":"ok"},
+            {"id":"/modules/0/summary","candidate":"p2","reason":"ok"},
             {"id":"/modules/0/outcomes/1","candidate":"p2","reason":"ok"},
             {"id":"/modules/0/lessons/0","candidate":"none","reason":"ok"}
         ]})]);
-        assert!(
-            link(&llm, &mut draft, &sources(), None, &OutlineProgress::default())
-                .await
-                .is_err()
-        );
-        assert_eq!(cited_count(&draft.candidate), 1);
-        assert!(draft.citation_receipts.is_empty());
-        // One source only: the summary has one candidate, p1; p2 belongs to no item.
+        link(&llm, &mut draft, &sources(), None, &OutlineProgress::default())
+            .await
+            .unwrap();
+        let module = &draft.candidate["modules"][0];
+        assert_eq!(module["summary"]["quote"], ASSIGNMENT);
+        assert_eq!(module["outcomes"][0]["sourceIndex"], Value::Null);
+        assert_eq!(module["outcomes"][1]["quote"], UNCERTAINTY);
+        assert_eq!(module["lessons"][0]["sourceIndex"], Value::Null);
+        // Two positive receipts and one declined set; the undecided item has
+        // none, so the next linking run asks about it again.
+        assert_eq!(draft.citation_receipts.len(), 3);
+        // One source only: the summary's one candidate is p1; p2 names no
+        // listed passage, so the summary stays unlinked without a receipt.
         let mut draft = draft_with(json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
             "summary":{"text":"Compare treatment groups.","sourceIndex":null,"quote":""},"outcomes":[],"lessons":[]}]}));
         let llm = model(vec![json!({"links":[
             {"id":"/modules/0/summary","candidate":"p2","reason":"ok"}
         ]})]);
-        assert!(
-            link(&llm, &mut draft, &sources()[..1], None, &OutlineProgress::default())
-                .await
-                .is_err()
-        );
+        link(&llm, &mut draft, &sources()[..1], None, &OutlineProgress::default())
+            .await
+            .unwrap();
+        assert_eq!(draft.candidate["modules"][0]["summary"]["sourceIndex"], Value::Null);
+        assert!(draft.citation_receipts.is_empty());
+        // An unreadable answer is the same: nothing linked, nothing failed.
+        let mut unreadable = super::tests::draft(candidate());
+        let llm = model(vec![json!({"unexpected":true})]);
+        link(&llm, &mut unreadable, &sources(), None, &OutlineProgress::default())
+            .await
+            .unwrap();
+        assert!(unreadable.citation_receipts.is_empty());
     }
 
     #[tokio::test]
