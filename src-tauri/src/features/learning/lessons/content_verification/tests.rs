@@ -457,6 +457,9 @@ mod coverage_adoption_tests;
 #[path = "repair_progress_tests.rs"]
 mod repair_progress_tests;
 
+#[path = "evidence_paging_tests.rs"]
+mod evidence_paging_tests;
+
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
 
@@ -1107,6 +1110,7 @@ async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result
         0,
         &references,
         &[],
+        1,
     )
     .await?;
     assert_eq!(evidence.len(), 12, "not the former eight");

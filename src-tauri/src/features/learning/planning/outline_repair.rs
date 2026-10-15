@@ -324,68 +324,83 @@ async fn resolve_factual(
         research(repo, llm, web, program, draft, sources, finding, progress).await?;
     }
     let claim = issue.claim.clone();
-    let (passages, base) = if sources.is_empty() {
-        (vec![], vec![])
-    } else {
-        // As many passages as one check of the claim holds, not a count.
-        let collection = ReferenceCollection::lexical(sources)?;
-        let fits =
-            |passages: &[crate::features::learning::reference_collection::ReferencePassage]| {
-                crate::features::learning::content_verification::check_fits(
-                    llm,
-                    &claim,
-                    passages.iter().map(|passage| passage.text.clone()),
-                )
-            };
-        (
-            collection
-                .retrieve_for_verification_within(&claim, fits)
-                .await?,
-            collection.retrieve_within(&claim, fits).await?,
-        )
+    let collection = ReferenceCollection::lexical(sources)?;
+    // A finding is checked alone, so its first page may fill the checker's
+    // window. An unsupported verdict walks on to the next page, passages not
+    // yet shown, while that page shares a content term with the claim.
+    let share = crate::features::learning::content_verification::claim_share(llm, &claim, 1);
+    let fits = |passages: &[ReferencePassage]| {
+        crate::features::learning::content_verification::within_share(llm, share, passages.iter())
     };
-    if passages.is_empty() {
+    let mut shown: Vec<ReferencePassage> = Vec::new();
+    let mut decision = None;
+    loop {
+        let (passages, base) = if sources.is_empty() {
+            (vec![], vec![])
+        } else {
+            collection.verification_page(&claim, &shown, fits).await?
+        };
+        let more = if shown.is_empty() {
+            !passages.is_empty()
+        } else {
+            passages
+                .iter()
+                .any(|passage| collection.mentions_subject_of(&claim, &passage.text))
+        };
+        if !more {
+            break;
+        }
+        let key = claim_key(llm.model_name(), &claim, &passages);
+        let judged = match draft.claim_receipts.get(&key) {
+            Some(receipt) => (
+                receipt.verdict,
+                receipt.reason.clone(),
+                receipt
+                    .source_id
+                    .clone()
+                    .zip(receipt.supporting_quote.clone()),
+            ),
+            None => {
+                progress.detail(format!(
+                    "Finding {position} of {total}: judging the claim against {} saved passages",
+                    passages.len()
+                ));
+                let texts: Vec<String> = passages.iter().map(|p| p.text.clone()).collect();
+                let outcome = judge(llm, &claim, &texts).await?;
+                let evidence = outcome.quote.as_deref().and_then(|located| {
+                    locate(located, outcome.verdict, &passages, &base, sources)
+                });
+                let reason = outcome
+                    .reason
+                    .unwrap_or_else(|| "The claim check gave no reason.".into());
+                draft.claim_receipts.insert(
+                    key,
+                    OutlineClaimReceipt {
+                        verdict: outcome.verdict,
+                        reason: reason.clone(),
+                        supporting_quote: evidence.as_ref().map(|(_, quote)| quote.clone()),
+                        checked_at: chrono::Utc::now().timestamp_millis(),
+                        claim: claim.clone(),
+                        path: issue.path.clone(),
+                        source_id: evidence.as_ref().map(|(id, _)| id.clone()),
+                    },
+                );
+                (outcome.verdict, reason, evidence)
+            }
+        };
+        let unsupported = judged.0 == ClaimVerdict::Unsupported;
+        // An unsupported verdict on a deeper page does not replace the first.
+        if decision.is_none() || !unsupported {
+            decision = Some(judged);
+        }
+        if !unsupported {
+            break;
+        }
+        shown.extend(passages);
+    }
+    let Some((verdict, reason, evidence)) = decision else {
         issue_mut(draft, id)?.message = "No saved reference addresses this claim.".into();
         return Ok(Resolution::Rewrite(NARROW));
-    }
-    let key = claim_key(llm.model_name(), &claim, &passages);
-    let (verdict, reason, evidence) = match draft.claim_receipts.get(&key) {
-        Some(receipt) => (
-            receipt.verdict,
-            receipt.reason.clone(),
-            receipt
-                .source_id
-                .clone()
-                .zip(receipt.supporting_quote.clone()),
-        ),
-        None => {
-            progress.detail(format!(
-                "Finding {position} of {total}: judging the claim against {} saved passages",
-                passages.len()
-            ));
-            let texts: Vec<String> = passages.iter().map(|p| p.text.clone()).collect();
-            let outcome = judge(llm, &claim, &texts).await?;
-            let evidence = outcome
-                .quote
-                .as_deref()
-                .and_then(|located| locate(located, outcome.verdict, &passages, &base, sources));
-            let reason = outcome
-                .reason
-                .unwrap_or_else(|| "The claim check gave no reason.".into());
-            draft.claim_receipts.insert(
-                key,
-                OutlineClaimReceipt {
-                    verdict: outcome.verdict,
-                    reason: reason.clone(),
-                    supporting_quote: evidence.as_ref().map(|(_, quote)| quote.clone()),
-                    checked_at: chrono::Utc::now().timestamp_millis(),
-                    claim: claim.clone(),
-                    path: issue.path.clone(),
-                    source_id: evidence.as_ref().map(|(id, _)| id.clone()),
-                },
-            );
-            (outcome.verdict, reason, evidence)
-        }
     };
     tracing::info!(finding = %id, path = %issue.path, ?verdict, "Judged an outline assertion against the saved references");
     match verdict {

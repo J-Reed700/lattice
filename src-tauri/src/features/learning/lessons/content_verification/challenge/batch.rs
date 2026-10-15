@@ -39,7 +39,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
     let ids: Vec<_> = (0..targets.len())
         .map(|index| format!("claim-{index}"))
         .collect();
-    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}});
+    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}});
     let response = send_challenge(
         llm,
         challenge_request(&system, prompt, schema, targets.len()),

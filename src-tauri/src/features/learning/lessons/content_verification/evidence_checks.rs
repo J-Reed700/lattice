@@ -1,7 +1,16 @@
 //! Retrieve and restore individual comparisons, then batch only unfinished ones.
 //! Every decision retains its own evidence binding and durable receipt.
+//!
+//! Evidence is paged. A claim is first checked against its top-ranked
+//! passages, an equal share of its batch call's room. A claim that page
+//! leaves unsupported is checked again against its next page, passages it has
+//! not been shown, batched with the other claims still looking; the walk ends
+//! at the first supported or contradicted verdict, or when the next page has
+//! no passage sharing a content term with the claim (vector neighbours alone
+//! do not continue it). Each page's check has its own receipt.
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
+use std::collections::BTreeMap;
 
 const BATCH_SIZE: usize = 8;
 const PROVISIONAL_BATCH_POLICY: &str =
@@ -116,7 +125,9 @@ impl ProvisionalBatchReceipt {
 }
 
 enum PreparedClaim {
-    Complete(CheckedClaim),
+    /// A finished decision: `true` when it is a retained final decision that
+    /// already walked its pages, `false` for a first-page result.
+    Complete(CheckedClaim, bool),
     Pending(PendingClaim),
 }
 
@@ -128,14 +139,16 @@ async fn prepare(
     retained: &ClaimChecks,
     ordinal: usize,
     located_claim: (usize, Claim),
+    sharing: usize,
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
-    let evidence =
-        evidence_selection::select(llm, &claim, unit, references, sources, executions, retained)
-            .await?;
+    let evidence = evidence_selection::select(
+        llm, &claim, unit, references, sources, executions, retained, sharing,
+    )
+    .await?;
     let key = ClaimChecks::key(unit, &claim, &evidence);
     if let Some(finding) = retained.get(&key, unit, &claim, &evidence) {
-        return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+        return Ok(PreparedClaim::Complete((ordinal, key, finding, true), true));
     }
     let receipt_key = claim_receipt_key(llm, &key);
     if let Some(finding) = crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
@@ -143,7 +156,10 @@ async fn prepare(
         .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
         .and_then(|receipt| receipt.finding(unit, &claim, &evidence))
     {
-        return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+        return Ok(PreparedClaim::Complete(
+            (ordinal, key, finding, true),
+            false,
+        ));
     }
     if let Some(receipt) =
         claim_reuse::legacy_receipt(llm, retained, unit, &claim, &evidence).await?
@@ -152,7 +168,10 @@ async fn prepare(
         if let Some(finding) = receipt.finding(unit, &claim, &evidence) {
             crate::features::learning::lesson_drafts::record_checkpoint(&receipt_key, saved)
                 .await?;
-            return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+            return Ok(PreparedClaim::Complete(
+                (ordinal, key, finding, true),
+                false,
+            ));
         }
     }
     let text = evidence
@@ -183,7 +202,10 @@ async fn prepare(
         evidence,
     };
     if let Some(judgment) = local {
-        return Ok(PreparedClaim::Complete(finish(pending, judgment).await?));
+        return Ok(PreparedClaim::Complete(
+            finish(pending, judgment).await?,
+            false,
+        ));
     }
     Ok(PreparedClaim::Pending(pending))
 }
@@ -434,6 +456,9 @@ pub(super) async fn check(
     let mut results = Vec::new();
     let mut pending = Vec::new();
     let mut reused = 0;
+    // Claims share a batch call's room equally; one checked alone has it all.
+    let sharing = BATCH_SIZE.min(total);
+    let mut decided = HashSet::new();
     let mut entries = futures::stream::iter(entries.into_iter().enumerate()).chunks(BATCH_SIZE);
     while let Some(entries) = entries.next().await {
         // Drain the reads before any subsequent model work/checkpoint writes.
@@ -448,6 +473,7 @@ pub(super) async fn check(
                     retained,
                     ordinal,
                     (unit, claim),
+                    sharing,
                 )
             })
             .buffered(BATCH_SIZE)
@@ -455,8 +481,11 @@ pub(super) async fn check(
             .await?;
         for item in prepared {
             match item {
-                PreparedClaim::Complete(result) => {
+                PreparedClaim::Complete(result, final_decision) => {
                     reused += usize::from(result.3);
+                    if final_decision {
+                        decided.insert(result.0);
+                    }
                     completed(&mut results, result);
                 }
                 PreparedClaim::Pending(item) => pending.push(item),
@@ -493,6 +522,129 @@ pub(super) async fn check(
             results.len() - resolved
         ));
     }
+    deepen(llm, references, &mut results, &decided).await?;
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
     Ok(results)
+}
+
+/// A claim still looking for evidence: what it has been shown so far.
+struct Walk {
+    unit: usize,
+    claim: Claim,
+    shown: Vec<EvidencePassage>,
+}
+
+/// Check every first-page result that is unsupported against its next pages
+/// until a page decides it or no page with a matching content term is left.
+/// A deciding page's finding replaces the first page's; the first page's key
+/// still names the decision, so a later pass on the same evidence reuses it.
+async fn deepen(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    results: &mut [CheckedClaim],
+    decided: &HashSet<usize>,
+) -> Result<()> {
+    let mut walks: BTreeMap<usize, Walk> = results
+        .iter()
+        .filter(|(ordinal, _, finding, _)| {
+            !decided.contains(ordinal) && finding.verdict == ClaimVerdict::Unsupported
+        })
+        .map(|(ordinal, _, finding, _)| {
+            (
+                *ordinal,
+                Walk {
+                    unit: finding.unit,
+                    claim: Claim {
+                        quote: finding.quote.clone(),
+                        statement: finding.statement.clone(),
+                    },
+                    shown: finding
+                        .evidence
+                        .iter()
+                        .filter(|passage| passage.retrieval_kind != "execution")
+                        .cloned()
+                        .collect(),
+                },
+            )
+        })
+        .collect();
+    let mut round = 0;
+    while !walks.is_empty() {
+        round += 1;
+        let sharing = BATCH_SIZE.min(walks.len());
+        let mut pending = Vec::new();
+        let mut outcomes = Vec::new();
+        for (ordinal, walk) in std::mem::take(&mut walks) {
+            let share = claim_share(llm, &walk.claim.statement, sharing);
+            let (mut page, _) = references
+                .verification_page(&walk.claim.statement, &walk.shown, |passages| {
+                    within_share(llm, share, passages.iter())
+                })
+                .await?;
+            // A page that only shares the subject's common words, or only
+            // vector neighbours, ends the walk.
+            if !page
+                .iter()
+                .any(|passage| references.mentions_subject_of(&walk.claim.statement, &passage.text))
+            {
+                continue;
+            }
+            canonicalize_evidence(&mut page);
+            let key = ClaimChecks::key(walk.unit, &walk.claim, &page);
+            let receipt_key = claim_receipt_key(llm, &key);
+            if let Some(finding) =
+                crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
+                    .await?
+                    .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
+                    .and_then(|receipt| receipt.finding(walk.unit, &walk.claim, &page))
+            {
+                outcomes.push((ordinal, finding));
+            } else {
+                pending.push(PendingClaim {
+                    ordinal,
+                    key,
+                    receipt_key,
+                    unit: walk.unit,
+                    claim: walk.claim.clone(),
+                    evidence: page.clone(),
+                });
+            }
+            let mut shown = walk.shown;
+            shown.extend(page);
+            walks.insert(ordinal, Walk { shown, ..walk });
+        }
+        if !pending.is_empty() {
+            crate::features::learning::lesson_progress::stage(format!(
+                "Checking {} unsupported claims against their next page of evidence (page {})",
+                pending.len(),
+                round + 1
+            ));
+            let mut batches = futures::stream::iter(pending)
+                .chunks(BATCH_SIZE)
+                .map(|pending| group(llm, pending))
+                .buffer_unordered(1);
+            while let Some(batch) = batches.next().await {
+                outcomes.extend(
+                    batch?
+                        .into_iter()
+                        .map(|(ordinal, _, finding, _)| (ordinal, finding)),
+                );
+            }
+        }
+        for (ordinal, finding) in outcomes {
+            if finding.verdict == ClaimVerdict::Unsupported {
+                continue;
+            }
+            walks.remove(&ordinal);
+            if let Some(result) = results.iter_mut().find(|result| result.0 == ordinal) {
+                result.2 = finding;
+            }
+        }
+        tracing::info!(
+            round,
+            looking = walks.len(),
+            "Deepened the evidence of unsupported claims"
+        );
+    }
+    Ok(())
 }

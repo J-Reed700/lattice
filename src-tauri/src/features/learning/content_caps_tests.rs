@@ -305,3 +305,51 @@ async fn assessment_items_are_authored_per_requirement_from_retrieved_passages()
         .contains(needle));
     Ok(())
 }
+
+#[test]
+fn the_tutor_sees_the_newest_whole_turns_that_fit_and_counts_the_rest() {
+    use crate::features::learning::dto::{LearningPracticeTutorTurnDto, LearningTutorRequestKind};
+    let turn = |index: usize| LearningPracticeTutorTurnDto {
+        id: format!("turn-{index}"),
+        prompt: format!(
+            "Question {index}: {}",
+            "why does this step hold? ".repeat(40)
+        ),
+        response: format!(
+            "Answer {index}: {}",
+            "consider the earlier result. ".repeat(40)
+        ),
+        request_kind: LearningTutorRequestKind::Question,
+        hint_level: None,
+        citations: vec![],
+        proposal_ids: vec![],
+        model_name: "fixture".into(),
+        created_at: index as i64,
+    };
+    let few: Vec<_> = (0..6).map(turn).collect();
+    let many: Vec<_> = (0..400).map(turn).collect();
+    let llm = scripted(vec![]);
+    let prompt =
+        json!({"taskPrompt":"Solve it.","recentTurns":[],"earlierTurns":"","sourceSnapshots":[]});
+    // Six turns all fit: not the former four.
+    let shown = crate::features::learning::practice_generation::with_recent_turns(
+        &llm,
+        prompt.clone(),
+        &few,
+    );
+    assert_eq!(shown["recentTurns"].as_array().unwrap().len(), 6);
+    assert_eq!(shown["earlierTurns"], "");
+    // Four hundred do not: the newest whole turns, then a count of the rest.
+    let shown =
+        crate::features::learning::practice_generation::with_recent_turns(&llm, prompt, &many);
+    let turns = shown["recentTurns"].as_array().unwrap();
+    assert!(turns.len() > 4 && turns.len() < 400);
+    assert!(turns[0]["request"]
+        .as_str()
+        .unwrap()
+        .starts_with("Question 399:"));
+    assert_eq!(
+        shown["earlierTurns"],
+        format!("{} earlier turns not shown", 400 - turns.len())
+    );
+}

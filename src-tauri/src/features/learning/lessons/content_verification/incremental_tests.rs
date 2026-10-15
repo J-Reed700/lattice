@@ -168,7 +168,7 @@ async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_ap
         let collection = ReferenceCollection::lexical(&sources)?;
         let original = claims(1);
         let claim = &original.units[0].claims[0];
-        let evidence = evidence_for(&model, &claim.statement, 0, &collection, &[]).await?;
+        let evidence = evidence_for(&model, &claim.statement, 0, &collection, &[], 1).await?;
         let passages: Vec<_> = evidence.iter().map(|p|(&p.source_id,&p.text,p.start_byte,p.end_byte)).collect();
         let comparison = digest(&json!({"unit":0,"claim":claim,"passages":passages}).to_string());
         lesson_drafts::record_checkpoint(&claim_receipt_key(&model,&comparison), json!({"verdict":"supported","reason":"Prior complete comparison","supporting_quote":claim.statement})).await?;
@@ -380,7 +380,7 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
             acquired_at: 1,
         });
         let references = ReferenceCollection::lexical(&sources)?;
-        let fresh = evidence_for(&model, "mineral0 property0", 0, &references, &[]).await?;
+        let fresh = evidence_for(&model, "mineral0 property0", 0, &references, &[], 1).await?;
         let claim = &claims(1).units[0].claims[0];
         assert_ne!(
             ClaimChecks::key(0, claim, &fresh),

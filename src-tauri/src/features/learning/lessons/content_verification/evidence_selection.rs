@@ -194,6 +194,7 @@ pub(super) async fn select(
     current: &[SourceBinding],
     executions: &[execution::Observation],
     retained: &ClaimChecks,
+    sharing: usize,
 ) -> Result<Vec<EvidencePassage>> {
     let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
@@ -279,53 +280,51 @@ pub(super) async fn select(
         .as_ref()
         .and_then(|saved| saved.restore(references, current));
     let research_scope = research_scope(current, retained).await?;
-    let (mut evidence, changed) =
-        if let (Some(saved), Some(mut evidence)) = (saved.as_ref(), restored) {
-            let added: HashSet<_> = current
-                .iter()
-                .filter(|source| !saved.sources.contains(source))
-                .map(|source| source.id.as_str())
-                .collect();
-            let claim_is_research_target = research_scope
-                .as_ref()
-                .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
-            if !added.is_empty() && claim_is_research_target {
-                // Use normal hybrid retrieval over the current collection to locate
-                // relevant new sources. Keep the old comparison inputs verbatim.
-                // Do not trim new evidence to the old character budget: that could
-                // drop counterevidence. The checker enforces its real context size.
-                let found = references
-                    .retrieve_for_verification_within(&claim.statement, |passages| {
-                        check_fits(
-                            llm,
-                            &claim.statement,
-                            evidence
+    let (mut evidence, changed) = if let (Some(saved), Some(mut evidence)) =
+        (saved.as_ref(), restored)
+    {
+        let added: HashSet<_> = current
+            .iter()
+            .filter(|source| !saved.sources.contains(source))
+            .map(|source| source.id.as_str())
+            .collect();
+        let claim_is_research_target = research_scope
+            .as_ref()
+            .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
+        if !added.is_empty() && claim_is_research_target {
+            // Use normal hybrid retrieval over the current collection to locate
+            // relevant new sources. Keep the old comparison inputs verbatim and
+            // add new passages while the claim's share of a batch call holds them.
+            let share = claim_share(llm, &claim.statement, sharing);
+            let (found, _) = references
+                .verification_page(&claim.statement, &[], |passages| {
+                    within_share(
+                        llm,
+                        share,
+                        evidence.iter().chain(
+                            passages
                                 .iter()
-                                .chain(
-                                    passages
-                                        .iter()
-                                        .filter(|p| added.contains(p.source_id.as_str())),
-                                )
-                                .map(|passage| passage.text.clone()),
-                        )
-                    })
-                    .await?;
-                evidence.extend(
-                    found
-                        .into_iter()
-                        .filter(|passage| added.contains(passage.source_id.as_str())),
-                );
-            }
-            (evidence, saved.sources != current)
-        } else {
-            // This preserves exact keys for existing durable factual receipts.
-            let evidence = evidence_for(llm, &claim.statement, unit, references, executions)
-                .await?
-                .into_iter()
-                .filter(|passage| passage.retrieval_kind != "execution")
-                .collect();
-            (evidence, true)
-        };
+                                .filter(|p| added.contains(p.source_id.as_str())),
+                        ),
+                    )
+                })
+                .await?;
+            evidence.extend(
+                found
+                    .into_iter()
+                    .filter(|passage| added.contains(passage.source_id.as_str())),
+            );
+        }
+        (evidence, saved.sources != current)
+    } else {
+        // This preserves exact keys for existing durable factual receipts.
+        let evidence = evidence_for(llm, &claim.statement, unit, references, executions, sharing)
+            .await?
+            .into_iter()
+            .filter(|passage| passage.retrieval_kind != "execution")
+            .collect();
+        (evidence, true)
+    };
     evidence.sort_by(|a, b| {
         (&a.source_id, a.start_byte, a.end_byte).cmp(&(&b.source_id, b.start_byte, b.end_byte))
     });

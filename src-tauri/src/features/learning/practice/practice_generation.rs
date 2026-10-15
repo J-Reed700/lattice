@@ -96,6 +96,46 @@ pub struct GradeCriterionJson {
 const TUTOR_SYSTEM: &str = "You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.";
 const SOLUTION_SYSTEM: &str = "Give a concise worked reference solution for the learning task. When source snapshots are supplied, use them for factual claims. Without sources, use the stated task and general knowledge, acknowledge uncertainty, and return no citations. Cite exact quotations and do not imply that viewing this solution is evidence of learner ability.";
 
+/// `prompt` with the newest whole tutor turns, newest first, while they fit
+/// half the room the tutor call leaves (the snapshots take the rest), and a
+/// line saying how many earlier turns are not shown.
+pub(in crate::features::learning) fn with_recent_turns(
+    llm: &dyn LLMPort,
+    mut prompt: serde_json::Value,
+    turns: &[LearningPracticeTutorTurnDto],
+) -> serde_json::Value {
+    let room = crate::features::learning::reference_collection::snapshot_room(
+        llm,
+        TUTOR_SYSTEM,
+        &prompt,
+        1400,
+    ) / 2;
+    let mut shown = Vec::new();
+    let mut used = 0;
+    for turn in turns.iter().rev() {
+        let entry = serde_json::json!({"request":turn.prompt,"response":turn.response,"hintLevel":turn.hint_level});
+        let cost = llm.count_tokens(&entry.to_string()) + 1;
+        if used + cost > room {
+            break;
+        }
+        used += cost;
+        shown.push(entry);
+    }
+    let earlier = turns.len() - shown.len();
+    if let Some(fields) = prompt.as_object_mut() {
+        fields.insert("recentTurns".into(), serde_json::Value::Array(shown));
+        fields.insert(
+            "earlierTurns".into(),
+            serde_json::json!(if earlier == 0 {
+                String::new()
+            } else {
+                format!("{earlier} earlier turns not shown")
+            }),
+        );
+    }
+    prompt
+}
+
 /// `prompt` with the snapshot passages `query` retrieves, as many as the
 /// request's window leaves room for, under `sourceSnapshots`.
 async fn with_snapshots(
@@ -162,8 +202,9 @@ pub async fn tutor(
     request: &RequestLearningTutorResponseRequestDto,
     sources: &[LearningSourceVersionDto],
 ) -> Result<TutorJson> {
-    let prompt = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"recentTurns":session.tutor_turns.iter().rev().take(4).map(|t|serde_json::json!({"request":t.prompt,"response":t.response,"hintLevel":t.hint_level})).collect::<Vec<_>>(),"revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":[]});
+    let prompt = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"recentTurns":[],"earlierTurns":"","revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":[]});
     let query = format!("{} {}", session.task_prompt, request.prompt);
+    let prompt = with_recent_turns(llm, prompt, &session.tutor_turns);
     let prompt = with_snapshots(llm, TUTOR_SYSTEM, prompt, sources, &query, 1400).await?;
     let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
 

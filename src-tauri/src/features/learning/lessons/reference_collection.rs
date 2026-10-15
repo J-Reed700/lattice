@@ -70,6 +70,46 @@ pub struct ReferenceCollection<'a> {
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
+/// The longest prefix of `passages` that `fits` accepts; `fits` holds for
+/// every shorter prefix of one it accepts.
+fn longest_fitting_prefix(
+    passages: &[ReferencePassage],
+    fits: &impl Fn(&[ReferencePassage]) -> bool,
+) -> usize {
+    let (mut low, mut high) = (0, passages.len());
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if fits(passages.get(..middle).unwrap_or_default()) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    low
+}
+
+/// Function words that match nearly every passage; never a content term.
+const FUNCTION_WORDS: &[&str] = &[
+    "a", "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "been",
+    "before", "but", "by", "can", "could", "did", "do", "does", "each", "for", "from", "had",
+    "has", "have", "how", "if", "in", "into", "is", "it", "its", "may", "more", "most", "must",
+    "no", "not", "of", "on", "only", "or", "other", "should", "so", "some", "such", "than", "that",
+    "the", "their", "them", "then", "there", "these", "they", "this", "those", "to", "under", "up",
+    "use", "used", "uses", "using", "was", "we", "were", "what", "when", "where", "which", "while",
+    "who", "will", "with", "without", "would", "you", "your",
+];
+
+/// The words of `text` a keyword match should rest on: not function words.
+fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
+    terms_iter(text).filter(|word| !FUNCTION_WORDS.contains(&word.as_str()))
+}
+
+fn terms_iter(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+}
+
 fn terms(text: &str) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for word in text
@@ -350,43 +390,85 @@ impl<'a> ReferenceCollection<'a> {
         query: &str,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<Vec<ReferencePassage>> {
-        self.fill(query, fits, Ok).await
+        self.fill(query, fits).await
     }
 
-    /// Passages for verifying `query`, each widened to its surrounding source
-    /// text (see `verification_context`), filled to what `fits` accepts.
-    pub(in crate::features::learning) async fn retrieve_for_verification_within(
+    /// The next page of verification evidence for `query`: ranked passages,
+    /// each widened to its surrounding source text (see
+    /// `verification_context`), that overlap none of `shown`, best first,
+    /// while `fits` accepts them. Also returns the ranked hits the page was
+    /// built from, so a quote can be located inside a widened passage.
+    pub(in crate::features::learning) async fn verification_page(
         &self,
         query: &str,
+        shown: &[ReferencePassage],
         fits: impl Fn(&[ReferencePassage]) -> bool,
-    ) -> Result<Vec<ReferencePassage>> {
-        self.fill(query, fits, |passages| self.verification_context(passages))
-            .await
+    ) -> Result<(Vec<ReferencePassage>, Vec<ReferencePassage>)> {
+        let mut depth = FIRST_PAGE;
+        loop {
+            let hits = self.retrieve(query, depth).await?;
+            let exhausted = hits.len() < depth;
+            let mut page: Vec<_> = self
+                .verification_context(hits.clone())?
+                .into_iter()
+                .filter(|passage| {
+                    !shown.iter().any(|seen| {
+                        seen.source_id == passage.source_id
+                            && seen.start_byte < passage.end_byte
+                            && passage.start_byte < seen.end_byte
+                    })
+                })
+                .collect();
+            let fitting = longest_fitting_prefix(&page, &fits);
+            if fitting < page.len() || exhausted {
+                page.truncate(fitting);
+                return Ok((page, hits));
+            }
+            depth = depth.saturating_mul(2);
+        }
+    }
+
+    /// Whether `text` mentions what `query` is about: one of the query's
+    /// distinctive content terms, those no more common across this
+    /// collection's passages than the median of the query's own content
+    /// terms. Words the whole subject shares (in a .NET collection, "net" or
+    /// "core") do not count, so a walk through deeper evidence ends once only
+    /// the subject's common vocabulary is left. Vector neighbours alone never
+    /// count.
+    pub(in crate::features::learning) fn mentions_subject_of(
+        &self,
+        query: &str,
+        text: &str,
+    ) -> bool {
+        let mut wanted: Vec<(usize, String)> = content_terms(query)
+            .map(|term| (self.frequencies.get(&term).copied().unwrap_or(0), term))
+            .collect();
+        wanted.sort();
+        wanted.dedup();
+        let Some(&(median, _)) = wanted.get(wanted.len().saturating_sub(1) / 2) else {
+            return false;
+        };
+        let distinctive: HashSet<&str> = wanted
+            .iter()
+            .filter(|(frequency, _)| *frequency <= median)
+            .map(|(_, term)| term.as_str())
+            .collect();
+        content_terms(text).any(|term| distinctive.contains(term.as_str()))
     }
 
     async fn fill(
         &self,
         query: &str,
         fits: impl Fn(&[ReferencePassage]) -> bool,
-        shape: impl Fn(Vec<ReferencePassage>) -> Result<Vec<ReferencePassage>>,
     ) -> Result<Vec<ReferencePassage>> {
         let mut depth = FIRST_PAGE;
         loop {
             let found = self.retrieve(query, depth).await?;
             let exhausted = found.len() < depth;
-            let mut passages = shape(found)?;
-            // The longest prefix that fits; `fits` holds for shorter prefixes.
-            let (mut low, mut high) = (0, passages.len());
-            while low < high {
-                let middle = (low + high).div_ceil(2);
-                if fits(passages.get(..middle).unwrap_or_default()) {
-                    low = middle;
-                } else {
-                    high = middle - 1;
-                }
-            }
-            if low < passages.len() || exhausted {
-                passages.truncate(low);
+            let mut passages = found;
+            let fitting = longest_fitting_prefix(&passages, &fits);
+            if fitting < passages.len() || exhausted {
+                passages.truncate(fitting);
                 return Ok(passages);
             }
             depth = depth.saturating_mul(2);

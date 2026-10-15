@@ -73,7 +73,7 @@ use repair_loop::{repair_fingerprint, PendingRepair, RepairProgress};
 #[cfg(test)]
 use report::content_hash;
 pub(in crate::features::learning) use report::persist_report;
-const POLICY: &str = "lesson-evidence-v18";
+const POLICY: &str = "lesson-evidence-v19";
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
 const INVENTORY_POLICY: &str = "lesson-evidence-v6";
@@ -192,7 +192,24 @@ impl ClaimChecks {
             finding.unit = unit;
             finding.quote = claim.quote.clone();
             finding.statement = claim.statement.clone();
-            finding.evidence = evidence.to_vec();
+            // A decision on this evidence takes its fresh retrieval metadata;
+            // one reached on a deeper page keeps that page's passages.
+            let identity = |p: &EvidencePassage| {
+                (
+                    p.source_id.clone(),
+                    p.start_byte,
+                    p.end_byte,
+                    p.text.clone(),
+                )
+            };
+            if finding
+                .evidence
+                .iter()
+                .map(identity)
+                .eq(evidence.iter().map(identity))
+            {
+                finding.evidence = evidence.to_vec();
+            }
             finding
         })
     }
@@ -335,33 +352,55 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     }
     Ok(())
 }
-/// Whether `passages`, with the claim, fit one strict claim check beside its
-/// answer: the checker's window, not a count, bounds a claim's evidence.
-pub(in crate::features::learning) fn check_fits(
+/// The tokens one passage costs in a strict batch's passage bank, with its
+/// id and the claim's reference to it.
+pub(in crate::features::learning) fn bank_tokens(llm: &dyn LLMPort, text: &str) -> usize {
+    llm.count_tokens(&json!({"id":"passage-000","text":text}).to_string()) + 5
+}
+
+/// The evidence tokens one claim may carry when `sharing` claims share a
+/// strict batch call: an equal share of the room the call leaves after its
+/// instructions, the claims and their answers. A claim checked alone gets
+/// the whole room.
+pub(in crate::features::learning) fn claim_share(
     llm: &dyn LLMPort,
     claim: &str,
-    passages: impl Iterator<Item = String>,
-) -> bool {
+    sharing: usize,
+) -> usize {
+    let sharing = sharing.max(1);
     ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
         512,
         CheckPolicy::Strict,
     )
-    .batch_fits(&[
-        lattice_core::application::services::claim_verification::LocatedClaim {
-            claim: claim.to_owned(),
-            passages: passages.collect(),
-        },
-    ])
+    .batch_evidence_room(&vec![claim.to_owned(); sharing])
+        / sharing
 }
 
+/// Whether `passages` fit within `share` tokens of a passage bank.
+pub(in crate::features::learning) fn within_share<'p>(
+    llm: &dyn LLMPort,
+    share: usize,
+    passages: impl Iterator<Item = &'p EvidencePassage>,
+) -> bool {
+    passages
+        .map(|passage| bank_tokens(llm, &passage.text))
+        .sum::<usize>()
+        <= share
+}
+
+/// A claim's first page of evidence: passed example runs for its section,
+/// then its top-ranked passages, as many as its share of a batch call holds
+/// when `sharing` claims share the call. Deeper pages follow only for a
+/// claim the first page leaves unsupported (see `evidence_checks`).
 async fn evidence_for(
     llm: &dyn LLMPort,
     claim: &str,
     unit: usize,
     references: &ReferenceCollection<'_>,
     observations: &[execution::Observation],
+    sharing: usize,
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = Vec::new();
     for observation in observations
@@ -380,21 +419,14 @@ async fn evidence_for(
     // Each claim searches the entire pinned collection independently of the
     // author's selected passages. Contradictory passages are not filtered out.
     // Execution output must not erase retrieved references when it is lengthy.
-    // The checker batches by its actual context budget, not a character count,
-    // and a claim takes as many passages as one check of it can hold.
-    let found = references
-        .retrieve_for_verification_within(claim, |passages| {
-            check_fits(
-                llm,
-                claim,
-                evidence
-                    .iter()
-                    .chain(passages)
-                    .map(|passage| passage.text.clone()),
-            )
+    // The checker batches by its actual context budget, not a character count.
+    let share = claim_share(llm, claim, sharing);
+    let (page, _) = references
+        .verification_page(claim, &[], |passages| {
+            within_share(llm, share, evidence.iter().chain(passages))
         })
         .await?;
-    evidence.extend(found);
+    evidence.extend(page);
     canonicalize_evidence(&mut evidence);
     Ok(evidence)
 }
@@ -419,7 +451,7 @@ pub(in crate::features::learning) async fn live_retrieved_passages(
     claim: &str,
     references: &ReferenceCollection<'_>,
 ) -> Result<Vec<String>> {
-    Ok(evidence_for(llm, claim, 0, references, &[])
+    Ok(evidence_for(llm, claim, 0, references, &[], 1)
         .await?
         .into_iter()
         .map(|passage| passage.text)

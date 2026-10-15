@@ -359,6 +359,7 @@ mod capacity_tests {
             0,
             &references,
             &observations,
+            1,
         )
         .await?;
         assert_eq!(

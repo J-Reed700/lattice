@@ -89,3 +89,15 @@ async fn malformed_or_failed_challenge_never_inherits_provisional_approval() {
         ClaimJudgment::Unusable
     ));
 }
+
+#[test]
+fn the_challenge_may_raise_as_many_distinct_questions_as_its_concerns_need() {
+    let questions: Questions = serde_json::from_value(serde_json::json!({"queries":(0..5)
+        .map(|i| serde_json::json!({"query":format!("distinct concern search {i}"),"rationale":"A specific omitted condition."}))
+        .collect::<Vec<_>>()}))
+    .unwrap();
+    assert!(
+        validate_questions(&questions).is_ok(),
+        "not the former three"
+    );
+}
