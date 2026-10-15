@@ -5,6 +5,14 @@ that a learner has mastered a subject, is ready for employment, or will retain
 material. A release result is valid only for the exact commit, platform, model,
 and optional runtime named in its retained artifacts.
 
+Course generation itself (references, outline, evidence linking, review and
+repair, lesson evidence, writing, verification and repair) is documented as built
+in [course-generation-pipeline.md](course-generation-pipeline.md). Its unit
+tests, live end-to-end runs and claim-checker measurements are in
+[course-generation-testing.md](course-generation-testing.md), and every live run
+in [course-generation-history.md](course-generation-history.md). Dated sections
+below are historical records of what was verified at the time.
+
 ## Saved outline drafts and repair
 
 Course packs now use format v2, with a separately versioned
@@ -54,48 +62,54 @@ nor a factual correctness guarantee. Backend acceptance rejects unchecked or
 unresolved drafts. Lesson preparation retains its separate verification gate;
 this repair workflow does not edit already prepared lessons.
 
-Initial generation and resumed repair automatically search for supporting pages
-when references are missing or review reports unresolved findings. There is no
-web-research checkbox. A topic-only draft is saved before research and stays
-unresolved if no usable references can be captured.
+References are gathered before the outline is drafted: the model plans
+subtopics with public searches (never the learner's goal text), and the selected
+pages are captured and saved with the draft. During repair, a factual finding
+gets its own targeted research. There is no web-research checkbox. If web search
+is unavailable or no page can be saved, the topic-only draft is saved with a
+References finding that blocks acceptance until Repair gathers references.
 
-Automatic repair edits affected modules and continues while the unresolved
-finding count decreases. Newly captured references allow another attempt even
-if the count has not decreased. Each operation searches the course goal and each
-affected module at most once, using stable module positions so rewritten titles
-cannot restart the same searches. Duplicate URLs and identical captures are not
-added again. Without new evidence or fewer findings, the remaining issues stay
-visible for another manual attempt. There is no
+Review findings have stable IDs and a kind: factual, plan or references. Each
+review pass gives every open finding a verdict and may raise new findings only
+in the modules it was asked to check. Repair acts by kind: a factual finding is
+researched and judged against all saved references (supported closes it with a
+citation; contradicted or unsupported rewrites its module), and a plan finding
+rewrites its module. Each finding gets two attempts and each module three
+rewrites per operation, so the loop ends by construction. Exhausted plan
+findings become advisory and stop blocking acceptance; other remaining findings
+stay visible for another manual attempt. Duplicate URLs and identical captures
+are not added again. There is no
 overall or per-call elapsed-time deadline for outline authoring/review/repair;
 user cancellation, provider errors and transport stall detection still apply.
 Each call uses a fresh prompt containing the current artifact and relevant
 passages, not an accumulating conversation transcript.
-If a module rewrite breaks a previously valid quotation attached to an unchanged
-claim, the original citation is retained. Changed claims still need their evidence
-checked. After a completed semantic review, repairs can reuse its checks for
-unchanged modules. The next request contains the complete changed or unresolved
-modules and their retrieved evidence, plus every module's instructional fields
-(without repeated quotations) for checking cross-course effects. It can report
-new problems anywhere in that sequence. Exact quotation checks still run across
-the entire outline.
+Repair never adds a citation. If a module rewrite drops a receipted citation on
+an unchanged item, the citation is restored; changed items are linked again.
+After a completed semantic review, repairs can reuse its checks for unchanged
+modules. The next request contains the complete changed or unresolved modules
+and their retrieved evidence, plus every module's instructional fields (without
+citations) for checking cross-course effects. New findings must be anchored to
+a module or item inside the modules being checked; the reviewer cannot raise
+course-wide findings.
 
 A separate persisted review receipt records module hashes and the context of the
 last completed semantic check; merely saving an edited draft does not update it.
-Changed source content or order, learner request, model name, review protocol,
-module/lesson identities or course-wide findings require full review. Missing
+A changed learner request, model name, review protocol or module/lesson
+identities require full review; newly saved references do not. Missing
 receipts also require full review. Failed or interrupted checks cannot create a
 receipt or approve the draft. The UI labels findings from an incomplete recheck
 as previous findings awaiting verification, and displays whether the operation
 is checking the whole outline or selected modules. Incremental checks reduce
 repeated model input; they do not guarantee latency or factual correctness.
 
-Before research or review, formatting-only quote mismatches are repaired by
-copying an exact span from the same saved reference. This handles straight versus
-curly quotation marks and whitespace without a model rewrite. Words, numbers,
-operators and source indices must still match; fabricated or paraphrased quotes
-remain findings. Restored quotations are checkpointed as unchecked and still
-require factual/instructional review of the affected content. The strict quote
-validator itself is unchanged.
+Outline citations are optional and are never findings. Formatting-only quote
+mismatches in the author's citations are repaired by copying an exact span from
+the same saved reference; a quote that still does not match is removed. Evidence
+linking then retrieves candidate passages for every module summary, outcome and
+lesson objective and lets the model choose one or none. The quote is always the
+saved page's own text, each decision is receipted and never judged again, and
+the reviewer never sees citations. The review note reports how many items were
+linked.
 
 Review and repair receive an explicit module-number map: JSON paths and
 prerequisite indices start at zero, while learner-facing module numbers start
@@ -116,18 +130,18 @@ To try draft recovery:
    draft** while review continues. The generation panel shows the current stage,
    elapsed time, model and received response text length.
 2. Cancel during review, or reopen a draft after restarting the app. The draft
-   remains in Programs. Its findings show the affected module/lesson, claim,
-   unmatched quotation where applicable, and reason.
-3. Choose **Repair remaining issues** to resume a stopped draft. Both initial
-   generation and resumed repair automatically search using the goal and affected
-   module titles. **Finding supporting references** appears during research.
-   Research fetches complete pages through
+   remains in Programs. Its findings show the affected module/lesson, kind,
+   claim, reason and attempts used.
+3. Choose **Repair remaining issues** to resume a stopped draft. Every open
+   finding gets fresh attempts. Factual findings are researched with planned
+   public searches, never the goal text; **Researching an unresolved finding**
+   appears during research. Research fetches complete pages through
    the existing safe web service and saves them in the course source library.
    Search snippets and truncated captures are not evidence. Fetched pages still
    require relevance/support review; search rank does not establish authority.
-4. Inspect the revised findings. Acceptance becomes available only when the
-   outline checks pass. Source quote matching remains deterministic even if an
-   AI reviewer approves an invalid quotation.
+4. Inspect the revised findings. Acceptance becomes available when no blocking
+   finding remains (exhausted plan findings are advisory). Quote matching is
+   done by code, never by the reviewer.
 
 Repairs retain module and lesson identities and counts, and use revision checks
 to reject concurrent stale writes. Checkpoints retain previous candidates and

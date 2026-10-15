@@ -1,0 +1,1238 @@
+{
+  "qwen3.8-27b-lesson-judge": {
+    "pairs": 85,
+    "accuracy": 0.9529411764705882,
+    "balanced_accuracy": 0.9607843137254901,
+    "precision_supported": 0.8947368421052632,
+    "recall_supported": 1.0,
+    "f1_supported": 0.9444444444444444,
+    "macro_f1": 0.9518140589569161,
+    "false_approvals": 4,
+    "false_approval_rate": 0.0784313725490196,
+    "false_blocks": 0,
+    "false_block_rate": 0.0,
+    "balanced_accuracy_95ci": [
+      0.9210526315789473,
+      0.990909090909091
+    ],
+    "recall_unsupported": 0.9,
+    "recall_contradicted": 1.0,
+    "three_way": true,
+    "three_way_accuracy": 0.9176470588235294,
+    "exact_recall_supported": 1.0,
+    "exact_recall_unsupported": 0.85,
+    "exact_recall_contradicted": 0.9090909090909091,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "supported": 34
+      },
+      "unsupported": {
+        "unsupported": 34,
+        "contradicted": 2,
+        "supported": 4
+      },
+      "contradicted": {
+        "contradicted": 10,
+        "unsupported": 1
+      }
+    },
+    "latency_ms": {
+      "median": 4507.874114625,
+      "p95": 6708.840927125,
+      "mean": 4557.491924529411,
+      "max": 6708.840927125
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.9529411764705882,
+        "false_approvals": 4,
+        "false_approval_rate": 0.0784313725490196,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.9428571428571428,
+        "false_approvals": 2,
+        "false_approval_rate": 0.4,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.96,
+        "false_approvals": 1,
+        "false_approval_rate": 0.04,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 1.0,
+        "false_approvals": 0,
+        "false_approval_rate": 0.0,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.9,
+        "false_approvals": 1,
+        "false_approval_rate": 0.16666666666666666,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 3,
+        "pairs": 4,
+        "accuracy": 0.75
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "hedge": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "lexical_trap": {
+        "correct": 17,
+        "pairs": 19,
+        "accuracy": 0.8947368421052632
+      },
+      "multi_clause": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      },
+      "multi_sentence": {
+        "correct": 11,
+        "pairs": 11,
+        "accuracy": 1.0
+      },
+      "negation": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "number_drift": {
+        "correct": 5,
+        "pairs": 5,
+        "accuracy": 1.0
+      },
+      "paraphrase": {
+        "correct": 23,
+        "pairs": 23,
+        "accuracy": 1.0
+      },
+      "partial": {
+        "correct": 10,
+        "pairs": 11,
+        "accuracy": 0.9090909090909091
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "verbatim": {
+        "correct": 12,
+        "pairs": 12,
+        "accuracy": 1.0
+      },
+      "world_knowledge": {
+        "correct": 18,
+        "pairs": 18,
+        "accuracy": 1.0
+      },
+      "wrong_entity": {
+        "correct": 7,
+        "pairs": 7,
+        "accuracy": 1.0
+      }
+    }
+  },
+  "granite-guardian-3.3-8b": {
+    "pairs": 85,
+    "accuracy": 0.8705882352941177,
+    "balanced_accuracy": 0.8872549019607843,
+    "precision_supported": 0.7674418604651163,
+    "recall_supported": 0.9705882352941176,
+    "f1_supported": 0.8571428571428571,
+    "macro_f1": 0.869431643625192,
+    "false_approvals": 10,
+    "false_approval_rate": 0.19607843137254902,
+    "false_blocks": 1,
+    "false_block_rate": 0.029411764705882353,
+    "balanced_accuracy_95ci": [
+      0.8228458049886621,
+      0.9444444444444444
+    ],
+    "recall_unsupported": 0.775,
+    "recall_contradicted": 0.9090909090909091,
+    "three_way": false,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "supported": 33,
+        "not_supported": 1
+      },
+      "unsupported": {
+        "not_supported": 31,
+        "supported": 9
+      },
+      "contradicted": {
+        "not_supported": 10,
+        "supported": 1
+      }
+    },
+    "latency_ms": {
+      "median": 6342.420042026788,
+      "p95": 11133.959291968495,
+      "mean": 7080.496076576631,
+      "max": 19337.167166988365
+    },
+    "best_threshold": {
+      "threshold": 0.8959920537500408,
+      "accuracy": 0.8823529411764706,
+      "balanced_accuracy": 0.892156862745098,
+      "precision_supported": 0.8,
+      "recall_supported": 0.9411764705882353,
+      "f1_supported": 0.8648648648648649,
+      "macro_f1": 0.8803490990990992,
+      "false_approvals": 8,
+      "false_approval_rate": 0.1568627450980392,
+      "false_blocks": 2,
+      "false_block_rate": 0.058823529411764705
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.8705882352941177,
+        "false_approvals": 10,
+        "false_approval_rate": 0.19607843137254902,
+        "false_blocks": 1,
+        "false_block_rate": 0.029411764705882353
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.8857142857142857,
+        "false_approvals": 3,
+        "false_approval_rate": 0.6,
+        "false_blocks": 1,
+        "false_block_rate": 0.03333333333333333
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.88,
+        "false_approvals": 3,
+        "false_approval_rate": 0.12,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 0.8666666666666667,
+        "false_approvals": 2,
+        "false_approval_rate": 0.13333333333333333,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.8,
+        "false_approvals": 2,
+        "false_approval_rate": 0.3333333333333333,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 3,
+        "pairs": 4,
+        "accuracy": 0.75
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 5,
+        "pairs": 6,
+        "accuracy": 0.8333333333333334
+      },
+      "hedge": {
+        "correct": 3,
+        "pairs": 6,
+        "accuracy": 0.5
+      },
+      "lexical_trap": {
+        "correct": 13,
+        "pairs": 19,
+        "accuracy": 0.6842105263157895
+      },
+      "multi_clause": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      },
+      "multi_sentence": {
+        "correct": 10,
+        "pairs": 11,
+        "accuracy": 0.9090909090909091
+      },
+      "negation": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 8,
+        "pairs": 9,
+        "accuracy": 0.8888888888888888
+      },
+      "number_drift": {
+        "correct": 4,
+        "pairs": 5,
+        "accuracy": 0.8
+      },
+      "paraphrase": {
+        "correct": 21,
+        "pairs": 23,
+        "accuracy": 0.9130434782608695
+      },
+      "partial": {
+        "correct": 9,
+        "pairs": 11,
+        "accuracy": 0.8181818181818182
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 5,
+        "pairs": 6,
+        "accuracy": 0.8333333333333334
+      },
+      "verbatim": {
+        "correct": 12,
+        "pairs": 12,
+        "accuracy": 1.0
+      },
+      "world_knowledge": {
+        "correct": 17,
+        "pairs": 18,
+        "accuracy": 0.9444444444444444
+      },
+      "wrong_entity": {
+        "correct": 5,
+        "pairs": 7,
+        "accuracy": 0.7142857142857143
+      }
+    }
+  },
+  "laguna-xs-2.1": {
+    "pairs": 85,
+    "accuracy": 0.8,
+    "balanced_accuracy": 0.8284313725490196,
+    "precision_supported": 0.673469387755102,
+    "recall_supported": 0.9705882352941176,
+    "f1_supported": 0.7951807228915663,
+    "macro_f1": 0.7998892120204958,
+    "false_approvals": 16,
+    "false_approval_rate": 0.3137254901960784,
+    "false_blocks": 1,
+    "false_block_rate": 0.029411764705882353,
+    "balanced_accuracy_95ci": [
+      0.7571428571428571,
+      0.8953488372093024
+    ],
+    "recall_unsupported": 0.6,
+    "recall_contradicted": 1.0,
+    "three_way": true,
+    "three_way_accuracy": 0.7529411764705882,
+    "exact_recall_supported": 0.9705882352941176,
+    "exact_recall_unsupported": 0.575,
+    "exact_recall_contradicted": 0.7272727272727273,
+    "unverified": 1,
+    "confusion": {
+      "supported": {
+        "supported": 33,
+        "unverified": 1
+      },
+      "unsupported": {
+        "unsupported": 23,
+        "supported": 16,
+        "contradicted": 1
+      },
+      "contradicted": {
+        "unsupported": 3,
+        "contradicted": 8
+      }
+    },
+    "latency_ms": {
+      "median": 6177.2763644999995,
+      "p95": 9401.952348875,
+      "mean": 6667.52843824706,
+      "max": 9401.952348875
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.8,
+        "false_approvals": 16,
+        "false_approval_rate": 0.3137254901960784,
+        "false_blocks": 1,
+        "false_block_rate": 0.029411764705882353
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.8285714285714286,
+        "false_approvals": 5,
+        "false_approval_rate": 1.0,
+        "false_blocks": 1,
+        "false_block_rate": 0.03333333333333333
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.8,
+        "false_approvals": 5,
+        "false_approval_rate": 0.2,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 0.8,
+        "false_approvals": 3,
+        "false_approval_rate": 0.2,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.7,
+        "false_approvals": 3,
+        "false_approval_rate": 0.5,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 1,
+        "pairs": 4,
+        "accuracy": 0.25
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 5,
+        "pairs": 6,
+        "accuracy": 0.8333333333333334
+      },
+      "hedge": {
+        "correct": 3,
+        "pairs": 6,
+        "accuracy": 0.5
+      },
+      "lexical_trap": {
+        "correct": 12,
+        "pairs": 19,
+        "accuracy": 0.631578947368421
+      },
+      "multi_clause": {
+        "correct": 5,
+        "pairs": 7,
+        "accuracy": 0.7142857142857143
+      },
+      "multi_sentence": {
+        "correct": 11,
+        "pairs": 11,
+        "accuracy": 1.0
+      },
+      "negation": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 8,
+        "pairs": 9,
+        "accuracy": 0.8888888888888888
+      },
+      "number_drift": {
+        "correct": 4,
+        "pairs": 5,
+        "accuracy": 0.8
+      },
+      "paraphrase": {
+        "correct": 22,
+        "pairs": 23,
+        "accuracy": 0.9565217391304348
+      },
+      "partial": {
+        "correct": 5,
+        "pairs": 11,
+        "accuracy": 0.45454545454545453
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 5,
+        "pairs": 6,
+        "accuracy": 0.8333333333333334
+      },
+      "verbatim": {
+        "correct": 11,
+        "pairs": 12,
+        "accuracy": 0.9166666666666666
+      },
+      "world_knowledge": {
+        "correct": 14,
+        "pairs": 18,
+        "accuracy": 0.7777777777777778
+      },
+      "wrong_entity": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      }
+    }
+  },
+  "minicheck-flan-t5-large": {
+    "pairs": 85,
+    "accuracy": 0.7764705882352941,
+    "balanced_accuracy": 0.7941176470588236,
+    "precision_supported": 0.6666666666666666,
+    "recall_supported": 0.8823529411764706,
+    "f1_supported": 0.759493670886076,
+    "macro_f1": 0.7753512310474335,
+    "false_approvals": 15,
+    "false_approval_rate": 0.29411764705882354,
+    "false_blocks": 4,
+    "false_block_rate": 0.11764705882352941,
+    "balanced_accuracy_95ci": [
+      0.7106060606060607,
+      0.8757575757575757
+    ],
+    "recall_unsupported": 0.75,
+    "recall_contradicted": 0.5454545454545454,
+    "three_way": false,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "not_supported": 4,
+        "supported": 30
+      },
+      "unsupported": {
+        "not_supported": 30,
+        "supported": 10
+      },
+      "contradicted": {
+        "not_supported": 6,
+        "supported": 5
+      }
+    },
+    "latency_ms": {
+      "median": 3499.4991660350934,
+      "p95": 7948.918499983847,
+      "mean": 3942.183917670456,
+      "max": 9637.7124999417
+    },
+    "best_threshold": {
+      "threshold": 0.9232698082923889,
+      "accuracy": 0.8117647058823529,
+      "balanced_accuracy": 0.803921568627451,
+      "precision_supported": 0.7647058823529411,
+      "recall_supported": 0.7647058823529411,
+      "f1_supported": 0.7647058823529411,
+      "macro_f1": 0.803921568627451,
+      "false_approvals": 8,
+      "false_approval_rate": 0.1568627450980392,
+      "false_blocks": 8,
+      "false_block_rate": 0.23529411764705882
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.7764705882352941,
+        "false_approvals": 15,
+        "false_approval_rate": 0.29411764705882354,
+        "false_blocks": 4,
+        "false_block_rate": 0.11764705882352941
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.8571428571428571,
+        "false_approvals": 2,
+        "false_approval_rate": 0.4,
+        "false_blocks": 3,
+        "false_block_rate": 0.1
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.64,
+        "false_approvals": 9,
+        "false_approval_rate": 0.36,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 0.8666666666666667,
+        "false_approvals": 2,
+        "false_approval_rate": 0.13333333333333333,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.7,
+        "false_approvals": 2,
+        "false_approval_rate": 0.3333333333333333,
+        "false_blocks": 1,
+        "false_block_rate": 0.25
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 2,
+        "pairs": 4,
+        "accuracy": 0.5
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 2,
+        "pairs": 6,
+        "accuracy": 0.3333333333333333
+      },
+      "hedge": {
+        "correct": 3,
+        "pairs": 6,
+        "accuracy": 0.5
+      },
+      "lexical_trap": {
+        "correct": 11,
+        "pairs": 19,
+        "accuracy": 0.5789473684210527
+      },
+      "multi_clause": {
+        "correct": 4,
+        "pairs": 7,
+        "accuracy": 0.5714285714285714
+      },
+      "multi_sentence": {
+        "correct": 8,
+        "pairs": 11,
+        "accuracy": 0.7272727272727273
+      },
+      "negation": {
+        "correct": 2,
+        "pairs": 3,
+        "accuracy": 0.6666666666666666
+      },
+      "noisy_passage": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "number_drift": {
+        "correct": 3,
+        "pairs": 5,
+        "accuracy": 0.6
+      },
+      "paraphrase": {
+        "correct": 20,
+        "pairs": 23,
+        "accuracy": 0.8695652173913043
+      },
+      "partial": {
+        "correct": 9,
+        "pairs": 11,
+        "accuracy": 0.8181818181818182
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 3,
+        "pairs": 6,
+        "accuracy": 0.5
+      },
+      "verbatim": {
+        "correct": 11,
+        "pairs": 12,
+        "accuracy": 0.9166666666666666
+      },
+      "world_knowledge": {
+        "correct": 17,
+        "pairs": 18,
+        "accuracy": 0.9444444444444444
+      },
+      "wrong_entity": {
+        "correct": 2,
+        "pairs": 7,
+        "accuracy": 0.2857142857142857
+      }
+    }
+  },
+  "qwen3.8-27b-lesson-judge AND granite-guardian-3.3-8b": {
+    "pairs": 85,
+    "accuracy": 0.9529411764705882,
+    "balanced_accuracy": 0.9558823529411764,
+    "precision_supported": 0.9166666666666666,
+    "recall_supported": 0.9705882352941176,
+    "f1_supported": 0.9428571428571428,
+    "macro_f1": 0.9514285714285714,
+    "false_approvals": 3,
+    "false_approval_rate": 0.058823529411764705,
+    "false_blocks": 1,
+    "false_block_rate": 0.029411764705882353,
+    "balanced_accuracy_95ci": [
+      0.9074279379157428,
+      0.990909090909091
+    ],
+    "recall_unsupported": 0.925,
+    "recall_contradicted": 1.0,
+    "three_way": false,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "supported": 33,
+        "not_supported": 1
+      },
+      "unsupported": {
+        "not_supported": 37,
+        "supported": 3
+      },
+      "contradicted": {
+        "not_supported": 11
+      }
+    },
+    "latency_ms": {
+      "median": 10857.75378131184,
+      "p95": 16179.421635127672,
+      "mean": 11637.988001106043,
+      "max": 23578.341130613364
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.9529411764705882,
+        "false_approvals": 3,
+        "false_approval_rate": 0.058823529411764705,
+        "false_blocks": 1,
+        "false_block_rate": 0.029411764705882353
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.9428571428571428,
+        "false_approvals": 1,
+        "false_approval_rate": 0.2,
+        "false_blocks": 1,
+        "false_block_rate": 0.03333333333333333
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.96,
+        "false_approvals": 1,
+        "false_approval_rate": 0.04,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 1.0,
+        "false_approvals": 0,
+        "false_approval_rate": 0.0,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.9,
+        "false_approvals": 1,
+        "false_approval_rate": 0.16666666666666666,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 3,
+        "pairs": 4,
+        "accuracy": 0.75
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "hedge": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "lexical_trap": {
+        "correct": 17,
+        "pairs": 19,
+        "accuracy": 0.8947368421052632
+      },
+      "multi_clause": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      },
+      "multi_sentence": {
+        "correct": 10,
+        "pairs": 11,
+        "accuracy": 0.9090909090909091
+      },
+      "negation": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "number_drift": {
+        "correct": 5,
+        "pairs": 5,
+        "accuracy": 1.0
+      },
+      "paraphrase": {
+        "correct": 22,
+        "pairs": 23,
+        "accuracy": 0.9565217391304348
+      },
+      "partial": {
+        "correct": 11,
+        "pairs": 11,
+        "accuracy": 1.0
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "verbatim": {
+        "correct": 12,
+        "pairs": 12,
+        "accuracy": 1.0
+      },
+      "world_knowledge": {
+        "correct": 18,
+        "pairs": 18,
+        "accuracy": 1.0
+      },
+      "wrong_entity": {
+        "correct": 7,
+        "pairs": 7,
+        "accuracy": 1.0
+      }
+    }
+  },
+  "qwen3.8-27b-lesson-judge AND laguna-xs-2.1": {
+    "pairs": 85,
+    "accuracy": 0.9411764705882353,
+    "balanced_accuracy": 0.946078431372549,
+    "precision_supported": 0.8918918918918919,
+    "recall_supported": 0.9705882352941176,
+    "f1_supported": 0.9295774647887324,
+    "macro_f1": 0.9395362071418409,
+    "false_approvals": 4,
+    "false_approval_rate": 0.0784313725490196,
+    "false_blocks": 1,
+    "false_block_rate": 0.029411764705882353,
+    "balanced_accuracy_95ci": [
+      0.8957142857142857,
+      0.9891304347826086
+    ],
+    "recall_unsupported": 0.9,
+    "recall_contradicted": 1.0,
+    "three_way": false,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "supported": 33,
+        "not_supported": 1
+      },
+      "unsupported": {
+        "not_supported": 36,
+        "supported": 4
+      },
+      "contradicted": {
+        "not_supported": 11
+      }
+    },
+    "latency_ms": {
+      "median": 11032.364838624999,
+      "p95": 14816.427,
+      "mean": 11225.020362776471,
+      "max": 15565.041015750001
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.9411764705882353,
+        "false_approvals": 4,
+        "false_approval_rate": 0.0784313725490196,
+        "false_blocks": 1,
+        "false_block_rate": 0.029411764705882353
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.9142857142857143,
+        "false_approvals": 2,
+        "false_approval_rate": 0.4,
+        "false_blocks": 1,
+        "false_block_rate": 0.03333333333333333
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.96,
+        "false_approvals": 1,
+        "false_approval_rate": 0.04,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 1.0,
+        "false_approvals": 0,
+        "false_approval_rate": 0.0,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.9,
+        "false_approvals": 1,
+        "false_approval_rate": 0.16666666666666666,
+        "false_blocks": 0,
+        "false_block_rate": 0.0
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 3,
+        "pairs": 4,
+        "accuracy": 0.75
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "hedge": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "lexical_trap": {
+        "correct": 17,
+        "pairs": 19,
+        "accuracy": 0.8947368421052632
+      },
+      "multi_clause": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      },
+      "multi_sentence": {
+        "correct": 11,
+        "pairs": 11,
+        "accuracy": 1.0
+      },
+      "negation": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "number_drift": {
+        "correct": 5,
+        "pairs": 5,
+        "accuracy": 1.0
+      },
+      "paraphrase": {
+        "correct": 23,
+        "pairs": 23,
+        "accuracy": 1.0
+      },
+      "partial": {
+        "correct": 10,
+        "pairs": 11,
+        "accuracy": 0.9090909090909091
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "verbatim": {
+        "correct": 11,
+        "pairs": 12,
+        "accuracy": 0.9166666666666666
+      },
+      "world_knowledge": {
+        "correct": 18,
+        "pairs": 18,
+        "accuracy": 1.0
+      },
+      "wrong_entity": {
+        "correct": 7,
+        "pairs": 7,
+        "accuracy": 1.0
+      }
+    }
+  },
+  "qwen3.8-27b-lesson-judge AND minicheck-flan-t5-large": {
+    "pairs": 85,
+    "accuracy": 0.9176470588235294,
+    "balanced_accuracy": 0.9117647058823529,
+    "precision_supported": 0.9090909090909091,
+    "recall_supported": 0.8823529411764706,
+    "f1_supported": 0.8955223880597015,
+    "macro_f1": 0.9137806115055789,
+    "false_approvals": 3,
+    "false_approval_rate": 0.058823529411764705,
+    "false_blocks": 4,
+    "false_block_rate": 0.11764705882352941,
+    "balanced_accuracy_95ci": [
+      0.8429802955665024,
+      0.9666666666666667
+    ],
+    "recall_unsupported": 0.925,
+    "recall_contradicted": 1.0,
+    "three_way": false,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "not_supported": 4,
+        "supported": 30
+      },
+      "unsupported": {
+        "not_supported": 37,
+        "supported": 3
+      },
+      "contradicted": {
+        "not_supported": 11
+      }
+    },
+    "latency_ms": {
+      "median": 8101.767510550149,
+      "p95": 12632.89606192509,
+      "mean": 8499.675842199867,
+      "max": 15276.064770816698
+    },
+    "by_subject": {
+      "dotnet": {
+        "pairs": 85,
+        "accuracy": 0.9176470588235294,
+        "false_approvals": 3,
+        "false_approval_rate": 0.058823529411764705,
+        "false_blocks": 4,
+        "false_block_rate": 0.11764705882352941
+      }
+    },
+    "by_origin": {
+      "approved": {
+        "pairs": 35,
+        "accuracy": 0.8857142857142857,
+        "false_approvals": 1,
+        "false_approval_rate": 0.2,
+        "false_blocks": 3,
+        "false_block_rate": 0.1
+      },
+      "perturbed": {
+        "pairs": 25,
+        "accuracy": 0.96,
+        "false_approvals": 1,
+        "false_approval_rate": 0.04,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "rejected": {
+        "pairs": 15,
+        "accuracy": 1.0,
+        "false_approvals": 0,
+        "false_approval_rate": 0.0,
+        "false_blocks": 0,
+        "false_block_rate": null
+      },
+      "related": {
+        "pairs": 10,
+        "accuracy": 0.8,
+        "false_approvals": 1,
+        "false_approval_rate": 0.16666666666666666,
+        "false_blocks": 1,
+        "false_block_rate": 0.25
+      }
+    },
+    "by_tag": {
+      "causal_addition": {
+        "correct": 3,
+        "pairs": 4,
+        "accuracy": 0.75
+      },
+      "date_drift": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "hedge": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "lexical_trap": {
+        "correct": 18,
+        "pairs": 19,
+        "accuracy": 0.9473684210526315
+      },
+      "multi_clause": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      },
+      "multi_sentence": {
+        "correct": 8,
+        "pairs": 11,
+        "accuracy": 0.7272727272727273
+      },
+      "negation": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "number_drift": {
+        "correct": 5,
+        "pairs": 5,
+        "accuracy": 1.0
+      },
+      "paraphrase": {
+        "correct": 20,
+        "pairs": 23,
+        "accuracy": 0.8695652173913043
+      },
+      "partial": {
+        "correct": 10,
+        "pairs": 11,
+        "accuracy": 0.9090909090909091
+      },
+      "reversal": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 6,
+        "pairs": 6,
+        "accuracy": 1.0
+      },
+      "verbatim": {
+        "correct": 11,
+        "pairs": 12,
+        "accuracy": 0.9166666666666666
+      },
+      "world_knowledge": {
+        "correct": 18,
+        "pairs": 18,
+        "accuracy": 1.0
+      },
+      "wrong_entity": {
+        "correct": 7,
+        "pairs": 7,
+        "accuracy": 1.0
+      }
+    }
+  }
+}

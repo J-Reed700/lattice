@@ -1,0 +1,85 @@
+{"id":"dotnet-2a55d4cd1a","label":"supported","difficulty":["verbatim"],"note":"First-class support for implicit conversions of Span<T> and ReadOnlySpan<T> listed under C# 14."}
+{"id":"dotnet-d7c8bc1864","label":"contradicted","difficulty":["negation","multi_clause"],"note":"returns the name of the type without requiring a type argument."}
+{"id":"dotnet-54d77d3204","label":"supported","difficulty":["paraphrase"],"note":"EF10 ... redacting such inlined parameters by default and replacing them with a question mark character (?)."}
+{"id":"dotnet-1442b2b294","label":"unsupported","difficulty":["wrong_entity","lexical_trap"],"note":"New property sets format of container images, not tab-completion scripts."}
+{"id":"dotnet-7a2072bde5","label":"unsupported","difficulty":["scope","lexical_trap"],"note":"Passage says 'fewer manual AsSpan() calls', not removing the need entirely."}
+{"id":"dotnet-e331d8e576","label":"unsupported","difficulty":["world_knowledge"],"note":"Passage never mentions Module 2 or a course solution."}
+{"id":"dotnet-66958fb70a","label":"unsupported","difficulty":["partial"],"note":"Passage says console apps can natively create container images; no Docker setup advice."}
+{"id":"dotnet-b640961888","label":"unsupported","difficulty":["world_knowledge"],"note":"Passage on query filters never mentions IN (?, ?) redacted logs."}
+{"id":"dotnet-1adc9f18f5","label":"unsupported","difficulty":["partial","scope"],"note":"Lazy initialization is mentioned for the getter, not setter; no lazy-init setter example."}
+{"id":"dotnet-f49834b9b8","label":"supported","difficulty":["paraphrase"],"note":"full logging can be reenabled via EnableSensitiveDataLogging; used in diagnostic or debugging scenarios."}
+{"id":"dotnet-037135252f","label":"contradicted","difficulty":["date_drift","multi_clause"],"note":"String to ReadOnlySpan<char> is new in C# 14; earlier you had to call .AsSpan(); C# 7.2 only introduced the span types."}
+{"id":"dotnet-2f717e3425","label":"unsupported","difficulty":["noisy_passage"],"note":"Passage is an AWS article on RAG; says nothing about span-based parameters."}
+{"id":"dotnet-0bb296f3b4","label":"unsupported","difficulty":["partial","multi_clause"],"note":"Passage lists container images, C# 14 features, EF logging not; no EF Core vector search mentioned, nor a lesson."}
+{"id":"dotnet-e86f7f18f6","label":"supported","difficulty":["paraphrase"],"note":"ASP.NET Core 10.0 features include ... passkey support for Identity."}
+{"id":"dotnet-20b4cc20a7","label":"unsupported","difficulty":["causal_addition","scope"],"note":"Passage says BCL had to offer multiple forms and could now provide a single overload; never says it removed array overloads."}
+{"id":"dotnet-7acb31b9e0","label":"supported","difficulty":["paraphrase"],"note":"Heading 'Redact inlined constants from logging by default' under EF10 improvements."}
+{"id":"dotnet-4dc123872d","label":"contradicted","difficulty":["wrong_entity","lexical_trap"],"note":"The contextual keyword is `field`, not `value`."}
+{"id":"dotnet-76f883ecb0","label":"unsupported","difficulty":["lexical_trap","paraphrase"],"note":"Quoted 'smoother path' phrase absent; passage is the spec motivation about backing-field overhead."}
+{"id":"dotnet-cceb166884","label":"contradicted","difficulty":["number_drift","multi_clause"],"note":"ASP.NET Core 2.2 added support for HTTP/2 (2.1 added compiled regex and Span<T> benefits)."}
+{"id":"dotnet-221b8d2953","label":"supported","difficulty":["verbatim"],"note":"ASP.NET Core 10.0 features include ... improved diagnostics."}
+{"id":"dotnet-f646cf8568","label":"contradicted","difficulty":["wrong_entity","multi_clause"],"note":"#32018 was for the ExecuteUpdateAsync non-expression lambda change, not redaction."}
+{"id":"dotnet-3596b67fda","label":"supported","difficulty":["verbatim"],"note":"You can access the compiler-generated backing field using the `field` contextual keyword."}
+{"id":"dotnet-158a1bbd7e","label":"supported","difficulty":["paraphrase"],"note":"C# 14 introduces several new features and enhancements to improve developer productivity and code quality (performance not stated for C# 14 generally; lenient)."}
+{"id":"dotnet-9ec24fe950","label":"supported","difficulty":["verbatim"],"note":"Features include ... enhanced form validation."}
+{"id":"dotnet-4969b9dd32","label":"supported","difficulty":["verbatim"],"note":"Features include ... passkey support for Identity."}
+{"id":"dotnet-9c19fd8354","label":"supported","difficulty":["paraphrase"],"note":"you no longer have to sprinkle your code with manual .AsSpan() calls."}
+{"id":"dotnet-dae46f9aed","label":"unsupported","difficulty":["noisy_passage","world_knowledge"],"note":"Passage is Blazor/Minimal API release notes; nothing on string manipulation or allocations."}
+{"id":"dotnet-fff70ed276","label":"supported","difficulty":["verbatim"],"note":"Features include Blazor WebAssembly preloading."}
+{"id":"dotnet-06603ab8f5","label":"unsupported","difficulty":["world_knowledge","causal_addition"],"note":"Passage says nameof supports unbound generics; nothing about logging, error messages or generic repositories."}
+{"id":"dotnet-da77a812d6","label":"supported","difficulty":["verbatim"],"note":"named query filters that allow multiple filters per entity type with selective disabling."}
+{"id":"dotnet-1941ed9acd","label":"unsupported","difficulty":["lexical_trap","scope"],"note":"Passage says a smoother path from auto-implemented properties to custom accessors, not that they replace auto properties."}
+{"id":"dotnet-1a02646df7","label":"supported","difficulty":["multi_clause"],"note":"Sections for .NET runtime, libraries, SDK, ASP.NET Core, C# 14 and EF Core all describe .NET 10 updates."}
+{"id":"dotnet-a56ac241c1","label":"supported","difficulty":["verbatim"],"note":"Field-backed properties provide a smoother path from auto-implemented properties to writing custom get and set accessors."}
+{"id":"dotnet-b799d65365","label":"unsupported","difficulty":["partial","world_knowledge"],"note":"Field keyword access is stated; breaking existing identifiers named field is not in this passage."}
+{"id":"dotnet-326c800752","label":"unsupported","difficulty":["causal_addition","world_knowledge"],"note":"Passage advises minimizing large object allocations (ArrayPool, caching) but never mentions Spans."}
+{"id":"dotnet-9a08b37857","label":"unsupported","difficulty":["noisy_passage","world_knowledge"],"note":"Passage is about OpenAPI source generators; nothing about text buffers or spans."}
+{"id":"dotnet-8013aae28a","label":"unsupported","difficulty":["partial"],"note":"First-class Span implicit conversions stated; 'stack-only ref struct' not in this passage."}
+{"id":"dotnet-1f454b4477","label":"supported","difficulty":["paraphrase","multi_sentence"],"note":"`field` accesses backing field; within the setter, applying a constraint to ensure the validity of a value."}
+{"id":"dotnet-5c735c118c","label":"supported","difficulty":["paraphrase","causal_addition"],"note":"Optimizations in .NET and ASP.NET Core mean that newer versions generally outperform older versions."}
+{"id":"dotnet-2e7c841ccc","label":"unsupported","difficulty":["partial","hedge"],"note":"Redaction by default is stated; passage never says EnableSensitiveDataLogging configuration may need verifying."}
+{"id":"dotnet-ebe926383a","label":"supported","difficulty":["verbatim"],"note":"First-class support for implicit conversions of Span<T> and ReadOnlySpan<T> under C# 14."}
+{"id":"dotnet-d51e4f773a","label":"supported","difficulty":["paraphrase"],"note":"On previous versions of EF, this produced SQL with IN (N'Administrator', N'Manager'); sensitive values were logged."}
+{"id":"dotnet-9fabead233","label":"supported","difficulty":["multi_sentence","paraphrase"],"note":"EF10 sends the same SQL to the database but logs redacted roles, preventing leakage; inlining kept."}
+{"id":"dotnet-6b6d4cfc02","label":"unsupported","difficulty":["scope"],"note":"Redaction by default is stated, but nothing says it applies to all database providers."}
+{"id":"dotnet-b0a9dfc1ac","label":"supported","difficulty":["paraphrase"],"note":"Motivation: extra control in accessors confronts users with the overhead of declaring a backing field; `field` keyword avoids it."}
+{"id":"dotnet-d98a7e2650","label":"supported","difficulty":["table"],"note":"Applies to: SQL Server 2025 (17.x), Azure SQL Database ...; the vector data type page."}
+{"id":"dotnet-569a6b9a79","label":"supported","difficulty":["noisy_passage","lexical_trap"],"note":"Spec examples use `field` in properties; glossary link csharp-14.0/field-keyword and 'prior to C# 14' indicate C# 14 feature."}
+{"id":"dotnet-94ba2522c0","label":"supported","difficulty":["paraphrase"],"note":"String to ReadOnlySpan<char> removes AsSpan() clutter for text-processing/parsing APIs, improving readability."}
+{"id":"dotnet-5dfd39a346","label":"supported","difficulty":["paraphrase"],"note":"Use `field` to add setter validation ... skip the manual field declaration entirely."}
+{"id":"dotnet-552a862fbf","label":"supported","difficulty":["paraphrase"],"note":"ASP.NET Core Identity isn't related to the Microsoft identity platform; Identity adds UI login, the platform is an alternative identity solution."}
+{"id":"dotnet-71cb96677d","label":"supported","difficulty":["paraphrase"],"note":"nameof ... supports unbound generic types ... returns the name of the type without requiring a type argument."}
+{"id":"dotnet-d2d5bb8102","label":"unsupported","difficulty":["lexical_trap","scope"],"note":"Quoted Blazor, OpenAPI and minimal API items are not described as security or diagnostics enhancements."}
+{"id":"dotnet-84b07b6e9b","label":"supported","difficulty":["paraphrase"],"note":"ASP.NET Core Identity isn't related to the Microsoft identity platform; Identity adds UI login, platform is an alternative identity solution."}
+{"id":"dotnet-35196d1650","label":"unsupported","difficulty":["noisy_passage","world_knowledge"],"note":"Passage is about CQRS commands and handlers; nothing on the field keyword or Domain layer scaffolding advice."}
+{"id":"dotnet-1f23bd1e54","label":"supported","difficulty":["paraphrase"],"note":"EF10 ... redacting such inlined parameters by default ... prevents that information from leaking into the application logs."}
+{"id":"dotnet-8bcf00b6c4","label":"supported","difficulty":["paraphrase"],"note":"EF Core 10 release introduces ... named query filters that allow multiple filters per entity type."}
+{"id":"dotnet-19c1dcc7cd","label":"unsupported","difficulty":["causal_addition","world_knowledge"],"note":"Minimize exceptions is about throwing/catching exceptions being slow; nothing about spans or subtle bugs."}
+{"id":"dotnet-0e86e0c478","label":"supported","difficulty":["paraphrase"],"note":"new contextual keyword `field` ... may be used within property accessor bodies; 'prior to 14' indicates C# 14."}
+{"id":"dotnet-2d761caf13","label":"contradicted","difficulty":["wrong_entity","multi_clause"],"note":"Partial methods and properties were introduced in C# 13, not C# 14."}
+{"id":"dotnet-4fce0eb30c","label":"unsupported","difficulty":["world_knowledge","scope"],"note":"Passage never says Span<T> is essential; mentions Span<T> only for .NET Core 2.1 benefit."}
+{"id":"dotnet-695240c618","label":"supported","difficulty":["verbatim"],"note":"For containers, console apps can natively create container images."}
+{"id":"dotnet-818e51ad8b","label":"contradicted","difficulty":["negation","reversal"],"note":"In previous versions, the potentially sensitive values were logged."}
+{"id":"dotnet-319d2ae9d5","label":"unsupported","difficulty":["partial","world_knowledge"],"note":"Passkey support for Identity stated; WebAuthn is not mentioned."}
+{"id":"dotnet-f129f0bfee","label":"unsupported","difficulty":["scope"],"note":"Automatic memory pool eviction is listed generically; passage does not restrict it to Blazor WebAssembly."}
+{"id":"dotnet-59b370ee91","label":"unsupported","difficulty":["partial"],"note":"Each release includes performance improvements; security patches are not mentioned."}
+{"id":"dotnet-d427ee372d","label":"supported","difficulty":["paraphrase"],"note":"Field-backed properties ... access the compiler-generated backing field using the `field` contextual keyword."}
+{"id":"dotnet-c2d3ec0544","label":"supported","difficulty":["verbatim"],"note":"Heading 'Vector search support' under 'Azure SQL and SQL Server'; EF 10 brings full support for the vector data type."}
+{"id":"dotnet-67def49f75","label":"supported","difficulty":["paraphrase","multi_sentence"],"note":"Identity includes built-in support for passkeys; passkeys use public key cryptography and device-based authentication."}
+{"id":"dotnet-ba7801a72f","label":"contradicted","difficulty":["reversal","lexical_trap"],"note":"EF10 sends the same SQL to the database, but logs the redacted SQL."}
+{"id":"dotnet-caec619908","label":"unsupported","difficulty":["noisy_passage","world_knowledge"],"note":"Passage is C# interview questions on OOP, collections, exceptions; nothing on string manipulation or allocations."}
+{"id":"dotnet-07d7c40724","label":"supported","difficulty":["verbatim"],"note":"ASP.NET Core Identity isn't related to the Microsoft identity platform."}
+{"id":"dotnet-af2ef1f9bd","label":"unsupported","difficulty":["noisy_passage","world_knowledge"],"note":"Passage on query filter limitations and multi-tenancy; nothing about connection strings, secrets or inlined logging."}
+{"id":"dotnet-4551b9b0d2","label":"contradicted","difficulty":["reversal","negation"],"note":"On previous versions the inlined values were logged; EF10 now redacts them by default."}
+{"id":"dotnet-ce7610b7b9","label":"contradicted","difficulty":["number_drift","lexical_trap"],"note":"Large objects require a full (generation 2) garbage collection, not generation 1."}
+{"id":"dotnet-8f4993d595","label":"unsupported","difficulty":["wrong_entity","lexical_trap"],"note":"The Span<T> conversion support is listed under C# 14; the F# section does not mention it."}
+{"id":"dotnet-888efd70b4","label":"contradicted","difficulty":["number_drift"],"note":".NET 10 is supported for three years as a long-term support (LTS) release."}
+{"id":"dotnet-2ed1091805","label":"supported","difficulty":["paraphrase"],"note":"C# 14 introduces ... first-class language support for spans ... new implicit conversions between Span<T>, ReadOnlySpan<T>, and arrays."}
+{"id":"dotnet-42dc1a598c","label":"unsupported","difficulty":["hedge","causal_addition"],"note":"Redaction is stated as default EF10 behavior; passage gives no configuration or best practice needed to ensure it."}
+{"id":"dotnet-c4600e44e1","label":"unsupported","difficulty":["noisy_passage"],"note":"Identity intro text never mentions passkeys or ASP.NET Core 10 features."}
+{"id":"dotnet-f1fe92b112","label":"contradicted","difficulty":["negation"],"note":"ASP.NET Core Identity isn't related to the Microsoft identity platform."}
+{"id":"dotnet-b43dd76027","label":"unsupported","difficulty":["causal_addition"],"note":"Span conversions in C# 14 and VB respecting OverloadResolutionPriority are stated separately; no causal link given."}
+{"id":"dotnet-a5e8f9ea2c","label":"unsupported","difficulty":["scope","world_knowledge"],"note":"Passage gives best-practice advice but never says runtime improvements fail to help or that bottlenecks always need manual optimization."}
+{"id":"dotnet-c6098f6127","label":"unsupported","difficulty":["partial","multi_clause"],"note":"Container images, field keyword, Span conversions, named query filters stated; EF Core vector data type support is not mentioned."}
+{"id":"dotnet-698389f2a1","label":"supported","difficulty":["verbatim"],"note":"Field-backed properties provide a smoother path from auto-implemented properties to writing custom get and set accessors."}
+{"id":"dotnet-930b8f3aed","label":"unsupported","difficulty":["causal_addition"],"note":"Console apps natively creating container images and a new format property are separate facts; the new property is not said to enable native creation."}
