@@ -31,10 +31,10 @@ shared/error/
   status_code, type }`, built with `ErrorResponse::from(app_error)`.
 
 `From` conversions exist for `io::Error`, `serde_json::Error`, `sqlx::Error`,
-`keyring::Error`, `anyhow::Error`, `ndarray::ShapeError`, `String`/`&str`,
-`DomainTypeError`, `LLMError`, `DownloadError`, `DomainError` and
-`ApplicationError`, so `?` works across layers. Driver conversions live in
-`infrastructure/error_conversions.rs`; LLM and download conversions live beside
+`anyhow::Error`, `String`/`&str`, `DomainTypeError`, `LLMError`,
+`DownloadError`, `DomainError` and `ApplicationError`, so `?` works across layers. The `sqlx::Error` conversion
+lives in `shared/persistence/driver_error.rs`; keyring and ndarray errors are
+mapped explicitly where they occur; LLM and download conversions live beside
 those types. The shared contracts do not import infrastructure or features.
 
 Helpers on `AppError`: constructors (`not_found`, `validation_failed`,

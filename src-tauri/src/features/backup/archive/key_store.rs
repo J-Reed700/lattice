@@ -126,19 +126,19 @@ impl MasterKeyStore {
 
     /// Any error here sends `load` to the file fallback; it is only logged.
     fn load_from_keyring(&self) -> Result<Option<MasterKey>, AppError> {
-        let entry = keyring::Entry::new(&self.service, KEYRING_USER)?;
+        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(keyring_error)?;
         match entry.get_password() {
             Ok(encoded) => decode_key(&encoded)
                 .map(Some)
                 .map_err(|e| AppError::InvalidData(e.to_string())),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(keyring_error(e)),
         }
     }
 
     fn store_in_keyring(&self, encoded: &str) -> Result<(), AppError> {
-        let entry = keyring::Entry::new(&self.service, KEYRING_USER)?;
-        Ok(entry.set_password(encoded)?)
+        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(keyring_error)?;
+        entry.set_password(encoded).map_err(keyring_error)
     }
 
     fn load_from_file(&self) -> Result<Option<MasterKey>, ArchiveError> {
@@ -177,6 +177,10 @@ fn restrict_permissions(_path: &Path) -> Result<(), ArchiveError> {
     // Windows inherits the app data directory's ACL, which is already
     // per-user. There is no portable mode bit to set.
     Ok(())
+}
+
+fn keyring_error(err: keyring::Error) -> AppError {
+    AppError::KeyringError(err.to_string())
 }
 
 fn decode_key(encoded: &str) -> Result<MasterKey, ArchiveError> {

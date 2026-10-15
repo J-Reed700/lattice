@@ -12,7 +12,6 @@
 
 pub mod adapters;
 pub mod crash;
-mod error_conversions;
 pub mod events;
 pub mod extraction;
 pub mod file_system;

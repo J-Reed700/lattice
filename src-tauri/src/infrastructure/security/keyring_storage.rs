@@ -142,7 +142,7 @@ impl SecureStorage {
                 }
                 Err(e) => {
                     error!("Failed to retrieve API key '{}': {}", key_name, e);
-                    Err(e.into())
+                    Err(AppError::KeyringError(e.to_string()))
                 }
             }
         })
@@ -179,7 +179,7 @@ impl SecureStorage {
                 }
                 Err(e) => {
                     error!("Failed to delete API key '{}': {}", key_name, e);
-                    Err(e.into())
+                    Err(AppError::KeyringError(e.to_string()))
                 }
             }
         })
