@@ -6,8 +6,10 @@
 //! leaves unsupported is checked again against its next page, passages it has
 //! not been shown, batched with the other claims still looking; the walk ends
 //! at the first supported or contradicted verdict, or when the next page has
-//! no passage sharing a content term with the claim (vector neighbours alone
-//! do not continue it). Each page's check has its own receipt.
+//! no passage mentioning the claim's subject (vector neighbours alone do not
+//! continue it). Deepening rounds continue only while the last round settled
+//! at least one claim as supported or contradicted. Each page's check has its
+//! own receipt.
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
 use std::collections::BTreeMap;
@@ -631,10 +633,15 @@ async fn deepen(
                 );
             }
         }
+        let mut settled = 0;
         for (ordinal, finding) in outcomes {
             if finding.verdict == ClaimVerdict::Unsupported {
                 continue;
             }
+            settled += usize::from(matches!(
+                finding.verdict,
+                ClaimVerdict::Supported | ClaimVerdict::Contradicted
+            ));
             walks.remove(&ordinal);
             if let Some(result) = results.iter_mut().find(|result| result.0 == ordinal) {
                 result.2 = finding;
@@ -642,9 +649,14 @@ async fn deepen(
         }
         tracing::info!(
             round,
+            settled,
             looking = walks.len(),
             "Deepened the evidence of unsupported claims"
         );
+        // Another round runs only while the last one settled a claim.
+        if settled == 0 {
+            break;
+        }
     }
     Ok(())
 }

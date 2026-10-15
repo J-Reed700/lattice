@@ -76,7 +76,7 @@ pub(in crate::features::learning) use report::persist_report;
 const POLICY: &str = "lesson-evidence-v19";
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v6";
+const INVENTORY_POLICY: &str = "lesson-evidence-v7";
 
 pub(in crate::features::learning) async fn normalize_example_fences(
     llm: &dyn LLMPort,

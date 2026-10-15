@@ -59,6 +59,11 @@ pub struct ReferenceCollection<'a> {
     pub sources: Vec<LearningSourceDto>,
     chunks: Vec<Chunk>,
     frequencies: HashMap<String, usize>,
+    /// How many passages of the whole collection, library-ranked snapshots
+    /// included, contain each term.
+    subject_frequencies: HashMap<String, usize>,
+    /// How many passages the whole collection has.
+    subject_passages: usize,
     average_length: f64,
     library: Option<&'a dyn LibraryPassagesPort>,
     /// Library chunk ID to its bytes in a snapshot.
@@ -175,12 +180,20 @@ impl<'a> ReferenceCollection<'a> {
     fn keyword(sources: &[LearningSourceDto], ranked_by_library: &HashSet<usize>) -> Self {
         let mut chunks = Vec::new();
         let mut frequencies = HashMap::new();
+        let mut subject_frequencies: HashMap<String, usize> = HashMap::new();
+        let mut subject_passages = 0;
         for (source, value) in sources.iter().enumerate() {
-            if ranked_by_library.contains(&source) {
-                continue;
-            }
             for (start, end) in spans(&value.excerpt) {
+                subject_passages += 1;
                 let counts = terms(&value.excerpt[start..end]);
+                for term in counts.keys() {
+                    *subject_frequencies.entry(term.clone()).or_default() += 1;
+                }
+                // The library ranks its own snapshots; only the rest are
+                // keyword passages.
+                if ranked_by_library.contains(&source) {
+                    continue;
+                }
                 for term in counts.keys() {
                     *frequencies.entry(term.clone()).or_default() += 1;
                 }
@@ -200,6 +213,8 @@ impl<'a> ReferenceCollection<'a> {
             sources: sources.to_vec(),
             chunks,
             frequencies,
+            subject_frequencies,
+            subject_passages,
             average_length,
             library: None,
             library_spans: HashMap::new(),
@@ -434,14 +449,21 @@ impl<'a> ReferenceCollection<'a> {
     /// terms. Words the whole subject shares (in a .NET collection, "net" or
     /// "core") do not count, so a walk through deeper evidence ends once only
     /// the subject's common vocabulary is left. Vector neighbours alone never
-    /// count.
+    /// count. Before the median is taken, two kinds of query term are left
+    /// out because no page can tell anything by them: a term in no passage of
+    /// the collection, such as a name a lesson invented for its example (no
+    /// page can contain it, so it neither keeps a walk going nor lowers the
+    /// bar the real terms must meet), and a term in every passage.
     pub(in crate::features::learning) fn mentions_subject_of(
         &self,
         query: &str,
         text: &str,
     ) -> bool {
         let mut wanted: Vec<(usize, String)> = content_terms(query)
-            .map(|term| (self.frequencies.get(&term).copied().unwrap_or(0), term))
+            .filter_map(|term| {
+                let frequency = self.subject_frequencies.get(&term).copied().unwrap_or(0);
+                (frequency > 0 && frequency < self.subject_passages).then_some((frequency, term))
+            })
             .collect();
         wanted.sort();
         wanted.dedup();

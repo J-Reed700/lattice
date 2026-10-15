@@ -113,7 +113,7 @@ fn inventory(statements: &[String]) -> Inventory {
 #[tokio::test]
 async fn a_claim_backed_only_past_its_first_page_is_found_by_deepening() -> Result<()> {
     // The marker passage shares one term with the claim, so it ranks last.
-    let mut sources: Vec<_> = (0..12).map(related).collect();
+    let mut sources: Vec<_> = (0..8).map(related).collect();
     sources.push(reference(
         "marker".into(),
         format!("{} {MARKER}", "Archive index entry. ".repeat(80)),
@@ -226,4 +226,41 @@ async fn each_claim_in_a_batch_call_stays_within_its_share() -> Result<()> {
     .await?;
     assert!(model.checks.lock().unwrap().len() >= statements.len());
     Ok(())
+}
+
+#[tokio::test]
+async fn deepening_stops_after_a_round_that_settles_nothing() -> Result<()> {
+    // Plenty of deeper pages mention the claim's subject, but none settles it.
+    let sources: Vec<_> = (0..20).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let results = evidence_checks::check(
+        &model,
+        &references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &ClaimChecks::default(),
+    )
+    .await?;
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
+    // Page 1, then one deepening round that settled nothing, then stop.
+    assert_eq!(model.checks.lock().unwrap().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
+    let one = |id: &str, text: &str| reference(id.into(), text.into());
+    let mut sources = vec![
+        one("a1", "Alpha decays slowly."),
+        one("a2", "Alpha is measured hourly."),
+    ];
+    sources.extend((0..5).map(|i| one(&format!("b{i}"), &format!("Beta reading {i}."))));
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    // Three invented names, in no passage, would pull the median to zero and
+    // leave only themselves distinctive; excluded, "alpha" is distinctive.
+    let claim = "OrderWidget CartFactory SkuHelper keep alpha above beta.";
+    assert!(references.mentions_subject_of(claim, "A note about alpha."));
+    assert!(!references.mentions_subject_of(claim, "A note about beta."));
+    assert!(!references.mentions_subject_of(claim, "OrderWidget CartFactory SkuHelper"));
 }

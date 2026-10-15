@@ -433,3 +433,43 @@ fn quotes_are_prose_and_never_headings_navigation_tables_or_link_lists() {
     ));
     assert!(is_prose("- Value objects can include methods that encapsulate domain logic, but those methods shouldn't produce side effects."));
 }
+
+#[tokio::test]
+async fn sixty_four_items_are_linked_in_eight_calls_that_each_fit() {
+    use crate::features::learning::lessons::course_generation_tests::LINKS_SENTINEL;
+    let item = |i: usize| json!({"text":format!("Explain random assignment and uncertainty in comparison {i}."),"sourceIndex":null,"quote":""});
+    let modules: Vec<Value> = (0..8)
+        .map(|m| json!({
+            "title":format!("Comparisons {m}"),"prerequisiteIndices":[],
+            "summary":item(m * 8),
+            "outcomes":(1..4).map(|i| item(m * 8 + i)).collect::<Vec<_>>(),
+            "lessons":(4..8).map(|i| json!({"title":format!("Lesson {m}.{i}"),"objective":format!("Plan random assignment with an uncertainty estimate, case {}.", m * 8 + i),"sourceIndex":null,"quote":""})).collect::<Vec<_>>()
+        }))
+        .collect();
+    let mut draft = draft(json!({ "modules": modules }));
+    let llm = ScriptedModel {
+        outputs: std::sync::Mutex::new(vec![format!("{LINKS_SENTINEL}{{}}}}")].into()),
+        prompts: std::sync::Mutex::new(vec![]),
+    };
+    let log = link(
+        &llm,
+        &mut draft,
+        &sources(),
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(log.items, 64);
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 8, "batches of eight, not one call for all");
+    for prompt in prompts.iter() {
+        let request = payload(prompt);
+        let items = request["items"].as_array().unwrap();
+        assert_eq!(items.len(), 8);
+        assert!(items
+            .iter()
+            .all(|i| !i["candidates"].as_array().unwrap().is_empty()));
+        assert!(fits(&llm, &request.to_string(), 200 + 120 * items.len()));
+    }
+}
