@@ -34,7 +34,7 @@
     "type-check:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "test": "vitest",
     "test:unit": "vitest run",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked --features bindings-export --lib --bins --tests --no-fail-fast",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast",
     "test:check": "npm run type-check && npm run type-check:e2e && npm run lint && npm run contracts:check && npm run test:coverage",
     "test:all": "npm run test:check && npx vite build && npm run test:rust && npm run test:e2e && npm run test:desktop:build && npm run test:desktop",
     "test:ui": "vitest --ui",

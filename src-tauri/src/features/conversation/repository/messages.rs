@@ -1,14 +1,14 @@
 //! Conversation messages: append, read and two-phase-commit status changes.
 
 use super::ConversationRepository;
-use crate::domain::conversation::memory::compute_digest;
-use crate::domain::conversation::{ConversationMessage, MessageRole};
 use crate::features::conversation::persistence_mapper::{
     ConversationMessageMapper, ConversationMessageModel,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::ConversationId;
 use chrono::Utc;
+use lattice_core::domain::conversation::memory::compute_digest;
+use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::ConversationId;
 use std::str::FromStr;
 
 impl ConversationRepository {

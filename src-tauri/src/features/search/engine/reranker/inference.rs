@@ -7,7 +7,7 @@ use candle_nn::Module;
 use parking_lot::Mutex;
 use tokenizers::{Encoding, Tokenizer};
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::{Inner, RerankResult};
 

@@ -78,7 +78,7 @@ pub(super) const INTENT_CONTEXT_TURNS: usize = 4;
 /// defaults, not to second-guess a decision.
 pub(super) async fn infer_turn_intent_flags(
     container: &dyn ChatRuntime,
-    chat_llm: &Arc<dyn crate::application::ports::LLMPort>,
+    chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     search_flags: SearchFlags,
     validated_message: &str,
@@ -184,7 +184,7 @@ pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) 
 /// router are the ones where no router ran.
 pub(super) async fn resolve_router_decision(
     container: &dyn ChatRuntime,
-    conversation_document_context: &[crate::domain::conversation::DocumentReference],
+    conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     validated_message: &str,
     search_flags: SearchFlags,
     explorer: bool,

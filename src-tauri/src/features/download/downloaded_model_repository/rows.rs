@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use tracing::warn;
 
-use crate::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
-use crate::domain::models::downloaded::{DownloadedModel, ModelLocation, StoredDownloadedModel};
-use crate::domain::models::metadata::ModelType;
-use crate::domain::value_objects::ArtifactIdentity;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
+use lattice_core::domain::models::downloaded::{
+    DownloadedModel, ModelLocation, StoredDownloadedModel,
+};
+use lattice_core::domain::models::metadata::ModelType;
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Database record structure for RETURNING queries.
 ///
@@ -112,7 +114,7 @@ pub(super) fn fallback_artifact_path(location: &ModelLocation) -> Option<PathBuf
         // under a `model.safetensors` path that does not exist, and the
         // synthesized manifest row would report a zero size.
         ModelLocation::LocalDirectory { path } => Some(
-            crate::domain::models::checkpoint::weights_path(path)
+            lattice_core::domain::models::checkpoint::weights_path(path)
                 .unwrap_or_else(|| path.join(WEIGHTS_SAFETENSORS)),
         ),
         ModelLocation::RemoteOllama => None,

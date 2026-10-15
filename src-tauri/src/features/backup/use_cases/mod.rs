@@ -16,7 +16,7 @@ pub use start_auto::StartAutoBackupUseCase;
 pub use startup_auto::StartupAutoBackupUseCase;
 pub use stop_auto::StopAutoBackupUseCase;
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use std::time::Duration;
 
 pub(crate) fn parse_backup_schedule(schedule: &str) -> Result<Duration, AppError> {

@@ -20,22 +20,22 @@ use futures::{FutureExt, StreamExt};
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
-use crate::application::contracts::settings::LLMVerificationSettingsDto;
-use crate::application::ports::llm_port::SamplingOverride;
+use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
+use lattice_core::application::ports::llm_port::SamplingOverride;
 #[cfg(test)]
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
-use crate::application::ports::LLMPort;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::ports::LLMPort;
 #[cfg(test)]
-use crate::application::services::claim_verification::{
+use lattice_core::application::services::claim_verification::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs,
 };
-use crate::application::services::claim_verification::{CheckPolicy, ClaimChecker};
-pub(super) use crate::application::services::claim_verification::{
+use lattice_core::application::services::claim_verification::{CheckPolicy, ClaimChecker};
+pub(super) use lattice_core::application::services::claim_verification::{
     ClaimEvidence, ClaimJudgment, MIN_VERDICT_CONFIDENCE,
 };
-use crate::features::qa::dto::SourceDto;
 #[cfg(test)]
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
 #[cfg(test)]
@@ -305,7 +305,7 @@ mod tests {
     use super::super::lexical::lexical_pass;
     use super::super::test_support::source;
     use super::*;
-    use crate::application::ports::llm_port::CompletionResponse;
+    use lattice_core::application::ports::llm_port::CompletionResponse;
 
     fn found(evidence: Evidence) -> ClaimEvidence {
         match evidence {

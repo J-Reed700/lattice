@@ -14,11 +14,11 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tracing::warn;
 
-use crate::application::contracts::search::CorpusDocument;
-use crate::application::ports::llm_port::chars_within_tokens;
-use crate::application::ports::LLMPort;
-use crate::domain::value_objects::source_context::SourceContext;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::ports::llm_port::chars_within_tokens;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::value_objects::source_context::SourceContext;
+use lattice_core::shared::error::{AppError, Result};
 
 use super::shortlist::SHORTLIST_CAP;
 use super::{CorrectionRequest, CORRECTION_INSTRUCTION, PLANNER_SYSTEM, SUMMARY_CATALOG_CHARS};

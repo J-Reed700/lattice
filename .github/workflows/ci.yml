@@ -81,7 +81,7 @@ jobs:
 
       - name: cargo check
         working-directory: src-tauri
-        run: cargo check --all-targets
+        run: cargo check --workspace --all-targets
 
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
@@ -104,7 +104,11 @@ jobs:
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          cargo test --locked --features bindings-export --lib --bins --tests --no-run --message-format=json > $json
+          # Two jobs, not four: each test crate that reads the lattice rlib
+          # (about 1 GB) needs several GB while it compiles, and four at once
+          # exceed the runner's commit limit ("The paging file is too small",
+          # os error 1455), which rustc reports as E0786 invalid metadata.
+          cargo test --locked --features bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -129,7 +133,7 @@ jobs:
 
       - name: All desktop Rust unit, command and integration tests
         working-directory: src-tauri
-        run: cargo test --locked --features bindings-export --lib --bins --tests --no-fail-fast
+        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
 
       - name: Execute C#, Rust, React and Python container exercises
         if: matrix.os == 'ubuntu-latest'
@@ -148,11 +152,11 @@ jobs:
             LATTICE_LAB_SMOKE_ENGINE=docker \
             cargo test --features bindings-export --lib features::learning::runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
-      # The crate defines additional safety lints in Cargo.toml. Existing
+      # The workspace defines additional safety lints in Cargo.toml. Existing
       # warnings are not promoted to errors yet.
       - name: cargo clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets
+        run: cargo clippy --workspace --all-targets
 
       - name: generated bindings are current
         working-directory: src-tauri

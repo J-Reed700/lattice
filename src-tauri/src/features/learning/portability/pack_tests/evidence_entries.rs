@@ -8,7 +8,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 async fn course(pool: &SqlitePool) -> Result<String> {
@@ -82,7 +82,7 @@ async fn a_table_over_the_import_cap_is_refused_at_export_and_backup() -> Result
     let earlier = export(&home, home_dir.path(), &program_id).await?;
     sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<=?) INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) SELECT 'heavy-'||i,?,'recall','review',NULL,'hash','null',i FROM n")
         .bind(CAP).bind(&program_id).execute(&home).await?;
-    let names_cap = |error: &crate::shared::error::AppError| {
+    let names_cap = |error: &lattice_core::shared::error::AppError| {
         let text = error.to_string();
         assert!(
             text.contains("learning_operations") && text.contains(&CAP.to_string()),

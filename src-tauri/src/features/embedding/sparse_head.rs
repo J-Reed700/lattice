@@ -38,9 +38,9 @@ use std::path::{Path, PathBuf};
 use candle_core::{DType, Device, Module, Tensor};
 use tokenizers::Tokenizer;
 
-use crate::domain::value_objects::SparseEmbedding;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 /// The PyTorch pickle the BGE-M3 repository publishes.
 pub const SPARSE_HEAD_PT: &str = "sparse_linear.pt";

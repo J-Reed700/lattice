@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::shared::error::{AppError, Result, ResultExt};
+use lattice_core::shared::error::{AppError, Result, ResultExt};
 
 use super::{resolve_model_dir, Qwen3RerankerService, RerankResult, Reranker, RerankerService};
 

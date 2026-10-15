@@ -11,7 +11,8 @@ use super::client::OcrClient;
 use super::model::OcrModelSource;
 use super::render;
 use super::server::{OcrServer, ServerLauncher};
-use crate::application::ports::{OcrError, OcrPort};
+use lattice_core::application::ports::{OcrError, OcrPort};
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// Bound on one page's request to the server. Apple Silicon reads a dense
 /// page in about five seconds; the CPU-only build on an old laptop can take a
@@ -30,10 +31,11 @@ impl VisionOcr {
     pub fn new(
         models: Arc<dyn OcrModelSource>,
         launcher: Arc<dyn ServerLauncher>,
+        background: Arc<BackgroundTasks>,
     ) -> Result<Self, OcrError> {
         Ok(Self {
             models,
-            server: OcrServer::new(launcher),
+            server: OcrServer::new(launcher, background),
             client: OcrClient::new()?,
             page_timeout: OCR_PAGE_TIMEOUT,
         })
@@ -62,7 +64,7 @@ impl OcrPort for VisionOcr {
         // Rendering is CPU-bound and CoreGraphics may autorelease while it
         // decodes images, so it runs on the blocking pool inside a pool drain.
         let image = tokio::task::spawn_blocking(move || {
-            crate::shared::runtime::with_autorelease_pool(|| render::page_image(&path, page))
+            lattice_core::shared::runtime::with_autorelease_pool(|| render::page_image(&path, page))
         })
         .await
         .map_err(|error| OcrError::PageRender {

@@ -1,13 +1,13 @@
 //! Research turns as jobs: carried on after a restart, ended by the chat's
 //! stop button.
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
-use crate::domain::conversation::MessageRole;
 use crate::features::conversation::chat::routing::SearchFlags;
 use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
 use crate::features::conversation::chat::ToolPreferences;
 use crate::features::conversation::ConversationServiceTrait;
-use crate::shared::runtime::jobs::JobRuntime;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -40,7 +40,7 @@ async fn until(mut done: impl FnMut() -> bool) {
     .expect("waited too long");
 }
 
-async fn finished(jobs: &JobRuntime, id: &str) -> crate::shared::runtime::jobs::JobRecord {
+async fn finished(jobs: &JobRuntime, id: &str) -> lattice_core::shared::runtime::jobs::JobRecord {
     tokio::time::timeout(WAIT, async {
         loop {
             let job = jobs.store().get(id).await.unwrap();

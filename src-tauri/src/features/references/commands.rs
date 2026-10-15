@@ -9,8 +9,8 @@ use super::dto::{
 };
 use super::repository::{PassageReferenceRecord, PassageReferenceRepository};
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use uuid::Uuid;
 
 const DEFAULT_LIST_LIMIT: i64 = 200;

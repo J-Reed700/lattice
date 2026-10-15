@@ -1,12 +1,12 @@
 use super::*;
-use crate::application::ports::llm_port::CompletionInput;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
     curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
     dto::AcceptLearningProgramRequestDto, lesson_drafts,
     plan_dto::StartLearningGenerationJobRequestDto, repository::LearningRepository,
 };
-use crate::shared::runtime::jobs::{JobContext, JobStore, RecoveryPolicy};
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::shared::runtime::jobs::{JobContext, JobStore, RecoveryPolicy};
 
 #[derive(Default)]
 struct BatchModel {

@@ -12,7 +12,7 @@ use crate::features::learning::{
     source_library::LearningSourceLibraryRepository,
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
-use crate::{
+use lattice_core::{
     application::ports::LibraryPassagesPort,
     shared::error::{AppError, Result},
 };

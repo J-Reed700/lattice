@@ -21,11 +21,6 @@ use chrono::Utc;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
-use crate::application::factories::ChecksumFactory;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::application::ports::{DocumentRepositoryPort, LLMPort};
-use crate::domain::entities::Document;
-use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::features::corpus_shape::clustering::ClusteringParams;
 use crate::features::corpus_shape::entity::LabelSource;
 use crate::features::corpus_shape::labeling::RepresentativeDoc;
@@ -36,8 +31,13 @@ use crate::features::embedding::entity::Embedding as EmbeddingEntity;
 use crate::infrastructure::persistence::repositories::mocks::{
     MockDocumentRepository, MockEmbeddingRepository,
 };
-use crate::shared::error::Result;
-use crate::shared::types::{ChunkId, ValidatedFilePath};
+use lattice_core::application::factories::ChecksumFactory;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::{DocumentRepositoryPort, LLMPort};
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::types::{ChunkId, ValidatedFilePath};
 
 struct CountingMockLlm {
     calls: Arc<Mutex<usize>>,
@@ -107,8 +107,8 @@ fn make_document(id: &str, file_name: &str) -> Document {
     .unwrap();
     let checksum = ChecksumFactory::from_bytes(file_name.as_bytes()).unwrap();
     let now = Utc::now();
-    Document::with_id(crate::domain::entities::document::StoredDocument {
-        id: crate::shared::types::DocumentId::from(id.to_string()),
+    Document::with_id(lattice_core::domain::entities::document::StoredDocument {
+        id: lattice_core::shared::types::DocumentId::from(id.to_string()),
         file_path: path,
         file_name: file_name.to_string(),
         file_type: None,
@@ -117,10 +117,10 @@ fn make_document(id: &str, file_name: &str) -> Document {
         modified_at: now,
         indexed_at: now,
         checksum,
-        status: crate::domain::entities::document::DocumentStatus::Indexed,
+        status: lattice_core::domain::entities::document::DocumentStatus::Indexed,
         error_message: None,
-        language: crate::domain::entities::document::Language::default(),
-        category: crate::domain::entities::document::Category::default(),
+        language: lattice_core::domain::entities::document::Language::default(),
+        category: lattice_core::domain::entities::document::Category::default(),
         quality_score: 0.5,
         access_count: 0,
         last_accessed_at: None,
@@ -169,7 +169,7 @@ async fn seed_three_blob_vault() -> (
                 DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
                 vector.len(),
             );
-            use crate::application::ports::EmbeddingRepositoryPort;
+            use lattice_core::application::ports::EmbeddingRepositoryPort;
             emb_repo.save(&embedding, vector).await.unwrap();
         }
     }
@@ -202,7 +202,7 @@ fn build_use_case(
     llm: Arc<dyn LLMPort>,
 ) -> RunClusteringUseCase {
     let doc_port: Arc<dyn DocumentRepositoryPort> = doc_repo;
-    let emb_port: Arc<dyn crate::application::ports::EmbeddingRepositoryPort> = emb_repo;
+    let emb_port: Arc<dyn lattice_core::application::ports::EmbeddingRepositoryPort> = emb_repo;
     let cluster_repo: Arc<dyn ClusterRepositoryPort> = Arc::new(SqliteClusterRepository::new(pool));
     let preview: Arc<dyn DocumentContentPreviewPort> = Arc::new(StubPreview);
 

@@ -2,11 +2,11 @@
 //! time left, and saves of the vectors file that mark files embedded.
 
 use super::{per_second, Embedded, Indexer, Outcome, Pace};
-use crate::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
-use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::index::dto::FolderIndexState;
 use crate::features::explorer::index::store::ChunkRow;
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::{AppError, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

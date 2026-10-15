@@ -7,12 +7,12 @@
 //! This repository implements the FavoritesRepositoryPort trait,
 //! providing operations for managing document favorites.
 
-use crate::application::contracts::favorites::FavoriteRecord as FavoriteDto;
-use crate::application::ports::FavoritesRepositoryPort;
 use crate::infrastructure::persistence::database::query_with_timeout;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::Utc;
+use lattice_core::application::contracts::favorites::FavoriteRecord as FavoriteDto;
+use lattice_core::application::ports::FavoritesRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 

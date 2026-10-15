@@ -3,7 +3,7 @@
 //! Thin controllers for managing LLM conversations and conversational question-answering.
 //! Conversations maintain context across multiple Q&A interactions, enabling follow-up
 //! questions and contextual understanding. These commands follow Domain-Driven Design
-//! principles with cross-cutting concerns (rate limiting, validation, audit logging)
+//! principles with cross-cutting concerns (rate limiting, validation)
 //! and business logic delegation to ConversationService.
 //!
 //! # Architecture
@@ -12,7 +12,6 @@
 //! - **Rate limiting**: Protect against resource exhaustion
 //! - **Input validation**: Sanitize and validate user inputs (XSS prevention)
 //! - **Service delegation**: Business logic in ConversationService
-//! - **Audit logging**: Track security-sensitive operations
 //!
 //! # Conversational Q&A Pattern
 //!
@@ -29,20 +28,23 @@
 //! 2. Input validation
 //! 3. Get service from container
 //! 4. Delegate to service
-//! 5. Audit logging (for important operations)
-//! 6. Return result
+//! 5. Return result
 
-use crate::domain::{Conversation, ConversationMessage};
 use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::conversation::space_dto::{
-    ConversationSpaceDto, CreateConversationSpaceRequestDto,
-};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
-use crate::shared::error::{AppError, Result};
-use serde_json::Value;
+use lattice_core::domain::Conversation;
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
-use tracing::warn;
+
+mod delete;
+mod messages;
+mod rename;
+mod space;
+
+pub use delete::{delete_conversation, delete_conversation_impl};
+pub use messages::{get_conversation_messages, get_conversation_messages_impl};
+pub use rename::{rename_conversation, rename_conversation_impl};
+pub use space::create_conversation_space_impl;
 
 /// Creates a new conversation for multi-turn Q&A with context
 ///
@@ -106,7 +108,6 @@ use tracing::warn;
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents conversation spam
 /// - **Input Validation**: Title sanitized to prevent XSS attacks
-/// - **Audit Logging (CWE-778)**: Logs conversation creation for compliance
 ///
 /// # System Prompts
 ///
@@ -130,15 +131,13 @@ use tracing::warn;
 /// 1. Applies rate limiting
 /// 2. Validates and sanitizes title input
 /// 3. Delegates to `ConversationService.create_conversation()`
-/// 4. Logs audit event
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Input validation (title sanitization)
 /// 3. Execute ConversationService.create_conversation()
-/// 4. Log audit event (conversation created)
-/// 5. Return conversation metadata
+/// 4. Return conversation metadata
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn create_conversation_impl(
@@ -168,17 +167,6 @@ pub async fn create_conversation_impl(
     let conversation = service
         .create_conversation(sanitized_title, model_name, system_prompt)
         .await?;
-
-    // 4. Audit logging
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-        .with_resource_id(conversation.id.to_string())
-        .with_metadata("operation", "create_conversation")
-        .with_metadata("title", &conversation.title);
-
-    if let Err(e) = audit_logger.log(event).await {
-        warn!("Failed to write audit log: {}", e);
-    }
 
     Ok(conversation)
 }
@@ -442,505 +430,4 @@ pub async fn get_conversation(
     conversation_id: String,
 ) -> Result<Option<Conversation>> {
     get_conversation_impl(container.inner(), conversation_id).await
-}
-
-/// Retrieves all messages for a conversation
-///
-/// Fetches the complete message history for a conversation in chronological order.
-/// Messages include both user questions and assistant responses with timestamps,
-/// token counts, and metadata. Use this to display conversation history in the UI
-/// or to understand the full context of a conversation.
-///
-/// # Arguments
-///
-/// * `container` - Service container with conversation service and security context
-/// * `conversation_id` - Unique identifier of the conversation
-///
-/// # Returns
-///
-/// * `Ok(Vec<ConversationMessage>)` - List of messages in chronological order
-/// * `Err(AppError)` - If rate limited, conversation not found, or query fails
-///
-/// # Errors
-///
-/// * `AppError::RateLimitExceeded` - Too many message fetch requests (rate limited)
-/// * `AppError::NotFound` - Conversation ID not found
-/// * `AppError::Other` - Database query failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface ConversationMessage {
-///   id: string;
-///   conversationId: string;
-///   role: 'user' | 'assistant' | 'system';
-///   content: string;
-///   tokens: number;
-///   createdAt: string;
-///   metadata?: Record<string, any>;
-/// }
-///
-/// // Get all messages for a conversation
-/// const messages = await invoke<ConversationMessage[]>('get_conversation_messages', {
-///   conversationId: 'conv_abc123'
-/// });
-///
-/// console.log(`Conversation has ${messages.length} messages`);
-///
-/// // Display conversation history
-/// messages.forEach(msg => {
-///   if (msg.role === 'user') {
-///     console.log(`User: ${msg.content}`);
-///   } else if (msg.role === 'assistant') {
-///     console.log(`Assistant: ${msg.content} (${msg.tokens} tokens)`);
-///   }
-/// });
-///
-/// // Calculate total tokens
-/// const totalTokens = messages.reduce((sum, msg) => sum + msg.tokens, 0);
-/// console.log(`Total tokens: ${totalTokens}`);
-/// ```
-///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents excessive message fetching
-///
-/// # Message Ordering
-///
-/// Messages are returned in chronological order (oldest first):
-/// 1. Initial user question
-/// 2. Assistant response
-/// 3. Follow-up user question
-/// 4. Assistant response
-///
-/// The sequence continues in the same alternating order.
-///
-/// This ordering makes it easy to reconstruct the conversation flow for display.
-///
-/// # Performance Considerations
-///
-/// For very long conversations (hundreds of messages):
-/// - Consider implementing message pagination in the UI
-/// - Load recent messages first, older messages on demand
-/// - Cache messages to avoid repeated fetches
-///
-/// # Use Cases
-///
-/// - **Conversation Display**: Show full message history in chat UI
-/// - **Context Window**: Provide context for follow-up questions
-/// - **Export**: Save conversation history to file
-/// - **Analysis**: Analyze conversation patterns and token usage
-/// - **Debugging**: Inspect LLM responses and context flow
-///
-/// # Message Roles
-///
-/// - **user**: Human-written questions/prompts
-/// - **assistant**: LLM-generated responses
-/// - **system**: System-level instructions (e.g., system prompt)
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `ConversationService.get_conversation()`
-/// 3. Extracts messages from conversation aggregate
-///
-/// # Command Flow
-///
-/// 1. Rate limiting check
-/// 2. Execute ConversationService.get_conversation()
-/// 3. If conversation not found, return NotFound error
-/// 4. Extract messages from aggregate
-/// 5. Return messages in chronological order
-///
-/// Implementation function (Pure Rust - No Tauri)
-pub async fn get_conversation_messages_impl(
-    runtime: &dyn ChatRuntime,
-    conversation_id: String,
-) -> Result<Vec<ConversationMessage>> {
-    // 1. Rate limiting
-    runtime
-        .check_read_rate_limit("get_conversation_messages")
-        .await?;
-
-    // 2. Delegate to service
-    let service = runtime.conversation_service();
-    let aggregate = service
-        .get_conversation(&conversation_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::NotFound(format!("Conversation not found: {}", conversation_id))
-        })?;
-
-    // 3. Return messages from aggregate
-    let mut messages = aggregate.messages().to_vec();
-    for message in &mut messages {
-        message.metadata =
-            crate::features::conversation::chat::source_snapshots::hydrate_message_metadata(
-                runtime,
-                &conversation_id,
-                message.metadata.take(),
-            )
-            .await;
-    }
-    Ok(messages)
-}
-
-/// Tauri command wrapper
-#[tracing::instrument(skip(container), fields(conversation_id = %conversation_id))]
-pub async fn get_conversation_messages(
-    container: State<'_, Container>,
-    conversation_id: String,
-) -> Result<Vec<ConversationMessage>> {
-    get_conversation_messages_impl(container.inner(), conversation_id).await
-}
-
-/// Renames a conversation with a new title
-///
-/// Updates the conversation's title to better reflect its content or purpose.
-/// Useful when the conversation's topic evolves or when the initial title was
-/// generic. The title is validated and sanitized to prevent XSS attacks.
-///
-/// # Arguments
-///
-/// * `container` - Service container with conversation service and security context
-/// * `conversation_id` - Unique identifier of the conversation to rename
-/// * `new_title` - New title for the conversation (will be sanitized)
-///
-/// # Returns
-///
-/// * `Ok(())` - Conversation successfully renamed
-/// * `Err(AppError)` - If rate limited, validation fails, or conversation not found
-///
-/// # Errors
-///
-/// * `AppError::RateLimitExceeded` - Too many rename requests (rate limited)
-/// * `AppError::InvalidInput` - Title validation failed (empty, too long, or XSS detected)
-/// * `AppError::NotFound` - Conversation ID not found
-/// * `AppError::Other` - Database update failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Rename a conversation
-/// await invoke('rename_conversation', {
-///   conversationId: 'conv_abc123',
-///   newTitle: 'Machine Learning Discussion - Advanced Topics'
-/// });
-///
-/// console.log('Conversation renamed successfully');
-///
-/// // Verify rename
-/// const conversation = await invoke<Conversation>('get_conversation', {
-///   conversationId: 'conv_abc123'
-/// });
-///
-/// console.log(`New title: ${conversation.title}`);
-/// ```
-///
-/// # Title Validation
-///
-/// Titles are validated and sanitized:
-/// - **Min Length**: 1 character (empty titles rejected)
-/// - **Max Length**: 500 characters (truncated if longer)
-/// - **XSS Prevention**: HTML/script tags removed
-/// - **Whitespace**: Leading/trailing whitespace trimmed
-///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents rename spam
-/// - **Input Validation**: Title sanitized to prevent XSS attacks
-/// - **Audit Logging (CWE-778)**: Logs conversation title changes for compliance
-///
-/// # Use Cases
-///
-/// - **Topic Evolution**: Update title as conversation topic changes
-/// - **Better Organization**: Use descriptive titles for easy identification
-/// - **Searchability**: Clear titles make conversations easier to find
-/// - **Context Switching**: Rename to reflect current discussion focus
-///
-/// # Best Practices
-///
-/// **Good Titles**:
-/// - "Python Async Best Practices"
-/// - "Q3 Financial Analysis - Revenue Trends"
-/// - "Research: Quantum Computing Applications"
-///
-/// **Poor Titles**:
-/// - "Conversation 1" (too generic)
-/// - "Question" (not descriptive)
-/// - "..." (empty or whitespace only)
-///
-/// # Why Rename?
-///
-/// Conversations often start with generic titles like "New Conversation" or
-/// "Quick Question". As the conversation evolves, renaming helps:
-/// 1. **Identify conversations** at a glance in the list view
-/// 2. **Search effectively** by remembering topic keywords
-/// 3. **Organize knowledge** by grouping related conversations
-/// 4. **Context retrieval** when resuming a conversation later
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Validates and sanitizes title input (XSS prevention)
-/// 3. Delegates to `ConversationService.rename_conversation()`
-/// 4. Logs audit event with new title
-///
-/// # Command Flow
-///
-/// 1. Rate limiting check
-/// 2. Input validation (sanitize title, prevent XSS)
-/// 3. Execute ConversationService.rename_conversation()
-/// 4. Log audit event (conversation renamed, new title)
-/// 5. Return success
-///
-/// Implementation function (Pure Rust - No Tauri)
-pub async fn rename_conversation_impl(
-    container: &Container,
-    conversation_id: String,
-    new_title: String,
-) -> Result<()> {
-    // 1. Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_question
-        .check_rate_limit("rename_conversation")
-        .await
-        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
-
-    // 2. Input validation
-    let sanitized_title = container
-        .security_context()
-        .input_validator()
-        .validate_search_query(&new_title)
-        .map_err(|e| AppError::Other(format!("Invalid title: {}", e)))?;
-
-    // 3. Delegate to service
-    let service = container.conversation_service();
-    service
-        .rename_conversation(&conversation_id, sanitized_title.clone())
-        .await?;
-
-    // 4. Audit logging
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-        .with_resource_id(&conversation_id)
-        .with_metadata("operation", "rename_conversation")
-        .with_metadata("new_title", &sanitized_title);
-
-    if let Err(e) = audit_logger.log(event).await {
-        warn!("Failed to write audit log: {}", e);
-    }
-
-    Ok(())
-}
-
-/// Tauri command wrapper
-#[tracing::instrument(skip(container), fields(conversation_id = %conversation_id, new_title = %new_title))]
-pub async fn rename_conversation(
-    container: State<'_, Container>,
-    conversation_id: String,
-    new_title: String,
-) -> Result<()> {
-    rename_conversation_impl(container.inner(), conversation_id, new_title).await
-}
-
-/// Deletes a conversation and all associated messages
-///
-/// Permanently removes a conversation from the system including all message history,
-/// metadata, and token usage records. This operation cannot be undone. Use when a
-/// conversation is no longer needed or to clean up test/experimental conversations.
-///
-/// # Arguments
-///
-/// * `container` - Service container with conversation service and security context
-/// * `conversation_id` - Unique identifier of the conversation to delete
-///
-/// # Returns
-///
-/// * `Ok(())` - Conversation successfully deleted
-/// * `Err(AppError)` - If rate limited, conversation not found, or deletion fails
-///
-/// # Errors
-///
-/// * `AppError::RateLimitExceeded` - Too many deletion requests (rate limited)
-/// * `AppError::NotFound` - Conversation ID not found
-/// * `AppError::Other` - Database deletion failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Delete a conversation
-/// await invoke('delete_conversation', {
-///   conversationId: 'conv_abc123'
-/// });
-///
-/// console.log('Conversation deleted successfully');
-///
-/// // Verify deletion
-/// const conversation = await invoke<Conversation | null>('get_conversation', {
-///   conversationId: 'conv_abc123'
-/// });
-///
-/// console.log(conversation === null); // true
-/// ```
-///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents mass deletion attacks
-/// - **Audit Logging (CWE-778)**: Logs conversation deletions for compliance
-///
-/// # Cascade Deletion
-///
-/// When a conversation is deleted, the following data is also removed:
-/// - **All Messages**: User questions and assistant responses
-/// - **Message Metadata**: Timestamps, token counts, role information
-/// - **Conversation Metadata**: Title, model name, system prompt
-/// - **Aggregate State**: Total message count, total tokens
-///
-/// **Not Deleted**: Search index documents (conversation messages are not indexed)
-///
-/// # Use Cases
-///
-/// - **Privacy**: Remove sensitive conversations
-/// - **Cleanup**: Delete test or experimental conversations
-/// - **Organization**: Remove outdated or irrelevant conversations
-/// - **Storage Management**: Free up database space
-///
-/// # Warning
-///
-/// **This operation is irreversible.** Once deleted, conversation history cannot be
-/// recovered. Consider the following before deleting:
-/// 1. **Export First**: Save important conversations to file
-/// 2. **Confirm Intent**: Add UI confirmation dialog
-/// 3. **Batch Carefully**: Be cautious when deleting multiple conversations
-///
-/// # Best Practices
-///
-/// **When to Delete**:
-/// - Test conversations from development
-/// - Conversations with incorrect or irrelevant responses
-/// - Duplicate conversations
-/// - Conversations with sensitive information (after using data)
-///
-/// **When to Keep**:
-/// - Conversations with valuable insights
-/// - Reference conversations for similar future questions
-/// - Conversations demonstrating good LLM patterns
-///
-/// # Idempotency
-///
-/// Deleting an already-deleted conversation returns `NotFound` error. This is
-/// intentional to help detect bugs where the same conversation is deleted twice.
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `ConversationService.delete_conversation()`
-/// 3. Logs audit event for compliance
-///
-/// # Command Flow
-///
-/// 1. Rate limiting check
-/// 2. Execute ConversationService.delete_conversation() (cascade delete)
-/// 3. Log audit event (conversation deleted)
-/// 4. Return success
-///
-/// # Side Effects
-///
-/// - Removes conversation from database
-/// - Removes all associated messages
-/// - Does NOT affect search index (conversations are not indexed)
-///
-/// Implementation function (Pure Rust - No Tauri)
-pub async fn delete_conversation_impl(
-    runtime: &dyn ChatRuntime,
-    conversation_id: String,
-) -> Result<()> {
-    // 1. Rate limiting
-    runtime
-        .check_delete_rate_limit("delete_conversation")
-        .await?;
-    // 2. Stop its turn, take its attachments, remove it and audit
-    runtime
-        .delete_conversation_unmetered(&conversation_id)
-        .await
-}
-
-/// Tauri command wrapper
-#[tracing::instrument(skip(container), fields(conversation_id = %conversation_id))]
-pub async fn delete_conversation(
-    container: State<'_, Container>,
-    conversation_id: String,
-) -> Result<()> {
-    delete_conversation_impl(container.inner(), conversation_id).await
-}
-
-pub async fn create_conversation_space_impl(
-    container: &Container,
-    request: CreateConversationSpaceRequestDto,
-) -> Result<ConversationSpaceDto> {
-    if request.name.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Space name cannot be empty".to_string(),
-        ));
-    }
-    validate_space_preferences_not_journal(
-        request.tool_preferences_json.as_deref(),
-        "Conversation space",
-    )?;
-
-    let trimmed_name = request.name.trim().to_string();
-    let request = CreateConversationSpaceRequestDto {
-        name: trimmed_name,
-        ..request
-    };
-
-    crate::features::conversation::space_repository::ConversationSpaceRepository::new(
-        container.db_pool().clone(),
-    )
-    .create(request)
-    .await
-}
-
-fn validate_space_preferences_not_journal(
-    raw: Option<&str>,
-    context: &str,
-) -> Result<(), AppError> {
-    if preferences_declares_journal(raw) {
-        return Err(AppError::InvalidInput(format!(
-            "{} cannot declare `spaceType=journal`; journals are a separate entity",
-            context
-        )));
-    }
-    Ok(())
-}
-
-fn preferences_declares_journal(raw: Option<&str>) -> bool {
-    let Some(raw_json) = raw else {
-        return false;
-    };
-    if raw_json.trim().is_empty() {
-        return false;
-    }
-    let parsed: Result<Value, _> = serde_json::from_str(raw_json);
-    let Ok(value) = parsed else {
-        return false;
-    };
-    let kind = value
-        .get("spaceType")
-        .and_then(Value::as_str)
-        .or_else(|| value.get("space_type").and_then(Value::as_str))
-        .unwrap_or("standard");
-    kind.eq_ignore_ascii_case("journal")
 }

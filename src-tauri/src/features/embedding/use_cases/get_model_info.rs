@@ -9,7 +9,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
+//! use lattice_core::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
 //!
 //! # async fn example(use_case: GetEmbeddingModelInfoUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let info = use_case.execute().await?;
@@ -22,10 +22,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::EmbeddingPort;
-use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::features::embedding::dto::EmbeddingModelInfoDto;
-use crate::shared::error::Result;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
+use lattice_core::shared::error::Result;
 
 /// Default model name if not specified
 const DEFAULT_MODEL_NAME: &str = DEFAULT_EMBEDDING_MODEL_NAME;
@@ -70,7 +70,7 @@ impl GetEmbeddingModelInfoUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
+    /// # use lattice_core::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
     /// # async fn example(use_case: GetEmbeddingModelInfoUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let info = use_case.execute().await?;
     ///
@@ -80,7 +80,7 @@ impl GetEmbeddingModelInfoUseCase {
     /// println!("  Max Tokens: {}", info.max_tokens);
     ///
     /// // Use info to validate embeddings
-    /// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+    /// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     /// if info.dimension != DEFAULT_EMBEDDING_DIM {
     ///     println!("Warning: Unexpected dimension!");
     /// }
@@ -105,8 +105,8 @@ impl GetEmbeddingModelInfoUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     use async_trait::async_trait;
+    use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
     /// Mock embedding service for testing
     struct MockEmbeddingService {

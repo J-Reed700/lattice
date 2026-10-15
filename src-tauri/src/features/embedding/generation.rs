@@ -1,6 +1,6 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
-use crate::application::ports::EmbeddingPort;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::{AppError, Result};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
@@ -155,7 +155,7 @@ pub async fn restore_page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::embedding_port::EmbeddingTextChunk;
+    use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Model {
         identity: &'static str,

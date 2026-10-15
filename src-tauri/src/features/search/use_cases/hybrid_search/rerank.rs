@@ -5,8 +5,8 @@ use tracing::{info, warn};
 use super::HybridSearchUseCase;
 use crate::features::search::dto::SearchResponseDto;
 use crate::features::search::engine::reranker::{blend_rerank_scores, RerankResult};
-use crate::shared::error::Result;
-use crate::shared::text::safe_truncate;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::text::safe_truncate;
 
 /// How much wider than the results wanted a reranked search's fused pool is.
 const POOL_MULTIPLIER: usize = 3;

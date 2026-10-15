@@ -1,6 +1,6 @@
 //! The check a settings update runs before it turns the vault on.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Refuse a vault folder that cannot be resolved, created or written to.
 /// `configured` is the `vault_path` setting, empty for the default folder.

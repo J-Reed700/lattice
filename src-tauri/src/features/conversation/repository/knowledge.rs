@@ -1,11 +1,11 @@
 //! Scope, explicit user memory edits and time metadata on the same ledger.
 use super::ConversationRepository;
-use crate::domain::conversation::memory::compute_digest;
 use crate::features::conversation::knowledge_dto::{
     KnowledgeItemDto, KnowledgeRequestDto, KnowledgeResponseDto,
 };
 use crate::features::conversation::memory_dto::MemoryEvidenceDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::conversation::memory::compute_digest;
+use lattice_core::shared::error::{AppError, Result};
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -176,8 +176,10 @@ impl ConversationRepository {
             let id = uuid::Uuid::new_v4().to_string();
             changed = Some(id.clone());
             let digest = compute_digest(text);
-            let tokens = i64::try_from(crate::application::ports::llm_port::estimate_tokens(text))
-                .unwrap_or(i64::MAX);
+            let tokens = i64::try_from(
+                lattice_core::application::ports::llm_port::estimate_tokens(text),
+            )
+            .unwrap_or(i64::MAX);
             sqlx::query("INSERT INTO conversation_messages(id,conversation_id,role,content,tokens,status,sequence,content_digest,metadata) VALUES (?,?,'user',?,?,'completed',?,?, '{\"memoryNote\":true}')")
                 .bind(&message).bind(&r.conversation_id).bind(text).bind(tokens).bind(sequence).bind(&digest).execute(&mut *tx).await?;
             sqlx::query("UPDATE conversations SET message_count=message_count+1,total_tokens=total_tokens+?,updated_at=? WHERE id=?").bind(tokens).bind(&now).bind(&r.conversation_id).execute(&mut *tx).await?;
@@ -289,7 +291,7 @@ impl ConversationRepository {
         &self,
         conversation: &str,
         query: &str,
-    ) -> Result<crate::application::ports::conversation_memory::PreparedMemory> {
+    ) -> Result<lattice_core::application::ports::conversation_memory::PreparedMemory> {
         let revisions = self.knowledge_revisions(conversation).await?;
         let response = self.list_knowledge(conversation, 0, true).await?;
         if response.has_more {
@@ -306,7 +308,7 @@ impl ConversationRepository {
             .collect();
         let semantic = self.knowledge_semantic_scores(conversation, query).await;
         let mut prepared =
-            crate::application::ports::conversation_memory::PreparedMemory::default();
+            lattice_core::application::ports::conversation_memory::PreparedMemory::default();
         let mut optional = Vec::new();
         for item in response.items {
             let text=serde_json::json!({"memory_id":item.id,"source_conversation":item.conversation_id,"source_title":item.conversation_title,"scope":item.scope,"kind":item.kind,"generated_label":item.label,"learned_at":item.learned_at,"valid_from":item.valid_from,"valid_until":item.valid_until,"last_user_verified_at":item.verified_at,"evidence":item.evidence,"why_available":item.availability_reason}).to_string();
@@ -378,7 +380,8 @@ impl ConversationRepository {
                 }
                 let state = self.load_memory_state(&item.conversation_id).await?;
                 if !state.is_schema_supported()
-                    || state.validity != crate::domain::conversation::memory::MemoryValidity::Ready
+                    || state.validity
+                        != lattice_core::domain::conversation::memory::MemoryValidity::Ready
                 {
                     continue;
                 }

@@ -2,12 +2,12 @@
 //!
 //! Thin controllers for document tagging operations following Domain-Driven Design.
 //! Provides CRUD operations, query commands, tag assignment, and LLM-based tag generation.
-//! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
+//! These commands apply cross-cutting concerns (rate limiting, validation)
 //! and delegate business logic to dedicated use cases.
 
 use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use tauri::State;
 
 mod assignment;

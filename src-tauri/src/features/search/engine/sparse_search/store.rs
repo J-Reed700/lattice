@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use crate::application::ports::{ChunkSparseTerms, SparseTermStorePort};
-use crate::shared::error::Result;
+use lattice_core::application::ports::{ChunkSparseTerms, SparseTermStorePort};
+use lattice_core::shared::error::Result;
 
 /// Bound on how many `(chunk, model, term, weight)` rows one statement binds.
 ///

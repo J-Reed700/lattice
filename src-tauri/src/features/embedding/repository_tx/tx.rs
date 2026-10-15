@@ -3,10 +3,10 @@
 //! Transaction-based implementation of EmbeddingRepository that delegates to ops.rs.
 //! This enables transactional operations within a broader unit of work.
 
-use crate::application::ports::EmbeddingRepositoryPort;
 use crate::features::embedding::entity::Embedding as DomainEmbedding;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Sqlite, Transaction};
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
@@ -34,7 +34,7 @@ impl SqliteEmbeddingRepositoryTx {
 #[async_trait]
 impl EmbeddingRepositoryPort for SqliteEmbeddingRepositoryTx {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
-        use crate::shared::types::ChunkId;
+        use lattice_core::shared::types::ChunkId;
         let chunk_id_typed = ChunkId::from(chunk_id.to_string());
         let embedding = DomainEmbedding::new(chunk_id_typed, model.to_string(), vector.len());
         self.save(&embedding, vector.to_vec()).await?;

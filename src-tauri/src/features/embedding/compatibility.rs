@@ -14,7 +14,7 @@
 //! (Gemma, Qwen, Llama, Mistral) are reserved for a follow-up PR with
 //! last-token pooling.
 
-pub use crate::domain::models::selection::EmbeddingCompatibility;
+pub use lattice_core::domain::models::selection::EmbeddingCompatibility;
 
 /// Architecture tags that the local CandleEmbeddingService can actually
 /// load today. Each entry corresponds to a wired `ModelVariant` case in

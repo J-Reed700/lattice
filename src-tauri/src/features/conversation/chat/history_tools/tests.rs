@@ -8,9 +8,10 @@
 //! column that keeps two conversations apart, and the trigger that fills the
 //! index at all. A fake port would assert that this module calls itself.
 
+use super::recall::{build_recall_query, exact_identifiers};
 use super::*;
-use crate::domain::conversation::memory::{compute_digest, SourceRole};
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::domain::conversation::memory::{compute_digest, SourceRole};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 

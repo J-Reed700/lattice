@@ -14,7 +14,7 @@ use crate::features::learning::{
     persistence::hash_text,
     reference_collection::{ReferenceCollection, ReferencePassage},
 };
-use crate::{
+use lattice_core::{
     application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
     shared::error::{AppError, Result},
 };
@@ -76,7 +76,7 @@ impl ItemKind {
             Self::Lesson => "lesson objective",
         }
     }
-    fn text<'a>(self, field: &'a Value) -> Option<&'a str> {
+    fn text(self, field: &Value) -> Option<&str> {
         match self {
             Self::Summary | Self::Outcome => field.get("text"),
             Self::Lesson => field.get("objective"),
@@ -423,16 +423,22 @@ async fn candidates_for(
         .retrieve(&pending.query(), CANDIDATES_PER_ITEM)
         .await?
     {
-        let Some(source_index) = sources.iter().position(|s| s.id == passage.source_id) else {
+        let Some((source_index, source)) = sources
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.id == passage.source_id)
+        else {
             continue;
         };
-        let Some(quote) = citable_span(&passage, &sources[source_index].excerpt, &pending.query())
-        else {
+        let Some(hash) = hashes.get(source_index) else {
+            continue;
+        };
+        let Some(quote) = citable_span(&passage, &source.excerpt, &pending.query()) else {
             continue;
         };
         let candidate = Candidate {
             source_index,
-            hash: hashes[source_index].clone(),
+            hash: hash.clone(),
             quote,
         };
         if !pending.candidates.contains(&candidate) {
@@ -489,8 +495,8 @@ fn request(
         .zip(&per_item)
         .map(|(item, ids)| {
             let mut value = json!({"id":item.path,"kind":item.kind.name(),"moduleTitle":item.module_title,"item":item.text,"candidates":ids});
-            if let Some(title) = &item.lesson_title {
-                value["lessonTitle"] = json!(title);
+            if let (Some(title), Some(object)) = (&item.lesson_title, value.as_object_mut()) {
+                object.insert("lessonTitle".into(), json!(title));
             }
             value
         })
@@ -502,7 +508,9 @@ fn request(
             json!({"id":format!("p{}", i + 1),"sourceTitle":sources.get(candidate.source_index).map(|s| s.title.as_str()).unwrap_or_default(),"passage":candidate.quote})
         })
         .collect();
-    let mut choices: Vec<Value> = (1..=passages.len()).map(|i| json!(format!("p{i}"))).collect();
+    let mut choices: Vec<Value> = (1..=passages.len())
+        .map(|i| json!(format!("p{i}")))
+        .collect();
     choices.push(json!("none"));
     let ids: Vec<Value> = group.iter().map(|item| json!(item.path)).collect();
     let prompt = json!({"passages":listed,"items":items}).to_string();
@@ -539,7 +547,13 @@ fn apply(
                 cite(field, candidate.source_index, &candidate.quote);
             }
             draft.citation_receipts.insert(
-                receipt_key(model, item.kind, &item.text, &candidate.hash, &candidate.quote),
+                receipt_key(
+                    model,
+                    item.kind,
+                    &item.text,
+                    &candidate.hash,
+                    &candidate.quote,
+                ),
                 CitationReceipt {
                     covers: true,
                     reason,
@@ -547,7 +561,11 @@ fn apply(
                 },
             );
             log.linked += 1;
-            if item.author.as_ref().is_some_and(|author| author != candidate) {
+            if item
+                .author
+                .as_ref()
+                .is_some_and(|author| author != candidate)
+            {
                 log.removed_unchosen += 1;
             }
         }
@@ -602,7 +620,14 @@ pub(in crate::features::learning) async fn link(
         let Some(field) = draft.candidate.pointer(&path) else {
             continue;
         };
-        if is_verified(&draft.citation_receipts, &model, kind, field, sources, &hashes) {
+        if is_verified(
+            &draft.citation_receipts,
+            &model,
+            kind,
+            field,
+            sources,
+            &hashes,
+        ) {
             log.linked += 1;
             continue;
         }
@@ -611,7 +636,14 @@ pub(in crate::features::learning) async fn link(
         };
         let module_index = crate::features::learning::outline_draft::module_index(&path);
         let module_title = module_index
-            .and_then(|i| draft.candidate["modules"][i]["title"].as_str())
+            .and_then(|i| {
+                draft
+                    .candidate
+                    .get("modules")?
+                    .get(i)?
+                    .get("title")?
+                    .as_str()
+            })
             .unwrap_or_default()
             .to_owned();
         let author = citation(field).and_then(|(index, quote)| {
@@ -652,7 +684,13 @@ pub(in crate::features::learning) async fn link(
     }
     let total = pending.len();
     if total == 0 {
-        tracing::info!(linked = log.linked, items = log.items, removed_unmatched = log.removed_unmatched, removed_unchosen = log.removed_unchosen, "Outline items linked from receipts alone");
+        tracing::info!(
+            linked = log.linked,
+            items = log.items,
+            removed_unmatched = log.removed_unmatched,
+            removed_unchosen = log.removed_unchosen,
+            "Outline items linked from receipts alone"
+        );
         return Ok(log);
     }
     progress.detail(format!(
@@ -744,8 +782,12 @@ pub(in crate::features::learning) async fn link(
             let chosen = chosen.as_ref();
             apply(draft, &model, item, chosen, reason, &mut log);
             match chosen {
-                Some(candidate) => tracing::info!(path = %item.path, kind = item.kind.name(), source = candidate.source_index, "Linked an outline item to a saved reference"),
-                None => tracing::info!(path = %item.path, kind = item.kind.name(), candidates = item.candidates.len(), "No saved passage addresses this outline item"),
+                Some(candidate) => {
+                    tracing::info!(path = %item.path, kind = item.kind.name(), source = candidate.source_index, "Linked an outline item to a saved reference")
+                }
+                None => {
+                    tracing::info!(path = %item.path, kind = item.kind.name(), candidates = item.candidates.len(), "No saved passage addresses this outline item")
+                }
             }
         }
         done += group.len();
@@ -754,7 +796,13 @@ pub(in crate::features::learning) async fn link(
             log.linked
         ));
     }
-    tracing::info!(linked = log.linked, items = log.items, removed_unmatched = log.removed_unmatched, removed_unchosen = log.removed_unchosen, "Outline items linked to references");
+    tracing::info!(
+        linked = log.linked,
+        items = log.items,
+        removed_unmatched = log.removed_unmatched,
+        removed_unchosen = log.removed_unchosen,
+        "Outline items linked to references"
+    );
     Ok(log)
 }
 
@@ -837,9 +885,15 @@ mod tests {
             {"id":"/modules/0/outcomes/1","candidate":"p2","reason":"The passage is about uncertainty estimates, not assignment."},
             {"id":"/modules/0/lessons/0","candidate":"none","reason":"Neither passage plans treatment groups."}
         ]})]);
-        let log = link(&llm, &mut draft, &sources(), None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        let log = link(
+            &llm,
+            &mut draft,
+            &sources(),
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             log,
             LinkLog {
@@ -870,10 +924,20 @@ mod tests {
         assert_eq!(payload["passages"].as_array().unwrap().len(), 2);
         assert_eq!(payload["items"][3]["lessonTitle"], "Groups");
         assert_eq!(payload["items"][3]["moduleTitle"], "Comparisons");
-        assert!(payload["items"][1]["candidates"].as_array().unwrap().contains(&json!("p1")));
+        assert!(payload["items"][1]["candidates"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("p1")));
         // Three positive receipts and one declined set.
         assert_eq!(draft.citation_receipts.len(), 4);
-        assert_eq!(draft.citation_receipts.values().filter(|r| r.covers).count(), 3);
+        assert_eq!(
+            draft
+                .citation_receipts
+                .values()
+                .filter(|r| r.covers)
+                .count(),
+            3
+        );
     }
 
     #[tokio::test]
@@ -885,18 +949,30 @@ mod tests {
             {"id":"/modules/0/outcomes/1","candidate":"none","reason":"ok"},
             {"id":"/modules/0/lessons/0","candidate":"none","reason":"ok"}
         ]})]);
-        link(&llm, &mut draft, &sources(), None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        link(
+            &llm,
+            &mut draft,
+            &sources(),
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         // A rewrite re-attaches the author's declined citation; the declined
         // receipt and the linked items' receipts settle everything without a
         // call.
         draft.candidate["modules"][0]["outcomes"][1]["sourceIndex"] = json!(0);
         draft.candidate["modules"][0]["outcomes"][1]["quote"] = json!(ASSIGNMENT);
         let silent = model(vec![]);
-        let log = link(&silent, &mut draft, &sources(), None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        let log = link(
+            &silent,
+            &mut draft,
+            &sources(),
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert!(silent.prompts.lock().unwrap().is_empty());
         assert_eq!(
             log,
@@ -907,8 +983,14 @@ mod tests {
                 removed_unchosen: 1
             }
         );
-        assert_eq!(draft.candidate["modules"][0]["summary"]["quote"], UNCERTAINTY);
-        assert_eq!(draft.candidate["modules"][0]["outcomes"][1]["sourceIndex"], Value::Null);
+        assert_eq!(
+            draft.candidate["modules"][0]["summary"]["quote"],
+            UNCERTAINTY
+        );
+        assert_eq!(
+            draft.candidate["modules"][0]["outcomes"][1]["sourceIndex"],
+            Value::Null
+        );
         let hashes = source_hashes(&sources());
         assert!(is_verified(
             &draft.citation_receipts,
@@ -933,14 +1015,23 @@ mod tests {
         let again = model(vec![json!({"links":[
             {"id":"/modules/0/lessons/0","candidate":"p1","reason":"The passage addresses uncertainty estimates."}
         ]})]);
-        let log = link(&again, &mut draft, &sources(), Some(0), &OutlineProgress::default())
-            .await
-            .unwrap();
+        let log = link(
+            &again,
+            &mut draft,
+            &sources(),
+            Some(0),
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(log.linked, 3);
         let prompts = again.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 1);
         assert_eq!(payload(&prompts[0])["items"].as_array().unwrap().len(), 1);
-        assert_eq!(draft.candidate["modules"][0]["lessons"][0]["quote"], UNCERTAINTY);
+        assert_eq!(
+            draft.candidate["modules"][0]["lessons"][0]["quote"],
+            UNCERTAINTY
+        );
     }
 
     #[tokio::test]
@@ -953,9 +1044,15 @@ mod tests {
             {"id":"/modules/0/outcomes/1","candidate":"p2","reason":"ok"},
             {"id":"/modules/0/lessons/0","candidate":"none","reason":"ok"}
         ]})]);
-        link(&llm, &mut draft, &sources(), None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        link(
+            &llm,
+            &mut draft,
+            &sources(),
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         let module = &draft.candidate["modules"][0];
         assert_eq!(module["summary"]["quote"], ASSIGNMENT);
         assert_eq!(module["outcomes"][0]["sourceIndex"], Value::Null);
@@ -966,36 +1063,61 @@ mod tests {
         assert_eq!(draft.citation_receipts.len(), 3);
         // One source only: the summary's one candidate is p1; p2 names no
         // listed passage, so the summary stays unlinked without a receipt.
-        let mut draft = draft_with(json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
-            "summary":{"text":"Compare treatment groups.","sourceIndex":null,"quote":""},"outcomes":[],"lessons":[]}]}));
+        let mut draft = draft_with(
+            json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
+            "summary":{"text":"Compare treatment groups.","sourceIndex":null,"quote":""},"outcomes":[],"lessons":[]}]}),
+        );
         let llm = model(vec![json!({"links":[
             {"id":"/modules/0/summary","candidate":"p2","reason":"ok"}
         ]})]);
-        link(&llm, &mut draft, &sources()[..1], None, &OutlineProgress::default())
-            .await
-            .unwrap();
-        assert_eq!(draft.candidate["modules"][0]["summary"]["sourceIndex"], Value::Null);
+        link(
+            &llm,
+            &mut draft,
+            &sources()[..1],
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            draft.candidate["modules"][0]["summary"]["sourceIndex"],
+            Value::Null
+        );
         assert!(draft.citation_receipts.is_empty());
         // An unreadable answer is the same: nothing linked, nothing failed.
         let mut unreadable = super::tests::draft(candidate());
         let llm = model(vec![json!({"unexpected":true})]);
-        link(&llm, &mut unreadable, &sources(), None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        link(
+            &llm,
+            &mut unreadable,
+            &sources(),
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert!(unreadable.citation_receipts.is_empty());
     }
 
     #[tokio::test]
     async fn an_author_fragment_is_not_offered_and_the_whole_sentence_replaces_it() {
-        let mut draft = draft(json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
+        let mut draft = draft(
+            json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
             "summary":{"text":"Explain why random assignment limits confounding.","sourceIndex":0,"quote":"Random assignment limits confounding when treatment groups"},
-            "outcomes":[],"lessons":[]}]}));
+            "outcomes":[],"lessons":[]}]}),
+        );
         let llm = model(vec![json!({"links":[
             {"id":"/modules/0/summary","candidate":"p1","reason":"The passage explains random assignment and confounding."}
         ]})]);
-        let log = link(&llm, &mut draft, &sources()[..1], None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        let log = link(
+            &llm,
+            &mut draft,
+            &sources()[..1],
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             log,
             LinkLog {
@@ -1041,7 +1163,12 @@ mod tests {
             score: 1.0,
         };
         // Too long: trimmed to whole sentences under the limit.
-        let quote = citable_span(&passage(start, excerpt.len()), &excerpt, "random assignment").unwrap();
+        let quote = citable_span(
+            &passage(start, excerpt.len()),
+            &excerpt,
+            "random assignment",
+        )
+        .unwrap();
         assert!(quote.chars().count() <= generation::MAX_QUOTE_CHARS);
         assert!(quote.ends_with("compared."));
         assert!(quote.starts_with("Random assignment"));
@@ -1049,7 +1176,8 @@ mod tests {
         // Cut mid-sentence at both ends: the partial sentences are dropped.
         let mid_start = start + 7;
         let mid_end = start + sentence.len() * 3 + 10;
-        let quote = citable_span(&passage(mid_start, mid_end), &excerpt, "random assignment").unwrap();
+        let quote =
+            citable_span(&passage(mid_start, mid_end), &excerpt, "random assignment").unwrap();
         assert!(quote.starts_with("Random assignment"));
         assert!(quote.ends_with("compared."));
         assert_eq!(quote.matches("compared.").count(), 2);
@@ -1066,8 +1194,14 @@ mod tests {
             score: 1.0,
         };
         assert_eq!(last_sentence_end(quoted), Some(quoted.len()));
-        assert_eq!(sentence_ends(quoted).next(), Some(quoted.find(" Then").unwrap()));
-        assert_eq!(citable_span(&short, quoted, "compare groups").unwrap(), quoted);
+        assert_eq!(
+            sentence_ends(quoted).next(),
+            Some(quoted.find(" Then").unwrap())
+        );
+        assert_eq!(
+            citable_span(&short, quoted, "compare groups").unwrap(),
+            quoted
+        );
     }
 
     #[test]
@@ -1082,18 +1216,31 @@ mod tests {
             score: 1.0,
         };
         // The run sharing the item's terms wins; it keeps its inline link text.
-        let quote = citable_span(&passage, excerpt, "random assignment confounding fair comparison").unwrap();
+        let quote = citable_span(
+            &passage,
+            excerpt,
+            "random assignment confounding fair comparison",
+        )
+        .unwrap();
         assert!(quote.starts_with("Random assignment limits confounding"));
         assert!(quote.ends_with("unmeasured trait."));
-        assert!(!quote.contains("Prev") && !quote.contains("# Comparing") && !quote.contains("assign("));
+        assert!(
+            !quote.contains("Prev") && !quote.contains("# Comparing") && !quote.contains("assign(")
+        );
         generation::validate_excerpt_quote(&quote, excerpt).unwrap();
         let quote = citable_span(&passage, excerpt, "confidence intervals uncertainty").unwrap();
         assert!(quote.starts_with("Confidence intervals"));
         // A page of only chrome yields no candidate at all.
         let chrome = "# What's new in the framework release notes overview\n\n| [Prev](a) | [Up](b) | [Home](c) |\n- [Edit](https://example.org/edit)";
-        let only = ReferencePassage { text: chrome.into(), end_byte: chrome.len(), ..passage.clone() };
+        let only = ReferencePassage {
+            text: chrome.into(),
+            end_byte: chrome.len(),
+            ..passage.clone()
+        };
         assert!(citable_span(&only, chrome, "framework release notes").is_none());
-        assert!(!is_prose("What's new in ASP.NET Core in the latest release"));
+        assert!(!is_prose(
+            "What's new in ASP.NET Core in the latest release"
+        ));
         assert!(is_prose("- Value objects can include methods that encapsulate domain logic, but those methods shouldn't produce side effects."));
     }
 }

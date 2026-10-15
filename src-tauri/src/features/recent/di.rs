@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::features::recent::repository::RecentDocumentsRepository;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 
 #[derive(Clone)]
 pub struct RecentDi {

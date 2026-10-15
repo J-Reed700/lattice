@@ -3,7 +3,7 @@
 //! Checks if a model is already downloaded.
 
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// Use case for checking if a model is downloaded
 pub struct CheckIsDownloadedUseCase {

@@ -1,7 +1,7 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
-use crate::application::contracts::settings::ThinkingOverrideDto;
-use crate::application::ports::llm_port::{
+use lattice_core::application::contracts::settings::ThinkingOverrideDto;
+use lattice_core::application::ports::llm_port::{
     SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice,
 };
 

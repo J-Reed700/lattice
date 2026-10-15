@@ -3,12 +3,12 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::application::ports::embedding_port::{span_chunk_texts, sparse_not_supported};
-use crate::domain::value_objects::SparseEmbedding;
 use crate::features::embedding::late_chunking::LateChunkingError;
 use crate::features::embedding::sparse_head::MAX_PASSAGE_TERMS;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::application::ports::embedding_port::{span_chunk_texts, sparse_not_supported};
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 use super::forward::{encoder_embed, qwen3_embed, run_inference};
 use super::{

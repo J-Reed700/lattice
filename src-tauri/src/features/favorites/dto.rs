@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::application::contracts::favorites::FavoriteRecord as FavoriteDto;
+pub use lattice_core::application::contracts::favorites::FavoriteRecord as FavoriteDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddFavoriteRequestDto {

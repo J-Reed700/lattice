@@ -3,13 +3,10 @@ use super::*;
 pub(super) async fn learning_memory(
     container: &Container,
     program_id: &str,
-) -> crate::shared::error::Result<LearningMemoryDto> {
+) -> lattice_core::shared::error::Result<LearningMemoryDto> {
     let repo = LearningRepository::new(container.db_pool().clone());
     let state = repo.memory_state(program_id).await?;
     let notes_repo = crate::features::daily_notes::repository::DailyNotesRepository::new(
-        container.db_pool().clone(),
-    );
-    let conversations = crate::features::conversation::repository::ConversationRepository::new(
         container.db_pool().clone(),
     );
     let mut lesson_notes = Vec::with_capacity(state.lesson_notes.len());
@@ -17,7 +14,7 @@ pub(super) async fn learning_memory(
         let row = notes_repo.get(&note_id).await?;
         let note = crate::features::daily_notes::commands::hydrate_workspace_note(
             &notes_repo,
-            &conversations,
+            container,
             row,
         )
         .await?;
@@ -75,7 +72,7 @@ pub async fn ensure_learning_lesson_note(
         .flat_map(|m| &m.lessons)
         .find(|l| l.id == request.lesson_id)
         .ok_or_else(|| {
-            ApiError::from(crate::shared::error::AppError::NotFound(
+            ApiError::from(lattice_core::shared::error::AppError::NotFound(
                 "Lesson does not belong to this learning program.".into(),
             ))
         })?;
@@ -148,7 +145,7 @@ pub async fn save_learning_card_draft(
         let n = value.trim().chars().count();
         if n == 0 || n > max {
             return Err(ApiError::from(
-                crate::shared::error::AppError::InvalidInput(format!(
+                lattice_core::shared::error::AppError::InvalidInput(format!(
                     "{name} must contain 1–{max} characters."
                 )),
             ));
@@ -156,7 +153,7 @@ pub async fn save_learning_card_draft(
     }
     if request.source_ids.len() > 24 {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "A card may cite no more than 24 sources.".into(),
             ),
         ));

@@ -13,7 +13,7 @@
 //!
 //! The Interfaces layer:
 //! 1. Receives external requests (Tauri commands, file system events)
-//! 2. Applies cross-cutting concerns (rate limiting, validation, audit logging)
+//! 2. Applies cross-cutting concerns (rate limiting, validation)
 //! 3. Delegates to Application Use Cases
 //! 4. Maps responses back to external format
 //!
@@ -38,9 +38,6 @@
 //!
 //!     // 4. Execute
 //!     let response = use_case.execute(input).await?;
-//!
-//!     // 5. Audit log
-//!     audit_success!(action = AuditAction::Operation, ...);
 //!
 //!     Ok(response)
 //! }

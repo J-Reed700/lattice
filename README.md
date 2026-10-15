@@ -119,8 +119,8 @@ Desktop backend:
 
 ```bash
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
-cargo test --manifest-path src-tauri/Cargo.toml --lib
+cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets
+cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib
 ```
 
 Architecture and contract checks:

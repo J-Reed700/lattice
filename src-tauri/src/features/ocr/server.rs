@@ -19,7 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::model::OcrModel;
-use crate::application::ports::OcrError;
+use lattice_core::application::ports::OcrError;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// How long the server stays up after its last page. Reloading costs a second
 /// or two; keeping 2 GB resident between unrelated imports costs more.
@@ -94,9 +95,9 @@ struct Inner {
     /// and it is what keeps the reaper from stopping a server mid-page.
     slot: tokio::sync::Mutex<Option<Slot>>,
     last_used: SyncMutex<Instant>,
-    /// Injected by tests; production reads the app's token when the first
-    /// server starts, because DI runs before the app scope is installed.
-    shutdown: Option<CancellationToken>,
+    /// The app's background scope: the reaper runs in it, and its
+    /// cancellation is the app shutting down.
+    background: Arc<BackgroundTasks>,
 }
 
 /// The OCR server, as a lease-per-page resource.
@@ -105,18 +106,14 @@ pub struct OcrServer {
 }
 
 impl OcrServer {
-    pub fn new(launcher: Arc<dyn ServerLauncher>) -> Self {
-        Self::with_idle_ttl(launcher, OCR_IDLE_TTL)
+    pub fn new(launcher: Arc<dyn ServerLauncher>, background: Arc<BackgroundTasks>) -> Self {
+        Self::with_idle_ttl(launcher, OCR_IDLE_TTL, background)
     }
 
-    pub fn with_idle_ttl(launcher: Arc<dyn ServerLauncher>, idle_ttl: Duration) -> Self {
-        Self::build(launcher, idle_ttl, None)
-    }
-
-    fn build(
+    pub fn with_idle_ttl(
         launcher: Arc<dyn ServerLauncher>,
         idle_ttl: Duration,
-        shutdown: Option<CancellationToken>,
+        background: Arc<BackgroundTasks>,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -124,7 +121,7 @@ impl OcrServer {
                 idle_ttl,
                 slot: tokio::sync::Mutex::new(None),
                 last_used: SyncMutex::new(Instant::now()),
-                shutdown,
+                background,
             }),
         }
     }
@@ -190,17 +187,12 @@ impl OcrServer {
 
     /// Start the reaper for a server that just came up.
     fn supervise(&self, server: &RunningServer) -> Result<(), OcrError> {
-        let shutdown = self
-            .inner
-            .shutdown
-            .clone()
-            .unwrap_or_else(crate::shared::runtime::background::cancellation_token);
         let reaper = reap(
             Arc::downgrade(&self.inner),
             Arc::clone(&server.process),
-            shutdown,
+            self.inner.background.token(),
         );
-        if crate::shared::runtime::background::spawn(reaper).is_none() {
+        if self.inner.background.spawn(reaper).is_none() {
             // Admission is closed: the app is shutting down. A server nobody
             // will stop must not be handed out; the caller drops it, which
             // kills it.

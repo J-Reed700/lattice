@@ -1,5 +1,5 @@
 use crate::infrastructure::persistence::database as db;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 
 pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection> {

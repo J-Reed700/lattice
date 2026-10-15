@@ -24,7 +24,7 @@ async fn setup() -> Result<(tempfile::TempDir, SqlitePool, LearningProgramDto, S
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let program = fixture();
     LearningRepository::new(pool.clone())
         .create(&program)

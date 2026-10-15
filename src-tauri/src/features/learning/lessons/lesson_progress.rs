@@ -5,8 +5,8 @@ pub(in crate::features::learning) use crate::features::learning::curriculum::Lea
 use crate::features::learning::curriculum::{
     LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::JobContext;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::JobContext;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -376,7 +376,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn lesson_model_can_run_past_old_deadlines_and_reports_stream_activity() -> Result<()> {
-        use crate::application::ports::{
+        use lattice_core::application::ports::{
             llm_port::{CompletionRequest, CompletionResponse},
             LLMPort,
         };
@@ -418,8 +418,8 @@ mod tests {
             crate::features::learning::generation::complete_json(&SlowModel, "Teach", "Lesson".into(), serde_json::json!({"type":"object"}), 4000).await?;
             assert!(progress.snapshot().2.response_characters > 0);
             assert!(!progress.snapshot().2.model_running);
-            use crate::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict};
-            let checker = ClaimChecker::new(&SlowModel, crate::application::ports::llm_port::SamplingOverride::deterministic(), 512, CheckPolicy::Strict);
+            use lattice_core::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict};
+            let checker = ClaimChecker::new(&SlowModel, lattice_core::application::ports::llm_port::SamplingOverride::deterministic(), 512, CheckPolicy::Strict);
             let judgment = checker.check_without_deadline("Rust is a language.", &ClaimEvidence { text: "Rust is a language.".into(), quote: None }).await;
             assert!(matches!(judgment, ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported));
             Ok(())

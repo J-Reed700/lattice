@@ -19,6 +19,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_system_stats,
             commands::get_version,
             commands::initialize_database,
+            commands::get_backend_logs,
         ])
         .build()
 }

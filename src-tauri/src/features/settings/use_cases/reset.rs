@@ -1,10 +1,10 @@
 //! Reset Settings Use Case
 
-use crate::application::ports::{
+use crate::features::settings::dto::{ResetSettingsRequestDto, SettingsCategory, SettingsDto};
+use lattice_core::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
 };
-use crate::features::settings::dto::{ResetSettingsRequestDto, SettingsCategory, SettingsDto};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Use case for resetting application settings to defaults.
@@ -84,7 +84,7 @@ impl ResetSettingsUseCase {
         self.side_effects
             .on_settings_updated(
                 request.category,
-                crate::application::ports::settings_side_effects_port::SettingsTransitionHints::default(),
+                lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints::default(),
             )
             .await;
 
@@ -121,8 +121,8 @@ impl ResetSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockSettingsRepository;
     use crate::features::settings::use_cases::update::UpdateSettingsUseCase;
+    use lattice_core::application::ports::MockSettingsRepository;
     use serde_json::json;
     use std::collections::HashMap;
 

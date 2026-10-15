@@ -9,8 +9,8 @@ use crate::{
         dto::DocumentRefDto,
     },
     interfaces::di::Container,
-    shared::ipc::ApiError,
 };
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

@@ -1,5 +1,5 @@
 use super::{dto::*, repository::LearningRepository};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,
@@ -13,11 +13,11 @@ pub(super) async fn pool() -> Result<SqlitePool> {
         .max_lifetime(None)
         .connect(":memory:")
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     Ok(pool)
 }
 fn id() -> String {
@@ -145,7 +145,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     sqlx::query("PRAGMA foreign_keys=ON")
         .execute(&pool)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let repo = LearningRepository::new(pool.clone());
     let program = ready_program(&repo).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -153,12 +153,12 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     sqlx::query("UPDATE learning_blocks SET source_ids_json=? WHERE lesson_id=? AND ordinal=0")
         .bind(
             serde_json::to_string(&vec![source_id.clone()])
-                .map_err(|e| crate::shared::error::AppError::Serialization(e.to_string()))?,
+                .map_err(|e| lattice_core::shared::error::AppError::Serialization(e.to_string()))?,
         )
         .bind(&lesson.id)
         .execute(&pool)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let (_, created) = repo
         .ensure_lesson_note(
             &program.summary.id,
@@ -177,7 +177,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
             .bind(&note_id)
             .fetch_one(&pool)
             .await
-            .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     assert_eq!(note_count, 1);
 
     let generated = super::generation::GeneratedLearningCardDraft {
@@ -194,7 +194,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     .bind(&program.summary.id)
     .fetch_one(&pool)
     .await
-    .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let cleared = SaveLearningCardDraftRequestDto {
         draft_id: Some(generated_id.clone()),
         program_id: program.summary.id.clone(),
@@ -208,7 +208,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     let other_source = id();
     sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,1)")
         .bind(&other_source).bind(&program.summary.id).bind("Different source").bind("Not referenced by this lesson")
-        .execute(&pool).await.map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .execute(&pool).await.map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let swapped = SaveLearningCardDraftRequestDto {
         source_ids: vec![other_source],
         ..cleared
@@ -238,14 +238,13 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     let state = repo.memory_state(&program.summary.id).await?;
     let deck = study
         .get(state.deck_id.as_deref().ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("missing Learning deck".into())
+            lattice_core::shared::error::AppError::InvalidState("missing Learning deck".into())
         })?)
         .await?;
-    let card = deck
-        .cards
-        .iter()
-        .find(|c| c.id == card_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("accepted card".into()))?;
+    let card =
+        deck.cards.iter().find(|c| c.id == card_id).ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound("accepted card".into())
+        })?;
     assert_eq!(
         card.format,
         crate::features::learning::recall::study_dto::StudyCardFormat::QuestionAnswer
@@ -266,7 +265,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     assert_eq!(reviewed.review_count, 1);
 
     let original_journal_id = state.journal_id.ok_or_else(|| {
-        crate::shared::error::AppError::InvalidState("missing Learning notebook".into())
+        lattice_core::shared::error::AppError::InvalidState("missing Learning notebook".into())
     })?;
     study.delete_deck(&deck.id).await?;
     assert!(repo
@@ -281,7 +280,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         .bind(&original_journal_id)
         .execute(&pool)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let detached = repo.memory_state(&program.summary.id).await?;
     assert!(detached.journal_id.is_none());
     assert!(detached.lesson_notes.is_empty());
@@ -296,17 +295,17 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     assert!(created_again);
     let preserved_state = repo.memory_state(&program.summary.id).await?;
     let journal_id = preserved_state.journal_id.ok_or_else(|| {
-        crate::shared::error::AppError::InvalidState("missing recreated notebook".into())
+        lattice_core::shared::error::AppError::InvalidState("missing recreated notebook".into())
     })?;
     let deck_id = preserved_state.deck_id.ok_or_else(|| {
-        crate::shared::error::AppError::InvalidState("missing recreated deck".into())
+        lattice_core::shared::error::AppError::InvalidState("missing recreated deck".into())
     })?;
     let recreated_note_id = preserved_state
         .lesson_notes
         .first()
         .map(|(_, id)| id.clone())
         .ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("missing recreated note".into())
+            lattice_core::shared::error::AppError::InvalidState("missing recreated note".into())
         })?;
     repo.delete(&program.summary.id).await?;
     assert!(study.get(&deck_id).await.is_ok());
@@ -320,15 +319,15 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         .bind(journal_id)
         .fetch_one(&pool)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     assert_eq!(journal_count, 1);
     Ok(())
 }
 
 #[tokio::test]
 async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()> {
-    let dir =
-        tempfile::tempdir().map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+    let dir = tempfile::tempdir()
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = dir.path().join("learning-memory.db");
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -337,11 +336,11 @@ async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()>
         .max_connections(1)
         .connect_with(options.clone())
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     sqlx::migrate!("./migrations")
         .run(&first)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let repo = LearningRepository::new(first.clone());
     let mut program = fixture();
     repo.create(&program).await?;
@@ -362,7 +361,7 @@ async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()>
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let restarted = LearningRepository::new(second.clone())
         .memory_state(&program.summary.id)
         .await?;
@@ -406,7 +405,7 @@ async fn memory_resources_and_lesson_ids_are_isolated_between_programs() -> Resu
             .bind(&first.summary.id)
             .fetch_one(&pool)
             .await
-            .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     assert_eq!(drafts, 0);
     Ok(())
 }
@@ -421,11 +420,11 @@ async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Resu
         .max_connections(1)
         .connect_with(options.clone())
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     sqlx::migrate!("./migrations")
         .run(&first)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let repo = LearningRepository::new(first.clone());
     let p = ready_program(&repo).await?;
     first.close().await;
@@ -433,7 +432,7 @@ async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Resu
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let saved = LearningRepository::new(second.clone())
         .get(&p.summary.id)
         .await?;
@@ -650,15 +649,17 @@ async fn deleted_source_snapshot_keeps_tombstone_versions_and_refresh_checks() -
     let initial_version_id = id();
     library
         .add(
-            &id(),
-            &source_id,
-            &initial_version_id,
-            &program.summary.id,
-            LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/learning-source",
-            Some("https://example.org/learning-source"),
-            LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &initial_version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/learning-source",
+                requested_url: Some("https://example.org/learning-source"),
+                freshness: LearningSourcePolicy::Manual,
+            },
             source_capture("Snapshot source", "original immutable text"),
             "initial-source-payload".into(),
         )
@@ -700,7 +701,9 @@ async fn deleted_source_snapshot_keeps_tombstone_versions_and_refresh_checks() -
         .iter()
         .find(|source| source.id == source_id)
         .ok_or_else(|| {
-            crate::shared::error::AppError::NotFound("deleted source missing from snapshot".into())
+            lattice_core::shared::error::AppError::NotFound(
+                "deleted source missing from snapshot".into(),
+            )
         })?;
     assert!(source.deleted_at.is_some());
     assert_eq!(source.deletion_reason.as_deref(), Some(reason));
@@ -756,15 +759,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let hash = super::plugin::source_request_hash(&add)?;
     library
         .add(
-            &op,
-            &source_id,
-            &version_id,
-            &program.summary.id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &op,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             source_capture("Reference", &add.text),
             hash.clone(),
         )
@@ -772,15 +777,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     // Repeating the receipt after the response is lost does not create another version.
     library
         .add(
-            &op,
-            &source_id,
-            &version_id,
-            &program.summary.id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &op,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             source_capture("Reference", "changed retry text"),
             hash.clone(),
         )
@@ -836,15 +843,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let document_version_id = id();
     library
         .add(
-            &id(),
-            &document_source_id,
-            &document_version_id,
-            &program.summary.id,
-            LearningSourceKind::Document,
-            "add_document",
-            "fixture-document",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &document_source_id,
+                version_id: &document_version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Document,
+                operation_kind: "add_document",
+                origin: "fixture-document",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             source_capture("Document text", "Indexed document material"),
             "document-operation".into(),
         )
@@ -869,15 +878,17 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let web_op = id();
     library
         .add(
-            &web_op,
-            &web_id,
-            &web_version,
-            &program.summary.id,
-            LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/source",
-            Some("https://example.org/source"),
-            LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &web_op,
+                source_id: &web_id,
+                version_id: &web_version,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/source",
+                requested_url: Some("https://example.org/source"),
+                freshness: LearningSourcePolicy::Manual,
+            },
             source_capture("Web source", "stable words"),
             "same-payload".into(),
         )
@@ -915,7 +926,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
         .sources
         .iter()
         .find(|s| s.id == web_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(item.revision, 1);
     assert_eq!(
         item.latest_check.as_ref().map(|c| c.status.clone()),
@@ -924,7 +935,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let pending = item
         .pending_version_id
         .clone()
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("pending missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("pending missing".into()))?;
     assert!(!repo
         .get(&program.summary.id)
         .await?
@@ -947,7 +958,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
         .sources
         .iter()
         .find(|s| s.id == web_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(item.versions.len(), 2);
     assert_eq!(item.pending_version_id.as_deref(), Some(pending.as_str()));
     // Matching active content clears a stale update pointer and advances CAS.
@@ -969,7 +980,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
         .sources
         .iter()
         .find(|s| s.id == web_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(item.revision, 2);
     assert!(item.pending_version_id.is_none());
     assert_eq!(
@@ -995,7 +1006,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
         .sources
         .iter()
         .find(|s| s.id == web_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(item.revision, 3);
     assert_eq!(item.versions.len(), 2);
     assert_eq!(item.pending_version_id.as_deref(), Some(pending.as_str()));
@@ -1013,7 +1024,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
         .sources
         .iter()
         .find(|s| s.id == web_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(
         item.active_version_id.as_deref(),
         Some(web_version.as_str())
@@ -1036,7 +1047,7 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
         .sources
         .iter()
         .find(|s| s.id == web_id)
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(item.active_version_id.as_deref(), Some(pending.as_str()));
     assert!(item.pending_version_id.is_none());
     assert_eq!(item.versions.len(), 2);
@@ -1053,8 +1064,8 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
 #[tokio::test]
 async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_on_delete(
 ) -> Result<()> {
-    let directory =
-        tempfile::tempdir().map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+    let directory = tempfile::tempdir()
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = directory.path().join("learning-sources.sqlite");
     let options = SqliteConnectOptions::new()
         .filename(&path)
@@ -1065,11 +1076,11 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
         .max_connections(2)
         .connect_with(options.clone())
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     sqlx::migrate!("./migrations")
         .run(&pool1)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let repo1 = LearningRepository::new(pool1.clone());
     let program1 = ready_program(&repo1).await?;
     let program2 = ready_program(&repo1).await?;
@@ -1080,15 +1091,17 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
     let capture = source_capture("Persisted source", "A durable stored source body.");
     library1
         .add(
-            &operation_id,
-            &source_id,
-            &version_id,
-            &program1.summary.id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Persisted",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &operation_id,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program1.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Persisted",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             capture.clone(),
             "source-payload".into(),
         )
@@ -1100,11 +1113,11 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
         .max_connections(2)
         .connect_with(options)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     sqlx::migrate!("./migrations")
         .run(&pool2)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let library2 = super::source_library::LearningSourceLibraryRepository::new(pool2.clone());
     let reopened = library2
         .get_version(&GetLearningSourceVersionRequestDto {
@@ -1137,13 +1150,13 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
             .bind(&program1.summary.id)
             .fetch_one(&pool2)
             .await
-            .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let versions: i64 =
         sqlx::query_scalar("SELECT count(*) FROM learning_source_versions WHERE program_id=?")
             .bind(&program1.summary.id)
             .fetch_one(&pool2)
             .await
-            .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     assert_eq!(logical, 0);
     assert_eq!(versions, 0);
     pool2.close().await;
@@ -1161,13 +1174,13 @@ async fn legacy_migration_metadata_is_backfilled_from_the_captured_text() -> Res
     for program_id in [&program.summary.id, &program2.summary.id] {
         sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,7)")
             .bind(&legacy_source).bind(program_id).bind("Legacy excerpt").bind("migration text has four words")
-            .execute(&pool).await.map_err(|e|crate::shared::error::AppError::Database(e.to_string()))?;
+            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
         sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?, 'document',?,NULL,'fixed',?,NULL,0,7,7)")
             .bind(&legacy_source).bind(program_id).bind(&legacy_source).bind(&legacy_source)
-            .execute(&pool).await.map_err(|e|crate::shared::error::AppError::Database(e.to_string()))?;
+            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
         sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Legacy excerpt',NULL,NULL,NULL,'migration text has four words','migration text has four words','',0,1,'legacy_bounded_extraction_v1',7)")
             .bind(&legacy_source).bind(program_id).bind(&legacy_source)
-            .execute(&pool).await.map_err(|e|crate::shared::error::AppError::Database(e.to_string()))?;
+            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
     }
     let library = super::source_library::LearningSourceLibraryRepository::new(pool.clone());
     let workspace = library.workspace(&program.summary.id).await?;
@@ -1176,7 +1189,9 @@ async fn legacy_migration_metadata_is_backfilled_from_the_captured_text() -> Res
         .iter()
         .find(|s| s.id == legacy_source)
         .and_then(|s| s.active_version.as_ref())
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("legacy version missing".into()))?;
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound("legacy version missing".into())
+        })?;
     assert_eq!(version.content_sha256.len(), 64);
     assert!(version
         .content_sha256
@@ -1206,7 +1221,7 @@ async fn initially_generated_sources_are_normalized_and_persisted_as_active_vers
     let repo = LearningRepository::new(pool);
     let mut program = fixture();
     let source = program.sources.first_mut().ok_or_else(|| {
-        crate::shared::error::AppError::InvalidInput("missing fixture source".into())
+        lattice_core::shared::error::AppError::InvalidInput("missing fixture source".into())
     })?;
     source.title = "  Captured title  ".into();
     source.excerpt = "  First line.\r\nSecond line.  ".into();
@@ -1215,7 +1230,7 @@ async fn initially_generated_sources_are_normalized_and_persisted_as_active_vers
     let stored_source = stored
         .sources
         .first()
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("source missing".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
     assert_eq!(stored_source.title, "Captured title");
     assert_eq!(stored_source.excerpt, "First line.\nSecond line.");
     let active = repo.active_sources(&program.summary.id).await?;
@@ -1236,15 +1251,17 @@ async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Res
     let source_id = id();
     library
         .add(
-            &id(),
-            &source_id,
-            &id(),
-            &program.summary.id,
-            LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/versioned",
-            Some("https://example.org/versioned"),
-            LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &id(),
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/versioned",
+                requested_url: Some("https://example.org/versioned"),
+                freshness: LearningSourcePolicy::Manual,
+            },
             source_capture("Versioned source", "Initial captured reference."),
             "initial".into(),
         )

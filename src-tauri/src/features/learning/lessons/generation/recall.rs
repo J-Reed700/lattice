@@ -6,12 +6,12 @@ use super::{
     validate_text, MAX_BODY, MAX_EXPLANATION, MAX_QUESTION, MAX_QUOTE_CHARS, MIN_QUOTE_CHARS,
     MIN_TEXT,
 };
-use crate::application::ports::LLMPort;
 use crate::features::learning::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningProgramStatus,
     LearningSourceDto,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;

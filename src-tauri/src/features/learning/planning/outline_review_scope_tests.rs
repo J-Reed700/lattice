@@ -4,17 +4,17 @@ use super::outline_reference_tests::*;
 use crate::features::learning::{
     dto::*,
     lessons::course_generation_tests::{outline, request},
-    outline_linking,
     outline_draft::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueDto, LearningOutlineIssueKind,
         LearningOutlineReviewStatus, OutlineDraft, RepairLearningOutlineRequestDto,
     },
+    outline_linking,
     outline_progress::OutlineProgress,
     outline_review_scope::{ReviewReceipt, ReviewScope},
     repository::LearningRepository,
     service,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde_json::json;
 
 #[tokio::test]
@@ -56,8 +56,14 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     assert_eq!(prompts.len(), 4);
     {
         let all = llm.prompts.lock().unwrap();
-        let last_link = all.iter().rposition(|p| p.starts_with(outline_linking::LINK_SYSTEM)).unwrap();
-        let first_review = all.iter().position(|p| p.starts_with("Review instructional quality.")).unwrap();
+        let last_link = all
+            .iter()
+            .rposition(|p| p.starts_with(outline_linking::LINK_SYSTEM))
+            .unwrap();
+        let first_review = all
+            .iter()
+            .position(|p| p.starts_with("Review instructional quality."))
+            .unwrap();
         assert!(last_link < first_review);
     }
     let full = payload(&prompts[1]);
@@ -116,11 +122,18 @@ async fn review_receipts_survive_new_references_and_invalidate_on_model_request_
     // never reopen a module that passed. The draft's own source list growing
     // or a citation being linked on an unchanged module changes nothing.
     let mut with_more_references = draft.clone();
-    with_more_references.source_ids.push("gathered-later".into());
+    with_more_references
+        .source_ids
+        .push("gathered-later".into());
     with_more_references.review.references_gathered += 1;
     assert!(ReviewScope::new(&with_more_references, &llm).incremental);
     let mut relinked = draft.clone();
-    cite_at(&mut relinked.candidate, "/modules/2/outcomes/0", 0, ORIGINAL);
+    cite_at(
+        &mut relinked.candidate,
+        "/modules/2/outcomes/0",
+        0,
+        ORIGINAL,
+    );
     relinked.candidate["modules"][0]["summary"]["sourceIndex"] = json!(null);
     relinked.candidate["modules"][0]["summary"]["quote"] = json!("");
     assert_eq!(

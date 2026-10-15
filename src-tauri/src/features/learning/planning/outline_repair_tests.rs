@@ -3,7 +3,6 @@
 //! module budgets exhaust, plan repair never adds citations, and targeted
 //! research saves pages that the judge then reads.
 use super::outline_reference_tests::*;
-use crate::application::services::claim_verification::ClaimVerdict;
 use crate::features::learning::{
     dto::*,
     lessons::course_generation_tests::request,
@@ -17,7 +16,8 @@ use crate::features::learning::{
     repository::LearningRepository,
     service,
 };
-use crate::shared::error::Result;
+use lattice_core::application::services::claim_verification::ClaimVerdict;
+use lattice_core::shared::error::Result;
 use serde_json::{json, Value};
 
 fn with_summary(text: &str) -> Value {
@@ -55,8 +55,8 @@ async fn generate_with(
 }
 
 #[tokio::test]
-async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_rewrite(
-) -> Result<()> {
+async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_rewrite() -> Result<()>
+{
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
@@ -77,7 +77,12 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert_eq!(review.repair_passes, 1);
     assert_eq!(review.citations_verified, 1);
     assert!(review.issues.is_empty());
@@ -92,8 +97,18 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
         .any(|p| p.starts_with("Repair a saved curriculum module")));
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][0]["summary"]["sourceIndex"], 0);
-    assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], ADDITIONAL);
-    assert_eq!(saved.citation_receipts.values().filter(|r| r.covers).count(), 1);
+    assert_eq!(
+        saved.candidate["modules"][0]["summary"]["quote"],
+        ADDITIONAL
+    );
+    assert_eq!(
+        saved
+            .citation_receipts
+            .values()
+            .filter(|r| r.covers)
+            .count(),
+        1
+    );
     let receipt = saved.claim_receipts.values().next().unwrap();
     assert_eq!(receipt.verdict, ClaimVerdict::Supported);
     assert_eq!(receipt.claim, ADDITIONAL);
@@ -128,7 +143,12 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert!(review.issues.is_empty());
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 5);
@@ -136,8 +156,14 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
     let repair = payload(&prompts[3]);
     assert_eq!(repair["findings"][0]["id"], "finding-1");
     assert_eq!(repair["findings"][0]["instruction"], CORRECT);
-    assert_eq!(repair["findings"][0]["contradictingPassage"]["sourceIndex"], 0);
-    assert_eq!(repair["findings"][0]["contradictingPassage"]["quote"], ADDITIONAL);
+    assert_eq!(
+        repair["findings"][0]["contradictingPassage"]["sourceIndex"],
+        0
+    );
+    assert_eq!(
+        repair["findings"][0]["contradictingPassage"]["quote"],
+        ADDITIONAL
+    );
     assert!(repair["findings"][0]["reason"]
         .as_str()
         .unwrap()
@@ -149,7 +175,10 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
     assert_eq!(receipt.source_id.as_deref(), Some(source.id.as_str()));
     assert_eq!(saved.candidate["modules"][0]["summary"]["text"], ADDITIONAL);
     // The rewrite changed the text, so the rewrite's item carries no citation.
-    assert_eq!(saved.candidate["modules"][0]["summary"]["sourceIndex"], Value::Null);
+    assert_eq!(
+        saved.candidate["modules"][0]["summary"]["sourceIndex"],
+        Value::Null
+    );
     Ok(())
 }
 
@@ -179,7 +208,12 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::NeedsRepair,
+        "{}",
+        review.note
+    );
     assert_eq!(review.repair_passes, 2);
     assert_eq!(review.issues.len(), 1);
     let issue = &review.issues[0];
@@ -224,13 +258,38 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
     let objective = "Design a controlled experiment and explain its limitations.";
     let llm = model(vec![
         initial,
-        findings(vec![plan_finding("/modules/0/lessons/0", objective, "Name the measurement for this lesson.")]),
+        findings(vec![plan_finding(
+            "/modules/0/lessons/0",
+            objective,
+            "Name the measurement for this lesson.",
+        )]),
         json!({"module":first}),
-        verdicts(&[("finding-1", "resolved")], vec![plan_finding("/modules/0/lessons/1", objective, "Name the measurement for this lesson too.")]),
+        verdicts(
+            &[("finding-1", "resolved")],
+            vec![plan_finding(
+                "/modules/0/lessons/1",
+                objective,
+                "Name the measurement for this lesson too.",
+            )],
+        ),
         json!({"module":second}),
-        verdicts(&[("finding-2", "resolved")], vec![plan_finding("/modules/0/lessons/2", objective, "And for this lesson.")]),
+        verdicts(
+            &[("finding-2", "resolved")],
+            vec![plan_finding(
+                "/modules/0/lessons/2",
+                objective,
+                "And for this lesson.",
+            )],
+        ),
         json!({"module":third}),
-        verdicts(&[("finding-3", "resolved")], vec![plan_finding("/modules/0/summary", "Build a skill and apply it to an experiment.", "The summary no longer matches the rewritten lessons.")]),
+        verdicts(
+            &[("finding-3", "resolved")],
+            vec![plan_finding(
+                "/modules/0/summary",
+                "Build a skill and apply it to an experiment.",
+                "The summary no longer matches the rewritten lessons.",
+            )],
+        ),
     ]);
     let program = service::generate(
         &repo,
@@ -242,7 +301,12 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
     .await?;
     let review = program.outline_review.as_ref().unwrap();
     // Out of rewrites, the summary finding is advice that does not block.
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert_eq!(review.repair_passes, 3);
     assert_eq!(review.issues.len(), 1);
     assert_eq!(review.issues[0].id, "finding-4");
@@ -274,7 +338,12 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert_eq!(review.citations_verified, 0);
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 4);
@@ -283,12 +352,21 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
     // again: every linking call precedes the first review.
     {
         let all = llm.prompts.lock().unwrap();
-        let last_link = all.iter().rposition(|p| p.starts_with(outline_linking::LINK_SYSTEM)).unwrap();
-        let first_review = all.iter().position(|p| p.starts_with("Review instructional quality.")).unwrap();
+        let last_link = all
+            .iter()
+            .rposition(|p| p.starts_with(outline_linking::LINK_SYSTEM))
+            .unwrap();
+        let first_review = all
+            .iter()
+            .position(|p| p.starts_with("Review instructional quality."))
+            .unwrap();
         assert!(last_link < first_review);
     }
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
-    assert_eq!(saved.candidate["modules"][0]["summary"]["sourceIndex"], Value::Null);
+    assert_eq!(
+        saved.candidate["modules"][0]["summary"]["sourceIndex"],
+        Value::Null
+    );
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], "");
     assert!(saved.candidate["modules"][0]["project"]["brief"]
         .as_str()
@@ -324,8 +402,14 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
     );
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
-    assert_ne!(payload(&prompts[2])["findings"][0]["instruction"], PLAN_SMALLEST);
-    assert_eq!(payload(&prompts[4])["findings"][0]["instruction"], PLAN_SMALLEST);
+    assert_ne!(
+        payload(&prompts[2])["findings"][0]["instruction"],
+        PLAN_SMALLEST
+    );
+    assert_eq!(
+        payload(&prompts[4])["findings"][0]["instruction"],
+        PLAN_SMALLEST
+    );
     Ok(())
 }
 
@@ -364,7 +448,12 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     )
     .await?;
     let review = saved.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::NeedsRepair,
+        "{}",
+        review.note
+    );
     assert!(review.note.contains("no usable correction"));
     assert_eq!(review.issues.len(), 1);
     assert_eq!(review.issues[0].attempts, 1);
@@ -425,14 +514,25 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     )
     .await?;
     let review = repaired.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert!(review.issues.is_empty());
     assert_eq!(repaired.sources.len(), 3);
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 5);
     assert_eq!(payload(&prompts[0])["openFindings"][0]["attempts"], 0);
-    assert_eq!(payload(&prompts[0])["reviewScope"]["mode"], "changed_modules");
-    assert_eq!(payload(&prompts[0])["reviewScope"]["moduleIndices"], json!([0]));
+    assert_eq!(
+        payload(&prompts[0])["reviewScope"]["mode"],
+        "changed_modules"
+    );
+    assert_eq!(
+        payload(&prompts[0])["reviewScope"]["moduleIndices"],
+        json!([0])
+    );
     assert_eq!(
         payload(&prompts[1])["alreadySearched"],
         json!(["random assignment confounding primary source"])
@@ -456,6 +556,8 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         .starts_with(claim));
     let versions = repo.verification_sources(&repaired.summary.id).await?;
     assert_eq!(versions.len(), 3);
-    assert!(versions.iter().all(|s| !s.excerpt.contains("SEARCH_SNIPPET")));
+    assert!(versions
+        .iter()
+        .all(|s| !s.excerpt.contains("SEARCH_SNIPPET")));
     Ok(())
 }

@@ -1,9 +1,9 @@
 //! Starts the backup ticker at launch (and after archive setup) when either
 //! the local auto-backup or the off-device archive is switched on.
 
-use crate::application::ports::{BackupSchedulerPort, SettingsRepositoryPort};
 use crate::features::backup::archive::service::ArchiveService;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{BackupSchedulerPort, SettingsRepositoryPort};
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 pub struct StartupAutoBackupUseCase {

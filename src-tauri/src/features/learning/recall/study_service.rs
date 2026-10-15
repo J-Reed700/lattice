@@ -1,6 +1,6 @@
 //! Study validation and orchestration. Persisted state belongs to the repository.
 use super::{study_dto::*, study_repository::StudyRepository};
-use crate::{
+use lattice_core::{
     application::ports::{LLMPort, LibraryPassagesPort},
     shared::error::{AppError, Result},
 };

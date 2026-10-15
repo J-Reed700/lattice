@@ -2,11 +2,11 @@
 //!
 //! Retrieves metadata for a file.
 
-use crate::application::ports::FileStoragePort;
 use crate::features::file::dto::{FileMetadataDto, GetFileMetadataRequestDto};
 use crate::infrastructure::security::FileAccessConfig;
-use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
+use lattice_core::application::ports::FileStoragePort;
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// Use case for retrieving file metadata.
@@ -173,13 +173,16 @@ mod tests {
                 .any(|(p, _, _)| p == &path_str || p == &path.display().to_string())
         }
 
-        async fn metadata(&self, path: &Path) -> Result<crate::application::ports::FileMetadata> {
+        async fn metadata(
+            &self,
+            path: &Path,
+        ) -> Result<lattice_core::application::ports::FileMetadata> {
             let path_str = path.to_string_lossy().to_string();
             self.existing_files
                 .iter()
                 .find(|(p, _, _)| p == &path_str || p == &path.display().to_string())
                 .map(
-                    |(_, size, modified_at)| crate::application::ports::FileMetadata {
+                    |(_, size, modified_at)| lattice_core::application::ports::FileMetadata {
                         size: *size,
                         modified_at: *modified_at,
                         is_file: true,
@@ -187,7 +190,7 @@ mod tests {
                     },
                 )
                 .ok_or_else(|| {
-                    crate::shared::error::AppError::NotFound(format!(
+                    lattice_core::shared::error::AppError::NotFound(format!(
                         "File not found: {}",
                         path.display()
                     ))
@@ -248,7 +251,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(crate::shared::error::AppError::NotFound(_))
+            Err(lattice_core::shared::error::AppError::NotFound(_))
         ));
     }
 

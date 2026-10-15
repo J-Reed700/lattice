@@ -7,8 +7,8 @@
 //! - Just the core business data and logic
 //! - Rich behavior for tag management
 
-use crate::shared::types::{TagId, TagName};
 use chrono::{DateTime, Utc};
+use lattice_core::shared::types::{TagId, TagName};
 use serde::{Deserialize, Serialize};
 
 /// Tag entity for categorizing and organizing documents.
@@ -30,8 +30,8 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::entities::tag::Tag;
-/// use lattice::shared::types::TagName;
+/// use lattice_core::domain::entities::tag::Tag;
+/// use lattice_core::shared::types::TagName;
 ///
 /// let name = TagName::new("rust".to_string()).unwrap();
 /// let tag = Tag::new(name, "#ff5733".to_string());
@@ -60,8 +60,8 @@ impl Tag {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::tag::Tag;
-    /// use lattice::shared::types::TagName;
+    /// use lattice_core::domain::entities::tag::Tag;
+    /// use lattice_core::shared::types::TagName;
     ///
     /// let name = TagName::new("machine-learning".to_string()).unwrap();
     /// let tag = Tag::new(name, "#6366f1".to_string());

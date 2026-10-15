@@ -1,11 +1,11 @@
 //! Web search and page capture shared by outline reference gathering and
 //! lesson research. Search snippets never become evidence: only a complete
 //! capture of a page, validated for full text, is returned.
-use crate::application::contracts::web::{WebSearchInput, WebSearchResult};
-use crate::application::ports::LLMPort;
 use crate::features::learning::source_library::CapturedLearningSource;
 use crate::features::web::traits::WebServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::{WebSearchInput, WebSearchResult};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 

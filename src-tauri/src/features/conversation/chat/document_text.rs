@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::LLMPort;
-use crate::domain::entities::document::Document;
-use crate::shared::text::safe_truncate;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::entities::document::Document;
+use lattice_core::shared::text::safe_truncate;
 
 /// The document's text in chunk order, falling back to the stored content for
 /// a document that has not been chunked yet.

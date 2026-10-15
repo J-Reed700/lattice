@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::TranscriptionPort;
 use crate::features::transcription::dto::TranscriptionStatusDto;
-use crate::shared::error::Result;
+use lattice_core::application::ports::TranscriptionPort;
+use lattice_core::shared::error::Result;
 
 /// Answers "can Lattice transcribe audio right now?".
 ///
@@ -59,6 +59,7 @@ mod tests {
         let pool = empty_pool().await;
         let port = Arc::new(WhisperTranscriptionService::new(
             DownloadedModelRepository::new(pool),
+            Arc::default(),
         )) as Arc<dyn TranscriptionPort>;
 
         let status = GetTranscriptionStatusUseCase::new(port)

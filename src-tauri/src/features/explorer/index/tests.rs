@@ -5,16 +5,16 @@ use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
 use super::search::{fuse, match_expression, FolderHit, RRF_K};
 use super::store::{self, FolderStore};
 use super::tool;
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::dto::ExplorerFocusDto;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
-use crate::shared::Result;
 use async_trait::async_trait;
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
+use lattice_core::shared::Result;
 use parking_lot::Mutex;
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -207,7 +207,8 @@ impl Rig {
                 events.lock().push(status);
             }
         });
-        let manager = FolderIndexManager::new(config, Arc::new(Source(embedder)), jobs);
+        let manager =
+            FolderIndexManager::new(config, Arc::new(Source(embedder)), jobs, Arc::default());
         manager.register().await.unwrap();
         manager
     }

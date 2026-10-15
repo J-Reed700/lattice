@@ -17,7 +17,6 @@ pub(super) struct GeneratedAnswer {
 
 /// `research` saves each round of a research turn, and resumes one after the
 /// rounds it saved.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn generate_answer(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
@@ -51,10 +50,7 @@ pub(super) async fn generate_answer(
         }
         None => run_agentic_tool_loop(
             container,
-            &turn.conv_service,
-            &turn.conv_id,
-            &turn.turn_id,
-            &turn.llm,
+            turn.chat_turn(),
             emit,
             LoopRequest {
                 input,
@@ -68,14 +64,11 @@ pub(super) async fn generate_answer(
                 ),
                 research,
             },
-            &turn.highlight_terms,
             &turn.settings.llm.tool_output,
             &mut sources,
             &mut retrieval_trace,
             pages_read,
-            &turn.focus,
             turn.explorer.as_ref(),
-            &turn.recorder,
         )
         .await
         .map(|outcome| {

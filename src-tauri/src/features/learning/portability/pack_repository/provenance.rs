@@ -6,7 +6,7 @@ use crate::features::learning::{
     content_verification::LessonVerificationReport, dto::LearningProgramDto,
     outline_draft::OutlineDraft, pack::DecodedLearningPack,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};

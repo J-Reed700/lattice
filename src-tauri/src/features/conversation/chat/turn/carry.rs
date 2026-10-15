@@ -1,8 +1,8 @@
 //! Stage 3: the material the turn reads whole rather than searches for.
 use super::prepare::PreparedTurn;
 use super::*;
-use crate::application::ports::llm_port::{chars_within_tokens, DEFAULT_CHARS_PER_TOKEN};
-use crate::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
+use lattice_core::application::ports::llm_port::{chars_within_tokens, DEFAULT_CHARS_PER_TOKEN};
+use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
 /// Attachments and the Explorer folder block, already charged to the budget.
 pub(super) struct CarriedMaterial {

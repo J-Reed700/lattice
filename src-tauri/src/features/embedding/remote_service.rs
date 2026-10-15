@@ -3,9 +3,9 @@
 //! Provides embeddings via a remote API (e.g., OpenAI-compatible endpoint).
 
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::shared::error::{AppError, Result};
-use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::reqwest_client_builder;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -136,7 +136,7 @@ impl EmbeddingServiceTrait for RemoteEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::domain::value_objects::ContextualizedChunk],
+        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         let texts: Vec<String> = chunks
             .iter()

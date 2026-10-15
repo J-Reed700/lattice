@@ -7,10 +7,10 @@
 //! assembly, sends the saved request with every round's calls and results
 //! after it, and numbers its rounds on from the saved one.
 use super::*;
-use crate::application::ports::llm_port::CompletionInput;
-use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::ports::ToolDefinition;
 use serde::{Deserialize, Serialize};
 
 /// The turn as it stood before the model's first round.

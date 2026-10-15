@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::features::web::services::web::public_web_client;
 use crate::features::web::traits::page_snapshot::PageCapturePort;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 mod capture;
 mod clutter;

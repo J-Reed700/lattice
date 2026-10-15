@@ -17,21 +17,21 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     CommittedMemorySnapshot, ConversationMemoryPort, MemoryCommitCandidate, MemoryCommitError,
     MemoryCommitPreconditions, ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, SamplingOverride,
 };
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
     SourceRole, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
     MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::segment::{clip_chars, segment_message};
 use super::selection::select_boundary;
@@ -853,11 +853,10 @@ impl LLMPort for FakeLlm {
             .input
             .iter()
             .filter_map(|input| match input {
-                crate::application::ports::llm_port::CompletionInput::Message { role, content }
-                    if role == "user" =>
-                {
-                    Some(content.clone())
-                }
+                lattice_core::application::ports::llm_port::CompletionInput::Message {
+                    role,
+                    content,
+                } if role == "user" => Some(content.clone()),
                 _ => None,
             })
             .next_back()

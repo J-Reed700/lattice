@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use lattice::application::ports::OcrPort;
 use lattice::features::indexing::engine::ContentExtractor;
 use lattice::features::ocr::{render, FixedOcrModel, LlamaServerLauncher, OcrModel, VisionOcr};
+use lattice_core::application::ports::OcrPort;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ocr = Arc::new(VisionOcr::new(
         Arc::new(FixedOcrModel(Some(model))),
         Arc::new(LlamaServerLauncher::with_binary(binary).on_port(8096)),
+        Arc::default(),
     )?);
     let extractor = ContentExtractor::new().with_ocr(Arc::clone(&ocr) as Arc<dyn OcrPort>);
 

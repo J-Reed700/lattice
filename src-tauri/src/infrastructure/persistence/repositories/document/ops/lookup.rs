@@ -1,6 +1,6 @@
 //! Single-value queries: counts, existence checks, checksums, paths and ids.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
 pub async fn exists_by_path(conn: &mut SqliteConnection, file_path: &str) -> Result<bool> {

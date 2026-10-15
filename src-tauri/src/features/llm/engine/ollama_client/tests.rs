@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
-    use crate::application::ports::llm_port::{
+    use lattice_core::application::ports::llm_port::{
         CompletionInput, CompletionRequest, LLMPort, SamplingOverride,
     };
     use wiremock::{
@@ -96,7 +96,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
 
 #[tokio::test]
 async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
-    use crate::application::ports::llm_port::{
+    use lattice_core::application::ports::llm_port::{
         CompletionInput, CompletionRequest, LLMPort, ToolDefinition,
     };
     use wiremock::{
@@ -196,7 +196,7 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
 
 #[tokio::test]
 async fn typed_completion_cancels_http_work_when_request_budget_expires() {
-    use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
+    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -254,7 +254,7 @@ async fn typed_completion_cancels_http_work_when_request_budget_expires() {
 
 #[tokio::test]
 async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
-    use crate::application::ports::llm_port::{
+    use lattice_core::application::ports::llm_port::{
         CompletionInput, CompletionRequest, LLMPort, ToolDefinition,
     };
     use wiremock::{
@@ -354,7 +354,7 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
 
 #[tokio::test]
 async fn typed_stream_handles_sparse_tool_indices_without_allocating_gaps() {
-    use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
+    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -434,7 +434,7 @@ async fn health_check_requires_an_ollama_route_not_just_a_listening_port() {
 
 #[tokio::test]
 async fn a_failed_status_says_what_it_means_without_echoing_the_body() {
-    use crate::application::ports::llm_port::CompletionRequest;
+    use lattice_core::application::ports::llm_port::CompletionRequest;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -509,7 +509,7 @@ async fn a_streamed_body_outlives_the_probe_timeout_and_keeps_split_characters()
     )
     .unwrap();
     let response = client
-        .complete(&crate::application::ports::llm_port::CompletionRequest::default())
+        .complete(&lattice_core::application::ports::llm_port::CompletionRequest::default())
         .await
         .unwrap();
     assert_eq!(response.text, "Slow 世界");
@@ -532,7 +532,7 @@ async fn a_stream_that_goes_silent_is_a_stall_not_a_wait() {
     )
     .unwrap();
     let error = client
-        .complete(&crate::application::ports::llm_port::CompletionRequest::default())
+        .complete(&lattice_core::application::ports::llm_port::CompletionRequest::default())
         .await
         .unwrap_err();
     assert!(error.to_string().contains("sent nothing"), "{error}");
@@ -541,7 +541,7 @@ async fn a_stream_that_goes_silent_is_a_stall_not_a_wait() {
 
 #[test]
 fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
-    use crate::application::ports::llm_port::ToolDefinition;
+    use lattice_core::application::ports::llm_port::ToolDefinition;
     let client = OllamaClient::with_model_and_timeouts(
         "http://localhost:11434",
         "qwen3.5",

@@ -4,7 +4,7 @@
 //! `ask_question` commands were removed with the use case behind them.
 
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 /// Checks LLM availability and returns health status information
@@ -36,17 +36,6 @@ pub async fn check_llm_health(
         max_context_tokens: llm.max_context_tokens(),
         backend: "rust-ddd".to_string(),
     };
-
-    // 4. Audit logging
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::QuestionAnswered,
-        "llm_health_check",
-        "available" => if is_ready { "true" } else { "false" }
-    )
-    .await
-    .ok();
 
     Ok(health_response)
 }

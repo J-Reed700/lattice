@@ -1,5 +1,5 @@
 //! Per-request outline progress and cancellation. Draft text never crosses IPC.
-use crate::shared::{
+use lattice_core::shared::{
     error::{AppError, Result},
     ipc::{ApiError, ErrorCode},
 };
@@ -109,10 +109,7 @@ impl OutlineProgress {
     pub fn detail(&self, detail: impl Into<String>) {
         let detail = detail.into();
         tracing::info!(operation_id = %self.id, %detail, "Learning outline stage progress");
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .detail = Some(detail);
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).detail = Some(detail);
         self.emit();
     }
 

@@ -1,6 +1,6 @@
-use crate::domain::repositories::search_repository::{SearchRepository, SearchResult};
-use crate::shared::error::AppError;
 use async_trait::async_trait;
+use lattice_core::domain::repositories::search_repository::{SearchRepository, SearchResult};
+use lattice_core::shared::error::AppError;
 use sqlx::SqlitePool;
 
 use super::ops;

@@ -7,8 +7,8 @@ use crate::features::learning::{
     operations::Operation,
     persistence::{db, hash, hash_text, now},
 };
-use crate::shared::error::{AppError, Result};
 use futures::TryStreamExt;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
@@ -88,6 +88,22 @@ fn check_name(value: &LearningSourceCheckStatus) -> &'static str {
 #[derive(Clone)]
 pub struct LearningSourceLibraryRepository {
     pool: SqlitePool,
+}
+
+/// Who is adding a source and where it came from. Source capture owns this
+/// fixed provenance plus caller-supplied stable IDs; naming each field keeps
+/// replay validation auditable.
+#[derive(Debug, Clone)]
+pub struct NewLearningSource<'a> {
+    pub operation_id: &'a str,
+    pub source_id: &'a str,
+    pub version_id: &'a str,
+    pub program_id: &'a str,
+    pub kind: LearningSourceKind,
+    pub operation_kind: &'a str,
+    pub origin: &'a str,
+    pub requested_url: Option<&'a str>,
+    pub freshness: LearningSourcePolicy,
 }
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
 use super::*;
-use crate::shared::http::normalize_web_source_url;
+use lattice_core::shared::http::normalize_web_source_url;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationLinkedDocumentRow {

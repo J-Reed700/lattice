@@ -122,7 +122,7 @@ pub struct StartJournalSynthesisRequestDto {
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct JournalSynthesisDto {
-    pub job: crate::shared::runtime::jobs::JobDto,
+    pub job: lattice_core::shared::runtime::jobs::JobDto,
     pub title: String,
     pub heading: String,
     pub destination: SynthesisDestinationDto,

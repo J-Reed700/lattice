@@ -2,8 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::RepositoryPort;
-use crate::domain::entities::Document;
 use crate::features::extraction::use_cases::extract_and_resolve_links::{
     ParseWikilinksPort, ResolveWikilinkPort,
 };
@@ -12,6 +10,8 @@ use crate::features::extraction::use_cases::{
     ResolveWikilinkUseCase,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::RepositoryPort;
+use lattice_core::domain::entities::Document;
 
 #[derive(Clone)]
 pub struct ExtractionDi {

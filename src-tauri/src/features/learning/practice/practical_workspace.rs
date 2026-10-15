@@ -1,6 +1,6 @@
 //! Combines saved workspace data with the current runtime capabilities.
 use crate::features::learning::{
-    embedded_runtime::{self, LearningBuiltinRuntime, LearningBuiltinRuntimeCapability},
+    embedded_runtime::{BuiltinRuntimes, LearningBuiltinRuntime, LearningBuiltinRuntimeCapability},
     lab_runtime::{self, LearningContainerEngine, LearningLabRuntimeCapability},
     practical_dto::{LearningPracticalRuntimeKind, LearningPracticalWorkspaceDto},
     practical_repository::{LearningPracticalRepository, PracticalWorkspaceSnapshot},
@@ -8,12 +8,15 @@ use crate::features::learning::{
 
 impl PracticalWorkspaceSnapshot {
     /// Probe runtimes only after persistence has finished, including operation replay.
-    pub async fn resolve_runtime(self) -> LearningPracticalWorkspaceDto {
+    pub async fn resolve_runtime(
+        self,
+        runtimes: &BuiltinRuntimes,
+    ) -> LearningPracticalWorkspaceDto {
         let (docker, podman) = tokio::join!(
             lab_runtime::detect_container_engine(LearningContainerEngine::Docker),
             lab_runtime::detect_container_engine(LearningContainerEngine::Podman)
         );
-        self.with_capabilities(embedded_runtime::capabilities(), vec![docker, podman])
+        self.with_capabilities(runtimes.capabilities(), vec![docker, podman])
     }
 
     /// Apply a single capability snapshot consistently to every activity.
@@ -67,7 +70,7 @@ impl PracticalWorkspaceSnapshot {
     }
 }
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
@@ -75,6 +78,7 @@ fn invalid(message: impl Into<String>) -> AppError {
 
 pub(in crate::features::learning) async fn runtime_generation_context(
     repo: &LearningPracticalRepository,
+    runtimes: &BuiltinRuntimes,
     profile_id: Option<&str>,
     builtin: Option<LearningBuiltinRuntime>,
 ) -> Result<Option<crate::features::learning::practical_generation::PracticalRuntimeContext>> {
@@ -82,7 +86,8 @@ pub(in crate::features::learning) async fn runtime_generation_context(
         if profile_id.is_some() {
             return Err(invalid("Choose one execution environment for an activity."));
         }
-        let capability = embedded_runtime::capabilities()
+        let capability = runtimes
+            .capabilities()
             .into_iter()
             .find(|item| item.id == runtime)
             .ok_or_else(|| invalid("Unknown built-in runtime."))?;

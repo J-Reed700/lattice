@@ -11,17 +11,14 @@ use crate::features::learning::{
     persistence::{db, decode, encode, hash, hash_text, now},
     plan_dto::*,
 };
-use crate::shared::error::{AppError, Result};
 #[cfg(test)]
-use crate::{
-    features::learning::{
-        curriculum::{
-            LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
-        },
-        repository::LearningRepository,
-    },
-    shared::runtime::jobs::JobStore,
+use crate::features::learning::{
+    curriculum::{LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus},
+    repository::LearningRepository,
 };
+use lattice_core::shared::error::{AppError, Result};
+#[cfg(test)]
+use lattice_core::shared::runtime::jobs::JobStore;
 use sqlx::{Row, SqlitePool};
 
 #[path = "generation_recovery.rs"]

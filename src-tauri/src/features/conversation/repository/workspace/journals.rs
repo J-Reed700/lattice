@@ -271,7 +271,7 @@ impl ConversationRepository {
     )
     .bind(journal_space_id)
     .bind(conversation_id)
-    .bind(crate::shared::persistence::timestamps::now_db_timestamp())
+    .bind(lattice_core::shared::persistence::timestamps::now_db_timestamp())
     .execute(&self.pool)
     .await
     .map_err(|e| {
@@ -346,7 +346,7 @@ impl ConversationRepository {
              WHERE journal_space_id = ? AND conversation_id = ?",
         )
         .bind(request.pinned)
-        .bind(crate::shared::persistence::timestamps::now_db_timestamp())
+        .bind(lattice_core::shared::persistence::timestamps::now_db_timestamp())
         .bind(journal_space_id)
         .bind(conversation_id)
         .execute(&self.pool)

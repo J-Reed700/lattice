@@ -2,7 +2,10 @@
 //! shown, and who gets to choose the opening documents.
 
 use super::*;
-use crate::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
+use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
 
 /// Replays one canned plan and records what it was asked.
 struct SummaryPlannerStub {
@@ -96,7 +99,7 @@ async fn the_catalog_carries_summaries_when_the_tier_has_them() {
         None,
         &catalog,
         &summaries(&[("doc-1", "A manual about preflight and engine start.")]),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -118,7 +121,7 @@ async fn an_empty_summary_map_reproduces_the_plain_catalog() {
         None,
         &catalog,
         &HashMap::new(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -130,7 +133,7 @@ async fn an_empty_summary_map_reproduces_the_plain_catalog() {
         None,
         &catalog,
         &HashMap::new(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -150,7 +153,7 @@ async fn catalog_summaries_are_truncated_per_document() {
         None,
         &catalog,
         &summaries(&[("doc-1", &long)]),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -243,7 +246,7 @@ fn unknown_or_absent_summary_documents_leave_the_plan_alone() {
 
 #[test]
 fn explicit_reading_order_outranks_summary_similarity() {
-    use crate::domain::value_objects::source_context::{SourceContext, SourceGroup};
+    use lattice_core::domain::value_objects::source_context::{SourceContext, SourceGroup};
 
     let ordered = |id: &str, position: u32| CorpusDocument {
         source_context: Some(SourceContext {

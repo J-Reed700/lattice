@@ -5,10 +5,11 @@
 //! signal that running transfer tasks listen on.
 
 use super::types::DownloadEvent;
-use crate::domain::download::DownloadSession;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::DownloadEngine;
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
+use lattice_core::domain::download::DownloadSession;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -57,6 +58,8 @@ pub struct DownloadManagerService {
     pub(super) auth_tokens: Arc<RwLock<HashMap<String, String>>>,
     pub(super) file_cleanup: Arc<FileCleanupService>,
     pub(super) allowed_root: PathBuf,
+    /// Where transfers run, so shutdown joins them.
+    pub(super) background: Arc<BackgroundTasks>,
 }
 
 impl DownloadManagerService {
@@ -64,11 +67,12 @@ impl DownloadManagerService {
         repository: Arc<dyn DownloadRepository>,
         engine: Arc<dyn DownloadEngine>,
         allowed_root: PathBuf,
+        background: Arc<BackgroundTasks>,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::channel(128);
 
         Self {
-            shutdown: crate::shared::runtime::background::cancellation_token().child_token(),
+            shutdown: background.token().child_token(),
             repository,
             engine,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
@@ -80,6 +84,7 @@ impl DownloadManagerService {
             auth_tokens: Arc::new(RwLock::new(HashMap::new())),
             file_cleanup: Arc::new(FileCleanupService::new()),
             allowed_root,
+            background,
         }
     }
 

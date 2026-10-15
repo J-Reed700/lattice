@@ -1,5 +1,5 @@
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 const AI_MODELS_NOT_INSTALLED_MSG: &str =

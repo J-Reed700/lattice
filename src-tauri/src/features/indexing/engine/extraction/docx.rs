@@ -3,13 +3,18 @@
 use super::archive_budget::{run_archive_work, ArchiveBudget};
 use super::markup::{decode_entities, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
+use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
 
 /// Extract content from DOCX files.
-pub async fn extract_docx(path: &Path, max_file_size: u64) -> Result<ExtractedContent> {
+pub async fn extract_docx(
+    path: &Path,
+    max_file_size: u64,
+    workers: &ExtractionWorkers,
+) -> Result<ExtractedContent> {
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| IndexingError::Io {
@@ -29,7 +34,10 @@ pub async fn extract_docx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
 
     let path_clone = path.to_path_buf();
 
-    let text = run_archive_work(path.to_path_buf(), move || extract_docx_sync(&path_clone)).await?;
+    let text = run_archive_work(workers, path.to_path_buf(), move || {
+        extract_docx_sync(&path_clone)
+    })
+    .await?;
 
     let metadata = ContentMetadata {
         page_count: None,
@@ -134,7 +142,9 @@ mod tests {
         zip.write_all(DOCUMENT_XML.as_bytes()).unwrap();
         zip.finish().unwrap();
 
-        let content = extract_docx(&path, 1 << 20).await.unwrap();
+        let content = extract_docx(&path, 1 << 20, &ExtractionWorkers::new())
+            .await
+            .unwrap();
         assert!(content.text.starts_with("Cover Letter\n"));
         assert!(content.text.ends_with("Last paragraph."));
     }

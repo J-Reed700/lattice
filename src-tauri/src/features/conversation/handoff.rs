@@ -8,18 +8,18 @@ use super::branching_dto::{
     ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
 };
 use super::memory::MAX_FORGOTTEN_LABELS;
-use crate::application::ports::conversation_memory::ConversationMemoryPort;
-use crate::application::ports::llm_port::{
+use crate::features::conversation::chat::ports::ChatRuntime;
+use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
+use lattice_core::application::ports::llm_port::{
     chars_within_tokens, InferencePriority, SamplingOverride,
 };
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
-use crate::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
-use crate::domain::conversation::ConversationMessage;
-use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::shared::{error::AppError, ipc::ApiError};
+use lattice_core::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
+use lattice_core::domain::conversation::ConversationMessage;
+use lattice_core::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -182,7 +182,7 @@ impl Forgotten {
         memory: &dyn ConversationMemoryPort,
         conversation_id: &str,
         messages: &[ConversationMessage],
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
         Ok(Self {
             spans: memory.suppressed_spans(conversation_id, &ids).await?,
@@ -560,8 +560,8 @@ mod tests {
 
     #[test]
     fn failed_and_empty_messages_are_not_evidence() {
-        use crate::domain::conversation::MessageRole;
-        use crate::shared::types::ConversationId;
+        use lattice_core::domain::conversation::MessageRole;
+        use lattice_core::shared::types::ConversationId;
         let message = |id: &str, content: &str, status: &str| ConversationMessage {
             id: id.into(),
             conversation_id: ConversationId::new(),
@@ -616,9 +616,9 @@ mod tests {
     /// transcript count it too.
     #[test]
     fn forgotten_text_is_cut_and_forgotten_facts_are_named() {
-        use crate::domain::conversation::memory::compute_digest;
-        use crate::domain::conversation::MessageRole;
-        use crate::shared::types::ConversationId;
+        use lattice_core::domain::conversation::memory::compute_digest;
+        use lattice_core::domain::conversation::MessageRole;
+        use lattice_core::shared::types::ConversationId;
         let message = |id: &str, content: &str| ConversationMessage {
             id: id.into(),
             conversation_id: ConversationId::new(),

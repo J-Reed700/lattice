@@ -7,7 +7,6 @@
 //!
 //! # Security
 //! - Retrieves credentials from OS keyring
-//! - Audit logs credential access
 //! - Returns error if credential not found
 //!
 //! # Example
@@ -17,8 +16,8 @@
 //! // Use key for API calls
 //! ```
 
-use crate::application::ports::CredentialsPort;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::CredentialsPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetApiKeyUseCase {

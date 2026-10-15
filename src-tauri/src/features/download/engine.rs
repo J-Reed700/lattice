@@ -1,6 +1,6 @@
-use crate::domain::download::DownloadError;
-use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
+use lattice_core::domain::download::DownloadError;
+use lattice_core::shared::http::reqwest_client_builder;
 use reqwest::{header, Client, StatusCode};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

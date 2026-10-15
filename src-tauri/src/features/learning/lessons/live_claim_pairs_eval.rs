@@ -9,8 +9,8 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS, LATTICE_CLAIM_PAIRS and LATTICE_CLAIM_RESULTS; makes real model requests"]
 async fn live_claim_pairs_eval() -> Result<()> {
-    use crate::application::ports::llm_port::SamplingOverride;
-    use crate::application::services::claim_verification::{
+    use lattice_core::application::ports::llm_port::SamplingOverride;
+    use lattice_core::application::services::claim_verification::{
         CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, LocatedClaim,
     };
     use std::io::Write as _;

@@ -1,3 +1,3 @@
 //! Compatibility exports for settings application contracts.
 
-pub use crate::application::contracts::settings::*;
+pub use lattice_core::application::contracts::settings::*;

@@ -1,8 +1,8 @@
 //! Removing messages: explicit pruning, truncation and taking back a turn.
 
 use super::ConversationRepository;
-use crate::shared::error::{AppError, Result};
 use chrono::Utc;
+use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
     /// Delete specific messages from a conversation

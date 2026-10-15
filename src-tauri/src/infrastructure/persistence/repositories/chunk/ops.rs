@@ -3,9 +3,9 @@
 //! Generic SQL operations for chunk persistence that work with any SQLite executor.
 //! These functions can be used with both connection pools and transactions.
 
-use crate::domain::entities::chunk::Chunk as ChunkEntity;
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::QueryBuilder;
 use sqlx::SqliteConnection;
 

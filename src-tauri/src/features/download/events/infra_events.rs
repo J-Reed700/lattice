@@ -1,5 +1,7 @@
-use crate::domain::download::snapshot::{BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::download::snapshot::{
+    BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -202,7 +204,7 @@ impl DownloadEventBridge {
                             }
                             let delay = reconciliation_poll_delay(sessions.len(), false);
                             for session in sessions {
-                                use crate::domain::download::DownloadState;
+                                use lattice_core::domain::download::DownloadState;
                                 use crate::features::download::manager::DownloadEvent as ManagerEvent;
 
                                 let event = match session.state() {
@@ -504,7 +506,7 @@ impl DownloadEventBridge {
 async fn process_queue_after_terminal(
     manager: &dyn crate::features::download::manager::DownloadManager,
     terminal_event: bool,
-) -> Result<(), crate::domain::download::DownloadError> {
+) -> Result<(), lattice_core::domain::download::DownloadError> {
     if terminal_event {
         manager.process_pending_queue().await?;
     }
@@ -520,7 +522,9 @@ fn is_terminal_manager_event(event: &crate::features::download::manager::Downloa
     )
 }
 
-fn model_file_name_for_session(session: &crate::domain::download::DownloadSession) -> String {
+fn model_file_name_for_session(
+    session: &lattice_core::domain::download::DownloadSession,
+) -> String {
     session
         .model_file_name()
         .map(str::to_string)

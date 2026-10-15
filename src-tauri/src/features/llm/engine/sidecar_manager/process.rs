@@ -217,12 +217,15 @@ impl SpawnedChild {
         // It executed, so whatever a stale preflight says about this build is
         // out of date — including an `Unusable` verdict reached from a bare
         // signal, which is what a jetsam kill looks like.
+        let registry = app.try_state::<SidecarRegistry>();
         if invalidate_preflight {
-            preflight_cache().forget(binary);
+            if let Some(registry) = &registry {
+                registry.preflight.forget(binary);
+            }
         }
 
         let child = Arc::new(SyncMutex::new(Some(child)));
-        let registration = match app.try_state::<SidecarRegistry>() {
+        let registration = match registry {
             Some(registry) => match registry.register(&child, endpoint) {
                 Some(id) => Some(Registration {
                     app: app.clone(),
@@ -269,7 +272,12 @@ impl SpawnedChild {
         endpoint: &str,
         probe_timeout: Duration,
     ) -> Option<(Vec<u8>, Vec<u8>)> {
-        let cancellation = crate::shared::runtime::background::cancellation_token();
+        // A host that never managed a background scope has no shutdown to
+        // stop the probe for.
+        let cancellation = app
+            .try_state::<Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
+            .map(|tasks| tasks.token())
+            .unwrap_or_default();
         if cancellation.is_cancelled() {
             return None;
         }

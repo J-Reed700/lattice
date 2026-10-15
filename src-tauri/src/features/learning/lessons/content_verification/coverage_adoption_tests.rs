@@ -133,13 +133,19 @@ async fn adopted_assertion_is_checked_and_repaired(
         .filter(|claim| claim.statement == statement)
         .collect();
     assert_eq!(adopted.len(), 1);
-    assert_eq!(adopted[0].quote, premise, "an adopted claim is located at the judged passage");
+    assert_eq!(
+        adopted[0].quote, premise,
+        "an adopted claim is located at the judged passage"
+    );
     assert!(model.judged_watched_claim.load(Ordering::Relaxed));
     assert!(report
         .findings
         .iter()
         .any(|f| f.statement == statement && f.verdict == verdict));
-    assert!(!report.issues.is_empty(), "an adopted claim without support blocks publication");
+    assert!(
+        !report.issues.is_empty(),
+        "an adopted claim without support blocks publication"
+    );
 
     let publishing = JudgingModel::new(premise, &[statement], statement);
     let (raw, report) = verify_and_repair(
@@ -154,7 +160,10 @@ async fn adopted_assertion_is_checked_and_repaired(
     assert!(report.issues.is_empty());
     assert!(*publishing.inner.repaired.lock().unwrap());
     let repaired: Value = serde_json::from_str(&raw)?;
-    assert_eq!(repaired["blocks"][0], original["blocks"][0], "the sound section is untouched");
+    assert_eq!(
+        repaired["blocks"][0], original["blocks"][0],
+        "the sound section is untouched"
+    );
     assert_ne!(repaired["blocks"][1]["body"], original["blocks"][1]["body"]);
     assert!(!repaired.to_string().contains(removed_wording));
     assert!(report.coverage_audit.iter().all(|unit| unit.complete));
@@ -208,7 +217,9 @@ async fn a_rubric_without_a_missing_assertion_is_neither_adopted_nor_repaired() 
     assert!(!*model.inner.repaired.lock().unwrap());
     assert_eq!(serde_json::from_str::<Value>(&raw)?, original);
     assert!(report.coverage_audit.iter().all(|unit| unit.complete));
-    assert!(!report.coverage_audit[1].reason.contains("recorded as claims"));
+    assert!(!report.coverage_audit[1]
+        .reason
+        .contains("recorded as claims"));
     assert_eq!(
         report.coverage[1].claims.len(),
         1,

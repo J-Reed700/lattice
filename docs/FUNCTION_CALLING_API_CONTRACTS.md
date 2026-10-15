@@ -219,7 +219,7 @@ page's lead section. Both call the Wikipedia API.
 ## Custom query tools
 
 Users can define HTTP lookup tools in settings (`llm.customTools`,
-`CustomToolSettingsDto` in `src-tauri/src/application/contracts/settings.rs`):
+`CustomToolSettingsDto` in `src-tauri/crates/lattice-core/src/application/contracts/settings.rs`):
 `enabled`, `name`, `description`, `endpoint`, `query_param`,
 `max_results_param?`, `default_max_results`. Each enabled tool is registered
 with the schema `{ query: string (required), max_results: integer 1-100 }`.

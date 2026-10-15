@@ -1,14 +1,14 @@
 //! Rejected requests and transfer failures.
 
 use super::{poll_until, temp_file, temp_root};
-use crate::domain::download::DownloadError;
-use crate::domain::download::{DownloadSession, DownloadState};
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::{
     DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use lattice_core::domain::download::DownloadError;
+use lattice_core::domain::download::{DownloadSession, DownloadState};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -19,7 +19,12 @@ async fn test_download_invalid_path_rejected() -> Result<(), Box<dyn std::error:
     let repository = Arc::new(MockDownloadRepository::new());
     let mock_engine = Arc::new(MockDownloadEngine::new());
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let request = DownloadRequest {
         url: "https://example.com/file.bin".to_string(),
@@ -58,7 +63,12 @@ async fn test_download_handles_transient_error_gracefully() -> Result<(), Box<dy
     mock_engine.set_file_size("https://example.com/transient_error.bin", Some(1000));
     mock_engine.set_network_error("Connection timeout (transient)".to_string());
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let request = DownloadRequest {
         url: "https://example.com/transient_error.bin".to_string(),
@@ -125,6 +135,7 @@ async fn test_download_fails_on_permanent_error() -> Result<(), Box<dyn std::err
         repository.clone(),
         mock_engine.clone(),
         temp_dir.path().to_path_buf(),
+        Arc::default(),
     );
     let dest_path = temp_dir.path().join("forbidden.bin");
 

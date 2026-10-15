@@ -51,14 +51,44 @@ pub use types::{ContentMetadata, ExtractedContent};
 
 pub use streaming::extract_text_streaming;
 
-use crate::application::ports::OcrPort;
 use crate::features::indexing::engine::error::Result;
+use lattice_core::application::ports::OcrPort;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncRead;
+use tokio::sync::Semaphore;
 
 /// Default maximum file size: 50 MB
 const DEFAULT_MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Admission for the blocking parsers that can hold a whole document in
+/// memory: PDFs and office archives each run at most two at a time.
+///
+/// A parser that times out still owns its memory and CPU until it returns, so
+/// its permit lives inside the blocking closure and a retry cannot get past
+/// the bound. The bound is only worth anything if everything that parses
+/// shares it: the composition root builds one set and hands it to every
+/// extractor in the app, and an extractor built without one has its own.
+#[derive(Debug, Clone)]
+pub struct ExtractionWorkers {
+    pdf: Arc<Semaphore>,
+    archives: Arc<Semaphore>,
+}
+
+impl ExtractionWorkers {
+    pub fn new() -> Self {
+        Self {
+            pdf: Arc::new(Semaphore::new(pdf::MAX_PDF_WORKERS)),
+            archives: Arc::new(Semaphore::new(archive_budget::MAX_ARCHIVE_WORKERS)),
+        }
+    }
+}
+
+impl Default for ExtractionWorkers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Main content extractor with configurable size limits.
 ///
@@ -69,6 +99,8 @@ pub struct ContentExtractor {
     /// Consulted for scanned PDF pages. `None` leaves those pages in
     /// `ExtractedContent::needs_ocr` and indexes the rest of the document.
     ocr: Option<Arc<dyn OcrPort>>,
+    /// Bounds the PDF and office parsers this extractor starts.
+    workers: ExtractionWorkers,
 }
 
 impl ContentExtractor {
@@ -82,7 +114,15 @@ impl ContentExtractor {
         Self {
             max_file_size,
             ocr: None,
+            workers: ExtractionWorkers::new(),
         }
+    }
+
+    /// Share `workers` with the other extractors in the app, so their parsers
+    /// count against one bound.
+    pub fn with_workers(mut self, workers: ExtractionWorkers) -> Self {
+        self.workers = workers;
+        self
     }
 
     /// Enable OCR for scanned PDF pages.
@@ -127,20 +167,20 @@ impl ContentExtractor {
 
             // Documents
             "application/pdf" => {
-                pdf::extract_pdf(path, self.max_file_size, self.ocr.as_ref()).await
+                pdf::extract_pdf(path, self.max_file_size, self.ocr.as_ref(), &self.workers).await
             }
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
-                docx::extract_docx(path, self.max_file_size).await
+                docx::extract_docx(path, self.max_file_size, &self.workers).await
             }
             "application/rtf" => rtf::extract_rtf(path, self.max_file_size).await,
             "application/vnd.oasis.opendocument.text" => {
-                odt::extract_odt(path, self.max_file_size).await
+                odt::extract_odt(path, self.max_file_size, &self.workers).await
             }
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
-                xlsx::extract_xlsx(path, self.max_file_size).await
+                xlsx::extract_xlsx(path, self.max_file_size, &self.workers).await
             }
             "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
-                pptx::extract_pptx(path, self.max_file_size).await
+                pptx::extract_pptx(path, self.max_file_size, &self.workers).await
             }
 
             // CSV/TSV. Ahead of the `text/` catch-all below, which would

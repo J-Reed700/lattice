@@ -1,7 +1,7 @@
 //! Inserting vectors, growing capacity and rebuilding the index in batches.
 use super::{USearchVectorIndex, VectorMeta, INITIAL_INDEX_CAPACITY};
-use crate::application::ports::VectorSearchPort;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::VectorSearchPort;
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::atomic::Ordering;
 
 impl USearchVectorIndex {

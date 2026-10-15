@@ -18,14 +18,14 @@ use lru::LruCache;
 use tokenizers::{PaddingDirection, PaddingParams, PaddingStrategy};
 use tokio::sync::Mutex;
 
-use crate::domain::models::checkpoint::{weights_path, WEIGHTS_PYTORCH_BIN};
-use crate::domain::value_objects::ArtifactIdentity;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
 use crate::features::embedding::qwen3_encoder::Qwen3Encoder;
 use crate::features::embedding::sparse_head::SparseHead;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
-use crate::shared::runtime::with_autorelease_pool;
+use lattice_core::domain::models::checkpoint::{weights_path, WEIGHTS_PYTORCH_BIN};
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::runtime::with_autorelease_pool;
 
 use super::config::{read_pooling_strategy, resolve_prefixes, weights_dtype};
 use super::{

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::features::search::use_cases::hybrid_search::HybridSearchUseCase;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// One fused hit, reduced to what a compare cell can cite: the identity,
 /// the text, and where it sits in the document.

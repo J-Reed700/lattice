@@ -17,9 +17,9 @@
 //! println!("Available RAM: {} GB", caps.available_ram_gb);
 //! ```
 
-use crate::application::ports::system_info::SystemInfoPort;
 use crate::features::llm::dto::{GpuInfoDto, SystemCapabilitiesDto};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::system_info::SystemInfoPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetSystemCapabilitiesUseCase {
@@ -50,7 +50,7 @@ impl GetSystemCapabilitiesUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::system_info::{ComputeType, GpuInfo, MockSystemInfoPort};
+    use lattice_core::application::ports::system_info::{ComputeType, GpuInfo, MockSystemInfoPort};
 
     #[tokio::test]
     async fn test_get_system_capabilities_default() {

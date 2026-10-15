@@ -1,26 +1,28 @@
-use crate::application::services::context_assembler::EvidenceBudget;
-use crate::domain::qa::hyde::QueryType;
-use crate::features::conversation::chat::ports::ChatRuntime;
+use crate::features::conversation::chat::ports::{ChatRuntime, SettingsDto};
 use crate::features::conversation::chat::router::RouterAction;
-use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
+use crate::features::function_calling::dto::WikiSearchOutput;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::settings::dto::{
-    RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
+    RetrievalTuningSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
 };
-use crate::shared::error::Result;
-use crate::shared::text::safe_truncate;
+use lattice_core::application::contracts::web::WebSearchResult;
+use lattice_core::application::services::context_assembler::EvidenceBudget;
+use lattice_core::domain::qa::hyde::QueryType;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::text::safe_truncate;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use super::SearchFlags;
+use super::{ChatTurn, SearchFlags};
 mod conversation_helpers;
 mod corpus_plan;
 pub(super) use corpus_plan::fused_search;
+pub(crate) use corpus_plan::PlannerHealth;
 mod external_query;
 pub(super) use external_query::search_text_without_url_tracking;
 mod followup_context;
@@ -155,7 +157,7 @@ pub(super) struct RouterDecisionOutcome {
 #[derive(Debug)]
 pub(super) struct RetrievalPipelineOutcome {
     pub(super) short_circuit_response: Option<String>,
-    pub(super) interpretation: crate::domain::qa::hyde::HyDEInterpretation,
+    pub(super) interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation,
     pub(super) search_response: crate::features::search::dto::SearchResponseDto,
     pub(super) followup_context: Option<(FollowupDocument, Vec<SourceDto>)>,
     /// Wiki results first, then web, rendered once the sources are numbered.
@@ -292,7 +294,7 @@ impl RetrievalPlan {
 
 #[derive(Debug)]
 struct KbRetrievalOutcome {
-    interpretation: crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation,
     search_response: SearchResponseDto,
     sources: Vec<SourceDto>,
     low_confidence: bool,
@@ -312,45 +314,25 @@ struct SpaceDocumentScope {
     document_ids: HashSet<String>,
 }
 
-// This facade mirrors the implementation's complete per-turn retrieval configuration.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    request_id: &str,
-    validated_message: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-    router_settings: &RouterSettingsDto,
+    turn: ChatTurn<'_>,
+    settings: &SettingsDto,
     router_decision: &RouterDecisionOutcome,
     search_flags: SearchFlags,
-    conversation_document_context: &[crate::domain::conversation::DocumentReference],
-    highlight_terms: &[String],
+    conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
-    tool_output_settings: &ToolOutputSettingsDto,
-    search_settings: &SearchSettingsDto,
-    focus: &super::focus::FocusScope,
-    recorder: &super::turn_record::TurnRecorder,
 ) -> RetrievalPipelineOutcome {
     run_retrieval_pipeline_impl(
         container,
-        conv_service,
-        conversation_id,
-        request_id,
-        validated_message,
-        llm,
-        router_settings,
+        turn,
+        settings,
         router_decision,
         search_flags,
         conversation_document_context,
-        highlight_terms,
         evidence,
         attachment_digest,
-        tool_output_settings,
-        search_settings,
-        focus,
-        recorder,
     )
     .await
 }
@@ -359,38 +341,24 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-// This facade mirrors the knowledge-base retrieval policy inputs.
-#[allow(clippy::too_many_arguments)]
 async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    validated_message: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    turn: ChatTurn<'_>,
     search_flags: SearchFlags,
-    highlight_terms: &[String],
     kb_search_limit: usize,
     enable_reranking: bool,
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
-    focus: &super::focus::FocusScope,
-    recorder: &super::turn_record::TurnRecorder,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> KbRetrievalOutcome {
     run_kb_retrieval_impl(
         container,
-        conv_service,
-        conversation_id,
-        validated_message,
-        llm,
+        turn,
         search_flags,
-        highlight_terms,
         kb_search_limit,
         enable_reranking,
         semantic_threshold,
         tuning,
-        focus,
-        recorder,
         cancel,
     )
     .await
@@ -399,7 +367,7 @@ async fn run_kb_retrieval(
 async fn apply_rerank_stage(
     container: &dyn ChatRuntime,
     validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
     search_response: SearchResponseDto,
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
@@ -433,8 +401,8 @@ async fn load_space_document_scope(
 pub(super) async fn confine_document_context(
     container: &dyn ChatRuntime,
     conversation_id: &str,
-    references: Vec<crate::domain::conversation::DocumentReference>,
-) -> Vec<crate::domain::conversation::DocumentReference> {
+    references: Vec<lattice_core::domain::conversation::DocumentReference>,
+) -> Vec<lattice_core::domain::conversation::DocumentReference> {
     if references.is_empty() {
         return references;
     }
@@ -445,9 +413,9 @@ pub(super) async fn confine_document_context(
 }
 
 fn keep_references_in_scope(
-    references: Vec<crate::domain::conversation::DocumentReference>,
+    references: Vec<lattice_core::domain::conversation::DocumentReference>,
     allowed: &HashSet<String>,
-) -> Vec<crate::domain::conversation::DocumentReference> {
+) -> Vec<lattice_core::domain::conversation::DocumentReference> {
     references
         .into_iter()
         .filter(|reference| allowed.contains(&reference.document_id))
@@ -498,7 +466,7 @@ pub(super) struct RecentDocumentMetadata {
 
 pub(super) async fn load_recent_document_metadata(
     container: &dyn ChatRuntime,
-    document_context: &[crate::domain::conversation::DocumentReference],
+    document_context: &[lattice_core::domain::conversation::DocumentReference],
 ) -> Option<RecentDocumentMetadata> {
     load_recent_document_metadata_impl(container, document_context).await
 }
@@ -584,10 +552,10 @@ async fn build_followup_context(
     container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
-    document_context: &[crate::domain::conversation::DocumentReference],
+    document_context: &[lattice_core::domain::conversation::DocumentReference],
     highlight_terms: &[String],
     token_budget: usize,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
     excerpt_chars: usize,
 ) -> Option<(FollowupDocument, Vec<SourceDto>)> {
     build_followup_context_impl(

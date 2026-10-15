@@ -28,12 +28,12 @@
 //! }
 //! ```
 
-use crate::domain::models::embedding_defaults::{
-    DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
-};
 use crate::features::initialization::dto::InitializeModelsResponseDto;
 use crate::infrastructure::services::traits::ModelManagerTrait;
-use crate::shared::error::Result;
+use lattice_core::domain::models::embedding_defaults::{
+    DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
+};
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Initialize models use case.

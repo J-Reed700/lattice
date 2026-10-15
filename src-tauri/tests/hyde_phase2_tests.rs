@@ -14,11 +14,11 @@
 //! 2. HyDE generation via LLM
 //! 3. Service orchestration
 use async_trait::async_trait;
-use lattice::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use lattice::application::ports::LLMPort;
-use lattice::domain::qa::hyde::{HyDEInterpretation, QueryType, SearchStrategy};
 use lattice::features::search::hyde::{HyDEGenerator, HyDEService, QueryClassifier};
-use lattice::shared::error::Result;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::qa::hyde::{HyDEInterpretation, QueryType, SearchStrategy};
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 struct MockLLM {

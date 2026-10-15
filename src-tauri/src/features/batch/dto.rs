@@ -40,7 +40,7 @@ pub struct StartBatchFileImportResponseDto {
 ///
 /// # Example
 /// ```rust,no_run
-/// use lattice::application::dtos::batch_dto::{
+/// use lattice_core::application::dtos::batch_dto::{
 ///     StartBatchUrlImportRequestDto, BatchImportOptionsDto
 /// };
 ///
@@ -69,7 +69,7 @@ pub struct StartBatchUrlImportRequestDto {
 ///
 /// # Example
 /// ```rust
-/// use lattice::application::dtos::batch_dto::BatchImportOptionsDto;
+/// use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
 ///
 /// let options = BatchImportOptionsDto {
 ///     extract_article: Some(true),
@@ -243,5 +243,5 @@ pub struct RetryFailedItemsResponseDto {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileIndexingOptionsDto {
-    pub source_group: Option<crate::domain::value_objects::source_context::SourceGroup>,
+    pub source_group: Option<lattice_core::domain::value_objects::source_context::SourceGroup>,
 }

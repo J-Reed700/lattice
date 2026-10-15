@@ -10,8 +10,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::search::semantic_search::SemanticSearchUseCase;
-//! use lattice::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+//! use lattice_core::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+//! use lattice_core::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
 //!
 //! # async fn example(use_case: SemanticSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = SearchRequestDto {
@@ -33,10 +33,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::features::search::dto::{SearchRequestDto, SearchResponseDto};
 use crate::features::search::mapper::SearchMapper;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Semantic search use case.
 ///
@@ -50,7 +50,7 @@ use crate::shared::error::{AppError, Result};
 pub struct SemanticSearchUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     vector_search: Arc<dyn VectorSearchPort>,
-    chunk_repository: Option<Arc<dyn crate::application::ports::ChunkRepositoryPort>>,
+    chunk_repository: Option<Arc<dyn lattice_core::application::ports::ChunkRepositoryPort>>,
 }
 
 impl SemanticSearchUseCase {
@@ -64,9 +64,9 @@ impl SemanticSearchUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+    /// use lattice_core::application::use_cases::search::semantic_search::SemanticSearchUseCase;
     /// # use std::sync::Arc;
-    /// # use lattice::application::ports::{EmbeddingPort, VectorSearchPort};
+    /// # use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
     ///
     /// # fn example(embedder: Arc<dyn EmbeddingPort>, searcher: Arc<dyn VectorSearchPort>) {
     /// let use_case = SemanticSearchUseCase::new(embedder, searcher);
@@ -86,7 +86,7 @@ impl SemanticSearchUseCase {
     #[must_use]
     pub fn with_chunk_repository(
         mut self,
-        repository: Arc<dyn crate::application::ports::ChunkRepositoryPort>,
+        repository: Arc<dyn lattice_core::application::ports::ChunkRepositoryPort>,
     ) -> Self {
         self.chunk_repository = Some(repository);
         self
@@ -112,8 +112,8 @@ impl SemanticSearchUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::search::semantic_search::SemanticSearchUseCase;
-    /// # use lattice::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+    /// # use lattice_core::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+    /// # use lattice_core::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
     /// # async fn example(use_case: SemanticSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = SearchRequestDto {
     ///     query: "semantic search".to_string(),

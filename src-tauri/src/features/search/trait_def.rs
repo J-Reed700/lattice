@@ -7,8 +7,8 @@ use crate::features::search::engine::service::SearchResult;
 use crate::features::search::use_cases::{
     HybridSearchUseCase, QueryBranches, RankedBranch, RerankOptions, Reranked,
 };
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 
 #[async_trait]
 pub trait SearchServiceTrait: Send + Sync {

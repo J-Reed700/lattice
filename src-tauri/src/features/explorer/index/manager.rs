@@ -25,13 +25,16 @@
 
 use super::build::{self, BuildRequest, LiveIndex};
 use super::run::{Limits, StatusCell, StatusSink};
-use super::store::{self, FolderStore, IndexEntry, TooLarge};
-use crate::application::ports::EmbeddingPort;
-use crate::shared::{
-    runtime::jobs::{JobRecord, JobRuntime, NewJob},
+use super::store::{self, FolderStore, IndexEntry, OpenStamps, TooLarge};
+use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::{
+    runtime::{
+        background::BackgroundTasks,
+        jobs::{JobRecord, JobRuntime, NewJob},
+    },
     Result,
 };
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -106,6 +109,8 @@ pub struct FolderIndexManager {
     config: ManagerConfig,
     pub(super) embedders: Arc<dyn EmbedderSource>,
     pub(super) jobs: Arc<JobRuntime>,
+    /// Where each open folder's watcher runs, so shutdown stops it.
+    background: Arc<BackgroundTasks>,
     open: tokio::sync::Mutex<Option<OpenFolder>>,
     view: Arc<parking_lot::Mutex<Option<OpenView>>>,
     /// The open folder's build, which runs before any other.
@@ -113,6 +118,8 @@ pub struct FolderIndexManager {
     live: tokio::sync::Mutex<HashMap<PathBuf, LiveEntry>>,
     /// Where the open folder's status goes when the watcher updates it.
     folder_changes: parking_lot::Mutex<Option<StatusSink>>,
+    /// Stamps each opened folder, which the folders list orders by.
+    open_stamps: OpenStamps,
     me: Weak<FolderIndexManager>,
 }
 
@@ -154,16 +161,19 @@ impl FolderIndexManager {
         config: ManagerConfig,
         embedders: Arc<dyn EmbedderSource>,
         jobs: Arc<JobRuntime>,
+        background: Arc<BackgroundTasks>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             config,
             embedders,
             jobs,
+            background,
             open: tokio::sync::Mutex::new(None),
             view: Arc::default(),
             first: parking_lot::Mutex::new(None),
             live: tokio::sync::Mutex::new(HashMap::new()),
             folder_changes: parking_lot::Mutex::new(None),
+            open_stamps: OpenStamps::default(),
             me: me.clone(),
         })
     }

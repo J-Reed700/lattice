@@ -3,7 +3,6 @@
 //! what it contradicts or leaves unsupported is rewritten. A plan finding is
 //! rewritten. Repair never adds a citation of its own: a rewrite keeps or
 //! drops what it was given, and evidence linking then runs on that module.
-use crate::application::services::claim_verification::{ClaimJudgment, ClaimVerdict, JudgeOutcome};
 use crate::features::learning::lessons::content_verification::judge_for_publication;
 use crate::features::learning::outline_linking::{
     self, CitationReceipt, CitationReceipts, ItemKind,
@@ -19,7 +18,10 @@ use crate::features::learning::{
     outline_progress::OutlineStage, persistence::hash_text, repository::LearningRepository,
 };
 use crate::features::web::traits::WebServiceTrait;
-use crate::{
+use lattice_core::application::services::claim_verification::{
+    ClaimJudgment, ClaimVerdict, JudgeOutcome,
+};
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -187,6 +189,14 @@ fn attach(
     Ok(())
 }
 
+/// The finding a targeted research pass serves, and its place in the run.
+struct ResearchFinding<'a> {
+    issue: &'a LearningOutlineIssueDto,
+    topic: &'a str,
+    position: usize,
+    total: usize,
+}
+
 /// Targeted research for one factual finding: plan public searches from the
 /// claim and the reviewer's reason, run them, select once, capture the chosen
 /// pages and persist them with the draft. Everything saved is available to
@@ -198,12 +208,15 @@ async fn research(
     program: &mut LearningProgramDto,
     draft: &mut OutlineDraft,
     sources: &mut Vec<LearningSourceDto>,
-    issue: &LearningOutlineIssueDto,
-    topic: &str,
-    position: usize,
-    total: usize,
+    finding: ResearchFinding<'_>,
     progress: &OutlineProgress,
 ) -> Result<()> {
+    let ResearchFinding {
+        issue,
+        topic,
+        position,
+        total,
+    } = finding;
     let gaps = [json!({"claim":issue.claim,"missingEvidence":issue.message})];
     let already: Vec<String> = draft
         .research_log
@@ -291,14 +304,24 @@ async fn resolve_factual(
         short(&issue.claim)
     ));
     let topic = module_index(&issue.path)
-        .and_then(|index| draft.candidate["modules"][index]["title"].as_str())
+        .and_then(|index| {
+            draft
+                .candidate
+                .get("modules")?
+                .get(index)?
+                .get("title")?
+                .as_str()
+        })
         .unwrap_or_default()
         .to_owned();
     if let Some(web) = web {
-        research(
-            repo, llm, web, program, draft, sources, &issue, &topic, position, total, progress,
-        )
-        .await?;
+        let finding = ResearchFinding {
+            issue: &issue,
+            topic: &topic,
+            position,
+            total,
+        };
+        research(repo, llm, web, program, draft, sources, finding, progress).await?;
     }
     let claim = issue.claim.clone();
     let (passages, base) = if sources.is_empty() {
@@ -311,8 +334,7 @@ async fn resolve_factual(
         )
     };
     if passages.is_empty() {
-        issue_mut(draft, id)?.message =
-            "No saved reference addresses this claim.".into();
+        issue_mut(draft, id)?.message = "No saved reference addresses this claim.".into();
         return Ok(Resolution::Rewrite(NARROW));
     }
     let key = claim_key(llm.model_name(), &claim, &passages);
@@ -358,9 +380,15 @@ async fn resolve_factual(
     match verdict {
         ClaimVerdict::Supported => {
             if let Some((source_id, quote)) = &evidence {
-                attach(draft, sources, llm.model_name(), &issue.path, source_id, quote)?;
-                draft.review.citations_verified =
-                    outline_linking::cited_count(&draft.candidate);
+                attach(
+                    draft,
+                    sources,
+                    llm.model_name(),
+                    &issue.path,
+                    source_id,
+                    quote,
+                )?;
+                draft.review.citations_verified = outline_linking::cited_count(&draft.candidate);
             }
             draft.review.issues.retain(|open| open.id != id);
             progress.detail(format!(
@@ -460,7 +488,10 @@ fn preserve_valid_citations(
     if let (Some(before), Some(after)) = (before.get("summary"), after.get_mut("summary")) {
         preserve(ItemKind::Summary, before, after);
     }
-    for (name, kind) in [("outcomes", ItemKind::Outcome), ("lessons", ItemKind::Lesson)] {
+    for (name, kind) in [
+        ("outcomes", ItemKind::Outcome),
+        ("lessons", ItemKind::Lesson),
+    ] {
         if let (Some(before), Some(after)) = (
             before.get(name).and_then(Value::as_array),
             after.get_mut(name).and_then(Value::as_array_mut),
@@ -635,7 +666,16 @@ pub(in crate::features::learning) async fn repair(
             continue;
         }
         match resolve_factual(
-            repo, llm, program, draft, sources, web, id, position + 1, total, progress,
+            repo,
+            llm,
+            program,
+            draft,
+            sources,
+            web,
+            id,
+            position + 1,
+            total,
+            progress,
         )
         .await?
         {
@@ -661,9 +701,7 @@ pub(in crate::features::learning) async fn repair(
             .issues
             .iter()
             .filter(|issue| issue.kind != LearningOutlineIssueKind::References && !issue.exhausted)
-            .filter(|issue| {
-                issue.path == path || issue.path.starts_with(&format!("{path}/"))
-            })
+            .filter(|issue| issue.path == path || issue.path.starts_with(&format!("{path}/")))
             .filter(|issue| {
                 issue.kind == LearningOutlineIssueKind::Plan || instructions.contains_key(&issue.id)
             })
@@ -673,7 +711,11 @@ pub(in crate::features::learning) async fn repair(
             continue;
         }
         if !budgets.spend(index) {
-            tracing::info!(module = index + 1, findings = ids.len(), "Module rewrite budget spent; its findings wait for the user");
+            tracing::info!(
+                module = index + 1,
+                findings = ids.len(),
+                "Module rewrite budget spent; its findings wait for the user"
+            );
             continue;
         }
         progress.stage(OutlineStage::Repairing);
@@ -681,7 +723,11 @@ pub(in crate::features::learning) async fn repair(
             "Module {} of {module_count}: rewriting for {} {}",
             index + 1,
             ids.len(),
-            if ids.len() == 1 { "finding" } else { "findings" }
+            if ids.len() == 1 {
+                "finding"
+            } else {
+                "findings"
+            }
         ));
         let mut listed = Vec::new();
         for id in &ids {
@@ -695,8 +741,8 @@ pub(in crate::features::learning) async fn repair(
                 _ => instructions.get(id).copied().unwrap_or(NARROW),
             };
             let mut entry = json!({"id":issue.id,"path":issue.path,"kind":kind_name(issue.kind),"claim":issue.claim,"reason":issue.message,"instruction":instruction});
-            if let Some(source_id) = &issue.source_id {
-                entry["contradictingPassage"] = json!({"sourceIndex":sources.iter().position(|s| &s.id == source_id),"quote":issue.quote});
+            if let (Some(source_id), Some(object)) = (&issue.source_id, entry.as_object_mut()) {
+                object.insert("contradictingPassage".into(), json!({"sourceIndex":sources.iter().position(|s| &s.id == source_id),"quote":issue.quote}));
             }
             listed.push(entry);
         }

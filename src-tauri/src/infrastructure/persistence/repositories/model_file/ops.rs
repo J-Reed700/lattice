@@ -1,7 +1,7 @@
-use crate::domain::entities::model_file::ModelFile;
-use crate::domain::value_objects::model_status::FileStatus;
-use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use lattice_core::domain::entities::model_file::ModelFile;
+use lattice_core::domain::value_objects::model_status::FileStatus;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 use std::str::FromStr;
 use tracing::{debug, error, info};

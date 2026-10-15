@@ -8,7 +8,7 @@ use crate::features::extraction::dto::{
     ResolveWikilinkRequestDto, WikiLinkDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

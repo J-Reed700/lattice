@@ -45,7 +45,7 @@ use sqlx::SqlitePool;
 #[derive(Clone)]
 pub struct ConversationRepository {
     pool: SqlitePool,
-    memory_embedding: Option<std::sync::Arc<dyn crate::application::ports::EmbeddingPort>>,
+    memory_embedding: Option<std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort>>,
 }
 
 impl ConversationRepository {
@@ -65,7 +65,7 @@ impl ConversationRepository {
 impl ConversationRepository {
     pub fn with_memory_embedding(
         mut self,
-        embedding: Option<std::sync::Arc<dyn crate::application::ports::EmbeddingPort>>,
+        embedding: Option<std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort>>,
     ) -> Self {
         self.memory_embedding = embedding;
         self

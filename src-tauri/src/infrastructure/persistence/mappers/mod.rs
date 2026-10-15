@@ -25,7 +25,7 @@
 //!
 //! ```rust,no_run
 //! use lattice::infrastructure::persistence::mappers::DocumentMapper;
-//! use lattice::domain::entities::Document;
+//! use lattice_core::domain::entities::Document;
 //!
 //! // DB model → Domain entity
 //! let db_model = /* from SQLx query */;

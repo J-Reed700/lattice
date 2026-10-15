@@ -3,9 +3,9 @@
 use super::checksum::calculate_checksum;
 use super::types::DocumentRecord;
 use crate::features::indexing::engine::error::{IndexingError, Result};
-use crate::shared::error::ResultExt;
-use crate::shared::fs::path::path_to_string;
 use chrono::Utc;
+use lattice_core::shared::error::ResultExt;
+use lattice_core::shared::fs::path::path_to_string;
 use serde::Deserialize;
 use sqlx::{Row, SqlitePool};
 use std::path::Path;

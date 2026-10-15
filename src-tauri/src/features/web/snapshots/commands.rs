@@ -2,7 +2,7 @@
 //! `#[tauri::command]` wrappers live in `features::web::plugin`.
 
 use super::{WebPageSnapshotDto, WebPageSnapshotService};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 pub async fn get_web_page_snapshot(
     service: &WebPageSnapshotService,

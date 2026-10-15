@@ -48,8 +48,8 @@ use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 /// Width of one `f32` on disk. Matches `features::embedding::encoding`.
 const F32_BYTES: usize = 4;

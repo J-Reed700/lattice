@@ -4,7 +4,7 @@ use crate::features::learning::{
     operations::Operation,
     persistence::{db, now},
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashSet;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::contracts::web::CleanArticle;
+use lattice_core::application::contracts::web::CleanArticle;
 
 #[test]
 fn test_extract_domain() {

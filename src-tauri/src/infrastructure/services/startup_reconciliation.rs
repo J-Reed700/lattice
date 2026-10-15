@@ -1,7 +1,7 @@
-use crate::domain::download::{DownloadError, DownloadState};
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use chrono::{DateTime, Utc};
+use lattice_core::domain::download::{DownloadError, DownloadState};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -322,8 +322,8 @@ fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::download::DownloadSession;
     use crate::features::download::download_repository::mock::MockDownloadRepository;
+    use lattice_core::domain::download::DownloadSession;
 
     #[tokio::test]
     async fn a_check_the_last_run_never_finished_is_marked_not_checked() {

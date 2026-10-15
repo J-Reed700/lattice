@@ -2,7 +2,7 @@
 //! resumption after a restart, and durable redelivery after a temporary
 //! service or connection outage.
 use super::*;
-use crate::shared::runtime::jobs::{
+use lattice_core::shared::runtime::jobs::{
     Backoff, Deferral, JobFailure, JobKindConfig, JobRecord, RecoveryPolicy,
 };
 

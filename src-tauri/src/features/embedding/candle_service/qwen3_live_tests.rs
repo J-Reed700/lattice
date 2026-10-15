@@ -1,8 +1,8 @@
 //! Live checks against real Qwen3-Embedding weights, ignored by default.
 
 use super::*;
-use crate::application::ports::EmbeddingPort;
 use candle_core::DType;
+use lattice_core::application::ports::EmbeddingPort;
 use std::path::Path;
 use std::time::Instant;
 

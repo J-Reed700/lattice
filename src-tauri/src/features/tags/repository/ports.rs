@@ -3,10 +3,10 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use crate::application::ports::{Filter, RepositoryPort};
 use crate::features::tags::entity::Tag as TagEntity;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::{TagFilter, TagRepository};
 
@@ -43,7 +43,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
             let db_models = if let Some(pattern) = &tag_filter.name_pattern {
                 // Case-insensitive partial match
                 let search_pattern =
-                    crate::shared::persistence::sql_like::contains_pattern(&pattern.to_lowercase());
+                    lattice_core::shared::persistence::sql_like::contains_pattern(&pattern.to_lowercase());
                 let limit_i64 = limit as i64;
                 sqlx::query(
                     r#"
@@ -258,7 +258,7 @@ impl crate::features::tags::TagRepositoryTrait for TagRepository {
 
     async fn find_by_filter(
         &self,
-        filter: &dyn crate::application::ports::Filter,
+        filter: &dyn lattice_core::application::ports::Filter,
     ) -> Result<Vec<TagEntity>> {
         RepositoryPort::find_by_filter(self, filter).await
     }

@@ -22,8 +22,8 @@
 //! }
 //! ```
 
-use crate::domain::entities::Document;
-use crate::shared::error::Result;
+use lattice_core::domain::entities::Document;
+use lattice_core::shared::error::Result;
 // Mention imports removed - migrated to DDD (MentionRepositoryTrait removed from this file)
 // use crate::infrastructure::persistence::repositories::mention_repository::MentionRepository;
 // use crate::infrastructure::persistence::repositories::mention_repository::{Mention, MentionWithContext};
@@ -132,9 +132,9 @@ pub trait DocumentRepositoryTrait: Send + Sync {
 // Chunk Repository Trait - REMOVED (migrated to DDD)
 // The old ChunkRepositoryTrait has been removed as part of the DDD migration.
 // Chunks now use:
-// - Domain entity: crate::domain::entities::chunk::Chunk
+// - Domain entity: lattice_core::domain::entities::chunk::Chunk
 // - Repository: ChunkRepository implements RepositoryPort<Chunk> + ChunkRepositoryPort
-// - Ports: crate::application::ports::{RepositoryPort, ChunkRepositoryPort}
+// - Ports: lattice_core::application::ports::{RepositoryPort, ChunkRepositoryPort}
 // See chunk_repository.rs for the new implementation.
 
 /*
@@ -197,7 +197,7 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 // Tag Repository Trait - REMOVED (migrated to DDD)
 // The old TagRepositoryTrait has been removed as part of the DDD migration.
 // Tags now use:
-// - Domain entity: crate::domain::entities::tag::Tag
+// - Domain entity: lattice_core::domain::entities::tag::Tag
 // - Repository: TagRepository implements RepositoryPort<TagEntity>
 // - Service trait: crate::infrastructure::services::traits::TagRepositoryTrait
 // See tag_repository.rs for the new implementation.

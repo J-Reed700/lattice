@@ -6,14 +6,19 @@ use super::*;
 use crate::features::learning::{
     curriculum::LearningGenerationJobKind,
     dto::*,
-    outline_draft::{DraftRunRegistry, LearningOutlineReviewStatus, RepairLearningOutlineRequestDto},
+    outline_draft::{
+        DraftRunRegistry, LearningOutlineReviewStatus, RepairLearningOutlineRequestDto,
+    },
     outline_progress::OutlineRunRegistry,
     plan_dto::StartLearningGenerationJobRequestDto,
 };
 use crate::features::web::services::web::WebService;
 
 fn review_status(program: &LearningProgramDto) -> Option<LearningOutlineReviewStatus> {
-    program.outline_review.as_ref().map(|review| review.status.clone())
+    program
+        .outline_review
+        .as_ref()
+        .map(|review| review.status.clone())
 }
 
 /// Every outline state the learner would have seen, for diagnosis after a run.
@@ -95,12 +100,13 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
     let drafts = DraftRunRegistry::new();
     let registry = OutlineRunRegistry::new();
     let started = std::time::Instant::now();
-    let report = |update: crate::features::learning::outline_progress::LearningOutlineProgressDto| {
-        println!(
-            "Live outline: {:?} at {}s, {} response characters",
-            update.stage, update.elapsed_seconds, update.response_characters
-        );
-    };
+    let report =
+        |update: crate::features::learning::outline_progress::LearningOutlineProgressDto| {
+            println!(
+                "Live outline: {:?} at {}s, {} response characters",
+                update.stage, update.elapsed_seconds, update.response_characters
+            );
+        };
 
     let run = registry.register(None, report)?;
     let progress = &run.progress;

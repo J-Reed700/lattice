@@ -3,7 +3,7 @@ use super::{
     resolve_out_of_range_values, SettingsFile, SettingsRepository, SETTINGS_FILE_NAME,
     SETTINGS_VERSION, TEMP_SUFFIX,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;

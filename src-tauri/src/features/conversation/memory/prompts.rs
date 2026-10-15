@@ -14,7 +14,7 @@
 //! boundary — the boundary is deterministic validation in
 //! `domain::conversation::memory`.
 
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     MemoryItem, MAX_EVIDENCE_PER_ITEM, MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE,
     MAX_QUOTE_BYTES, MEMORY_SCHEMA_VERSION,
 };

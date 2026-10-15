@@ -3,8 +3,8 @@
 //! This module defines trait interfaces for dependency injection.
 
 pub use crate::features::tags::service::DocumentLockGuard;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 
 #[async_trait]
 pub trait TagServiceTrait: Send + Sync {
@@ -298,7 +298,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     /// Vector of matching tag entities
     async fn find_by_filter(
         &self,
-        filter: &dyn crate::application::ports::Filter,
+        filter: &dyn lattice_core::application::ports::Filter,
     ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Find all tags

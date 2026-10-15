@@ -7,9 +7,9 @@ use crate::features::settings::dto::{
     UpdateSettingsRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::http::reqwest_client_builder;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::http::reqwest_client_builder;
+use lattice_core::shared::ipc::ApiError;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Client,
@@ -208,7 +208,7 @@ pub async fn test_ollama_connection(
 #[tauri::command]
 #[specta::specta]
 pub async fn test_llama_cpp_connection(
-    request: crate::application::contracts::settings::LlamaCppSettingsDto,
+    request: lattice_core::application::contracts::settings::LlamaCppSettingsDto,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
     let models = crate::features::llm::llama_cpp::LlamaCppLlm::test_connection(&request)
         .await

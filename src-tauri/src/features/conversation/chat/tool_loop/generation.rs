@@ -7,11 +7,11 @@
 use super::clock::TurnClock;
 use super::final_round::LeakedCallFilter;
 use super::{answer_was_cut_short, StreamEmitter, CUT_SHORT_NOTE};
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
-use crate::shared::error::Result;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -28,8 +28,6 @@ pub(super) struct Generation<'r> {
 
 /// Run one generation. `hold_back_calls` keeps calls written into the text
 /// out of the bubble: on a round that may not call tools they are never run.
-// One round's inputs, each borrowed from the turn; a struct would only rename them.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn generate<'r>(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -174,7 +172,7 @@ impl ReasoningProgress {
     fn push(&mut self, delta: &str) -> Option<String> {
         let remaining = Self::MAX_CHARS.saturating_sub(self.chars);
         if remaining > 0 {
-            let kept = crate::shared::text::safe_truncate(delta, remaining);
+            let kept = lattice_core::shared::text::safe_truncate(delta, remaining);
             self.chars = self.chars.saturating_add(kept.chars().count());
             self.text.push_str(&kept);
         }

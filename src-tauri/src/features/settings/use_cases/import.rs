@@ -1,11 +1,11 @@
 //! Import Settings Use Case
 
-use crate::application::ports::settings_side_effects_port::SettingsTransitionHints;
-use crate::application::ports::{
+use crate::features::settings::dto::{ImportSettingsRequestDto, ImportSettingsResponseDto};
+use lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints;
+use lattice_core::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
 };
-use crate::features::settings::dto::{ImportSettingsRequestDto, ImportSettingsResponseDto};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -121,7 +121,7 @@ impl ImportSettingsUseCase {
     /// Returns error if path is empty or file doesn't exist
     fn validate_import_path(&self, path: &str) -> Result<()> {
         if path.is_empty() {
-            return Err(crate::shared::error::AppError::InvalidInput(
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
                 "Import path cannot be empty".to_string(),
             ));
         }
@@ -130,18 +130,16 @@ impl ImportSettingsUseCase {
 
         // repository-barrier-allow: import consumes the user-selected file itself.
         if !path_buf.exists() {
-            return Err(crate::shared::error::AppError::InvalidInput(format!(
-                "Import file does not exist: {}",
-                path
-            )));
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
+                format!("Import file does not exist: {}", path),
+            ));
         }
 
         // repository-barrier-allow: import requires that selected resource to be a regular file.
         if !path_buf.is_file() {
-            return Err(crate::shared::error::AppError::InvalidInput(format!(
-                "Import path is not a file: {}",
-                path
-            )));
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
+                format!("Import path is not a file: {}", path),
+            ));
         }
 
         Ok(())

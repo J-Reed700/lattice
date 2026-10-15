@@ -55,12 +55,11 @@ pub struct GPUInfo {
 
 /// Detect GPU information for the current system.
 ///
-/// This is a best-effort detection that may not work on all systems.
-/// Falls back to CPU-only if GPU cannot be detected.
+/// This is a best-effort detection that may not work on all systems: it has
+/// no sidecar to ask, so it uses the heuristics below. Falls back to CPU-only
+/// if GPU cannot be detected.
 pub async fn detect_gpu() -> Option<GPUInfo> {
-    from_backend_devices()
-        .or_else(detect_apple_silicon)
-        .or_else(detect_gpu_sysinfo)
+    detect_apple_silicon().or_else(detect_gpu_sysinfo)
 }
 
 /// The authoritative form: ask the sidecar that will do the offloading.
@@ -69,16 +68,13 @@ pub async fn detect_gpu() -> Option<GPUInfo> {
 /// ggml can actually use it — right driver, right runtime — which is the
 /// question every caller is really asking, and it needs no per-platform code.
 /// The heuristics below remain only for when the probe cannot run.
-pub async fn detect_gpu_with_sidecar(app: &tauri::AppHandle) -> Option<GPUInfo> {
-    let devices = super::backend_devices::detect_backend_devices(app).await;
-    gpu_from_devices(devices)
+pub async fn detect_gpu_with_sidecar(
+    app: &tauri::AppHandle,
+    devices: &super::backend_devices::BackendDevices,
+) -> Option<GPUInfo> {
+    gpu_from_devices(devices.detect(app).await)
         .or_else(detect_apple_silicon)
         .or_else(detect_gpu_sysinfo)
-}
-
-/// The probe's cached answer, for callers with no `AppHandle`.
-fn from_backend_devices() -> Option<GPUInfo> {
-    gpu_from_devices(super::backend_devices::cached_backend_devices()?)
 }
 
 /// The largest accelerator decides, since that is the one worth offloading to.

@@ -14,10 +14,11 @@ use super::commands::{
     append_sources_and_remap_citations, appended_capture, capture_snippet, hydrate_workspace_note,
     row_to_dto, WorkspaceNoteDto,
 };
+use super::ports::{ArchivedWebPage, LinkedConversationArchive};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::qa::dto::{SourceChunkExcerptDto, SourceDto, WebSnapshotDto};
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 fn source(citation_id: u32, document_id: &str) -> SourceDto {
     SourceDto {
@@ -102,6 +103,31 @@ fn record(id: &str, title: &str, content: &str, updated_at: &str) -> WorkspaceNo
     }
 }
 
+/// The linked-conversation archive read straight from the conversation
+/// repository, as the composition root binds it, so hydration runs against
+/// real archive rows without building a container.
+struct RepositoryArchive<'a>(&'a ConversationRepository);
+
+#[async_trait::async_trait]
+impl LinkedConversationArchive for RepositoryArchive<'_> {
+    async fn archived_web_page(
+        &self,
+        conversation_id: &str,
+        url: &str,
+    ) -> lattice_core::shared::error::Result<Option<ArchivedWebPage>> {
+        let snapshot = self
+            .0
+            .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())
+            .await?;
+        Ok(snapshot.map(|snapshot| ArchivedWebPage {
+            title: snapshot.title,
+            content: snapshot.content,
+            fetched_at: snapshot.fetched_at,
+            truncated: snapshot.truncated,
+        }))
+    }
+}
+
 #[tokio::test]
 async fn vault_updates_preserve_saved_source_metadata() {
     let repository = fresh_repository().await;
@@ -161,6 +187,7 @@ async fn opening_an_old_page_hydrates_and_persists_its_web_snapshot() {
     let pool = fresh_pool().await;
     let notes = DailyNotesRepository::new(pool.clone());
     let conversations = ConversationRepository::new(pool.clone());
+    let archive = RepositoryArchive(&conversations);
     let conversation = conversations
         .create_conversation("Archived source", "test", None)
         .await
@@ -188,10 +215,9 @@ async fn opening_an_old_page_hydrates_and_persists_its_web_snapshot() {
     old_note.sources_json = serde_json::to_string(&vec![citation]).unwrap();
     notes.insert(&old_note).await.unwrap();
 
-    let hydrated =
-        hydrate_workspace_note(&notes, &conversations, notes.get("old-page").await.unwrap())
-            .await
-            .unwrap();
+    let hydrated = hydrate_workspace_note(&notes, &archive, notes.get("old-page").await.unwrap())
+        .await
+        .unwrap();
     let snapshot = hydrated.sources[0].web_snapshot.as_ref().unwrap();
     assert_eq!(snapshot.url, url);
     assert_eq!(snapshot.text, "The archived article text.");
@@ -222,6 +248,7 @@ async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots()
     let pool = fresh_pool().await;
     let notes = DailyNotesRepository::new(pool.clone());
     let conversations = ConversationRepository::new(pool.clone());
+    let archive = RepositoryArchive(&conversations);
     let first = conversations
         .create_conversation("First", "test", None)
         .await
@@ -265,10 +292,9 @@ async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots()
     note.sources_json = serde_json::to_string(&vec![missing_snapshot]).unwrap();
     notes.insert(&note).await.unwrap();
 
-    let hydrated =
-        hydrate_workspace_note(&notes, &conversations, notes.get("conflict").await.unwrap())
-            .await
-            .unwrap();
+    let hydrated = hydrate_workspace_note(&notes, &archive, notes.get("conflict").await.unwrap())
+        .await
+        .unwrap();
     assert!(hydrated.sources[0].web_snapshot.is_none());
     assert_eq!(
         notes.get("conflict").await.unwrap().sources_json,
@@ -282,10 +308,9 @@ async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots()
     unknown_note.sources_json = serde_json::to_string(&vec![provenance_unknown]).unwrap();
     notes.insert(&unknown_note).await.unwrap();
 
-    let hydrated =
-        hydrate_workspace_note(&notes, &conversations, notes.get("unknown").await.unwrap())
-            .await
-            .unwrap();
+    let hydrated = hydrate_workspace_note(&notes, &archive, notes.get("unknown").await.unwrap())
+        .await
+        .unwrap();
     assert!(hydrated.sources[0].web_snapshot.is_none());
     assert_eq!(
         notes.get("unknown").await.unwrap().sources_json,
@@ -307,10 +332,9 @@ async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots()
     note_with_snapshot.sources_json = serde_json::to_string(&vec![already_archived]).unwrap();
     notes.insert(&note_with_snapshot).await.unwrap();
 
-    let hydrated =
-        hydrate_workspace_note(&notes, &conversations, notes.get("saved").await.unwrap())
-            .await
-            .unwrap();
+    let hydrated = hydrate_workspace_note(&notes, &archive, notes.get("saved").await.unwrap())
+        .await
+        .unwrap();
     assert_eq!(
         hydrated.sources[0].web_snapshot.as_ref().unwrap().text,
         saved_snapshot.text

@@ -21,6 +21,12 @@ use super::resources::{
 use super::{MAX_EMITTED_BYTES, PLACEHOLDER_DATA_URL_LEN};
 use crate::features::web::traits::page_snapshot::{CaptureRequest, DataUri};
 
+mod collect;
+mod srcset;
+
+pub(super) use collect::collect;
+pub(super) use srcset::choose_srcset;
+
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 // ---------------------------------------------------------------------------
@@ -214,94 +220,6 @@ fn non_empty(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// One `srcset` candidate.
-#[derive(Debug, PartialEq)]
-pub(super) struct SrcsetCandidate {
-    pub url: String,
-    pub width: Option<u32>,
-    pub density: Option<f32>,
-}
-
-/// Parse `srcset` the way the HTML spec does: a URL runs to whitespace (a
-/// trailing comma ends it), descriptors run to a comma outside parentheses.
-/// URLs may contain commas (`data:`, image CDNs).
-pub(super) fn parse_srcset(srcset: &str) -> Vec<SrcsetCandidate> {
-    let mut candidates = Vec::new();
-    let mut rest = srcset;
-    loop {
-        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
-        if rest.is_empty() {
-            break;
-        }
-        let url_end = rest
-            .find(|c: char| c.is_ascii_whitespace())
-            .unwrap_or(rest.len());
-        let raw_url = &rest[..url_end];
-        rest = &rest[url_end..];
-        let url = raw_url.trim_end_matches(',');
-        let mut descriptors = "";
-        if url.len() == raw_url.len() {
-            let mut parens = 0usize;
-            let end = rest
-                .char_indices()
-                .find(|&(_, c)| {
-                    match c {
-                        '(' => parens += 1,
-                        ')' => parens = parens.saturating_sub(1),
-                        ',' if parens == 0 => return true,
-                        _ => {}
-                    }
-                    false
-                })
-                .map(|(i, _)| i)
-                .unwrap_or(rest.len());
-            descriptors = &rest[..end];
-            rest = &rest[end..];
-        }
-        candidates.push(srcset_candidate(url, descriptors));
-    }
-    candidates
-}
-
-fn srcset_candidate(url: &str, descriptors: &str) -> SrcsetCandidate {
-    let mut candidate = SrcsetCandidate {
-        url: url.to_string(),
-        width: None,
-        density: None,
-    };
-    for descriptor in descriptors.split_ascii_whitespace() {
-        let (number, unit) = descriptor.split_at(descriptor.len().saturating_sub(1));
-        match unit {
-            "w" => candidate.width = number.parse().ok(),
-            "x" => candidate.density = number.parse().ok(),
-            _ => {}
-        }
-    }
-    candidate
-}
-
-/// The largest `w` ≤ 1600, else the largest `x` ≤ 2 (no descriptor is 1x), else the first.
-pub(super) fn choose_srcset(srcset: &str) -> Option<String> {
-    let candidates = parse_srcset(srcset);
-    let by_width = candidates
-        .iter()
-        .filter(|c| c.width.is_some_and(|w| w <= SRCSET_MAX_W))
-        .max_by_key(|c| c.width);
-    let by_density = || {
-        candidates
-            .iter()
-            .filter(|c| c.width.is_none())
-            .map(|c| (c, c.density.unwrap_or(1.0)))
-            .filter(|(_, x)| *x <= SRCSET_MAX_X)
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(c, _)| c)
-    };
-    by_width
-        .or_else(by_density)
-        .or(candidates.first())
-        .map(|c| c.url.clone())
-}
-
 /// Decode the character references lol_html leaves in attribute values and
 /// RCDATA: the five XML ones, `&nbsp;` and numeric references.
 pub(super) fn decode_entities(text: &str) -> String {
@@ -384,124 +302,6 @@ pub(super) fn effective_base(html: &str, doc_url: &Url) -> Url {
         .with_enable_esi_tags(false);
     let _ = rewrite_str(html, settings);
     found.into_inner().unwrap_or_else(|| doc_url.clone())
-}
-
-// ---------------------------------------------------------------------------
-// Pass 1: collect
-// ---------------------------------------------------------------------------
-
-/// What pass 1 found.
-#[derive(Debug, Default)]
-pub(super) struct Collected {
-    pub refs: Vec<ResourceRef>,
-    /// The first icon link, absolute.
-    pub favicon: Option<String>,
-    pub title: Option<String>,
-}
-
-#[derive(Default)]
-struct CollectState {
-    found: RefCell<Collected>,
-    in_title: Cell<bool>,
-    title_seen: Cell<bool>,
-    title_text: RefCell<String>,
-    style_text: RefCell<String>,
-    noscript_text: RefCell<String>,
-}
-
-/// Pass 1: every resource URL the rewrite will look up, with its role.
-pub(super) fn collect(html: &str, doc_url: &Url) -> Collected {
-    let base = effective_base(html, doc_url);
-    collect_with_base(html, &base)
-}
-
-fn collect_with_base(html: &str, base: &Url) -> Collected {
-    let state = CollectState::default();
-    let settings = RewriteStrSettings::new()
-        .append_element_content_handler(element!("*", |el| {
-            collect_element(el, base, &state);
-            Ok(())
-        }))
-        .append_element_content_handler(text!("title", |chunk| {
-            collect_title(chunk, &state);
-            Ok(())
-        }))
-        .append_element_content_handler(text!("style", |chunk| {
-            if let Some(css) = whole_text(chunk, &state.style_text, false) {
-                collect_css(&css, base, 0, &state);
-            }
-            Ok(())
-        }))
-        .append_element_content_handler(text!("noscript", |chunk| {
-            if let Some(fragment) =
-                whole_text(chunk, &state.noscript_text, false).and_then(|t| noscript_images(&t))
-            {
-                let inner = collect_with_base(&fragment, base);
-                state.found.borrow_mut().refs.extend(inner.refs);
-            }
-            Ok(())
-        }))
-        .with_strict(false)
-        .with_enable_esi_tags(false);
-    let _ = rewrite_str(html, settings);
-    state.found.into_inner()
-}
-
-fn collect_element(el: &mut Element<'_, '_>, base: &Url, state: &CollectState) {
-    let tag = el.tag_name();
-    let attr = |name: &str| attribute(el, name);
-    if tag == "title" && !is_svg(el) && !state.title_seen.get() {
-        state.in_title.set(true);
-    }
-    if let Some((raw, kind)) = element_resource(&tag, is_svg(el), &attr) {
-        if let Ok(url) = resolve_reference(base, &raw) {
-            let mut found = state.found.borrow_mut();
-            match kind {
-                ResourceKind::Favicon => {
-                    found.favicon.get_or_insert(url);
-                }
-                _ => found.refs.push(ResourceRef {
-                    url,
-                    kind,
-                    depth: 0,
-                }),
-            }
-        }
-    }
-    if let Some(style) = attr("style") {
-        collect_css(&style, base, 0, state);
-    }
-}
-
-/// CSS references, resolved against `base`; `@import` is one level deeper.
-fn collect_css(css_text: &str, base: &Url, depth: u8, state: &CollectState) {
-    let mut found = state.found.borrow_mut();
-    for reference in css::collect_refs(css_text) {
-        let (kind, depth) = match reference.kind {
-            CssRefKind::Import => (ResourceKind::Stylesheet, depth + 1),
-            CssRefKind::Font => (ResourceKind::Font, depth),
-            CssRefKind::Image => (ResourceKind::Image, depth),
-        };
-        if let Ok(url) = resolve_reference(base, &reference.url) {
-            found.refs.push(ResourceRef { url, kind, depth });
-        }
-    }
-}
-
-fn collect_title(chunk: &mut TextChunk<'_>, state: &CollectState) {
-    if !state.in_title.get() {
-        return;
-    }
-    state.title_text.borrow_mut().push_str(chunk.as_str());
-    if chunk.last_in_text_node() {
-        state.in_title.set(false);
-        state.title_seen.set(true);
-        let text = decode_entities(&state.title_text.take());
-        let title = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !title.is_empty() {
-            state.found.borrow_mut().title = Some(title);
-        }
-    }
 }
 
 /// Accumulate a text node's chunks; returns the whole text on its last

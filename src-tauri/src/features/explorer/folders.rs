@@ -10,9 +10,8 @@
 use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
-use crate::features::conversation::chat::ports::ChatPolicy;
-use crate::shared::Result;
 use chrono::{DateTime, SecondsFormat, Utc};
+use lattice_core::shared::Result;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -133,7 +132,7 @@ pub async fn set_settings(
 ) -> Result<u64> {
     let instructions = instructions.trim();
     if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-        return Err(crate::shared::AppError::InvalidInput(format!(
+        return Err(lattice_core::shared::AppError::InvalidInput(format!(
             "Folder instructions are limited to {MAX_INSTRUCTIONS_CHARS} characters."
         )));
     }
@@ -142,7 +141,7 @@ pub async fn set_settings(
         (!space_id.is_empty() && space_id != repository::GENERAL_SPACE_ID).then_some(space_id);
     if let Some(space) = own_space {
         if !repository::space_is_open(pool, space).await? {
-            return Err(crate::shared::AppError::NotFound(format!(
+            return Err(lattice_core::shared::AppError::NotFound(format!(
                 "Space not found or archived: {space}"
             )));
         }
@@ -187,7 +186,7 @@ pub async fn remember_thread(pool: &SqlitePool, root: &str, conversation_id: &st
         .as_deref()
         != Some(root)
     {
-        return Err(crate::shared::AppError::InvalidInput(format!(
+        return Err(lattice_core::shared::AppError::InvalidInput(format!(
             "Conversation {conversation_id} is not a thread of {root}"
         )));
     }
@@ -211,6 +210,19 @@ pub async fn delete_index(manager: &FolderIndexManager, root: &str) -> Result<()
     manager.delete_index(root).await
 }
 
+/// What removing a folder needs from the threads bound to it. A thread is a
+/// conversation, and conversations are built on Explorer rather than under
+/// it, so Explorer names this port instead of the chat's; the composition root
+/// binds it to the app's conversation delete.
+#[async_trait::async_trait]
+pub trait FolderThreads: Send + Sync {
+    /// Spends the rate limit a user-initiated delete spends.
+    async fn check_delete_limit(&self) -> Result<()>;
+    /// Deletes a thread with its in-flight turn, messages and attachments,
+    /// without spending the rate limit again.
+    async fn delete_thread(&self, conversation_id: &str) -> Result<()>;
+}
+
 /// Removes a folder from the list: its own index, then, when asked, its
 /// threads, then its row. Threads go through the app's conversation delete,
 /// which takes their messages and attachments with them; one removal spends
@@ -219,7 +231,7 @@ pub async fn delete_index(manager: &FolderIndexManager, root: &str) -> Result<()
 /// how many threads were deleted.
 pub async fn remove(
     pool: &SqlitePool,
-    policy: &dyn ChatPolicy,
+    conversations: &dyn FolderThreads,
     manager: &FolderIndexManager,
     root: &str,
     delete_threads: bool,
@@ -230,16 +242,12 @@ pub async fn remove(
         Vec::new()
     };
     if !threads.is_empty() {
-        policy
-            .check_delete_rate_limit("delete_conversation")
-            .await?;
+        conversations.check_delete_limit().await?;
     }
     manager.delete_index(root).await?;
     let deleted = threads.len();
     for conversation_id in threads {
-        policy
-            .delete_conversation_unmetered(&conversation_id)
-            .await?;
+        conversations.delete_thread(&conversation_id).await?;
     }
     repository::delete_folder(pool, root).await?;
     info!(root, threads_deleted = deleted, "Explorer folder removed");

@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
-use crate::domain::models::downloaded::DownloadedModel;
-use crate::domain::value_objects::ArtifactIdentity;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
+use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Stream the artifacts under `dir` through SHA-256. The input is the
 /// content-addressed model plus its preprocessing, not merely its output

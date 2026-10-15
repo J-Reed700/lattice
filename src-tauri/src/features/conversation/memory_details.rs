@@ -7,14 +7,14 @@
 //! reason evidence is a byte range plus a digest is that deleting a message has
 //! to delete its quotation everywhere, including from this view.
 
-use crate::application::ports::conversation_memory::{
-    ConversationMemoryPort, SourceReadLimits, SourceSpanRef,
-};
-use crate::domain::conversation::memory::{MemoryItem, MemoryValidity};
 use crate::features::conversation::memory_dto::{
     ConversationMemoryDetailsDto, ConversationMemoryItemDto, MemoryEvidenceDto,
 };
-use crate::shared::error::Result;
+use lattice_core::application::ports::conversation_memory::{
+    ConversationMemoryPort, SourceReadLimits, SourceSpanRef,
+};
+use lattice_core::domain::conversation::memory::{MemoryItem, MemoryValidity};
+use lattice_core::shared::error::Result;
 
 /// How many superseded/resolved items the history view pages at once.
 const HISTORY_PAGE: i64 = 50;
@@ -155,10 +155,10 @@ mod tests {
     }
 
     async fn seeded(pool: &SqlitePool) -> (ConversationRepository, String, String) {
-        use crate::application::ports::conversation_memory::{
+        use lattice_core::application::ports::conversation_memory::{
             MemoryCommitCandidate, MemoryCommitPreconditions,
         };
-        use crate::domain::conversation::memory::{
+        use lattice_core::domain::conversation::memory::{
             compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem,
             MemoryKind, MemoryReview, MemoryState, SourceRole,
         };
@@ -173,7 +173,7 @@ mod tests {
         let message = repository
             .add_message(
                 &id,
-                crate::domain::conversation::MessageRole::User,
+                lattice_core::domain::conversation::MessageRole::User,
                 content,
                 10,
                 None,

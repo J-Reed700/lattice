@@ -47,11 +47,11 @@
 //! applies (0.65 reranker, 0.35 original) work because both inputs
 //! are now on the same scale.
 
-use crate::shared::error::{AppError, Result, ResultExt};
-use crate::shared::runtime::with_autorelease_pool;
 use candle_core::{DType, Device};
 use candle_nn::{linear, Linear, VarBuilder};
 use candle_transformers::models::bert::{BertModel, Config};
+use lattice_core::shared::error::{AppError, Result, ResultExt};
+use lattice_core::shared::runtime::with_autorelease_pool;
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::path::Path;

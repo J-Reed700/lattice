@@ -9,7 +9,7 @@ use crate::features::learning::{
     persistence::db,
     practical_dto::*,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;

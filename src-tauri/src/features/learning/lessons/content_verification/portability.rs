@@ -1,6 +1,6 @@
 //! Import preserves a historical receipt, not a new verification decision.
 use super::{invalid, LessonVerificationReport};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::collections::HashMap;
 
 impl LessonVerificationReport {

@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use url::Url;
 
 use super::WebArchiveService;
-use crate::application::contracts::web::CleanArticle;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::{AppError, Result};
 
 impl WebArchiveService {
     /// Convert CleanArticle to markdown with YAML frontmatter

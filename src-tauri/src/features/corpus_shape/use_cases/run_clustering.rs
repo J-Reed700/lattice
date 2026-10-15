@@ -17,7 +17,6 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::application::ports::{DocumentRepositoryPort, EmbeddingRepositoryPort, LLMPort};
 use crate::features::corpus_shape::clustering::{
     cluster as hdbscan_cluster, mean_pool, ClusteringInput, ClusteringParams, RawCluster,
     MAX_CLUSTERING_DOCS,
@@ -30,7 +29,8 @@ use crate::features::corpus_shape::labeling::{
     label_cluster, ClusterLabel, RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS,
 };
 use crate::features::corpus_shape::repository::ClusterRepositoryPort;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{DocumentRepositoryPort, EmbeddingRepositoryPort, LLMPort};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Port that yields "give me the title + short content preview for doc X."
 /// Kept generic so tests can fake it without dragging the whole chunking

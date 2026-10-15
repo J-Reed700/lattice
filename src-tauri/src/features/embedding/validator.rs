@@ -1,5 +1,5 @@
 use super::generator::ModelConfig;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Error raised when embedding dimensions don't match between systems
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +87,7 @@ pub fn validate_embedding_compatibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+    use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
     #[test]
     fn test_validate_embedding_dimension_success() {

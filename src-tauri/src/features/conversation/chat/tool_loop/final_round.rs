@@ -20,7 +20,7 @@
 //! does, with thinking on). Then it is asked once more with no tools at all:
 //! that request pays the prefill, but the turn gets its answer.
 
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
 };
 use serde_json::Value;
@@ -276,7 +276,7 @@ fn partial_marker_suffix_len(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::ToolDefinition;
+    use lattice_core::application::ports::ToolDefinition;
 
     fn json_of(value: &impl serde::Serialize) -> Value {
         serde_json::to_value(value).unwrap()

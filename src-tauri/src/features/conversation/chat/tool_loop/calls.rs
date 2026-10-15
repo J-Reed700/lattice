@@ -20,8 +20,6 @@ use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
     tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
 };
-use crate::application::ports::llm_port::CompletionInput;
-use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::fetch_memory::{self, Delivery, FetchMemory, Recall};
@@ -40,9 +38,11 @@ use crate::features::conversation::chat::{
 };
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::explorer::tools::is_explorer_tool;
-use crate::shared::error::Result;
-use crate::shared::http::url_identity::identity;
 use futures::{FutureExt, StreamExt};
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::http::url_identity::identity;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;

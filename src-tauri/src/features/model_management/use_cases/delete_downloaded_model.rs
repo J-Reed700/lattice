@@ -1,7 +1,7 @@
 //! Deletes a downloaded model record and optionally the file.
 
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
@@ -262,7 +262,7 @@ impl DeleteDownloadedModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;
@@ -397,7 +397,7 @@ mod tests {
         let (_temp, weights) = model_dir_with_weights("test-model-c");
         let model = local_model("row-c", "test-model-c", &weights);
         repo.save(&model).await.expect("save model");
-        let identity = crate::domain::value_objects::ArtifactIdentity::from_digest(&[0; 32]);
+        let identity = lattice_core::domain::value_objects::ArtifactIdentity::from_digest(&[0; 32]);
         repo.set_active_embedding_model("test-model-c", Some(&identity))
             .await
             .expect("activate for embedding");

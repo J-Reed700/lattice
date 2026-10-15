@@ -2,10 +2,10 @@
 //!
 //! SQLite pool-based implementation of EmbeddingRepository that delegates to ops.rs.
 
-use crate::application::ports::EmbeddingRepositoryPort;
 use crate::features::embedding::entity::Embedding as DomainEmbedding;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingRepositoryPort;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 use super::ops;
@@ -24,7 +24,7 @@ impl SqliteEmbeddingRepository {
 #[async_trait]
 impl EmbeddingRepositoryPort for SqliteEmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
-        use crate::shared::types::ChunkId;
+        use lattice_core::shared::types::ChunkId;
         let chunk_id_typed = ChunkId::from(chunk_id.to_string());
         let embedding = DomainEmbedding::new(chunk_id_typed, model.to_string(), vector.len());
         self.save(&embedding, vector.to_vec()).await?;
@@ -47,13 +47,19 @@ impl EmbeddingRepositoryPort for SqliteEmbeddingRepository {
         }
 
         let mut tx = self.pool.begin().await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Failed to begin transaction: {}", e))
+            lattice_core::shared::error::AppError::Database(format!(
+                "Failed to begin transaction: {}",
+                e
+            ))
         })?;
 
         ops::save_batch(&mut tx, entries).await?;
 
         tx.commit().await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Failed to commit transaction: {}", e))
+            lattice_core::shared::error::AppError::Database(format!(
+                "Failed to commit transaction: {}",
+                e
+            ))
         })?;
 
         Ok(())

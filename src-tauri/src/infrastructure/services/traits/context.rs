@@ -2,8 +2,8 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 
 /// Trait for enriching search results with document metadata
 #[async_trait]

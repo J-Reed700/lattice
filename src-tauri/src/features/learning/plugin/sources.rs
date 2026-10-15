@@ -54,7 +54,7 @@ pub async fn add_learning_web_source(
                 .check_rate_limit("learning_source_fetch")
                 .await
                 .map_err(|error| {
-                    crate::shared::error::AppError::RateLimitExceeded(error.to_string())
+                    lattice_core::shared::error::AppError::RateLimitExceeded(error.to_string())
                 })?;
             web.fetch_reference_content(&url).await
         },
@@ -77,7 +77,7 @@ pub async fn add_learning_document_source(
     )
     .map_err(ApiError::from)?;
     uuid::Uuid::parse_str(&request.document_id).map_err(|_| {
-        ApiError::from(crate::shared::error::AppError::InvalidInput(
+        ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
             "Invalid document ID".into(),
         ))
     })?;
@@ -109,15 +109,17 @@ pub async fn add_learning_document_source(
     .await
     .map_err(ApiError::from)?;
     repo.add(
-        &request.operation_id,
-        &request.source_id,
-        &request.version_id,
-        &request.program_id,
-        LearningSourceKind::Document,
-        "add_document",
-        &request.document_id,
-        None,
-        LearningSourcePolicy::Fixed,
+        crate::features::learning::source_library::NewLearningSource {
+            operation_id: &request.operation_id,
+            source_id: &request.source_id,
+            version_id: &request.version_id,
+            program_id: &request.program_id,
+            kind: LearningSourceKind::Document,
+            operation_kind: "add_document",
+            origin: &request.document_id,
+            requested_url: None,
+            freshness: LearningSourcePolicy::Fixed,
+        },
         captured,
         hash,
     )
@@ -153,15 +155,17 @@ pub async fn add_learning_text_source(
     };
     source_library(&container)
         .add(
-            &request.operation_id,
-            &request.source_id,
-            &request.version_id,
-            &request.program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            &request.title,
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &request.operation_id,
+                source_id: &request.source_id,
+                version_id: &request.version_id,
+                program_id: &request.program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: &request.title,
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             captured,
             hash,
         )
@@ -203,7 +207,7 @@ pub async fn refresh_learning_source(
         .map_err(ApiError::from)?;
     if revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Source changed; reload and retry.".into(),
             ),
         ));
@@ -215,13 +219,13 @@ pub async fn refresh_learning_source(
             .web_ingest
             .check_rate_limit("learning_source_refresh")
             .await
-            .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
         let article = container
             .web_service()
             .fetch_reference_content(&url)
             .await
-            .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;
-        Ok::<_, crate::shared::error::AppError>(
+            .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+        Ok::<_, lattice_core::shared::error::AppError>(
             crate::features::learning::source_library::CapturedLearningSource {
                 title: article.title.unwrap_or_else(|| url.clone()),
                 publisher: None,

@@ -10,8 +10,9 @@
 
 use super::pdf_layout;
 use super::types::{ContentMetadata, ExtractedContent};
-use crate::application::ports::{OcrError, OcrPort};
+use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
+use lattice_core::application::ports::{OcrError, OcrPort};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,8 +24,7 @@ use tracing::{debug, info, warn};
 // Keep its permit inside the blocking closure, so retries cannot bypass this
 // bound. Cancellation is cooperative between pages; lopdf cannot be preempted
 // while loading a document or decoding an individual page.
-static PDF_WORKERS: once_cell::sync::Lazy<Arc<Semaphore>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Semaphore::new(2)));
+pub(super) const MAX_PDF_WORKERS: usize = 2;
 const PDF_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const MAX_PDF_STREAM_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PDF_LAYOUT_BYTES: usize = 64 * 1024 * 1024;
@@ -91,6 +91,7 @@ pub async fn extract_pdf(
     path: &Path,
     max_file_size: u64,
     ocr: Option<&Arc<dyn OcrPort>>,
+    workers: &ExtractionWorkers,
 ) -> Result<ExtractedContent> {
     let metadata = tokio::fs::metadata(path)
         .await
@@ -111,7 +112,7 @@ pub async fn extract_pdf(
 
     let path_clone = path.to_path_buf();
 
-    let mut pages = run_pdf_worker(Arc::clone(&PDF_WORKERS), PDF_TIMEOUT, move |cancel| {
+    let mut pages = run_pdf_worker(Arc::clone(&workers.pdf), PDF_TIMEOUT, move |cancel| {
         extract_pdf_pages(&path_clone, &cancel)
     })
     .await?;

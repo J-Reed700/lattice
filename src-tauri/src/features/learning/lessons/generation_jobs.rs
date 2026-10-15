@@ -7,14 +7,14 @@ use crate::features::learning::{
     repository::LearningRepository,
     service,
 };
-use crate::{
+use futures::future::BoxFuture;
+use lattice_core::{
     application::ports::LLMPort,
     shared::{
         error::{AppError, Result},
         runtime::jobs::{JobContext, JobFailure, JobHandler, JobOutcome, JobRecord},
     },
 };
-use futures::future::BoxFuture;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -24,14 +24,18 @@ type SourceRefresh = Arc<dyn Fn(String) -> BoxFuture<'static, Result<()>> + Send
 /// The library search for document references, once the embedding model
 /// it queries with is loaded; `None` leaves every reference to keywords.
 type LibraryLoader = Arc<
-    dyn Fn() -> BoxFuture<'static, Option<Arc<dyn crate::application::ports::LibraryPassagesPort>>>
-        + Send
+    dyn Fn() -> BoxFuture<
+            'static,
+            Option<Arc<dyn lattice_core::application::ports::LibraryPassagesPort>>,
+        > + Send
         + Sync,
 >;
 
 #[derive(Clone)]
 pub(in crate::features::learning) struct LessonGenerationWorker {
     pub pool: SqlitePool,
+    /// Where a lesson's worked examples run while it is verified.
+    pub runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes,
     pub load_llm: ModelLoader,
     pub load_library: LibraryLoader,
     pub refresh_sources: SourceRefresh,
@@ -44,7 +48,7 @@ impl JobHandler for LessonGenerationWorker {
         let repo = LearningCurriculumRepository::new(self.pool.clone());
         // The worker is independent of the webview. Also tell macOS this
         // user-requested work must continue when the window loses focus.
-        let _activity = crate::shared::runtime::user_activity::UserActivity::begin(
+        let _activity = lattice_core::shared::runtime::user_activity::UserActivity::begin(
             "Preparing learning material",
         );
         // Preparation may perform network/model work. Dropping it closes the
@@ -89,7 +93,7 @@ impl LessonGenerationWorker {
         let job_id = context.id();
         let job = repo.job(job_id).await?;
         if job.kind != LearningGenerationJobKind::LessonPreparation {
-            return Err(crate::shared::error::AppError::InvalidInput(
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
                 "This worker currently accepts bounded lesson-preparation jobs only.".into(),
             ));
         }
@@ -109,12 +113,12 @@ impl LessonGenerationWorker {
         let program_repo = LearningRepository::new(self.pool.clone());
         let mut program = program_repo.get(&job.program_id).await?;
         if !repo.job_content_is_current(job_id).await? {
-            return Err(crate::shared::error::AppError::InvalidState(
+            return Err(lattice_core::shared::error::AppError::InvalidState(
                 "Course content changed before generation resumed. Start preparation again for the updated course.".into(),
             ));
         }
         if program.summary.status != LearningProgramStatus::Active {
-            return Err(crate::shared::error::AppError::InvalidState(
+            return Err(lattice_core::shared::error::AppError::InvalidState(
                 "Only active programs can prepare lessons.".into(),
             ));
         }
@@ -126,7 +130,7 @@ impl LessonGenerationWorker {
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
         if had_sources && program.sources.is_empty() {
-            return Err(crate::shared::error::AppError::InvalidState(
+            return Err(lattice_core::shared::error::AppError::InvalidState(
                 "No active source snapshots are available for lesson preparation.".into(),
             ));
         }
@@ -140,13 +144,13 @@ impl LessonGenerationWorker {
             .collect::<Vec<_>>();
         if !requested_ids.is_empty() {
             if requested_ids.len() > 3 {
-                return Err(crate::shared::error::AppError::InvalidInput(
+                return Err(lattice_core::shared::error::AppError::InvalidInput(
                     "A preparation job may target at most three upcoming lessons.".into(),
                 ));
             }
             candidates.retain(|lesson| requested_ids.contains(&lesson.id));
             if candidates.len() != requested_ids.len() {
-                return Err(crate::shared::error::AppError::InvalidInput(
+                return Err(lattice_core::shared::error::AppError::InvalidInput(
                     "A requested lesson is not an upcoming outline in this program.".into(),
                 ));
             }
@@ -154,7 +158,7 @@ impl LessonGenerationWorker {
             candidates.truncate(job.progress_total as usize);
         }
         if candidates.is_empty() || candidates.len() != job.progress_total as usize {
-            return Err(crate::shared::error::AppError::InvalidInput(
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
                 "The job must target one to three outline lessons.".into(),
             ));
         }
@@ -231,6 +235,7 @@ impl LessonGenerationWorker {
                     let preparation = Box::pin(
                         crate::features::learning::generation::prepare_lesson_with_references(
                             llm.as_ref(),
+                            &self.runtimes,
                             &program,
                             lesson,
                             &references,
@@ -300,10 +305,8 @@ impl LessonGenerationWorker {
 /// would after a start.
 #[cfg(test)]
 async fn run_attempt(worker: LessonGenerationWorker, job_id: &str) -> Result<()> {
-    use crate::{
-        features::learning::curriculum_repository::{lesson_job_config, LESSON_PREPARATION},
-        shared::runtime::jobs::JobRuntime,
-    };
+    use crate::features::learning::curriculum_repository::{lesson_job_config, LESSON_PREPARATION};
+    use lattice_core::shared::runtime::jobs::JobRuntime;
     let runtime = JobRuntime::new(worker.pool.clone());
     runtime
         .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
@@ -324,7 +327,7 @@ mod repository_tests {
         dto::AcceptLearningProgramRequestDto,
         plan_dto::{LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto},
     };
-    use crate::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
+    use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
 
     /// The old one-job-at-a-time semaphore did two things: it limited model
     /// use, which is now the inference scheduler's, and it kept two
@@ -412,6 +415,7 @@ mod repository_tests {
             let entered = Arc::new(tokio::sync::Notify::new());
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
+                runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
                 load_library: Arc::new(|| Box::pin(async { None })),
                 pool: pool.clone(),

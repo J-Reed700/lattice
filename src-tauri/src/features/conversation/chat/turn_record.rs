@@ -490,11 +490,11 @@ fn capped(mut links: Vec<TurnStepLinkDto>) -> Vec<TurnStepLinkDto> {
 }
 
 fn clip(text: &str) -> String {
-    crate::shared::text::safe_truncate(text.trim(), MAX_DETAIL_CHARS)
+    lattice_core::shared::text::safe_truncate(text.trim(), MAX_DETAIL_CHARS)
 }
 
 fn clip_reasoning(text: &str) -> String {
-    crate::shared::text::safe_truncate(text.trim(), MAX_REASONING_CHARS)
+    lattice_core::shared::text::safe_truncate(text.trim(), MAX_REASONING_CHARS)
 }
 
 #[cfg(test)]

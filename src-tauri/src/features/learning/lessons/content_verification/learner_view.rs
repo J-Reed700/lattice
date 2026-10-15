@@ -8,7 +8,7 @@ use crate::features::learning::{
         SavedEvidenceVersion,
     },
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 
 fn unavailable() -> AppError {

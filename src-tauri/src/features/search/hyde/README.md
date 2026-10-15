@@ -17,7 +17,7 @@ hyde/
 └── README.md
 ```
 
-The shared types live in `src-tauri/src/domain/qa/hyde.rs`: `QueryType`,
+The shared types live in `src-tauri/crates/lattice-core/src/domain/qa/hyde.rs`: `QueryType`,
 `SearchStrategy` (`HyDEOnly`, `RawOnly`, `Hybrid`), `ToolIntent` and
 `HyDEInterpretation`.
 

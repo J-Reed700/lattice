@@ -13,12 +13,12 @@ use crate::features::learning::{
     references::web_research,
     sources::{preview, InitialReference},
 };
-use crate::{
+use crate::features::web::traits::WebServiceTrait;
+use futures::StreamExt;
+use lattice_core::{
     application::{contracts::web::WebSearchResult, ports::LLMPort},
-    features::web::traits::WebServiceTrait,
     shared::error::{AppError, Result},
 };
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
@@ -171,7 +171,10 @@ pub(in crate::features::learning) async fn plan(
             planned += 1;
             if copies_private_text(&query, &private) {
                 dropped += 1;
-                tracing::warn!(subtopic = title, "Dropped a reference search that copied the learner's goal or prior knowledge");
+                tracing::warn!(
+                    subtopic = title,
+                    "Dropped a reference search that copied the learner's goal or prior knowledge"
+                );
                 continue;
             }
             if !queries.contains(&query) {
@@ -189,7 +192,13 @@ pub(in crate::features::learning) async fn plan(
             "The reference plan contained no usable searches; the draft was not started.".into(),
         ));
     }
-    tracing::info!(subtopics = plan.subtopics.len(), queries = plan.query_count(), planned, dropped, "Planned outline reference searches");
+    tracing::info!(
+        subtopics = plan.subtopics.len(),
+        queries = plan.query_count(),
+        planned,
+        dropped,
+        "Planned outline reference searches"
+    );
     Ok(plan)
 }
 
@@ -234,7 +243,9 @@ pub(in crate::features::learning) async fn gather_for(
     });
     let label = |number: usize, total: usize| match purpose {
         GatherPurpose::Course => format!("Subtopic {number} of {total}"),
-        GatherPurpose::Finding { position, total, .. } => format!("Finding {position} of {total}"),
+        GatherPurpose::Finding {
+            position, total, ..
+        } => format!("Finding {position} of {total}"),
     };
     let mut urls: HashSet<String> = existing.iter().filter_map(|s| s.url.clone()).collect();
     let mut hashes: HashSet<String> = existing
@@ -284,7 +295,9 @@ pub(in crate::features::learning) async fn gather_for(
         let (topic, gaps) = match purpose {
             GatherPurpose::Course => (
                 subtopic.title.as_str(),
-                [json!({"claim":subtopic.title,"missingEvidence":"reference material a lesson on this subtopic can cite"})],
+                [
+                    json!({"claim":subtopic.title,"missingEvidence":"reference material a lesson on this subtopic can cite"}),
+                ],
             ),
             GatherPurpose::Finding { topic, reason, .. } => (
                 topic,

@@ -1,7 +1,7 @@
 //! What Explorer keeps in `lattice.db`: `conversations.explorer_root`, and
 //! the folders list in `explorer_folders`.
 
-use crate::shared::{AppError, Result};
+use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 

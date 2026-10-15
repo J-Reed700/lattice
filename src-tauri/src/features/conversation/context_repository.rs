@@ -1,9 +1,9 @@
 //! SQLite adapter for supplemental chat context.
 
-use crate::application::ports::conversation_context::{
+use lattice_core::application::ports::conversation_context::{
     ConversationContextPort, LinkedConversationSource,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 pub struct SqliteConversationContext {

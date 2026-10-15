@@ -7,12 +7,12 @@
 //! This repository implements the RecentDocumentsRepositoryPort trait,
 //! providing operations for tracking and retrieving recently accessed documents.
 
-use crate::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
-use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::infrastructure::persistence::database::query_with_timeout;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::Utc;
+use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
+use lattice_core::application::ports::RecentDocumentsRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 
 /// SQLite implementation of recent documents repository.

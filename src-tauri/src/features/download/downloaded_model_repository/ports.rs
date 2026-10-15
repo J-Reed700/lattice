@@ -3,12 +3,12 @@
 use async_trait::async_trait;
 use tracing::{debug, error};
 
-use crate::application::ports::model_storage::{
+use lattice_core::application::ports::model_storage::{
     DownloadedModel as DownloadedModelDto, ModelStoragePort,
 };
-use crate::domain::models::downloaded::DownloadedModel;
-use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryTrait;
+use lattice_core::shared::error::{AppError, Result};
 
 use super::DownloadedModelRepository;
 

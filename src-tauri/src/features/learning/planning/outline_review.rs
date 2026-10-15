@@ -2,7 +2,6 @@
 //! findings only at the paths this pass may touch, and nothing about
 //! citations, which code has already settled. Findings have stable ids so a
 //! verdict can close them and a repeat can be merged instead of re-raised.
-use crate::application::services::claim_verification::ClaimVerdict;
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
@@ -11,10 +10,8 @@ use crate::features::learning::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
     reference_collection::ReferenceCollection,
 };
-use crate::{
-    application::ports::LLMPort,
-    shared::error::Result,
-};
+use lattice_core::application::services::claim_verification::ClaimVerdict;
+use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -182,7 +179,10 @@ fn apply(
     allowed: &[String],
     sources: &[LearningSourceDto],
 ) -> Result<()> {
-    let open_ids: Vec<String> = draft.open_findings().map(|issue| issue.id.clone()).collect();
+    let open_ids: Vec<String> = draft
+        .open_findings()
+        .map(|issue| issue.id.clone())
+        .collect();
     let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
     for verdict in review.verdicts {
         if open_ids.contains(&verdict.id) && !verdicts.contains_key(&verdict.id) {
@@ -190,7 +190,10 @@ fn apply(
         }
     }
     if verdicts.len() != open_ids.len() {
-        tracing::warn!(missing = open_ids.len() - verdicts.len(), "The outline review omitted verdicts; those findings stay open for the next pass");
+        tracing::warn!(
+            missing = open_ids.len() - verdicts.len(),
+            "The outline review omitted verdicts; those findings stay open for the next pass"
+        );
     }
     let candidate = draft.candidate.clone();
     let mut kept = Vec::new();
@@ -240,12 +243,9 @@ fn apply(
             tracing::info!(path = %finding.path, "Dropped a factual finding on an assertion already verified against saved references");
             continue;
         }
-        if let Some(existing) = draft
-            .review
-            .issues
-            .iter_mut()
-            .find(|issue| issue.path == finding.path && normalized(&issue.claim) == normalized(&claim))
-        {
+        if let Some(existing) = draft.review.issues.iter_mut().find(|issue| {
+            issue.path == finding.path && normalized(&issue.claim) == normalized(&claim)
+        }) {
             existing.message = finding.reason.trim().to_owned();
             continue;
         }
@@ -296,7 +296,10 @@ pub(in crate::features::learning) async fn review(
         .open_findings()
         .map(|issue| json!({"id":issue.id,"path":issue.path,"kind":kind_name(issue.kind),"claim":issue.claim,"reason":issue.message,"attempts":issue.attempts}))
         .collect();
-    let open_ids: Vec<String> = draft.open_findings().map(|issue| issue.id.clone()).collect();
+    let open_ids: Vec<String> = draft
+        .open_findings()
+        .map(|issue| issue.id.clone())
+        .collect();
     let verified = verified_assertions(draft, sources);
     let total = draft
         .candidate
@@ -304,8 +307,8 @@ pub(in crate::features::learning) async fn review(
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
     let mut payload = json!({"goal":draft.request.goal,"priorKnowledge":draft.request.prior_knowledge,"minutesPerSession":draft.request.minutes_per_session,"candidate":draft.candidate,"moduleNumbering":module_numbering(&draft.candidate),"sources":passages,"openFindings":open});
-    if !verified.is_empty() {
-        payload["verifiedAssertions"] = json!(verified);
+    if let (false, Some(object)) = (verified.is_empty(), payload.as_object_mut()) {
+        object.insert("verifiedAssertions".into(), json!(verified));
     }
     scope.add_context(&mut payload, &draft.candidate)?;
     // Verified citations are settled by code; the reviewer never re-litigates them.
@@ -319,7 +322,11 @@ pub(in crate::features::learning) async fn review(
         scope.indices.len(),
         total,
         open_ids.len(),
-        if open_ids.len() == 1 { "finding" } else { "findings" }
+        if open_ids.len() == 1 {
+            "finding"
+        } else {
+            "findings"
+        }
     ));
     tracing::info!(
         incremental = scope.incremental,

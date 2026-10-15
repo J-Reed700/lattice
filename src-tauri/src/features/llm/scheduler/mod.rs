@@ -37,9 +37,7 @@ mod scheduled;
 mod tokenize;
 
 pub(crate) use estimator::TokenEstimator;
-pub(crate) use registry::{
-    cloud_scheduler, llama_server_capacity, ollama_scheduler, remote_llama_cpp_scheduler,
-};
+pub(crate) use registry::{llama_server_capacity, SchedulerRegistry};
 pub(crate) use scheduled::ScheduledLlm;
 pub(crate) use tokenize::ServerTokenizer;
 
@@ -51,8 +49,8 @@ use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::shared::error::{AppError, Result};
 
 /// A wait longer than this is worth a line in the log: it is the contention
 /// this scheduler exists to arbitrate, and otherwise invisible.
