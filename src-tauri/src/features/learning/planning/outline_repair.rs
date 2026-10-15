@@ -373,18 +373,21 @@ async fn resolve_factual(
                 let reason = outcome
                     .reason
                     .unwrap_or_else(|| "The claim check gave no reason.".into());
-                draft.claim_receipts.insert(
-                    key,
-                    OutlineClaimReceipt {
-                        verdict: outcome.verdict,
-                        reason: reason.clone(),
-                        supporting_quote: evidence.as_ref().map(|(_, quote)| quote.clone()),
-                        checked_at: chrono::Utc::now().timestamp_millis(),
-                        claim: claim.clone(),
-                        path: issue.path.clone(),
-                        source_id: evidence.as_ref().map(|(id, _)| id.clone()),
-                    },
-                );
+                // A check that could not run is not a decision to keep.
+                if outcome.verdict != ClaimVerdict::Unverified {
+                    draft.claim_receipts.insert(
+                        key,
+                        OutlineClaimReceipt {
+                            verdict: outcome.verdict,
+                            reason: reason.clone(),
+                            supporting_quote: evidence.as_ref().map(|(_, quote)| quote.clone()),
+                            checked_at: chrono::Utc::now().timestamp_millis(),
+                            claim: claim.clone(),
+                            path: issue.path.clone(),
+                            source_id: evidence.as_ref().map(|(id, _)| id.clone()),
+                        },
+                    );
+                }
                 (outcome.verdict, reason, evidence)
             }
         };

@@ -362,22 +362,34 @@ pub(in crate::features::learning) fn bank_tokens(llm: &dyn LLMPort, text: &str) 
 
 /// The evidence tokens one claim may carry when `sharing` claims share a
 /// strict batch call: an equal share of the room the call leaves after its
-/// instructions, the claims and their answers. A claim checked alone gets
-/// the whole room.
+/// instructions, the claims and their answers. A claim checked alone is
+/// checked by the single-claim judge, so it gets that judge's whole room.
 pub(in crate::features::learning) fn claim_share(
     llm: &dyn LLMPort,
     claim: &str,
     sharing: usize,
 ) -> usize {
-    let sharing = sharing.max(1);
-    ClaimChecker::new(
+    let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
         512,
         CheckPolicy::Strict,
-    )
-    .batch_evidence_room(&vec![claim.to_owned(); sharing])
-        / sharing
+    );
+    if sharing <= 1 {
+        return checker.located_evidence_room(claim);
+    }
+    checker.batch_evidence_room(&vec![claim.to_owned(); sharing]) / sharing
+}
+
+/// A claim the checker could not judge, with why, as a judgment: the cause
+/// travels in its reason, and an unverified verdict is never a receipt.
+pub(in crate::features::learning) fn unchecked(cause: impl Into<String>) -> ClaimJudgment {
+    ClaimJudgment::Judged(JudgeOutcome {
+        verdict: ClaimVerdict::Unverified,
+        reason: Some(cause.into()),
+        quote: None,
+        confidence: None,
+    })
 }
 
 /// Whether `passages` fit within `share` tokens of a passage bank.
@@ -517,6 +529,23 @@ pub(in crate::features::learning) async fn judge_for_publication(
         512,
         CheckPolicy::Strict,
     );
+    // A page is sized for this judge; one sized for a batch call is cut to
+    // what this judge's window holds, best first.
+    let mut fitted = passages.len();
+    while fitted > 0 && !checker.located_fits(claim, passages.get(..fitted).unwrap_or_default()) {
+        fitted -= 1;
+    }
+    if fitted == 0 && !passages.is_empty() {
+        return unchecked("The claim and its first passage do not fit the claim check in this model's context window.");
+    }
+    if fitted < passages.len() {
+        tracing::warn!(
+            shown = fitted,
+            page = passages.len(),
+            "A claim's page holds more than the single-claim judge's window; checking the passages that fit"
+        );
+    }
+    let passages = passages.get(..fitted).unwrap_or_default();
     let _model_call = crate::features::learning::lesson_progress::model_call();
     let provisional = checker
         .check_passages_without_deadline(claim, passages)

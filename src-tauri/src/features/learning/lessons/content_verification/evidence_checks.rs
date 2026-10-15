@@ -221,14 +221,16 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
             outcome.reason.unwrap_or_default(),
             outcome.quote,
         ),
-        ClaimJudgment::OutOfTime => (
-            ClaimVerdict::Unverified,
-            "The claim checking deadline expired.".into(),
-            None,
-        ),
+        // Running out of time is an outage the job waits out, not a finding.
+        ClaimJudgment::OutOfTime => {
+            return Err(AppError::ServiceNotAvailable(
+                "The claim checking deadline expired.".into(),
+            ))
+        }
+        // Every unverified finding is deterministic: its reason is the cause.
         ClaimJudgment::Unusable => (
             ClaimVerdict::Unverified,
-            "Missing evidence or a failed, incomplete, or uncertain checker response.".into(),
+            "The checker's answer was unusable after its correction and its retry alone.".into(),
             None,
         ),
     };

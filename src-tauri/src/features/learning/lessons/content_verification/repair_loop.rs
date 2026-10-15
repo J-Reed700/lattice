@@ -150,17 +150,8 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         if report.issues.is_empty() {
             return Ok((raw, report));
         }
-        if report
-            .findings
-            .iter()
-            .any(|f| f.verdict == ClaimVerdict::Unverified)
-        {
-            let unfinished = report
-                .findings
-                .iter()
-                .filter(|f| f.verdict == ClaimVerdict::Unverified)
-                .count();
-            return Err(AppError::ServiceNotAvailable(format!("The evidence checker could not complete {unfinished} claim checks. No lesson was published. Retry when the checker is available; durable jobs retain the lesson draft.")));
+        if let Some(error) = unchecked_claims(&report.findings) {
+            return Err(error);
         }
         progress.record(&raw, &report.issues).await?;
         let issue_fingerprint = repair_issue_fingerprint(&report.issues);
@@ -264,6 +255,32 @@ impl RepairProgress {
         }
         Ok(())
     }
+}
+
+/// The error for claims the checker could not judge. An outage never gets
+/// here: it fails the check and the job waits it out. What is left is
+/// deterministic (a request that cannot fit, an answer unusable after its
+/// retries), and the same inputs would fail the same way, so the job stops
+/// with the claims and their causes instead of being deferred.
+pub(super) fn unchecked_claims(findings: &[Finding]) -> Option<AppError> {
+    let unchecked: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.verdict == ClaimVerdict::Unverified)
+        .collect();
+    let first = unchecked.first()?;
+    let more = unchecked.len() - 1;
+    Some(AppError::InvalidInput(format!(
+        "The evidence checker could not check {} claim{}. \"{}\": {}{} No lesson was published.",
+        unchecked.len(),
+        if unchecked.len() == 1 { "" } else { "s" },
+        first.statement,
+        first.reason,
+        if more == 0 {
+            String::new()
+        } else {
+            format!(" ({more} more claims could not be checked.)")
+        }
+    )))
 }
 
 #[derive(Serialize, Deserialize)]

@@ -353,3 +353,77 @@ async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
     assert!(taken.iter().all(|p| expected.contains(&p.source_id)));
     Ok(())
 }
+
+/// A judge that fails every check: with an outage, or with an unusable
+/// answer.
+struct BrokenJudge {
+    inner: Model,
+    outage: bool,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for BrokenJudge {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::features::learning::lessons::structured_call::task_messages(request);
+        if user.contains("Claim: ") || user.contains("\"sourcePassages\"") {
+            if self.outage {
+                return Err(AppError::ServiceNotAvailable("503: loading model".into()));
+            }
+            return Ok(CompletionResponse::from_text("no verdict here"));
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "broken-judge"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_000
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_unusable_check_fails_the_job_once_and_an_outage_defers_it() -> Result<()> {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    let sources: Vec<_> = (0..3).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let references = &references;
+    let check = |llm: BrokenJudge| async move {
+        evidence_checks::check(
+            &llm,
+            references,
+            &inventory(&[CLAIM.into()]),
+            &[],
+            &ClaimChecks::default(),
+        )
+        .await
+    };
+    // Deterministic: the claim is left unverified with its cause, and the
+    // job's error is not one it defers.
+    let results = check(BrokenJudge {
+        inner: Model::new(),
+        outage: false,
+    })
+    .await?;
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Unverified);
+    let findings: Vec<Finding> = results.into_iter().map(|r| r.2).collect();
+    let error = repair_loop::unchecked_claims(&findings).unwrap();
+    assert!(!JobFailure::is_transient(&error), "{error}");
+    assert!(error.to_string().contains(CLAIM));
+    assert!(error.to_string().contains("unusable"));
+    // Transient: the outage fails the check and the job defers it.
+    let error = check(BrokenJudge {
+        inner: Model::new(),
+        outage: true,
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(JobFailure::is_transient(&error), "{error}");
+    Ok(())
+}

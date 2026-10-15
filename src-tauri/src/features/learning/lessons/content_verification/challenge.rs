@@ -30,13 +30,13 @@ fn challenge_request(
     system: &str,
     prompt: String,
     schema: Value,
-    claims: usize,
+    output_tokens: usize,
 ) -> GroundedRequest {
     let mut request = crate::features::learning::model_call::structured(
         system,
         prompt,
         schema,
-        QUESTIONS_OUTPUT_TOKENS * claims,
+        output_tokens,
         "low",
     );
     request.output_fills_window = true;
@@ -47,7 +47,30 @@ fn challenge_request(
     request
 }
 
+/// Send a challenge request; an answer cut off at its output reservation is
+/// asked for once more with the reservation doubled, as far as the window
+/// allows.
 async fn send_challenge(
+    llm: &dyn LLMPort,
+    request: impl Fn(usize) -> GroundedRequest,
+    claims: usize,
+    too_large: &str,
+) -> Result<lattice_core::application::services::grounded_generation::GroundedOutput> {
+    let output =
+        send_challenge_once(llm, request(QUESTIONS_OUTPUT_TOKENS * claims), too_large).await?;
+    if !crate::features::learning::lessons::structured_call::cut_off(&output.finish_reason) {
+        return Ok(output);
+    }
+    tracing::warn!("An evidence challenge answer reached its output limit; asking once more with twice the room");
+    send_challenge_once(
+        llm,
+        request(2 * QUESTIONS_OUTPUT_TOKENS * claims),
+        too_large,
+    )
+    .await
+}
+
+async fn send_challenge_once(
     llm: &dyn LLMPort,
     request: GroundedRequest,
     too_large: &str,
@@ -73,20 +96,68 @@ async fn send_challenge(
     .await
 }
 
-async fn questions(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Result<Questions> {
+fn questions_schema() -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["queries"],"properties":{"queries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}})
+}
+
+fn questions_prompt(claim: &str, passages: &[&String]) -> String {
     let evidence = passages
         .iter()
         .enumerate()
         .map(|(i, text)| format!("[passage-{i}]\n{text}"))
         .collect::<Vec<_>>()
         .join("\n\n");
-    let prompt = format!("Source passages:\n{evidence}\n\nClaim: {claim}");
-    let schema = json!({"type":"object","additionalProperties":false,"required":["queries"],"properties":{"queries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}});
-    let request = challenge_request(SYSTEM, prompt, schema, 1);
+    format!("Source passages:\n{evidence}\n\nClaim: {claim}")
+}
+
+/// The challenge sizes its own request: the passage the judge named as
+/// support first, then the page's other passages while the challenge's room
+/// holds them. Only a claim and its supporting passage that cannot fit
+/// together are an error.
+async fn questions(
+    llm: &dyn LLMPort,
+    claim: &str,
+    passages: &[String],
+    supporting: Option<&str>,
+) -> Result<Questions> {
+    let support = supporting.and_then(|quote| passages.iter().position(|p| p.as_str() == quote));
+    let ordered: Vec<&String> = support
+        .and_then(|index| passages.get(index))
+        .into_iter()
+        .chain(
+            passages
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| Some(*index) != support)
+                .map(|(_, passage)| passage),
+        )
+        .collect();
+    let fits = |count: usize| {
+        crate::features::learning::model_call::fits(
+            llm,
+            &challenge_request(
+                SYSTEM,
+                questions_prompt(claim, ordered.get(..count).unwrap_or_default()),
+                questions_schema(),
+                QUESTIONS_OUTPUT_TOKENS,
+            ),
+        )
+    };
+    let mut count = ordered.len();
+    while count > 0 && !fits(count) {
+        count -= 1;
+    }
+    if count == 0 && !ordered.is_empty() {
+        return Err(invalid(
+            "The claim and its supporting passage do not fit the evidence challenge in this model's context window.",
+        ));
+    }
+    let prompt = questions_prompt(claim, ordered.get(..count).unwrap_or_default());
     let _model_call = crate::features::learning::lesson_progress::model_call();
     let response = send_challenge(
         llm,
-        request,
+        |output| challenge_request(SYSTEM, prompt.clone(), questions_schema(), output),
+        1,
         "The evidence challenge does not fit in the model's context window.",
     )
     .await?;
@@ -138,11 +209,20 @@ pub(super) async fn guard(
     {
         return provisional;
     }
-    match questions(llm, claim, passages).await {
+    let supporting = match &provisional {
+        ClaimJudgment::Judged(outcome) => outcome.quote.clone(),
+        _ => None,
+    };
+    match questions(llm, claim, passages, supporting.as_deref()).await {
         Ok(questions) => apply_questions(provisional, questions),
         Err(error) => {
             tracing::warn!(%error, "Evidence challenge did not complete; leaving claim unchecked");
-            ClaimJudgment::from_request_error(error)
+            // An outage is deferred by the caller; anything else is a
+            // deterministic failure whose cause the finding carries.
+            match ClaimJudgment::from_request_error(error.clone()) {
+                failed @ ClaimJudgment::Failed(_) => failed,
+                _ => unchecked(format!("The evidence challenge could not run: {error}")),
+            }
         }
     }
 }

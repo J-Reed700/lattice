@@ -1088,7 +1088,8 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
     .await
     .unwrap_err();
     assert!(error.to_string().contains("cut off"));
-    assert_eq!(progress.snapshot().response_characters, 14);
+    // The cut-off answer and its one retry with twice the room both streamed.
+    assert_eq!(progress.snapshot().response_characters, 28);
     Ok(())
 }
 
