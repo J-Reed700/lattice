@@ -6,6 +6,7 @@ pub mod dto;
 pub mod lessons;
 mod model_call;
 pub(crate) mod operations;
+mod patient_model;
 pub(crate) mod persistence;
 pub mod planning;
 pub mod plugin;
