@@ -1167,7 +1167,7 @@ export async function installLearningStudioBackend(page: Page) {
       get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
-        claimCount: 14, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+        claimCount: 14, generalKnowledgeCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
         teachingClaims: [{ sectionIndex: 0, contentQuote: "A comparison begins by naming the measure and the period under observation.",
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
