@@ -379,6 +379,7 @@ impl Container {
             core.db_pool().clone(),
             Arc::clone(&jobs),
             Arc::clone(&web_snapshot_events),
+            Arc::clone(core.background()),
         )?;
 
         let turn_cancellation = Arc::new(

@@ -71,6 +71,7 @@ async fn fixture() -> Fixture {
         capture.clone(),
         jobs,
         events.clone(),
+        Arc::new(crate::shared::runtime::background::BackgroundTasks::default()),
     ));
     service.register_job().await.unwrap();
     Fixture {
