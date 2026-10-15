@@ -178,6 +178,7 @@ pub async fn build_conversation_context(
 mod tests {
     use super::*;
     use crate::application::ports::conversation_context::LinkedConversationSource;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::application::ports::{ConversationHistoryPort, LLMPort};
     use crate::domain::conversation::{ConversationAggregate, MessageRole};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -192,6 +193,24 @@ mod tests {
             assert_eq!(id, "chat");
             self.reads.fetch_add(1, Ordering::SeqCst);
             Ok(self.aggregate.clone())
+        }
+    }
+    /// A model that is only asked to count tokens: the context builder
+    /// never sends it a completion.
+    struct Counter;
+    #[async_trait::async_trait]
+    impl LLMPort for Counter {
+        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+            Err(AppError::InvalidState("the context builder never completes".into()))
+        }
+        fn model_name(&self) -> &str {
+            "counter"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
         }
     }
     struct Supplemental {
@@ -222,8 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_precedence_and_history_use_one_snapshot() {
-        let llm: Arc<dyn LLMPort> =
-            Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+        let llm: Arc<dyn LLMPort> = Arc::new(Counter);
         for (conversation, space, global, expected) in [
             (
                 Some(" conversation "),
@@ -294,8 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_history_and_storage_failure_are_not_hidden() {
-        let llm: Arc<dyn LLMPort> =
-            Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+        let llm: Arc<dyn LLMPort> = Arc::new(Counter);
         let history = Arc::new(History {
             aggregate: None,
             reads: AtomicUsize::new(0),
