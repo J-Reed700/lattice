@@ -5,27 +5,13 @@
 //! section breadcrumb (`prepare_structured_with_spans` writes "Parent > Child",
 //! so "Parent" is the section a reader would call a section).
 //!
-//! Reads are bounded here rather than in the use case: a 900-page manual must
-//! not be pulled into memory just to write three sentences about it.
+//! The whole text is read: the summarizer describes a long document from all
+//! of it, part by part, rather than from its opening.
 
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
 use lattice_core::shared::error::{AppError, Result};
-
-/// Beginning-of-document text read for the document summary, before grounded
-/// generation carries as much of it as fits the window and
-/// [`crate::features::summaries::prompt::DOCUMENT_BODY_TOKENS`]. Four
-/// characters per token with headroom.
-const DOCUMENT_BODY_CHARS: usize = 24_000;
-
-/// Per-section text read, before grounded generation fits it to the window and
-/// [`crate::features::summaries::prompt::SECTION_BODY_TOKENS`].
-const SECTION_BODY_CHARS: usize = 12_000;
-
-/// Chunks read per document. Far more than any prompt can use; the cap only
-/// exists so a pathological document cannot stall the background task.
-const MAX_CHUNKS: i64 = 4_000;
 
 /// One top-level section's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +25,7 @@ pub struct SummarySection {
 pub struct SummarySource {
     pub document_id: String,
     pub title: String,
-    /// Beginning of the document, bounded by [`DOCUMENT_BODY_CHARS`].
+    /// The document's whole text, in chunk order.
     pub body: String,
     /// The document's `corpus_shape` cluster label from the most recent run.
     pub cluster_label: Option<String>,
@@ -65,12 +51,8 @@ pub fn assemble(
     let mut body = String::new();
     let mut sections: Vec<SummarySection> = Vec::new();
     for (section, content) in chunks {
-        // Byte length bounds char count from above, so this guard is cheap
-        // and conservative; the exact character cap is applied once at the end.
-        if body.len() < DOCUMENT_BODY_CHARS {
-            body.push_str(&content);
-            body.push('\n');
-        }
+        body.push_str(&content);
+        body.push('\n');
         let Some(heading) = section
             .as_deref()
             .and_then(|s| s.split(" > ").next())
@@ -81,10 +63,8 @@ pub fn assemble(
         };
         match sections.iter_mut().find(|s| s.heading == heading) {
             Some(existing) => {
-                if existing.text.len() < SECTION_BODY_CHARS {
-                    existing.text.push_str(&content);
-                    existing.text.push('\n');
-                }
+                existing.text.push_str(&content);
+                existing.text.push('\n');
             }
             None => sections.push(SummarySection {
                 heading: heading.to_owned(),
@@ -92,11 +72,6 @@ pub fn assemble(
             }),
         }
     }
-    body.truncate(
-        body.char_indices()
-            .nth(DOCUMENT_BODY_CHARS)
-            .map_or(body.len(), |(index, _)| index),
-    );
     SummarySource {
         document_id: document_id.to_owned(),
         title: title.to_owned(),
@@ -138,10 +113,9 @@ impl SummarySourcePort for SqliteSummarySource {
         .await
         .map_err(|e| AppError::Database(format!("summary source cluster label: {e}")))?;
         let chunks: Vec<(Option<String>, String)> = sqlx::query_as(
-            "SELECT section, content FROM text_chunks WHERE document_id = ? ORDER BY chunk_index LIMIT ?",
+            "SELECT section, content FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
         )
         .bind(document_id)
-        .bind(MAX_CHUNKS)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("summary source chunks: {e}")))?;
@@ -182,13 +156,23 @@ mod tests {
         assert!(source.body.contains("loose"));
     }
 
+    /// The body used to stop at 24,000 characters and each section at
+    /// 12,000. Both are read whole.
     #[test]
-    fn body_is_bounded_and_never_splits_a_character() {
-        let chunks: Vec<(Option<String>, String)> =
-            (0..40).map(|_| (None, "é".repeat(1_000))).collect();
+    fn body_and_sections_are_read_whole() {
+        let chunks: Vec<(Option<String>, String)> = (0..40)
+            .map(|_| (Some("Only".to_string()), "é".repeat(1_000)))
+            .collect();
         let source = assemble("doc-1", "Big", None, chunks);
-        assert!(source.body.chars().count() <= DOCUMENT_BODY_CHARS);
-        assert!(source.body.chars().all(|c| c == 'é' || c == '\n'));
+        assert_eq!(source.body.chars().filter(|c| *c == 'é').count(), 40_000);
+        assert_eq!(
+            source.sections[0]
+                .text
+                .chars()
+                .filter(|c| *c == 'é')
+                .count(),
+            40_000
+        );
     }
 
     #[test]

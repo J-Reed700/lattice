@@ -1318,22 +1318,41 @@ fn plain_9b() -> GgufModelInfo {
 const PLAIN_9B_BYTES: u64 = 5_629_109_248;
 
 /// The machine that reported the bug: an M3 Max with 28753 MiB of unified
-/// memory, which ran an 8192 window because nothing had looked.
+/// memory, which ran an 8192 window because nothing had looked, and then a
+/// fixed 32768 that capped every prompt budget. It gets what its memory holds.
 #[test]
-fn a_large_gpu_gets_the_ceiling_not_the_trained_length() {
+fn a_large_gpu_gets_the_window_its_memory_holds() {
     let chosen = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
 
-    assert_eq!(chosen, AUTO_MAX_CONTEXT_SIZE);
-    assert!(chosen > DEFAULT_GPU_CONTEXT_SIZE, "the old flat default");
+    let budget = (28.1 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+    let cache = u64::from(chosen) * 131_072;
+    assert!(cache + PLAIN_9B_BYTES <= budget, "{chosen} tokens fit");
+    assert!(
+        cache + 1024 * 131_072 + PLAIN_9B_BYTES > budget,
+        "and another thousand would not"
+    );
+    assert!(chosen > 32_768, "past the old fixed ceiling: {chosen}");
 }
 
-/// The trained length is a ceiling, never a target. Asking a 262144-trained
-/// model for 262144 would want 34 GB of KV cache.
+/// The trained length is the ceiling, never passed however much memory is
+/// free. Below it, memory decides.
 #[test]
-fn the_trained_length_is_never_treated_as_achievable() {
+fn the_trained_length_is_the_ceiling() {
     let roomy = context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
 
-    assert_eq!(roomy, AUTO_MAX_CONTEXT_SIZE);
+    assert_eq!(roomy, 262_144);
+}
+
+/// A header without its trained length is not guessed at: the caller keeps
+/// the flat default.
+#[test]
+fn an_unknown_trained_length_declines() {
+    let info = GgufModelInfo {
+        trained_context_length: None,
+        ..plain_9b()
+    };
+
+    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info), None);
 }
 
 /// A mid-sized card must come back with a window its memory can hold.
@@ -1347,7 +1366,7 @@ fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
         cache + PLAIN_9B_BYTES <= budget,
         "{chosen} tokens needs {cache} bytes on top of the weights"
     );
-    assert!(chosen < AUTO_MAX_CONTEXT_SIZE, "and below the ceiling");
+    assert!(chosen < 262_144, "and below the trained length");
 }
 
 /// A card that can barely hold the weights still gets a loadable window.
@@ -1393,7 +1412,10 @@ fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
     let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
 
     let alone = context_size_for(vram, UTILITY_BYTES, 0, &plain_9b()).unwrap();
-    assert_eq!(alone, AUTO_MAX_CONTEXT_SIZE, "the whole card to itself");
+    assert!(
+        UTILITY_BYTES + u64::from(alone) * 131_072 <= budget,
+        "the whole card to itself, and no more"
+    );
 
     let small_chat = 3_000_000_000;
     let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &plain_9b()).unwrap();

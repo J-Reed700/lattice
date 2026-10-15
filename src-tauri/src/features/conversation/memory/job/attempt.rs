@@ -11,7 +11,7 @@ use lattice_core::domain::conversation::memory::{
 
 use super::super::prompts::{EXTRACTOR_PROMPT_VERSION, VALIDATOR_VERSION};
 use super::super::selection::{
-    adjacent_context, quotable_messages, render_context, select_boundary,
+    adjacent_context, context_room_chars, quotable_messages, render_context, select_boundary,
 };
 use super::super::{
     extract, segment, summarize, verify, CompactionError, CompactionOutcome, CompactionRequest,
@@ -173,7 +173,10 @@ impl CompactionJob {
         for batch in &batches {
             let context = adjacent_context(&eligible, batch);
             let quotable = quotable_messages(&eligible, batch, &context);
-            let rendered = render_context(&context);
+            let rendered = render_context(
+                &context,
+                context_room_chars(self.utility_llm.as_ref(), batch, context.len()),
+            );
 
             let extraction_phase = PhaseTiming::start(conversation_id, "extract");
             let outcome = extract::extract_segments(

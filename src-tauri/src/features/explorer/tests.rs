@@ -317,14 +317,15 @@ mod model_tools {
             1_000_000,
         )
         .unwrap();
+        // The read used to stop at 400 lines whatever the room. A room that
+        // holds the whole file gets the whole file.
         assert!(
-            first.starts_with("src/long.txt · lines 1–400 of 1000\n"),
-            "{first}"
+            first.starts_with("src/long.txt · lines 1–1000 of 1000\n"),
+            "{first:.200}"
         );
         assert!(first.contains("   1│ line 1\n"));
-        assert!(first.contains(" 400│ line 400\n"));
-        assert!(!first.contains("│ line 401"));
-        assert!(first.contains("start_line 401"));
+        assert!(first.contains("1000│ line 1000\n"));
+        assert!(first.ends_with("[End of file.]"));
 
         // Numbers as strings, as small local models often write them.
         let tail = tools::run(
@@ -336,6 +337,32 @@ mod model_tools {
         .unwrap();
         assert!(tail.contains("lines 995–1000 of 1000"), "{tail}");
         assert!(tail.ends_with("[End of file.]"));
+    }
+
+    /// A file over the viewer's 2 MiB used to be refused outright, though
+    /// the tool reads by lines. It is now read as a stream, a window at a time.
+    #[test]
+    fn read_file_streams_a_file_too_large_to_load() {
+        let (_dir, scope) = fixture();
+        let line = "x".repeat(99);
+        let lines = (fs::MAX_TEXT_BYTES as usize / 100) + 500;
+        let text: String = (1..=lines).map(|n| format!("{line}{}\n", n % 10)).collect();
+        write(scope.root(), "huge.log", text.as_bytes());
+        let window = tools::run(
+            &scope,
+            "read_file",
+            &json!({"path": "huge.log", "start_line": lines - 1}),
+            10_000,
+        )
+        .unwrap();
+        assert!(
+            window.starts_with(&format!(
+                "huge.log · lines {}–{lines} of {lines}\n",
+                lines - 1
+            )),
+            "{window:.200}"
+        );
+        assert!(window.ends_with("[End of file.]"));
     }
 
     #[test]
@@ -399,7 +426,7 @@ mod model_tools {
     fn step_labels_are_plain() {
         assert_eq!(
             tools::activity_label("read_file", &json!({"path": "src/foo.rs"})),
-            "Read src/foo.rs 1–400"
+            "Read src/foo.rs from line 1"
         );
         assert_eq!(
             tools::activity_label(

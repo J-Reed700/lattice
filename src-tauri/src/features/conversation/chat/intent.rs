@@ -119,6 +119,33 @@ impl IntentClassifier {
         self
     }
 
+    /// The input for `message` with as much of `context` (oldest first) as
+    /// this classifier's window gives history: the newest turns, whole, and
+    /// a line counting any earlier ones left out.
+    pub fn input_for(&self, message: &str, context: &[String]) -> IntentInput {
+        use lattice_core::application::services::history_share::{
+            auxiliary_history_room, newest_that_fit, omitted_note,
+        };
+        let bare = render_intent_prompt(
+            &self.prompt_template,
+            &IntentInput {
+                message: message.to_string(),
+                recent_context: Vec::new(),
+            },
+        );
+        let room = auxiliary_history_room(self.llm.as_ref(), &bare);
+        let (recent, omitted) = newest_that_fit(context, room, |turn| {
+            self.llm.count_tokens(turn).saturating_add(1)
+        });
+        IntentInput {
+            message: message.to_string(),
+            recent_context: omitted_note(omitted)
+                .into_iter()
+                .chain(recent.iter().cloned())
+                .collect(),
+        }
+    }
+
     pub async fn classify(&self, input: &IntentInput) -> TurnIntent {
         let prompt = render_intent_prompt(&self.prompt_template, input);
         let timeout_ms = self.timeout_ms.max(1);

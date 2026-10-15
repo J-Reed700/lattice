@@ -2,24 +2,9 @@
 //! prompts, and the citations carried across them.
 use super::super::chat::ChatResponse;
 use super::super::workspace_dto::SynthesisCitationDto;
-use super::{
-    source_key, JournalSynthesisEntry, SourceDto, SynthesisMessage,
-    JOURNAL_SYNTHESIS_CHUNK_CHAR_LIMIT, JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT,
-    JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT, WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT,
-};
+use super::{source_key, JournalSynthesisEntry, SourceDto, SynthesisMessage};
+use lattice_core::shared::text::split_into_parts;
 use std::collections::{HashMap, HashSet};
-
-pub(super) fn truncate_for_synthesis(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut output = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    output.push('…');
-    output
-}
 
 pub(super) fn build_synthesis_transcript(
     messages: &[lattice_core::domain::conversation::ConversationMessage],
@@ -33,67 +18,86 @@ pub(super) fn build_synthesis_transcript(
         lines.push(format!(
             "{}: {}",
             message.role.to_string().to_uppercase(),
-            truncate_for_synthesis(content, JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT)
+            content
         ));
     }
 
-    truncate_for_synthesis(&lines.join("\n"), JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT)
+    lines.join("\n")
 }
 
-pub(super) fn chunk_journal_synthesis_entries(
+/// The map prompts for `entries`, each within `part_chars`.
+///
+/// Every entry is carried whole, in order. Entries are packed into parts that
+/// fit; an entry too long for a part of its own is split into consecutive
+/// pieces marked `part i of n`, each in a part, so the synthesis reads all of
+/// it rather than its opening.
+pub(super) fn plan_journal_map_prompts(
     entries: &[JournalSynthesisEntry],
-) -> Vec<Vec<JournalSynthesisEntry>> {
-    let mut chunks: Vec<Vec<JournalSynthesisEntry>> = Vec::new();
-    let mut current: Vec<JournalSynthesisEntry> = Vec::new();
-    let mut current_chars: usize = 0;
-
-    for entry in entries {
-        let entry_chars = entry.transcript.len()
-            + entry.title.len()
-            + entry
-                .sources
-                .iter()
-                .map(|source| source.content.len() + source.file_name.len() + 40)
-                .sum::<usize>()
-            + 120;
-        if !current.is_empty() && current_chars + entry_chars > JOURNAL_SYNTHESIS_CHUNK_CHAR_LIMIT {
-            chunks.push(current);
-            current = Vec::new();
-            current_chars = 0;
+    part_chars: usize,
+) -> Vec<String> {
+    const SEPARATOR: &str = "\n\n---\n\n";
+    // The instructions around the entries, with room for the part numbers.
+    let instructions = build_journal_map_prompt(&[], 1_000, 1_000).chars().count();
+    let room = part_chars.saturating_sub(instructions).max(1);
+    let mut blocks: Vec<String> = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let block = format_entry_for_synthesis_prompt(index + 1, entry);
+        if block.chars().count() <= room {
+            blocks.push(block);
+            continue;
         }
-        current.push(entry.clone());
-        current_chars += entry_chars;
+        let mark_room = format!("ENTRY {} (part 1000 of 1000, continued)\n", index + 1).len();
+        let pieces = split_into_parts(&block, room.saturating_sub(mark_room).max(1));
+        let total = pieces.len();
+        blocks.extend(pieces.into_iter().enumerate().map(|(part, piece)| {
+            format!(
+                "ENTRY {} (part {} of {total}{})\n{piece}",
+                index + 1,
+                part + 1,
+                if part > 0 { ", continued" } else { "" }
+            )
+        }));
     }
 
+    let mut chunks: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut current_chars = 0usize;
+    for block in blocks {
+        let size = block.chars().count() + SEPARATOR.len();
+        if !current.is_empty() && current_chars + size > room {
+            chunks.push(std::mem::take(&mut current));
+            current_chars = 0;
+        }
+        current_chars += size;
+        current.push(block);
+    }
     if !current.is_empty() {
         chunks.push(current);
     }
 
+    let total = chunks.len();
     chunks
-}
-
-fn format_entries_for_synthesis_prompt(entries: &[JournalSynthesisEntry]) -> String {
-    entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| {
-            [
-                format!("ENTRY {}", index + 1),
-                format!("Title: {}", entry.title),
-                format!("Updated: {}", entry.updated_at),
-                format!("Message Count: {}", entry.message_count),
-                "Transcript (citation markers resolve to the source list below):".to_string(),
-                if entry.transcript.is_empty() {
-                    "(No message text captured.)".to_string()
-                } else {
-                    entry.transcript.clone()
-                },
-                format_synthesis_sources(&entry.sources),
-            ]
-            .join("\n")
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n")
+        .map(|(index, chunk)| build_journal_map_prompt(chunk, index + 1, total))
+        .collect()
+}
+
+fn format_entry_for_synthesis_prompt(number: usize, entry: &JournalSynthesisEntry) -> String {
+    [
+        format!("ENTRY {number}"),
+        format!("Title: {}", entry.title),
+        format!("Updated: {}", entry.updated_at),
+        format!("Message Count: {}", entry.message_count),
+        "Transcript (citation markers resolve to the source list below):".to_string(),
+        if entry.transcript.is_empty() {
+            "(No message text captured.)".to_string()
+        } else {
+            entry.transcript.clone()
+        },
+        format_synthesis_sources(&entry.sources),
+    ]
+    .join("\n")
 }
 
 pub(super) fn format_synthesis_sources(sources: &[SourceDto]) -> String {
@@ -118,7 +122,7 @@ pub(super) fn format_synthesis_sources(sources: &[SourceDto]) -> String {
                 location
                     .map(|value| format!(" — {value}"))
                     .unwrap_or_default(),
-                truncate_for_synthesis(&source.content, WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT)
+                source.content
             )
         })
         .collect::<Vec<_>>();
@@ -162,19 +166,12 @@ pub(super) fn assign_synthesis_source_ids(entries: &mut [JournalSynthesisEntry])
                     format!(
                         "{}: {}",
                         message.role.to_uppercase(),
-                        rewrite_citation_ids(
-                            &truncate_for_synthesis(
-                                &message.content,
-                                JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT
-                            ),
-                            &remap
-                        )
+                        rewrite_citation_ids(&message.content, &remap)
                     )
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            entry.transcript =
-                truncate_for_synthesis(&rendered, JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT);
+            entry.transcript = rendered;
         }
     }
     all_sources
@@ -250,7 +247,7 @@ pub(super) fn source_keys_by_message(
 }
 
 pub(super) fn build_journal_map_prompt(
-    entries: &[JournalSynthesisEntry],
+    entries: &[String],
     chunk_index: usize,
     chunk_total: usize,
 ) -> String {
@@ -278,8 +275,11 @@ pub(super) fn build_journal_map_prompt(
         "- Preserve source citations as numeric markers [n] from the supplied source lists; never renumber, invent, or cite an unavailable number.".to_string(),
         "- If a section has no data, write one bullet: - None identified.".to_string(),
         "".to_string(),
+        "- An entry marked (part i of n) continues across chunks; describe the part you have."
+            .to_string(),
+        "".to_string(),
         "Entries:".to_string(),
-        format_entries_for_synthesis_prompt(entries),
+        entries.join("\n\n---\n\n"),
     ]
     .join("\n")
 }
@@ -322,6 +322,76 @@ pub(super) fn build_journal_reduce_prompt(chunk_outputs: &[String]) -> String {
     .join("\n")
 }
 
+/// An intermediate merge, for chunk notes too many for one final brief:
+/// several chunk syntheses become one, in the same sections, so the final
+/// brief reads merged notes exactly as it reads a chunk's.
+pub(super) fn build_journal_merge_prompt(
+    chunk_outputs: &[String],
+    group_index: usize,
+    group_total: usize,
+) -> String {
+    let chunks = chunk_outputs
+        .iter()
+        .enumerate()
+        .map(|(index, output)| format!("CHUNK SYNTHESIS {}\n{}", index + 1, output))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    [
+        format!(
+            "Merge these chunk syntheses into one chunk synthesis (group {group_index} of {group_total})."
+        ),
+        "Use only the chunk syntheses below; keep every concrete detail, decision, open question and evidence note.".to_string(),
+        "Output markdown with exactly these sections:".to_string(),
+        "### Entry Highlights".to_string(),
+        "### Practical Details".to_string(),
+        "### Decisions & Constraints".to_string(),
+        "### Open Questions & Risks".to_string(),
+        "### Evidence Notes".to_string(),
+        "Rules:".to_string(),
+        "- Keep the [Entry: <title>] prefix on each bullet.".to_string(),
+        "- Preserve numeric source citations [n] verbatim; never renumber or invent citations.".to_string(),
+        "- Merge duplicates; drop nothing else.".to_string(),
+        "- If a section has no data, write one bullet: - None identified.".to_string(),
+        "".to_string(),
+        chunks,
+    ]
+    .join("\n")
+}
+
+/// `outputs` in consecutive groups whose merge prompt fits `part_chars`.
+/// Always fewer groups than outputs when there are two or more, so merging
+/// level by level ends in one: notes too long to share a prompt are merged in
+/// pairs, and a request that then does not fit fails at the model rather than
+/// being cut here.
+pub(super) fn group_for_merge(outputs: &[String], part_chars: usize) -> Vec<Vec<String>> {
+    let instructions = build_journal_reduce_prompt(&[]).chars().count().max(
+        build_journal_merge_prompt(&[], 1_000, 1_000)
+            .chars()
+            .count(),
+    );
+    let room = part_chars.saturating_sub(instructions);
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut used = 0usize;
+    for output in outputs {
+        // "CHUNK SYNTHESIS n" and the separator.
+        let size = output.chars().count() + 32;
+        if !current.is_empty() && used + size > room {
+            groups.push(std::mem::take(&mut current));
+            used = 0;
+        }
+        used += size;
+        current.push(output.clone());
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+    if outputs.len() > 1 && groups.len() == outputs.len() {
+        return outputs.chunks(2).map(<[String]>::to_vec).collect();
+    }
+    groups
+}
+
 pub(super) fn extract_latest_assistant_message(chat: &ChatResponse) -> Option<String> {
     chat.messages
         .iter()
@@ -354,4 +424,63 @@ pub(super) fn build_synthesis_citations(
             title: entry.title.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::SynthesisEntryKind;
+    use super::*;
+
+    fn entry(title: &str, transcript: &str) -> JournalSynthesisEntry {
+        JournalSynthesisEntry {
+            conversation_id: title.to_string(),
+            title: title.to_string(),
+            updated_at: "2026-09-05T10:00:00.000Z".to_string(),
+            message_count: 1,
+            transcript: transcript.to_string(),
+            kind: SynthesisEntryKind::Conversation,
+            source_id: title.to_string(),
+            sources: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    /// An entry used to reach the model as its first 6,000 characters, each
+    /// message as its first 900. It is now read whole: split into marked
+    /// parts across prompts when one prompt cannot hold it.
+    #[test]
+    fn a_long_entry_is_read_whole_across_marked_parts() {
+        let transcript: String = (0..4_000)
+            .map(|index| format!("USER: line {index}\n"))
+            .collect();
+        let entries = vec![entry("Short", "USER: hello"), entry("Long", &transcript)];
+        let part_chars = build_journal_map_prompt(&[], 1_000, 1_000).chars().count() + 8_000;
+        let prompts = plan_journal_map_prompts(&entries, part_chars);
+
+        assert!(prompts.len() > 2, "{} prompts", prompts.len());
+        assert!(prompts
+            .iter()
+            .all(|prompt| prompt.chars().count() <= part_chars));
+        assert!(prompts[0].contains("USER: hello"));
+        for index in [0, 1_999, 3_999] {
+            let line = format!("USER: line {index}\n");
+            assert!(
+                prompts.iter().any(|prompt| prompt.contains(&line)),
+                "{line} never reached a prompt"
+            );
+        }
+        assert!(prompts
+            .iter()
+            .any(|prompt| prompt.contains("ENTRY 2 (part 2 of")));
+    }
+
+    /// Entries that fit one prompt still make one prompt, as before.
+    #[test]
+    fn entries_that_fit_make_one_prompt() {
+        let entries = vec![entry("A", "USER: one"), entry("B", "USER: two")];
+        let prompts = plan_journal_map_prompts(&entries, 100_000);
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("ENTRY 1") && prompts[0].contains("ENTRY 2"));
+        assert!(!prompts[0].contains("ENTRY 1 (part") && !prompts[0].contains("ENTRY 2 (part"));
+    }
 }

@@ -15,7 +15,7 @@ use super::call_labels::{
 use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
-use super::tool_sources::collect_tool_sources;
+use super::tool_sources::{citable_passages, collect_tool_sources};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
     tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
@@ -667,18 +667,17 @@ impl<'a> ToolCalls<'a> {
             }
         }
         let page_offset = fetch_memory::fetch_offset(&arguments).unwrap_or(0);
-        let mut result_text = format_tool_result(tool, &result, settings, allowance, page_offset);
-        for source in sources
+        // The citation numbers this result's sources take come out of the
+        // same allowance as the result, so the two together fit it.
+        let citable: Vec<(u32, &SourceDto)> = sources
             .iter()
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
-        {
-            if let Some(number) = source.citation_id {
-                result_text.push_str(&format!(
-                    "\n\nCitable passage [{number}] — {}\n{}",
-                    source.file_name, source.content
-                ));
-            }
-        }
+            .filter_map(|source| source.citation_id.map(|number| (number, source)))
+            .collect();
+        let whole = format_tool_result(tool, &result, settings, allowance, page_offset);
+        let (citations, allowance) = citable_passages(&citable, &whole, allowance);
+        let mut result_text = format_tool_result(tool, &result, settings, allowance, page_offset);
+        result_text.push_str(&citations);
         let result_text = self
             .document_evidence
             .render(tool, &result, result_text, |excerpt| {

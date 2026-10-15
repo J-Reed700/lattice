@@ -543,6 +543,7 @@ async fn planned(
         conv_service,
         conversation_id,
         validated_message,
+        utility,
     )
     .await;
     shortlist_candidates(
@@ -618,6 +619,7 @@ async fn corrective_pass(
         turn.conv_service,
         turn.conversation_id,
         validated_message,
+        utility.as_ref(),
     )
     .await;
     shortlist_candidates(

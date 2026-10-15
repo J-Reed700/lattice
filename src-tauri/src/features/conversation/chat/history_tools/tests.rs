@@ -1224,9 +1224,10 @@ async fn retrieval_diagnostics_report_ids_and_counts_only() {
     );
 }
 
-/// §9.1 step 7: six groups is the initial ceiling, whatever the index returns.
+/// Groups used to stop at six whatever the budget. They now fill it: every
+/// match fits 64 KiB here, so every one is carried.
 #[tokio::test]
-async fn at_most_six_passage_groups_are_packed() {
+async fn passage_groups_fill_the_budget_rather_than_a_fixed_count() {
     let pool = migrated_pool().await;
     seed_conversation(&pool, "conv-mine", "Work").await;
     for index in 0..20 {
@@ -1255,10 +1256,11 @@ async fn at_most_six_passage_groups_are_packed() {
     .unwrap();
 
     assert!(
-        recalled.groups.len() <= MAX_PASSAGE_GROUPS,
+        recalled.groups.len() > 6,
         "{} groups",
         recalled.groups.len()
     );
+    assert_eq!(recalled.diagnostics.selected_message_ids.len(), 20);
     // Groups are emitted in the order the conversation happened.
     let anchors: Vec<i64> = recalled
         .groups
@@ -1430,4 +1432,38 @@ async fn a_search_result_names_the_role_and_sequence_of_every_excerpt() {
         data(&result)["continuation"]["read_with"],
         TOOL_READ_CONVERSATION_HISTORY
     );
+}
+
+/// A recalled message too long for the whole recall budget is the one thing
+/// cut, and the cut is marked; a shorter match still gets the room it fits.
+#[tokio::test]
+async fn a_message_longer_than_the_recall_budget_is_cut_and_marked() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    let long = format!("importer decision {}", "detail ".repeat(2_000));
+    seed_message(&pool, "conv-mine", "m0", "user", &long, "completed").await;
+
+    let recalled = recall_for_turn(
+        &port(&pool),
+        &scope("conv-mine"),
+        &RecallRequest {
+            user_input: "importer decision",
+            recent_turns: &[],
+            active_memory: &[],
+            max_bytes: 2_048,
+        },
+    )
+    .await
+    .unwrap();
+
+    let passages = recalled.passages();
+    assert_eq!(passages.len(), 1);
+    assert!(
+        passages[0].text.len() <= 2_048,
+        "{}",
+        passages[0].text.len()
+    );
+    assert!(passages[0]
+        .text
+        .contains("more bytes of this message are not shown"));
 }

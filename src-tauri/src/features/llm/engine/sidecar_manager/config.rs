@@ -48,9 +48,10 @@ pub struct SidecarConfig {
     /// `0` means CPU-only. Maps to llama-server's `-ngl` flag.
     pub n_gpu_layers: u32,
 
-    /// Context window in tokens. Maps to `--ctx-size`. Default is
-    /// constrained by the model's training context; we cap at 8192
-    /// to avoid OOM on entry-level hardware.
+    /// Context window in tokens. Maps to `--ctx-size`. `Auto` sizes it
+    /// from the model's trained length and the memory its KV cache can
+    /// have ([`auto_context_size`]); the flat defaults are the fallback when
+    /// either is unknown.
     pub context_size: u32,
 
     /// Whether the GGUF carries a multi-token-prediction head llama-server
@@ -96,12 +97,6 @@ pub(super) const DEFAULT_CPU_CONTEXT_SIZE: u32 = 4096;
 /// everything else.
 pub(super) const VRAM_USABLE_FRACTION: f64 = 0.7;
 
-/// The largest window `Auto` will choose, however much memory is free. Prefill
-/// cost climbs with context, and the retrieval pipeline never builds a prompt
-/// near this size — past here the user is paying latency for nothing. Someone
-/// who genuinely wants more can say so in settings.
-pub(super) const AUTO_MAX_CONTEXT_SIZE: u32 = 32_768;
-
 /// The smallest window worth starting. A card that cannot even afford this is
 /// going to struggle, but a too-small window that loads still beats the larger
 /// flat default that does not — and if it genuinely will not allocate, the
@@ -112,12 +107,15 @@ pub(super) const AUTO_MIN_CONTEXT_SIZE: u32 = 4_096;
 /// accelerator reports.
 ///
 /// Returns `None` when anything needed is unknown — an unreadable GGUF, a
-/// header without KV dimensions, a GPU that does not report its memory — so the
-/// caller keeps the conservative flat default rather than acting on a guess.
+/// header without its trained length or KV dimensions, a GPU that does not
+/// report its memory — so the caller keeps the conservative flat default
+/// rather than acting on a guess.
 ///
-/// The trained length is a ceiling, never a target: a plain model with 128 KiB
-/// of cache per token, trained at 262144, would need 34 GB of it at full
-/// length, which no consumer card holds.
+/// The window is the largest the memory left for the KV cache holds, up to
+/// the trained length and never past it: every prompt budget in the app is a
+/// share of this window, so a fixed ceiling here would cap them all. The
+/// trained length is a ceiling, not a target: a plain model with 128 KiB of
+/// cache per token, trained at 262144, would need 34 GB of it at full length.
 pub(super) fn auto_context_size(
     model_path: &std::path::Path,
     capabilities: &SystemCapabilities,
@@ -156,10 +154,7 @@ pub(super) fn context_size_for(
     resident_bytes: u64,
     info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
 ) -> Option<u32> {
-    let ceiling = info
-        .trained_context_length
-        .unwrap_or(AUTO_MAX_CONTEXT_SIZE)
-        .min(AUTO_MAX_CONTEXT_SIZE);
+    let ceiling = info.trained_context_length?;
     // A header without KV dimensions declines here, before memory is looked at.
     info.kv_cache_bytes(ceiling)?;
 

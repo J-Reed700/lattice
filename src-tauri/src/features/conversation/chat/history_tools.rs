@@ -60,10 +60,10 @@ pub const TOOL_SEARCH_CONVERSATION_HISTORY: &str = "search_conversation_history"
 pub const TOOL_READ_CONVERSATION_HISTORY: &str = "read_conversation_history";
 pub const TOOL_SEARCH_SAVED_KNOWLEDGE: &str = "search_saved_knowledge";
 
-/// §9.1 step 5: the candidate ceiling for one retrieval.
+/// §9.1 step 5: candidates one search returns. The history search tool's
+/// page, which reports when more may exist; automatic recall searches again
+/// for more while its budget has room.
 const MAX_CANDIDATES: usize = 24;
-/// §9.1 step 7: passage groups packed before the budget is consulted at all.
-const MAX_PASSAGE_GROUPS: usize = 6;
 /// §9.1 step 1: how much recent-turn context may be folded into the query, in
 /// whitespace-separated tokens. Enough to resolve "that option"; not enough for
 /// the whole tail of the conversation to become the query.

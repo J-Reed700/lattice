@@ -16,6 +16,71 @@ use lattice_core::shared::text::{build_excerpt, safe_truncate};
 /// vault passage gets.
 const FETCHED_PAGE_EXCERPT_CHARS: usize = 480;
 
+/// The lines that give a result's new sources their citation numbers, and
+/// what is left of `allowance` for the result itself.
+///
+/// The lines are charged to the result's own allowance, so the two together
+/// fit it. A source whose text the result already shows (`shown`, the result
+/// as it reads with the whole allowance) is named by number, title and
+/// address rather than repeated. One whose text the result does not show
+/// carries it, each such source an equal share of half the allowance, whole
+/// when it fits its share and otherwise cut there and marked.
+pub(super) fn citable_passages(
+    citable: &[(u32, &SourceDto)],
+    shown: &str,
+    allowance: usize,
+) -> (String, usize) {
+    if citable.is_empty() {
+        return (String::new(), allowance);
+    }
+    let unshown = citable
+        .iter()
+        .filter(|(_, source)| !is_shown(shown, &source.content))
+        .count();
+    let share = (allowance / 2) / unshown.max(1);
+    let mut text = String::new();
+    for (number, source) in citable {
+        let content = source.content.trim();
+        if is_shown(shown, content) {
+            text.push_str(&format!(
+                "\n\nCitable passage [{number}] — {} ({}): its text is in this result above.",
+                source.file_name, source.file_path
+            ));
+            continue;
+        }
+        let header = format!("\n\nCitable passage [{number}] — {}\n", source.file_name);
+        let room = share.saturating_sub(header.chars().count());
+        text.push_str(&header);
+        if content.chars().count() <= room {
+            text.push_str(content);
+        } else {
+            let mark = " […passage continues past this result's room]";
+            let part = lattice_core::shared::text::split_into_parts(
+                content,
+                room.saturating_sub(mark.chars().count()).max(1),
+            );
+            text.push_str(part.first().copied().unwrap_or_default());
+            text.push_str(mark);
+        }
+    }
+    let used = text.chars().count();
+    (text, allowance.saturating_sub(used))
+}
+
+/// Whether `shown` already carries `content`: its opening, whitespace aside.
+fn is_shown(shown: &str, content: &str) -> bool {
+    let probe: String = content
+        .split_whitespace()
+        .take(24)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if probe.is_empty() {
+        return true;
+    }
+    let shown: String = shown.split_whitespace().collect::<Vec<_>>().join(" ");
+    shown.contains(&probe)
+}
+
 pub(super) fn collect_tool_sources(
     tool_name: &str,
     result: &FunctionResult,
@@ -157,5 +222,56 @@ pub(super) fn collect_tool_sources(
             Vec::new()
         }
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod citable_tests {
+    use super::*;
+
+    fn source(content: &str) -> SourceDto {
+        SourceDto {
+            page_number: None,
+            from_ocr: false,
+            document_id: "web:https://example.com/a".to_string(),
+            chunk_id: "web-content-1".to_string(),
+            content: content.to_string(),
+            score: 1.0,
+            path: None,
+            position: Some(1),
+            file_name: "Page A".to_string(),
+            file_path: "https://example.com/a".to_string(),
+            mime_type: "text/html".to_string(),
+            category: "Web Article".to_string(),
+            file_size_bytes: 0,
+            modified_at: String::new(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: None,
+            chunk_excerpts: None,
+            citation_id: Some(1),
+            web_snapshot: None,
+        }
+    }
+
+    /// The citation lines used to be added after the result, uncounted, with
+    /// up to 4,000 characters of passage each. They come out of the result's
+    /// allowance now, and text the result already shows is not repeated.
+    #[test]
+    fn citable_passages_are_charged_to_the_allowance_and_not_repeated() {
+        let page = "The station opened in 1932 and was rebuilt after the fire. ".repeat(20);
+        let shown = source(&page);
+        let (text, left) = citable_passages(&[(1, &shown)], &format!("Page A\n{page}"), 10_000);
+        assert!(text.contains("Citable passage [1] — Page A (https://example.com/a)"));
+        assert!(!text.contains("rebuilt after the fire"));
+        assert_eq!(left, 10_000 - text.chars().count());
+
+        let unshown = source(&page);
+        let (text, left) = citable_passages(&[(1, &unshown)], "something else", 600);
+        assert!(text.contains("Citable passage [1] — Page A\n"));
+        assert!(text.contains("[…passage continues past this result's room]"));
+        assert!(text.chars().count() <= 300, "{}", text.chars().count());
+        assert_eq!(left, 600 - text.chars().count());
     }
 }

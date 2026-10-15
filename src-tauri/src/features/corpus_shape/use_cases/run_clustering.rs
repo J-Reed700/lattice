@@ -26,7 +26,7 @@ use crate::features::corpus_shape::fingerprint::{
     fingerprint, jaccard, JACCARD_INHERITANCE_THRESHOLD,
 };
 use crate::features::corpus_shape::labeling::{
-    label_cluster, ClusterLabel, RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS,
+    label_cluster, preview_chars, ClusterLabel, RepresentativeDoc,
 };
 use crate::features::corpus_shape::repository::ClusterRepositoryPort;
 use lattice_core::application::ports::{DocumentRepositoryPort, EmbeddingRepositoryPort, LLMPort};
@@ -37,7 +37,12 @@ use lattice_core::shared::error::{AppError, Result};
 /// pipeline in.
 #[async_trait::async_trait]
 pub trait DocumentContentPreviewPort: Send + Sync {
-    async fn preview(&self, document_id: &str) -> Result<Option<RepresentativeDoc>>;
+    /// The document's title and up to `max_chars` of its opening text.
+    async fn preview(
+        &self,
+        document_id: &str,
+        max_chars: usize,
+    ) -> Result<Option<RepresentativeDoc>>;
 }
 
 /// One step of a rebuild, for the rail's progress line. Tauri-free so the use
@@ -319,8 +324,11 @@ impl RunClusteringUseCase {
 
         // Fresh LLM call (or fallback if we don't have one).
         let mut reps: Vec<RepresentativeDoc> = Vec::new();
+        let max_chars = self.llm.as_ref().map_or(0, |llm| {
+            preview_chars(llm.as_ref(), raw.representatives.len())
+        });
         for rep_id in &raw.representatives {
-            if let Some(doc) = self.content_preview.preview(rep_id).await? {
+            if let Some(doc) = self.content_preview.preview(rep_id, max_chars).await? {
                 reps.push(doc);
             }
         }
@@ -367,7 +375,3 @@ fn params_hash(params: &ClusteringParams) -> String {
     let full = hex::encode(digest);
     full.get(..16).unwrap_or(full.as_str()).to_string()
 }
-
-// Preview length constant is also exposed so callers using a custom content
-// port can match the prompt's preview size.
-pub const DOCUMENT_CONTENT_PREVIEW_CHARS: usize = REP_CONTENT_PREVIEW_CHARS;

@@ -54,15 +54,16 @@ fn mtime_of(metadata: &std::fs::Metadata) -> i64 {
         })
 }
 
-/// Whether the walk should consider a file at all: decided by name and size
-/// alone, so counting a too-large folder reads nothing.
+/// Whether the walk should consider a file at all: decided by name alone, so
+/// counting a too-large folder reads nothing. Size decides nothing: a large
+/// text file is indexed like any other, in passages.
 pub(super) fn candidate(scope: &Scope, path: &Path) -> Option<Candidate> {
     let relative = scope.relative_of(path)?;
     if chunker::skipped_by_name(&relative) {
         return None;
     }
     let metadata = std::fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > chunker::MAX_FILE_BYTES {
+    if !metadata.is_file() {
         return None;
     }
     Some(Candidate {
@@ -134,12 +135,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// minified files are recorded with no chunks, so the next run skips them on
 /// size and time without reading them again.
 pub(super) fn prepare(path: &Path, previous_hash: Option<&str>) -> Prepared {
-    let Ok((bytes, cut)) = fs::read_prefix(path, chunker::MAX_FILE_BYTES) else {
+    let Ok(bytes) = std::fs::read(path) else {
         return Prepared::Gone;
     };
-    if cut {
-        return Prepared::Gone;
-    }
     let hash = sha256_hex(&bytes);
     if previous_hash == Some(hash.as_str()) {
         return Prepared::Touch;

@@ -25,7 +25,6 @@ fn request() -> StartJournalSynthesisRequestDto {
         request: SynthesizeJournalEntriesRequestDto {
             conversation_ids: vec!["first".into(), "second".into()],
             scope: Some("conversation".into()),
-            max_entries: Some(2),
         },
         destination: SynthesisDestinationDto::Note {
             note_id: "note-1".into(),
@@ -39,6 +38,8 @@ fn request() -> StartJournalSynthesisRequestDto {
 /// answering after `answers` of them, as an app about to close would.
 struct FakeWork {
     answers: usize,
+    parts: usize,
+    part_chars: usize,
     answered: Mutex<Vec<String>>,
     removed: Mutex<Vec<String>>,
     stalled: Notify,
@@ -48,6 +49,20 @@ impl FakeWork {
     fn answering(answers: usize) -> Arc<Self> {
         Arc::new(Self {
             answers,
+            parts: 2,
+            part_chars: 100_000,
+            answered: Mutex::default(),
+            removed: Mutex::default(),
+            stalled: Notify::new(),
+        })
+    }
+
+    /// Four parts whose notes cannot share one merge prompt.
+    fn merging() -> Arc<Self> {
+        Arc::new(Self {
+            answers: usize::MAX,
+            parts: 4,
+            part_chars: build_journal_reduce_prompt(&[]).chars().count() + 40,
             answered: Mutex::default(),
             removed: Mutex::default(),
             stalled: Notify::new(),
@@ -65,10 +80,15 @@ impl SynthesisWork for FakeWork {
         Ok(SynthesisPlan {
             scope: "conversation".into(),
             entry_count: 2,
-            prompts: vec!["part one".into(), "part two".into()],
+            prompts: ["part one", "part two", "part three", "part four"]
+                .iter()
+                .take(self.parts)
+                .map(|prompt| prompt.to_string())
+                .collect(),
             conversation_ids: selection.conversation_ids.clone(),
             citations: Vec::new(),
             sources: Vec::new(),
+            part_chars: self.part_chars,
         })
     }
 
@@ -234,6 +254,43 @@ async fn a_synthesis_still_running_cannot_be_marked_applied() {
         get_journal_synthesis_result_impl(&started.job.id, &jobs).await,
         Err(AppError::InvalidState(_))
     ));
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// Notes too many for one brief used to go into one prompt regardless. They
+/// are merged level by level until one prompt holds them, every note read.
+#[tokio::test]
+async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
+    let pool = pool().await;
+    let work = FakeWork::merging();
+    let jobs = runtime_with(&pool, work.clone()).await;
+    let started = synthesize_journal_entries_impl(request(), &jobs)
+        .await
+        .unwrap();
+    let job = finished(&jobs, &started.job.id).await;
+    assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
+
+    let answered = work.answered();
+    let merges: Vec<&String> = answered
+        .iter()
+        .filter(|prompt| prompt.starts_with("Merge these chunk syntheses"))
+        .collect();
+    // Four parts, merged in pairs; the two merges then go to the brief.
+    assert_eq!(answered.len(), 4 + 2 + 1, "{answered:#?}");
+    assert_eq!(merges.len(), 2);
+    for part in ["part one", "part two", "part three", "part four"] {
+        assert!(
+            merges
+                .iter()
+                .any(|merge| merge.contains(&format!("notes on {part}"))),
+            "{part} reached no merge"
+        );
+    }
+    assert!(answered
+        .last()
+        .unwrap()
+        .starts_with("Merge the chunk syntheses into one final journal brief"));
     jobs.close();
     jobs.drain().await;
 }

@@ -253,7 +253,6 @@ impl SynthesisEntries for FakeRuntime {
     async fn references_created_since(
         &self,
         _cutoff: &str,
-        _limit: i64,
     ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
         unreachable!("{UNUSED}")
     }

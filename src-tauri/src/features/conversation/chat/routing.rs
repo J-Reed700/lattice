@@ -69,9 +69,6 @@ impl SearchFlags {
     }
 }
 
-/// Recent turns handed to the intent classifier, most recent last.
-pub(super) const INTENT_CONTEXT_TURNS: usize = 4;
-
 /// Ask the utility model what an unflagged turn needs, and fold the answer
 /// into the search flags. Skipped the moment the user said anything explicit —
 /// a toggle, a turn mode, a closed book — because inference exists to fill in
@@ -104,18 +101,11 @@ pub(super) async fn infer_turn_intent_flags(
         }
     };
 
-    let recent_context: Vec<String> = context
-        .iter()
-        .skip(context.len().saturating_sub(INTENT_CONTEXT_TURNS))
-        .cloned()
-        .collect();
-    let intent = IntentClassifier::new(classifier_llm)
-        .with_cancellation(cancel)
-        .classify(&IntentInput {
-            message: validated_message.to_string(),
-            recent_context,
-        })
-        .await;
+    // As much recent history as the classifier's window gives it, newest
+    // first, rather than a fixed number of turns.
+    let classifier = IntentClassifier::new(classifier_llm).with_cancellation(cancel);
+    let input = classifier.input_for(validated_message, context);
+    let intent = classifier.classify(&input).await;
 
     let merged = apply_turn_intent(search_flags, &intent);
     // `web_fallback` is what the turn does with `needs_web`: the web is asked

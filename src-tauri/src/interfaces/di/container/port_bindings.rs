@@ -57,14 +57,13 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
     async fn references_created_since(
         &self,
         cutoff: &str,
-        limit: i64,
     ) -> lattice_core::shared::error::Result<
         Vec<crate::features::references::repository::PassageReferenceRecord>,
     > {
         crate::features::references::repository::PassageReferenceRepository::new(
             self.db_pool().clone(),
         )
-        .list_created_since(cutoff, limit)
+        .list_created_since(cutoff)
         .await
     }
 

@@ -11,7 +11,7 @@ use lattice_core::domain::conversation::memory::{SourceMessage, SourceRole};
 
 use super::prompts::ContextPassage;
 use super::segment::{clip_chars, SourceSegment};
-use super::{MAX_CONTEXT_PASSAGE_CHARS, MIN_RETAINED_TURNS};
+use super::MIN_RETAINED_TURNS;
 
 /// How many messages of `window` belong in the compacted prefix.
 ///
@@ -161,12 +161,39 @@ pub(super) fn quotable_messages(
     out
 }
 
-/// Render context messages for the prompt, clipped and flagged as clipped.
-pub(super) fn render_context<'a>(context: &[&'a SourceMessage]) -> Vec<ContextPassage<'a>> {
+/// Characters each context message may show beside `batch`: the extraction
+/// call's room once the batch itself is in, shared among `context_count`.
+pub(super) fn context_room_chars(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    batch: &[SourceSegment],
+    context_count: usize,
+) -> usize {
+    let batch_text: String = batch.iter().map(|segment| segment.text.as_str()).collect();
+    super::call_room_chars(
+        llm,
+        super::prompts::EXTRACTOR_SYSTEM,
+        super::EXTRACTOR_OUTPUT_TOKENS,
+        &batch_text,
+    ) / context_count.max(1)
+}
+
+/// Render context messages for the prompt, each whole when `max_chars` holds
+/// it and otherwise cut to it and flagged as clipped.
+pub(super) fn render_context<'a>(
+    context: &[&'a SourceMessage],
+    max_chars: usize,
+) -> Vec<ContextPassage<'a>> {
     context
         .iter()
         .map(|message| {
-            let (text, truncated) = clip_chars(&message.content, MAX_CONTEXT_PASSAGE_CHARS);
+            let (text, truncated) = clip_chars(&message.content, max_chars);
+            if truncated {
+                tracing::debug!(
+                    message_id = %message.id,
+                    max_chars,
+                    "Context message beside an extraction batch cut to the call's room"
+                );
+            }
             ContextPassage {
                 message_id: message.id.as_str(),
                 sequence: message.sequence,

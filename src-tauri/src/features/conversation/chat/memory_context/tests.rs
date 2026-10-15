@@ -148,6 +148,15 @@ async fn record_constraint_through(pool: &SqlitePool, conversation_id: &str, thr
         .unwrap();
 }
 
+/// More turns than the mock model's recent-history pool holds verbatim, so
+/// the oldest must be compacted before a turn may use the plan.
+const LONG_CONVERSATION: usize = 400;
+
+/// The default estimate, as the plan counts candidates.
+fn estimate(text: &str) -> usize {
+    lattice_core::application::ports::llm_port::estimate_tokens(text)
+}
+
 fn llm() -> Arc<dyn LLMPort> {
     Arc::new(MockLLMPort::new())
 }
@@ -215,7 +224,7 @@ async fn a_long_conversation_that_was_never_compacted_still_asks_for_compaction(
     // so nothing ever reported that the oldest messages had silently stopped
     // reaching the model, and the automatic trigger could not fire on the one
     // shape of conversation that most needs it.
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     let repository = ConversationRepository::new(pool.clone());
 
     let built = build_memory_plan(
@@ -308,7 +317,7 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
 #[tokio::test]
 async fn the_summary_is_carried_as_assistant_context_once_older_turns_are_out_of_reach() {
     let pool = database().await;
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     record_constraint(&pool, &id).await;
     let repository = ConversationRepository::new(pool.clone());
 
@@ -496,8 +505,9 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
         .unwrap()
         .id
         .to_string();
-    // 64 messages of 20 KB: 1.28 MB, well past the 512 KB candidate cap.
-    for index in 0..RECENT_CANDIDATE_MESSAGES {
+    // 64 messages of 20 KB: 1.28 MB, past one source page and far past a
+    // thousand-token recent-history pool.
+    for index in 0..64 {
         let role = if index % 2 == 0 {
             lattice_core::domain::conversation::MessageRole::User
         } else {
@@ -517,7 +527,7 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
         messages: recent,
         unread_source: unread,
         reaches_start,
-    } = load_recent(&repository, &id, &snapshot, latest - 3)
+    } = load_recent(&repository, &id, &snapshot, latest - 3, 1_000, &estimate)
         .await
         .unwrap();
     assert!(!unread, "source the ledger covers is not missing");
@@ -531,13 +541,13 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
         "the newest is kept"
     );
     assert!(
-        recent.len() < RECENT_CANDIDATE_MESSAGES,
-        "the cap still binds"
+        recent.len() < 64,
+        "reading stops once the pool is outweighed"
     );
     assert!(recent.first().unwrap().sequence <= latest - 3);
 
     // Without a ledger, the same cut really does leave source unaccounted for.
-    let unread = load_recent(&repository, &id, &snapshot, 0)
+    let unread = load_recent(&repository, &id, &snapshot, 0, 1_000, &estimate)
         .await
         .unwrap()
         .unread_source;

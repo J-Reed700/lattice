@@ -353,26 +353,21 @@ pub(super) fn evidence_frame(prompt_settings: &LLMPromptSettingsDto, question: &
     )
 }
 
-/// The most searches a deep-research instruction lists, and the longest each.
-const LISTED_SEARCHES: usize = 12;
-const LISTED_SEARCH_CHARS: usize = 120;
-
 /// What a deep-research turn is asked to do with the rounds it has left. The
 /// first round searched wide before the model ran; this sends the model after
 /// what that round missed, instead of answering from it or reopening one of
 /// its links.
+///
+/// Every search the round ran is listed whole: one left off the list is one
+/// the model may run again. They are short queries the round itself chose,
+/// so the list is as long as that round was.
 fn deep_research_instruction(searches: &[String]) -> String {
+    let mut seen = std::collections::HashSet::new();
     let listed: Vec<String> = searches
         .iter()
         .map(|search| search.trim())
-        .filter(|search| !search.is_empty())
-        .take(LISTED_SEARCHES)
-        .map(|search| {
-            format!(
-                "\"{}\"",
-                search.chars().take(LISTED_SEARCH_CHARS).collect::<String>()
-            )
-        })
+        .filter(|search| !search.is_empty() && seen.insert(search.to_lowercase()))
+        .map(|search| format!("\"{search}\""))
         .collect();
     let already = if listed.is_empty() {
         String::new()

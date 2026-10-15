@@ -6,6 +6,7 @@ pub mod conversation_context;
 pub mod evidence_retrieval;
 pub mod file_type_detector;
 pub mod grounded_generation;
+pub mod history_share;
 pub mod model_selection;
 
 pub use context_window_builder::ContextWindowBuilder;

@@ -39,6 +39,7 @@ impl ExternalLookup<'_> {
                 self.conv_service,
                 self.conversation_id,
                 self.validated_message,
+                self.utility_llm.as_ref(),
             )
             .await;
             // The attachment leads: it is this turn's subject, and on a first

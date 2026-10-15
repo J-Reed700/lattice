@@ -448,35 +448,33 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
         .contains("Key topics: preflight, engines"));
 }
 
-/// The source text is the call's evidence: the model reads its opening, as
-/// much as the window and the ceiling allow, ending on a whole passage, and
-/// the response contract still comes last.
+/// A document too long for one call used to be described from its opening
+/// (3,000 tokens of it). It is now read whole: part by part, in order, and
+/// then summarized from the parts' summaries, the contract last every time.
 #[tokio::test]
-async fn a_long_document_is_summarized_from_its_opening_with_the_contract_last() {
+async fn a_long_document_is_summarized_from_all_of_it_part_by_part() {
     let pool = pool_with_document().await;
     let mut source = source_with_sections(0);
-    source.body = (0..5_000)
+    source.body = (0..12_000)
         .map(|i| format!("w{i}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let (use_case, prompts) = use_case(
-        true,
-        Some(source),
-        &[r#"{"summary":"Three sentences.","topics":["a"]}"#],
-        &pool,
-        memory_index(),
-    );
+    let responses: Vec<&str> = vec![r#"{"summary":"Three sentences.","topics":["a"]}"#; 20];
+    let (use_case, prompts) = use_case(true, Some(source), &responses, &pool, memory_index());
 
     assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
 
-    let prompt = prompts.lock()[0].clone();
-    assert!(
-        prompt.contains("Beginning of the document:\nw0 w1 w2"),
-        "{prompt:.200}"
-    );
-    assert!(!prompt.contains("w4999"));
-    assert!(prompt.split_whitespace().count() < 3_200);
-    assert!(prompt.ends_with("No prose before or after it."));
+    let prompts = prompts.lock().clone();
+    assert!(prompts.len() >= 3, "{} calls", prompts.len());
+    assert!(prompts[0].contains("part 1 of"), "{:.300}", prompts[0]);
+    assert!(prompts[0].contains("Document text:\nw0 w1 w2"));
+    assert!(prompts.iter().any(|prompt| prompt.contains("w11999")));
+    let last = prompts.last().unwrap();
+    assert!(last.contains("Summaries of the text's parts, in order:"));
+    assert!(last.contains("Part 1: Three sentences."));
+    assert!(prompts
+        .iter()
+        .all(|prompt| prompt.ends_with("No prose before or after it.")));
 }
 
 #[tokio::test]
@@ -494,11 +492,12 @@ async fn too_few_sections_means_only_a_document_summary() {
     assert_eq!(prompts.lock().len(), 1);
 }
 
+/// Sections past the twelfth used to go unsummarized. Every one is.
 #[tokio::test]
-async fn section_summaries_are_capped_per_document() {
+async fn every_section_is_summarized() {
     let pool = pool_with_document().await;
     let index = memory_index();
-    let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 40];
+    let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 41];
     let (use_case, _) = use_case(
         true,
         Some(source_with_sections(40)),
@@ -507,10 +506,7 @@ async fn section_summaries_are_capped_per_document() {
         Arc::clone(&index),
     );
     let written = use_case.execute("doc-1").await.unwrap();
-    assert_eq!(
-        written,
-        1 + crate::features::summaries::prompt::MAX_SECTION_SUMMARIES
-    );
+    assert_eq!(written, 1 + 40);
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-use super::chunker::{self, chunk_text, MAX_CHUNK_CHARS, MAX_CHUNK_LINES, MAX_LINE_CHARS};
+use super::chunker::{self, chunk_text, Chunk, MAX_CHUNK_CHARS, MAX_CHUNK_LINES};
 use super::dto::{FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryState};
 use super::manager::{EmbedderSource, FolderIndexManager, ManagerConfig};
 use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
@@ -366,15 +366,24 @@ mod chunking {
         }
         assert_eq!(chunks.last().unwrap().end_line, 1_000);
 
+        // A line longer than a chunk used to be clipped at 500 characters.
+        // It is indexed whole, in parts that each point at that line.
         let long = format!("short\n{}\nafter\n", "y".repeat(10_000));
         let chunks = chunk_text(&long);
-        let clipped = chunks
+        let parts: Vec<&Chunk> = chunks
             .iter()
-            .flat_map(|chunk| chunk.body.lines())
-            .find(|line| line.starts_with('y'))
-            .unwrap();
-        assert_eq!(clipped.chars().count(), MAX_LINE_CHARS + 1);
-        assert!(clipped.ends_with('…'));
+            .filter(|chunk| chunk.start_line == 2)
+            .collect();
+        assert!(parts.len() > 1);
+        assert!(parts.iter().all(|chunk| chunk.end_line == 2));
+        assert!(parts
+            .iter()
+            .all(|chunk| chunk.body.len() <= MAX_CHUNK_CHARS));
+        let ys: usize = parts
+            .iter()
+            .map(|chunk| chunk.body.matches('y').count())
+            .sum();
+        assert_eq!(ys, 10_000);
         assert_eq!(chunks.last().unwrap().end_line, 3);
     }
 

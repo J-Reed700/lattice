@@ -71,7 +71,6 @@ pub struct DocumentSpaceMembershipDto {
 pub struct SynthesizeJournalEntriesRequestDto {
     pub conversation_ids: Vec<String>,
     pub scope: Option<String>,
-    pub max_entries: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

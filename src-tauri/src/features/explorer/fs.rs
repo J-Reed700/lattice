@@ -175,6 +175,40 @@ pub(super) fn read_prefix(path: &Path, limit: u64) -> std::io::Result<(Vec<u8>, 
     Ok((bytes, cut))
 }
 
+/// Streams the lines of a file too large to load, numbering them from 1 and
+/// handing each to `visit` until it returns false, and counts them all. Read
+/// in one pass with constant memory; invalid UTF-8 is replaced, as the
+/// viewer replaces it.
+pub(super) fn scan_lines(
+    scope: &Scope,
+    path: &str,
+    visit: &mut dyn FnMut(u32, &str) -> bool,
+) -> Result<u32> {
+    use std::io::BufRead;
+    let file = scope.resolve(path)?;
+    let read_error = |error: std::io::Error| AppError::FileRead {
+        path: file.relative.clone(),
+        reason: error.to_string(),
+    };
+    let mut reader =
+        std::io::BufReader::new(std::fs::File::open(&file.canonical).map_err(read_error)?);
+    let mut buffer = Vec::new();
+    let mut total = 0u32;
+    let mut visiting = true;
+    loop {
+        buffer.clear();
+        if reader.read_until(b'\n', &mut buffer).map_err(read_error)? == 0 {
+            break;
+        }
+        total = total.saturating_add(1);
+        if visiting {
+            let line = String::from_utf8_lossy(&buffer);
+            visiting = visit(total, line.trim_end_matches(['\n', '\r']));
+        }
+    }
+    Ok(total)
+}
+
 pub fn read_file(scope: &Scope, path: &str) -> Result<ExplorerFileDto> {
     let file = scope.resolve(path)?;
     let read_error = |error: std::io::Error| AppError::FileRead {

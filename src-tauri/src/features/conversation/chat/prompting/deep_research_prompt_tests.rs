@@ -56,13 +56,17 @@ fn no_instruction_without_a_first_round_or_a_way_to_search() {
     assert!(!prompt(None, Some(vec!["q".to_string()])).contains("Deep research:"));
 }
 
+/// The list used to stop at twelve searches of 120 characters, so the model
+/// could run the thirteenth again. Every search is listed whole, once.
 #[test]
-fn the_list_of_searches_is_bounded() {
-    let many: Vec<String> = (0..40)
+fn every_search_already_run_is_listed_whole_once() {
+    let mut many: Vec<String> = (0..40)
         .map(|n| format!("query {n} {}", "x".repeat(300)))
         .collect();
+    many.push("Query 0 ".to_string() + &"X".repeat(300));
     let text = deep_research_instruction(&many);
-    assert_eq!(text.matches("\"query ").count(), LISTED_SEARCHES);
-    assert!(!text.contains(&"x".repeat(LISTED_SEARCH_CHARS)));
+    assert_eq!(text.matches("\"query ").count(), 40);
+    assert!(text.contains(&format!("query 39 {}", "x".repeat(300))));
+    assert!(!text.contains("\"Query 0"));
     assert!(!deep_research_instruction(&[]).contains("Searches already run"));
 }

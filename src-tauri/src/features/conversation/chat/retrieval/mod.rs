@@ -428,33 +428,18 @@ async fn build_hyde_context_window_for_conversation(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     question: &str,
+    planner: &dyn lattice_core::application::ports::LLMPort,
 ) -> Option<String> {
-    build_hyde_context_window_for_conversation_impl(conv_service, conversation_id, question).await
+    build_hyde_context_window_for_conversation_impl(
+        conv_service,
+        conversation_id,
+        question,
+        planner,
+    )
+    .await
 }
 
-/// Passage tokens the chunker aims for (the embedding input policy's
-/// retrieval target). Used only when the library's passages cannot be
-/// measured, to size how deep a search reads.
-const ASSUMED_PASSAGE_TOKENS: usize = 480;
-
-/// How many passages a turn's search reads: as many as `evidence_tokens` can
-/// carry at what one of this library's passages measures, so a large window
-/// is handed enough to fill it and a small one is not handed a pile it must
-/// throw away. Rounded up: the prompt's best-first fill, not this count,
-/// decides what goes in.
-fn retrieval_depth(
-    evidence_tokens: usize,
-    passage_chars: Option<usize>,
-    chars_per_token: f64,
-) -> usize {
-    let passage_tokens = passage_chars
-        .map(|chars| {
-            lattice_core::application::ports::llm_port::tokens_for_chars(chars, chars_per_token)
-        })
-        .unwrap_or(ASSUMED_PASSAGE_TOKENS)
-        .max(1);
-    evidence_tokens.div_ceil(passage_tokens).max(1)
-}
+use lattice_core::application::services::grounded_generation::retrieval_depth;
 
 async fn persist_document_references(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,

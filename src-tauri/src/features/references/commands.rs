@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 const DEFAULT_LIST_LIMIT: i64 = 200;
 const MAX_LIST_LIMIT: i64 = 1000;
-pub(super) const MAX_TEXT_CHARS: usize = 20_000;
 const MAX_TITLE_CHARS: usize = 200;
 /// Chunk ids are uuid-shaped; this only guards against a hostile caller.
 const MAX_ID_CHARS: usize = 200;
@@ -89,7 +88,9 @@ pub(super) fn build_create_record(
         file_path,
         file_name,
         locator: optional_field(request.locator, MAX_LOCATOR_CHARS),
-        text: truncate_chars(&text, MAX_TEXT_CHARS),
+        // Stored whole: a saved passage is read back as the user saved it,
+        // and week synthesis reads it in full.
+        text,
         title: optional_field(request.title, MAX_TITLE_CHARS),
         note: optional_field(request.note, MAX_NOTE_CHARS),
         created_at: now_db_timestamp(),

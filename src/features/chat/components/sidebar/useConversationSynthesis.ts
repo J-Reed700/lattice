@@ -25,7 +25,7 @@ export function useConversationSynthesis() {
     try {
       await runSynthesis({
         title, heading: title,
-        request: { conversationIds: [id], scope: 'conversation', maxEntries: 1 },
+        request: { conversationIds: [id], scope: 'conversation' },
         destination: { kind: 'capture' },
       }, queryClient);
     } catch (error) {

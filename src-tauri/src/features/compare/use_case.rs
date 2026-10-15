@@ -25,11 +25,8 @@ use super::parser::parse_compare_response;
 use super::prompt::{build_compare_task, PASSAGES_HEADING};
 use super::retrieval::{retrieve_for_document, truncate_chars, RetrievedChunk};
 
-pub const MAX_DOCUMENTS: usize = 12;
 pub const MAX_COLUMNS: usize = 6;
 pub const MAX_COLUMN_CHARS: usize = 80;
-pub const CHUNKS_PER_COLUMN: usize = 3;
-pub const MAX_CHUNKS_PER_DOCUMENT: usize = 10;
 pub const MAX_VALUE_CHARS: usize = 400;
 pub const MAX_EXCERPT_CHARS: usize = 320;
 pub const DOCUMENT_CONCURRENCY: usize = 2;
@@ -138,9 +135,6 @@ fn sanitize_document_ids(document_ids: Vec<String>) -> Vec<String> {
             continue;
         }
         out.push(trimmed.to_string());
-        if out.len() == MAX_DOCUMENTS {
-            break;
-        }
     }
     out
 }
@@ -250,8 +244,17 @@ async fn build_row(
     document: &ResolvedDocument,
     columns: &[String],
 ) -> Result<CompareRowDto> {
+    // Each column reads as deep as its share of the row call's evidence room
+    // holds, at the chunker's passage size.
+    let room = grounded_generation::evidence_room(
+        llm.as_ref(),
+        &GroundedRequest::new("", build_compare_task(&document.title, columns)),
+    )
+    .map_err(AppError::from)?;
+    let per_column = grounded_generation::retrieval_depth(room, None, llm.chars_per_token())
+        .div_ceil(columns.len().max(1));
     let super::retrieval::DocumentChunks { chunks, degraded } =
-        retrieve_for_document(deps, &document.id, columns).await?;
+        retrieve_for_document(deps, &document.id, columns, per_column).await?;
     if chunks.is_empty() {
         return Ok(empty_row(
             document,

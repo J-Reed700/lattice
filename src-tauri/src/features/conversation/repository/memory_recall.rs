@@ -111,7 +111,7 @@ impl ConversationRepository {
         exact_terms: &[String],
         limit: usize,
     ) -> Result<RecallCandidates> {
-        let limit = limit.clamp(1, 64);
+        let limit = limit.max(1);
         let mut out = RecallCandidates::default();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 

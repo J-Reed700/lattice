@@ -257,12 +257,8 @@ pub trait ChatStarterCache: Send + Sync {
     async fn prune(&self, keep: i64) -> Result<()>;
     /// `(file_type, count)` over `allowed_ids`, most common first.
     async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>>;
-    /// The newest document titles in `allowed_ids`.
-    async fn recent_titles(
-        &self,
-        allowed_ids: &HashSet<String>,
-        limit: usize,
-    ) -> Result<Vec<String>>;
+    /// Every document title in `allowed_ids`, newest first.
+    async fn recent_titles(&self, allowed_ids: &HashSet<String>) -> Result<Vec<String>>;
     /// Newest `indexed_at` in `allowed_ids`, or an empty string when there is none.
     async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String>;
 }
@@ -296,7 +292,6 @@ pub trait SynthesisEntries: Send + Sync {
     async fn references_created_since(
         &self,
         cutoff: &str,
-        limit: i64,
     ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>>;
     /// Journal pages updated between `start_date` and `end_date`, as stored.
     async fn notes_in_range(

@@ -337,11 +337,8 @@ impl ConversationRepository {
             }
         }
         optional.sort_by(|a, b| b.0.total_cmp(&a.0));
-        prepared.optional = optional
-            .into_iter()
-            .take(24)
-            .map(|(_, text)| text)
-            .collect();
+        // Ranked, not cut: the assembler's evidence pool decides how many fit.
+        prepared.optional = optional.into_iter().map(|(_, text)| text).collect();
         if self.knowledge_revisions(conversation).await? != revisions {
             return Err(AppError::ConcurrentModification {
                 resource: "conversation memory".into(),
@@ -466,10 +463,15 @@ impl ConversationRepository {
             item_id: String,
             embedding: Vec<u8>,
         }
-        let limit = (32 * 1024 * 1024 / (vector.len().max(1) * 4)).min(2000) as i64;
-        let rows=sqlx::query_as::<_,VectorRow>("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE (i.conversation_id=? OR a.scope='personal' OR (a.scope='space' AND a.space_id=(SELECT space_id FROM conversations WHERE id=?))) AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC LIMIT ?")
-            .bind(conversation).bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(limit).fetch_all(&self.pool).await;
-        if let Ok(rows) = rows {
+        // Every applicable item's evidence is scored, a page at a time, each
+        // page sized so its vectors stay within a fixed amount of memory.
+        let page = (32 * 1024 * 1024 / (vector.len().max(1) * 4)).max(1) as i64;
+        let mut offset = 0i64;
+        loop {
+            let rows=sqlx::query_as::<_,VectorRow>("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE (i.conversation_id=? OR a.scope='personal' OR (a.scope='space' AND a.space_id=(SELECT space_id FROM conversations WHERE id=?))) AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC, e.item_id, e.ordinal LIMIT ? OFFSET ?")
+                .bind(conversation).bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(page).bind(offset).fetch_all(&self.pool).await;
+            let Ok(rows) = rows else { break };
+            let read = rows.len() as i64;
             for row in rows {
                 if let Ok(stored) =
                     crate::features::embedding::encoding::decode_embedding(&row.embedding)
@@ -480,6 +482,10 @@ impl ConversationRepository {
                     }
                 }
             }
+            if read < page {
+                break;
+            }
+            offset += read;
         }
         scores
     }

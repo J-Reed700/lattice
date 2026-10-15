@@ -87,10 +87,11 @@ pub const MAX_SOURCE_MESSAGES_PER_ATTEMPT: usize = 256;
 /// Source bytes processed in one foreground attempt.
 pub const MAX_SOURCE_BYTES_PER_ATTEMPT: usize = 1024 * 1024;
 
-/// Source bytes one attempt folds back into a dropped summary: two fold steps,
-/// so one page adds at most a couple of summariser calls to the attempt it
-/// rides on. Consolidation then folds page after page while its deadline lasts.
-pub const MAX_REFOLD_BYTES_PER_ATTEMPT: usize = 2 * summarize::MAX_FOLD_BYTES;
+/// Source bytes one attempt folds back into a dropped summary, so one page adds
+/// a bounded amount of summariser work to the attempt it rides on. A page, not
+/// a cut: consolidation folds page after page while its deadline lasts, and
+/// the next run resumes where this one stopped.
+pub const MAX_REFOLD_BYTES_PER_ATTEMPT: usize = 32 * 1024;
 
 /// Forgotten facts named to the summariser in one fold, most recent first.
 pub const MAX_FORGOTTEN_LABELS: usize = 32;
@@ -105,8 +106,24 @@ pub const DEFAULT_KEEP_RECENT_MESSAGES: usize = 6;
 /// Do not start a model call that cannot plausibly finish in what is left.
 const MIN_CALL_SLICE: Duration = Duration::from_millis(500);
 
-/// Characters of an adjacent message shown beside a batch.
-const MAX_CONTEXT_PASSAGE_CHARS: usize = 1_000;
+/// Provider-side answer caps for the utility calls. They stop a runaway
+/// response; the deterministic parsers apply the real bounds after it.
+const EXTRACTOR_OUTPUT_TOKENS: usize = 8_192;
+const VERIFIER_OUTPUT_TOKENS: usize = 4_096;
+
+/// Characters a utility call has for its material in the utility model's own
+/// window: what is left after the answer room (`output_tokens`, never more
+/// than a quarter of the window), a 5% margin, the system prompt and
+/// `framing`, the request text the material is set into.
+fn call_room_chars(llm: &dyn LLMPort, system: &str, output_tokens: usize, framing: &str) -> usize {
+    let window = llm.max_context_tokens();
+    let room = window
+        .saturating_sub(output_tokens.min(window / 4))
+        .saturating_sub(window / 20)
+        .saturating_sub(llm.count_tokens(system))
+        .saturating_sub(llm.count_tokens(framing));
+    lattice_core::application::ports::llm_port::chars_within_tokens(room, llm.chars_per_token())
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -276,12 +293,27 @@ async fn complete_json(
     prompt: String,
     schema: Option<serde_json::Value>,
 ) -> std::result::Result<String, CompactionError> {
+    complete_json_within(llm, deadline, system, prompt, schema, 0).await
+}
+
+/// [`complete_json`] with room for at least `min_output_tokens` of answer:
+/// a summary sized from a large window must not be cut off by the provider
+/// cap that stops a runaway response.
+async fn complete_json_within(
+    llm: &dyn LLMPort,
+    deadline: &Deadline,
+    system: &str,
+    prompt: String,
+    schema: Option<serde_json::Value>,
+    min_output_tokens: usize,
+) -> std::result::Result<String, CompactionError> {
     let remaining = deadline.slice()?;
     let max_output_tokens = if system == prompts::VERIFIER_SYSTEM {
-        4_096
+        VERIFIER_OUTPUT_TOKENS
     } else {
-        8_192
-    };
+        EXTRACTOR_OUTPUT_TOKENS
+    }
+    .max(min_output_tokens);
     let phase = if system == prompts::EXTRACTOR_SYSTEM {
         "extractor_model_call"
     } else if system == prompts::VERIFIER_SYSTEM {
@@ -321,7 +353,7 @@ async fn complete_json(
         // operation bounds after generation. This provider-side cap
         // prevents a malformed or uncooperative response from using
         // the model's much larger configured chat-output allowance.
-        max_output_tokens: Some(max_output_tokens),
+        max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX)),
         time_budget: Some(remaining),
         priority: deadline.priority,
         cancel: deadline.cancellation.clone(),

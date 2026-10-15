@@ -15,11 +15,6 @@ pub const SOFT_MAX_LINES: usize = 80;
 pub const MAX_CHUNK_LINES: usize = 120;
 /// Characters a chunk grows to before it is cut.
 pub const MAX_CHUNK_CHARS: usize = 1_500;
-/// A longer line is clipped. A minified bundle can put a whole file on one
-/// line, and one line must not become one huge passage.
-pub const MAX_LINE_CHARS: usize = 500;
-/// Files over this are not indexed, the bound `search_files` reads to.
-pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Average line length past which a file is taken as generated or minified.
 const MAX_AVERAGE_LINE_CHARS: usize = 300;
 
@@ -30,7 +25,8 @@ pub struct Chunk {
     pub start_line: u32,
     /// 1-based, inclusive.
     pub end_line: u32,
-    /// The lines themselves, joined with `\n`, overlong ones clipped.
+    /// The lines themselves, joined with `\n`. A line longer than a whole
+    /// chunk is its own run of chunks, one part each.
     pub body: String,
 }
 
@@ -68,13 +64,6 @@ pub fn skipped_by_name(relative: &str) -> bool {
 pub fn looks_minified(text: &str) -> bool {
     let lines = text.lines().count().max(1);
     text.len() / lines > MAX_AVERAGE_LINE_CHARS
-}
-
-fn clip(line: &str) -> String {
-    match line.char_indices().nth(MAX_LINE_CHARS) {
-        Some((cut, _)) => format!("{}…", line.get(..cut).unwrap_or(line)),
-        None => line.to_string(),
-    }
 }
 
 fn is_blank(line: &str) -> bool {
@@ -155,10 +144,26 @@ fn cut_before(lines: &[String], at: usize) -> Cut {
 
 /// The passages of `text`, in order. Blank-only stretches are left out.
 pub fn chunk_text(text: &str) -> Vec<Chunk> {
-    let lines: Vec<String> = text.lines().map(clip).collect();
+    let lines: Vec<String> = text.lines().map(str::to_string).collect();
     let mut chunks = Vec::new();
     let mut start = 0usize;
     while start < lines.len() {
+        // A line longer than a whole chunk is indexed in parts, each a chunk
+        // pointing at that line, so none of it falls out of the index.
+        if let Some(line) = lines.get(start).filter(|line| line.len() > MAX_CHUNK_CHARS) {
+            let number = start as u32 + 1;
+            for part in lattice_core::shared::text::split_into_parts(line, MAX_CHUNK_CHARS) {
+                if !part.trim().is_empty() {
+                    chunks.push(Chunk {
+                        start_line: number,
+                        end_line: number,
+                        body: part.to_string(),
+                    });
+                }
+            }
+            start += 1;
+            continue;
+        }
         // Grow as far as the caps allow, stopping early at a boundary only
         // once the chunk is past the soft line cap.
         let mut end = start;

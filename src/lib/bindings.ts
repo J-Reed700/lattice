@@ -8062,7 +8062,7 @@ export type SynthesisDestinationDto =
  */
 { kind: "week"; title: string }
 export type SynthesisStage = "gathering" | "reading" | "writing"
-export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
+export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null }
 export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];
 /**
  * Source passages from the conversations and journal notes, numbered to

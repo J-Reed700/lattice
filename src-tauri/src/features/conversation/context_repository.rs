@@ -40,17 +40,10 @@ impl ConversationContextPort for SqliteConversationContext {
         .map_err(|e| AppError::Database(format!("Failed to load space prompt: {}", e)))
     }
 
-    async fn linked_sources(
-        &self,
-        conversation_id: &str,
-        limit: i64,
-    ) -> Result<Vec<LinkedConversationSource>> {
-        if limit <= 0 {
-            return Ok(Vec::new());
-        }
+    async fn linked_sources(&self, conversation_id: &str) -> Result<Vec<LinkedConversationSource>> {
         let rows = sqlx::query_as::<_, SourceRow>(
-            "SELECT title, url, excerpt FROM conversation_web_sources WHERE conversation_id = ? ORDER BY added_at DESC LIMIT ?"
-        ).bind(conversation_id).bind(limit).fetch_all(&self.pool).await
+            "SELECT title, url, excerpt FROM conversation_web_sources WHERE conversation_id = ? ORDER BY added_at DESC"
+        ).bind(conversation_id).fetch_all(&self.pool).await
             .map_err(|e| AppError::Database(format!("Failed to load linked web sources for conversation context: {}", e)))?;
         Ok(rows
             .into_iter()
@@ -99,17 +92,13 @@ mod tests {
                 Some("prompt")
             );
         }
-        let rows = adapter.linked_sources("chat", 1).await.unwrap();
-        assert_eq!(rows.len(), 1);
+        let rows = adapter.linked_sources("chat").await.unwrap();
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].url, "new-url");
         assert_eq!(rows[0].title, None);
         assert_eq!(rows[0].excerpt.as_deref(), Some("excerpt"));
-        assert!(adapter.linked_sources("chat", 0).await.unwrap().is_empty());
-        assert!(adapter
-            .linked_sources("missing", 10)
-            .await
-            .unwrap()
-            .is_empty());
+        assert_eq!(rows[1].url, "old-url");
+        assert!(adapter.linked_sources("missing").await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -121,7 +110,7 @@ mod tests {
             Err(AppError::Database(_))
         ));
         assert!(matches!(
-            adapter.linked_sources("chat", 10).await,
+            adapter.linked_sources("chat").await,
             Err(AppError::Database(_))
         ));
     }

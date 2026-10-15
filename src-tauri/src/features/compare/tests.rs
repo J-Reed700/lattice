@@ -252,7 +252,7 @@ async fn without_an_embedding_model_the_keyword_branch_still_finds_the_column() 
     let container = container_with_chunks(&contents).await;
 
     let deps = retrieval_deps(&container);
-    let retrieved = super::retrieval::retrieve_for_document(&deps, "doc", &columns())
+    let retrieved = super::retrieval::retrieve_for_document(&deps, "doc", &columns(), 3)
         .await
         .expect("retrieve");
 
@@ -261,24 +261,21 @@ async fn without_an_embedding_model_the_keyword_branch_still_finds_the_column() 
 }
 
 /// A document the search finds nothing in still gets a row: its opening
-/// chunks, capped. The search worked, so the row is not marked degraded.
+/// chunks, as many as the searches would have read (the row call's room sets
+/// that depth). The search worked, so the row is not marked degraded.
 #[tokio::test]
 async fn a_document_the_search_finds_nothing_in_falls_back_to_its_opening_chunks() {
-    let contents: Vec<String> = (0..(super::use_case::MAX_CHUNKS_PER_DOCUMENT + 5))
-        .map(|index| format!("passage {index}"))
-        .collect();
+    let contents: Vec<String> = (0..40).map(|index| format!("passage {index}")).collect();
     let container = container_with_chunks(&contents).await;
 
     let deps = retrieval_deps(&container);
-    let retrieved = super::retrieval::retrieve_for_document(&deps, "doc", &columns())
+    let per_column = 7;
+    let retrieved = super::retrieval::retrieve_for_document(&deps, "doc", &columns(), per_column)
         .await
         .expect("retrieve");
 
     assert!(retrieved.degraded.is_none());
-    assert_eq!(
-        retrieved.chunks.len(),
-        super::use_case::MAX_CHUNKS_PER_DOCUMENT
-    );
+    assert_eq!(retrieved.chunks.len(), per_column * columns().len());
     assert_eq!(retrieved.chunks[0].chunk_id, "c0");
 }
 

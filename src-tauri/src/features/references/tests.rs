@@ -10,7 +10,7 @@
 
 use sqlx::SqlitePool;
 
-use super::commands::{build_create_record, MAX_TEXT_CHARS};
+use super::commands::build_create_record;
 use super::dto::CreatePassageReferenceRequestDto;
 use super::repository::{PassageReferenceRecord, PassageReferenceRepository};
 use lattice_core::shared::error::AppError;
@@ -113,7 +113,7 @@ async fn list_created_since_excludes_older() {
         .await
         .unwrap();
 
-    let listed = repo.list_created_since(cutoff, 10).await.unwrap();
+    let listed = repo.list_created_since(cutoff).await.unwrap();
     let ids: Vec<&str> = listed.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, vec!["pref_after", "pref_at"]);
 }
@@ -189,12 +189,10 @@ fn create_impl_trims_and_rejects_empty_text() {
     ));
 }
 
+/// Saved text used to be cut at 20,000 characters. It is stored whole.
 #[test]
-fn create_impl_truncates_oversized_text() {
-    // Multi-byte characters so byte slicing would panic or corrupt.
-    let oversized = "é".repeat(25_000);
-    let built = build_create_record(create_request(&oversized)).unwrap();
-    assert_eq!(built.text.chars().count(), MAX_TEXT_CHARS);
-    assert!(built.text.ends_with('…'));
-    assert!(std::str::from_utf8(built.text.as_bytes()).is_ok());
+fn create_impl_stores_long_text_whole() {
+    let long = "é".repeat(25_000);
+    let built = build_create_record(create_request(&long)).unwrap();
+    assert_eq!(built.text, long);
 }

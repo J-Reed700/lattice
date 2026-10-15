@@ -131,14 +131,41 @@ fn solution_schema() -> serde_json::Value {
     })
 }
 
+const TUTOR_SYSTEM: &str = "You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.";
+
 pub async fn tutor(
     llm: &dyn LLMPort,
     session: &LearningPracticeSessionDto,
     request: &RequestLearningTutorResponseRequestDto,
     sources: &[LearningSourceVersionDto],
 ) -> Result<TutorJson> {
-    let prompt=serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"recentTurns":session.tutor_turns.iter().rev().take(4).map(|t|serde_json::json!({"request":t.prompt,"response":t.response,"hintLevel":t.hint_level})).collect::<Vec<_>>(),"revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":source_context(sources)}).to_string();
-    let raw=complete_json(llm,"You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.",prompt,tutor_schema(),1400).await?;
+    // Earlier tutor turns, newest first, as many as the tutor's window gives
+    // history, with a count of any left out.
+    let fixed = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":source_context(sources)});
+    let turns: Vec<serde_json::Value> = session.tutor_turns.iter().map(|t|serde_json::json!({"request":t.prompt,"response":t.response,"hintLevel":t.hint_level})).collect();
+    let room = lattice_core::application::services::history_share::auxiliary_history_room(
+        llm,
+        &format!("{TUTOR_SYSTEM}{fixed}"),
+    );
+    let (kept, omitted) =
+        lattice_core::application::services::history_share::newest_that_fit(&turns, room, |turn| {
+            llm.count_tokens(&turn.to_string())
+        });
+    let mut prompt = fixed;
+    if let Some(fields) = prompt.as_object_mut() {
+        fields.insert(
+            "recentTurns".to_string(),
+            serde_json::json!(kept.iter().rev().collect::<Vec<_>>()),
+        );
+        if omitted > 0 {
+            fields.insert(
+                "earlierTurnsNotShown".to_string(),
+                serde_json::json!(omitted),
+            );
+        }
+    }
+    let prompt = prompt.to_string();
+    let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
     if parsed.response.trim().is_empty()

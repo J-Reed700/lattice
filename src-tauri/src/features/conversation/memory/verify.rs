@@ -38,9 +38,6 @@ use super::{complete_json, CompactionError, Deadline};
 /// silent `Ambiguous`.
 pub const MAX_REVIEWS_PER_CALL: usize = 6;
 
-/// Characters of surrounding original text shown per message.
-const MAX_SURROUNDING_CHARS: usize = 1_500;
-
 /// Verdicts for one patch, keyed the way [`apply_patch`] wants them.
 ///
 /// [`apply_patch`]: lattice_core::domain::conversation::memory::apply_patch
@@ -212,19 +209,35 @@ pub async fn review_patch(
     }
 
     for batch in requests.chunks(MAX_REVIEWS_PER_CALL) {
-        let rendered: Vec<ReviewRequest<'_>> = batch
+        let render = |surrounding_chars: Option<usize>| {
+            batch
+                .iter()
+                .map(|review| ReviewRequest {
+                    id: review.id.as_str(),
+                    change: review.change,
+                    kind: review.kind,
+                    label: review.label.as_str(),
+                    proposed_evidence: passages(&review.proposed, evidence),
+                    existing_evidence: passages(&review.existing, evidence),
+                    existing_label: review.existing_label.as_deref(),
+                    surrounding: surrounding_chars.map_or_else(Vec::new, |max_chars| {
+                        surrounding(&review.proposed, &review.existing, &messages, max_chars)
+                    }),
+                })
+                .collect::<Vec<_>>()
+        };
+        // The surrounding text shares what the review call's window has left
+        // once the reviews themselves are in: each message is shown whole when
+        // that share holds it, and centred on its quotes and flagged when not.
+        let bare = render_verifier_prompt(&render(None));
+        let context_messages: usize = render(Some(usize::MAX))
             .iter()
-            .map(|review| ReviewRequest {
-                id: review.id.as_str(),
-                change: review.change,
-                kind: review.kind,
-                label: review.label.as_str(),
-                proposed_evidence: passages(&review.proposed, evidence),
-                existing_evidence: passages(&review.existing, evidence),
-                existing_label: review.existing_label.as_deref(),
-                surrounding: surrounding(&review.proposed, &review.existing, &messages),
-            })
-            .collect();
+            .map(|review| review.surrounding.len())
+            .sum();
+        let share =
+            super::call_room_chars(llm, VERIFIER_SYSTEM, super::VERIFIER_OUTPUT_TOKENS, &bare)
+                / context_messages.max(1);
+        let rendered = render(Some(share));
 
         let prompt = render_verifier_prompt(&rendered);
         outcome.calls += 1;
@@ -327,6 +340,7 @@ fn surrounding<'a>(
     proposed: &[EvidenceSpan],
     existing: &[EvidenceSpan],
     messages: &HashMap<&'a str, &'a SourceMessage>,
+    max_chars: usize,
 ) -> Vec<ContextPassage<'a>> {
     let spans: Vec<&EvidenceSpan> = proposed.iter().chain(existing).collect();
     let mut out: Vec<ContextPassage<'a>> = Vec::new();
@@ -360,7 +374,7 @@ fn surrounding<'a>(
             .map(|candidate| candidate.end_byte as usize)
             .max()
             .unwrap_or(message.content.len());
-        let (text, truncated) = clip_around(&message.content, start, end, MAX_SURROUNDING_CHARS);
+        let (text, truncated) = clip_around(&message.content, start, end, max_chars);
         out.push(ContextPassage {
             message_id: message.id.as_str(),
             sequence: message.sequence,
@@ -389,7 +403,7 @@ fn surrounding<'a>(
                 continue;
             }
             adjacent_seen.push(neighbour.id.as_str());
-            let (text, truncated) = clip_chars(&neighbour.content, MAX_SURROUNDING_CHARS);
+            let (text, truncated) = clip_chars(&neighbour.content, max_chars);
             out.push(ContextPassage {
                 message_id: neighbour.id.as_str(),
                 sequence: neighbour.sequence,

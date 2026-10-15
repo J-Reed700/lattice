@@ -123,21 +123,18 @@ impl GenerateDocumentSummariesUseCase {
             .iter()
             .map(|section| section.heading.clone())
             .collect();
-        let document_request = summary_request(
-            prompt::document_system_prompt(),
-            prompt::render_document_task(&DocumentPromptInput {
+        let document = Summarized {
+            system: prompt::document_system_prompt(),
+            task: prompt::render_document_task(&DocumentPromptInput {
                 title: &source.title,
                 cluster_label: source.cluster_label.as_deref(),
                 section_headings: &headings,
             }),
-            prompt::DOCUMENT_BODY_HEADING,
-            document_id,
-            &source.body,
-            prompt::DOCUMENT_BODY_TOKENS,
-            cancel,
-        );
+            heading: prompt::DOCUMENT_BODY_HEADING,
+            source_id: document_id.to_string(),
+        };
         let mut summaries = Vec::new();
-        if let Some(draft) = ask(llm.as_ref(), document_request, cancel).await {
+        if let Some(draft) = summarize_whole(llm.as_ref(), &document, &source.body, cancel).await {
             summaries.push(DocumentSummary::new(
                 document_id,
                 None,
@@ -151,22 +148,23 @@ impl GenerateDocumentSummariesUseCase {
         // retrieval tier; the document summary already covers them.
         if source.sections.len() >= prompt::MIN_SECTIONS {
             let system = prompt::section_system_prompt();
-            for section in source.sections.iter().take(prompt::MAX_SECTION_SUMMARIES) {
+            // Every section is summarized: the summary tier must not stop
+            // at a document's first dozen.
+            for section in &source.sections {
                 ensure_active(cancel)?;
-                let section_request = summary_request(
-                    system.clone(),
-                    prompt::render_section_task(&SectionPromptInput {
+                let section_call = Summarized {
+                    system: system.clone(),
+                    task: prompt::render_section_task(&SectionPromptInput {
                         title: &source.title,
                         section: &section.heading,
                         cluster_label: source.cluster_label.as_deref(),
                     }),
-                    prompt::SECTION_BODY_HEADING,
-                    &format!("{document_id}#{}", section.heading),
-                    &section.text,
-                    prompt::SECTION_BODY_TOKENS,
-                    cancel,
-                );
-                if let Some(draft) = ask(llm.as_ref(), section_request, cancel).await {
+                    heading: prompt::SECTION_BODY_HEADING,
+                    source_id: format!("{document_id}#{}", section.heading),
+                };
+                if let Some(draft) =
+                    summarize_whole(llm.as_ref(), &section_call, &section.text, cancel).await
+                {
                     summaries.push(DocumentSummary::new(
                         document_id,
                         Some(section.heading.clone()),
@@ -305,23 +303,130 @@ fn ensure_active(cancel: &CancellationToken) -> Result<()> {
     }
 }
 
-/// One grounded summary call: the task, then as much of the source text's
-/// opening as the window and `ceiling` allow, then the response contract.
-fn summary_request(
+/// What one summary is asked for: the call's instructions and where its
+/// text comes from.
+struct Summarized {
     system: String,
+    task: String,
+    heading: &'static str,
+    source_id: String,
+}
+
+/// Levels of part summaries before a text is summarized from what fits. Each
+/// level shrinks the text to a few sentences per part, so a real document
+/// never reaches it; it stops a window too small for one part summary from
+/// recursing for ever.
+const MAX_SUMMARY_LEVELS: usize = 4;
+
+/// Summarize `text` from all of it: in one call when the window holds it,
+/// otherwise part by part, in order, and then from the parts' summaries (and
+/// so on, should those not fit either). A long document is described from
+/// its whole text rather than its opening.
+async fn summarize_whole(
+    llm: &dyn LLMPort,
+    call: &Summarized,
+    text: &str,
+    cancel: &CancellationToken,
+) -> Option<SummaryDraft> {
+    let mut task = call.task.clone();
+    let mut heading = call.heading;
+    let mut text = text.to_string();
+    for level in 0..=MAX_SUMMARY_LEVELS {
+        let parts = window_parts(llm, call, &task, heading, &text);
+        if parts.len() <= 1 || level == MAX_SUMMARY_LEVELS {
+            if parts.len() > 1 {
+                tracing::warn!(
+                    source_id = call.source_id,
+                    parts = parts.len(),
+                    "Summary parts still exceed the window; summarizing from what fits"
+                );
+            }
+            let request = summary_request(call, task, heading, &call.source_id, &text, cancel);
+            return ask(llm, request, cancel).await;
+        }
+        let total = parts.len();
+        let mut part_summaries = Vec::with_capacity(total);
+        for (index, part) in parts.iter().enumerate() {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            let part_task = format!(
+                "{task}\nThe text is too long to read at once. This is part {} of {total}, in order; summarize this part.",
+                index + 1
+            );
+            let id = format!("{}:part-{}", call.source_id, index + 1);
+            let request = summary_request(call, part_task, heading, &id, part, cancel);
+            if let Some(draft) = ask(llm, request, cancel).await {
+                part_summaries.push(format!("Part {}: {}", index + 1, draft.into_summary_text()));
+            }
+        }
+        if part_summaries.is_empty() {
+            return None;
+        }
+        task = format!(
+            "{}\nThe text was too long to read at once; summarize the whole of it from the summaries of its parts below.",
+            call.task
+        );
+        heading = prompt::PART_SUMMARIES_HEADING;
+        text = part_summaries.join("\n");
+    }
+    None
+}
+
+/// `text` in consecutive parts that each fit one summary call's evidence
+/// room, whole passages in order. One part when the window holds it all.
+fn window_parts(
+    llm: &dyn LLMPort,
+    call: &Summarized,
+    task: &str,
+    heading: &str,
+    text: &str,
+) -> Vec<String> {
+    let bare = summary_request(
+        call,
+        task.to_string(),
+        heading,
+        &call.source_id,
+        "",
+        &CancellationToken::new(),
+    );
+    let room = grounded_generation::evidence_room(llm, &bare).unwrap_or(0);
+    let passages =
+        grounded_generation::passages_from_text(&call.source_id, text, prompt::BODY_PASSAGE_CHARS);
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut used = 0usize;
+    for passage in &passages {
+        let cost = grounded_generation::passage_tokens(llm, passage);
+        if !current.is_empty() && used + cost > room {
+            parts.push(current.join("\n\n"));
+            current.clear();
+            used = 0;
+        }
+        used += cost;
+        current.push(&passage.text);
+    }
+    if !current.is_empty() {
+        parts.push(current.join("\n\n"));
+    }
+    parts
+}
+
+/// One grounded summary call: the task, then the source text, whole passages
+/// in order as far as the window holds, then the response contract.
+fn summary_request(
+    call: &Summarized,
     task: String,
     heading: &str,
     source_id: &str,
     text: &str,
-    ceiling: usize,
     cancel: &CancellationToken,
 ) -> GroundedRequest {
-    let mut request = GroundedRequest::new(system, task);
+    let mut request = GroundedRequest::new(call.system.clone(), task);
     request.evidence_heading = heading.to_string();
     request.evidence =
         grounded_generation::passages_from_text(source_id, text, prompt::BODY_PASSAGE_CHARS);
     request.selection = EvidenceSelection::Prefix;
-    request.evidence_limit = Some(ceiling);
     request.closing = prompt::response_contract().to_string();
     request.call = CallOptions {
         // Upkeep: queued behind anyone waiting on the model.

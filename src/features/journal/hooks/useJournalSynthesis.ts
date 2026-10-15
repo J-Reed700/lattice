@@ -11,7 +11,11 @@ import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
 import type { SetURLSearchParams } from 'react-router';
 
-export const SYNTHESIS_ENTRY_LIMIT = 12;
+/**
+ * How many of the newest entries the "Recent Entries" scope covers. It names
+ * the scope, not a cap: the synthesis reads every entry in it whole.
+ */
+export const RECENT_DECK_SIZE = 12;
 
 const SYNTHESIS_HEADINGS: Record<SynthesisScope, string> = {
   current: 'Current Entry',
@@ -48,11 +52,9 @@ export function useJournalSynthesis(options: {
         return entries.filter((e) => e.id === currentId);
       }
       if (scope === 'pinned') {
-        return entries
-          .filter((e) => pinnedIds.has(e.id))
-          .slice(0, SYNTHESIS_ENTRY_LIMIT);
+        return entries.filter((e) => pinnedIds.has(e.id));
       }
-      return entries.slice(0, SYNTHESIS_ENTRY_LIMIT);
+      return entries.slice(0, RECENT_DECK_SIZE);
     },
     [entries, pinnedIds, selectedId],
   );
@@ -74,7 +76,6 @@ export function useJournalSynthesis(options: {
         request: {
           conversationIds: targets.map((t) => t.id),
           scope,
-          maxEntries: SYNTHESIS_ENTRY_LIMIT,
         },
         // Capture the destination at start, even if the user changes pages.
         destination: scope === 'week' ? { kind: 'week', title: weekPageTitle() } : { kind: 'note', noteId: activeNote.id },

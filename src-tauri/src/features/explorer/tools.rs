@@ -22,12 +22,10 @@ pub const TOOL_SEARCH_FILES: &str = "search_files";
 pub const TOOL_FIND_FILES: &str = "find_files";
 
 /// Lines one `read_file` call returns at most.
-pub const READ_WINDOW_LINES: u32 = 400;
 const SEARCH_RESULTS: usize = 50;
 const FIND_RESULTS: usize = 100;
 /// A minified bundle can put a whole file on one line; past this a line is
 /// clipped so one line cannot spend the whole allowance.
-const MAX_LINE_CHARS: usize = 500;
 /// Room kept for the header and the "how to read on" footer.
 const FRAMING_CHARS: usize = 300;
 
@@ -63,11 +61,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_READ_FILE.to_string(),
-            description: format!(
-                "Read a text file from the user's folder, with line numbers. Returns at most \
-                 {READ_WINDOW_LINES} lines per call and says how to read the next window. Use \
-                 these line numbers when you point at lines in your answer."
-            ),
+            description: "Read a text file from the user's folder, with line numbers. Returns as \
+                 many lines as this turn has room for and says where to start the next read. \
+                 Use these line numbers when you point at lines in your answer."
+                .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -197,9 +194,10 @@ pub fn activity_label(tool: &str, arguments: &Value) -> String {
         TOOL_READ_FILE => {
             let path = arg_str(arguments, "path").unwrap_or("a file");
             let start = arg_u32(arguments, "start_line").unwrap_or(1).max(1);
-            let last = start + READ_WINDOW_LINES - 1;
-            let end = arg_u32(arguments, "end_line").map_or(last, |end| end.clamp(start, last));
-            format!("Read {path} {start}–{end}")
+            match arg_u32(arguments, "end_line") {
+                Some(end) => format!("Read {path} {start}–{}", end.max(start)),
+                None => format!("Read {path} from line {start}"),
+            }
         }
         TOOL_SEARCH_FILES => {
             let query = arg_str(arguments, "query").unwrap_or_default();
@@ -351,18 +349,11 @@ pub(super) fn list_directory(scope: &Scope, path: &str, max_chars: usize) -> Res
     Ok(out)
 }
 
-fn clip_line(line: &str) -> String {
-    if line.chars().count() <= MAX_LINE_CHARS {
-        return line.to_string();
-    }
-    let kept: String = line.chars().take(MAX_LINE_CHARS).collect();
-    format!("{kept} … [line clipped]")
-}
-
 /// One numbered line in the shape `  12│ text`, the shape the prompt also
 /// uses, so a model reads line numbers the same way wherever they come from.
+/// Whole: whoever lays lines out against a budget decides where to stop.
 pub(super) fn number_line(number: u32, text: &str, width: usize) -> String {
-    format!("{number:>width$}│ {}", clip_line(text))
+    format!("{number:>width$}│ {text}")
 }
 
 pub(super) fn number_width(last_line: u32) -> usize {
@@ -384,51 +375,76 @@ pub(super) fn read_window(
             human_size(file.size_bytes)
         )));
     }
-    if file.too_large {
+    // Lines from `start`, whole, while the turn's room holds them and up to
+    // `end_line` when one is given. A file too large to load is read as a
+    // stream, so its size changes how it is read, never whether.
+    let start = start_line.unwrap_or(1).max(1);
+    if end_line.is_some_and(|end| end < start) {
         return Err(AppError::InvalidInput(format!(
-            "{} is {}, too large to open here. Use search_files with path \"{}\" to find the lines you need.",
-            file.path,
-            human_size(file.size_bytes),
-            file.path
+            "end_line {} comes before start_line {start}.",
+            end_line.unwrap_or_default()
         )));
     }
-    let text = file.text.unwrap_or_default();
-    let total = file.line_count;
+    let budget = max_chars.saturating_sub(FRAMING_CHARS);
+    let mut selected: Vec<(u32, String)> = Vec::new();
+    let mut used = 0usize;
+    let mut select = |number: u32, line: &str| -> bool {
+        if number < start {
+            return true;
+        }
+        if end_line.is_some_and(|end| number > end) {
+            return false;
+        }
+        // The number column and its separator, at most this wide.
+        let cost = line.len() + 14;
+        if !selected.is_empty() && used + cost > budget {
+            return false;
+        }
+        used += cost;
+        selected.push((number, line.to_string()));
+        true
+    };
+    let total = match file.text.as_deref() {
+        Some(text) => {
+            for (index, line) in text.lines().enumerate() {
+                if !select(index as u32 + 1, line) {
+                    break;
+                }
+            }
+            file.line_count
+        }
+        None => fs::scan_lines(scope, &file.path, &mut select)?,
+    };
     if total == 0 {
         return Ok(format!("{} is empty.", file.path));
     }
-    let start = start_line.unwrap_or(1).max(1);
     if start > total {
         return Err(AppError::InvalidInput(format!(
             "{} has {total} lines; start_line {start} is past the end.",
             file.path
         )));
     }
-    let window_end = start + READ_WINDOW_LINES - 1;
-    let end = end_line.unwrap_or(window_end).min(window_end).min(total);
-    if end < start {
-        return Err(AppError::InvalidInput(format!(
-            "end_line {end} comes before start_line {start}."
-        )));
-    }
 
-    let budget = max_chars.saturating_sub(FRAMING_CHARS);
-    let width = number_width(end);
+    let last = selected.last().map_or(start - 1, |(number, _)| *number);
+    let width = number_width(last);
     let mut body = String::new();
-    let mut last = start - 1;
-    let numbered = text
-        .lines()
-        .enumerate()
-        .skip(start as usize - 1)
-        .take((end - start + 1) as usize)
-        .map(|(index, line)| number_line(index as u32 + 1, line, width));
-    for line in numbered {
-        if last >= start && body.len() + line.len() + 1 > budget {
-            break;
+    for (number, line) in &selected {
+        let numbered = number_line(*number, line, width);
+        if numbered.len() > budget {
+            // One line longer than the whole room: the room's worth of it,
+            // and how much more the line holds.
+            let kept = &numbered[..lattice_core::shared::text::floor_char_boundary(
+                &numbered,
+                budget.saturating_sub(80),
+            )];
+            body.push_str(&format!(
+                "{kept} […line continues: {} more characters not shown]\n",
+                numbered[kept.len()..].chars().count()
+            ));
+            continue;
         }
-        body.push_str(&line);
+        body.push_str(&numbered);
         body.push('\n');
-        last += 1;
     }
 
     let mut out = format!("{} · lines {start}–{last} of {total}\n{body}", file.path);

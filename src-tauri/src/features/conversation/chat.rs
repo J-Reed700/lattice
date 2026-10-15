@@ -30,7 +30,7 @@
 //! });
 //! ```
 
-use self::intent::{IntentClassifier, IntentInput, TurnIntent};
+use self::intent::{IntentClassifier, TurnIntent};
 use self::router::{RouterAction, RouterInput, RouterService};
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::dto::CreateConversationRequestDto;
