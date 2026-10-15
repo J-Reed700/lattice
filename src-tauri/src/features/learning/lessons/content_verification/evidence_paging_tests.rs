@@ -264,3 +264,92 @@ fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
     assert!(!references.mentions_subject_of(claim, "A note about beta."));
     assert!(!references.mentions_subject_of(claim, "OrderWidget CartFactory SkuHelper"));
 }
+
+fn marker_collection() -> Vec<LearningSourceDto> {
+    let mut sources: Vec<_> = (0..12).map(related).collect();
+    sources.push(reference(
+        "marker".into(),
+        format!("{} {MARKER}", "Archive index entry. ".repeat(80)),
+    ));
+    sources
+}
+
+#[tokio::test]
+async fn a_claim_whose_section_cites_its_support_is_settled_on_page_one() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    // Retrieval alone ranks the support past page 1.
+    let retrieved = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    assert!(retrieved.iter().all(|p| !p.text.contains(MARKER)));
+    let citations = Citations::from([(0, references.cited_passages(&[MARKER])?)]);
+
+    let results = evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks.len(), 1, "settled on page 1");
+    assert!(
+        checks[0][0].contains(MARKER),
+        "the cited passage comes first"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn another_sections_citations_are_not_added() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    // Section 1 cites the support; the claim belongs to section 0.
+    let citations = Citations::from([(1, references.cited_passages(&[MARKER])?)]);
+    evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+    let checks = model.checks.lock().unwrap();
+    assert!(checks[0].iter().all(|text| !text.contains(MARKER)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
+    let sources: Vec<_> = (0..12).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let quotes: Vec<String> = (0..12)
+        .rev()
+        .map(|i| format!("Mineral alpha notes {i}: property beta was measured, pressure varied."))
+        .collect();
+    let quotes: Vec<&str> = quotes.iter().map(String::as_str).collect();
+    let cited = references.cited_passages(&quotes)?;
+    assert_eq!(cited.len(), 12);
+    let share = claim_share(&model, CLAIM, 1);
+    assert!(
+        !within_share(&model, share, cited.iter()),
+        "the fixture must overflow"
+    );
+
+    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &cited).await?;
+
+    assert!(within_share(&model, share, page.iter()));
+    let taken: Vec<_> = page.iter().filter(|p| p.retrieval_kind == CITED).collect();
+    assert!(!taken.is_empty() && taken.len() < cited.len());
+    // The first cited passages in citation order, the rest left for page 2.
+    let expected: HashSet<_> = cited[..taken.len()].iter().map(|p| &p.source_id).collect();
+    assert!(taken.iter().all(|p| expected.contains(&p.source_id)));
+    Ok(())
+}

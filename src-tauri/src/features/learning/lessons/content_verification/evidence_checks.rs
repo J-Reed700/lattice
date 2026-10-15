@@ -142,10 +142,11 @@ async fn prepare(
     ordinal: usize,
     located_claim: (usize, Claim),
     sharing: usize,
+    cited: &[EvidencePassage],
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
     let evidence = evidence_selection::select(
-        llm, &claim, unit, references, sources, executions, retained, sharing,
+        llm, &claim, unit, references, sources, executions, retained, sharing, cited,
     )
     .await?;
     let key = ClaimChecks::key(unit, &claim, &evidence);
@@ -426,12 +427,34 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
     Ok(results)
 }
 
+#[cfg(test)]
 pub(super) async fn check(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
     inventory: &Inventory,
     executions: &[execution::Observation],
     retained: &ClaimChecks,
+) -> Result<Vec<CheckedClaim>> {
+    check_with_citations(
+        llm,
+        references,
+        inventory,
+        executions,
+        retained,
+        &Citations::new(),
+    )
+    .await
+}
+
+/// Check every claim of `inventory`, each first against the passages its
+/// own section cites (`citations`, by unit) and then retrieved ones.
+pub(super) async fn check_with_citations(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    inventory: &Inventory,
+    executions: &[execution::Observation],
+    retained: &ClaimChecks,
+    citations: &Citations,
 ) -> Result<Vec<CheckedClaim>> {
     let entries: Vec<_> = inventory
         .units
@@ -476,6 +499,7 @@ pub(super) async fn check(
                     ordinal,
                     (unit, claim),
                     sharing,
+                    citations.get(&unit).map_or(&[][..], Vec::as_slice),
                 )
             })
             .buffered(BATCH_SIZE)
@@ -524,7 +548,7 @@ pub(super) async fn check(
             results.len() - resolved
         ));
     }
-    deepen(llm, references, &mut results, &decided).await?;
+    deepen(llm, references, &mut results, &decided, citations).await?;
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
     Ok(results)
 }
@@ -545,6 +569,7 @@ async fn deepen(
     references: &ReferenceCollection<'_>,
     results: &mut [CheckedClaim],
     decided: &HashSet<usize>,
+    citations: &Citations,
 ) -> Result<()> {
     let mut walks: BTreeMap<usize, Walk> = results
         .iter()
@@ -578,16 +603,38 @@ async fn deepen(
         let mut outcomes = Vec::new();
         for (ordinal, walk) in std::mem::take(&mut walks) {
             let share = claim_share(llm, &walk.claim.statement, sharing);
-            let (mut page, _) = references
-                .verification_page(&walk.claim.statement, &walk.shown, |passages| {
-                    within_share(llm, share, passages.iter())
+            // Cited passages of the section that did not fit an earlier page
+            // lead this one; retrieved passages not yet shown fill the rest.
+            let mut page: Vec<EvidencePassage> = Vec::new();
+            for passage in citations.get(&walk.unit).into_iter().flatten() {
+                if walk
+                    .shown
+                    .iter()
+                    .chain(&page)
+                    .any(|seen| overlaps(seen, passage))
+                {
+                    continue;
+                }
+                if !within_share(llm, share, page.iter().chain(std::iter::once(passage))) {
+                    break;
+                }
+                page.push(passage.clone());
+            }
+            let cited_left = !page.is_empty();
+            let shown: Vec<_> = walk.shown.iter().chain(&page).cloned().collect();
+            let (retrieved, _) = references
+                .verification_page(&walk.claim.statement, &shown, |passages| {
+                    within_share(llm, share, page.iter().chain(passages))
                 })
                 .await?;
+            page.extend(retrieved);
             // A page that only shares the subject's common words, or only
-            // vector neighbours, ends the walk.
-            if !page
-                .iter()
-                .any(|passage| references.mentions_subject_of(&walk.claim.statement, &passage.text))
+            // vector neighbours, ends the walk; the section's own citations
+            // never do.
+            if !cited_left
+                && !page.iter().any(|passage| {
+                    references.mentions_subject_of(&walk.claim.statement, &passage.text)
+                })
             {
                 continue;
             }

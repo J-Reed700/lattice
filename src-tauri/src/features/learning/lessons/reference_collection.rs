@@ -531,6 +531,51 @@ impl<'a> ReferenceCollection<'a> {
             .collect()
     }
 
+    /// The source passages `quotes` copy, in quote order: each quote's span
+    /// in the first snapshot that contains it, exactly or apart from
+    /// typography and spacing, widened as verification widens a retrieved
+    /// passage. A quote no snapshot contains is skipped.
+    pub(in crate::features::learning) fn cited_passages(
+        &self,
+        quotes: &[&str],
+    ) -> Result<Vec<ReferencePassage>> {
+        let span = |source: &LearningSourceDto, start: usize, end: usize| ReferencePassage {
+            source_id: source.id.clone(),
+            text: source
+                .excerpt
+                .get(start..end)
+                .unwrap_or_default()
+                .to_owned(),
+            start_byte: start,
+            end_byte: end,
+            retrieval_kind: "cited".into(),
+            score: 0.0,
+        };
+        let mut found = Vec::new();
+        for quote in quotes
+            .iter()
+            .map(|quote| quote.trim())
+            .filter(|q| !q.is_empty())
+        {
+            let exact = self.sources.iter().find_map(|source| {
+                let start = source.excerpt.find(quote)?;
+                Some(span(source, start, start + quote.len()))
+            });
+            let restored = || {
+                self.sources.iter().find_map(|source| {
+                    let copied = crate::features::learning::outline_citations::exact_source_quote(
+                        &source.excerpt,
+                        quote,
+                    )?;
+                    let start = source.excerpt.find(copied)?;
+                    Some(span(source, start, start + copied.len()))
+                })
+            };
+            found.extend(exact.or_else(restored));
+        }
+        self.verification_context(found)
+    }
+
     /// Verification needs nearby conditions as well as the matching paragraph.
     /// Keep retrieval ranking unchanged, then restore surrounding source bytes
     /// and remove overlapping windows so repeated hits do not crowd out sources.

@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 mod challenge;
+mod citations;
+use citations::{overlaps, section_citations, take_cited, Citations, CITED};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
@@ -73,7 +75,7 @@ use repair_loop::{repair_fingerprint, PendingRepair, RepairProgress};
 #[cfg(test)]
 use report::content_hash;
 pub(in crate::features::learning) use report::persist_report;
-const POLICY: &str = "lesson-evidence-v19";
+const POLICY: &str = "lesson-evidence-v20";
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
 const INVENTORY_POLICY: &str = "lesson-evidence-v7";
@@ -394,6 +396,7 @@ pub(in crate::features::learning) fn within_share<'p>(
 /// then its top-ranked passages, as many as its share of a batch call holds
 /// when `sharing` claims share the call. Deeper pages follow only for a
 /// claim the first page leaves unsupported (see `evidence_checks`).
+#[cfg(test)]
 async fn evidence_for(
     llm: &dyn LLMPort,
     claim: &str,
@@ -401,6 +404,22 @@ async fn evidence_for(
     references: &ReferenceCollection<'_>,
     observations: &[execution::Observation],
     sharing: usize,
+) -> Result<Vec<EvidencePassage>> {
+    first_page(llm, claim, unit, references, observations, sharing, &[]).await
+}
+
+/// [`evidence_for`] with the passages the claim's section cites placed first,
+/// in citation order while they fit its share; the rest of the share is
+/// filled with retrieved passages that overlap none of them. Cited passages
+/// that do not fit lead the claim's next page.
+async fn first_page(
+    llm: &dyn LLMPort,
+    claim: &str,
+    unit: usize,
+    references: &ReferenceCollection<'_>,
+    observations: &[execution::Observation],
+    sharing: usize,
+    cited: &[EvidencePassage],
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = Vec::new();
     for observation in observations
@@ -421,8 +440,9 @@ async fn evidence_for(
     // Execution output must not erase retrieved references when it is lengthy.
     // The checker batches by its actual context budget, not a character count.
     let share = claim_share(llm, claim, sharing);
+    let shown = take_cited(llm, share, &mut evidence, cited);
     let (page, _) = references
-        .verification_page(claim, &[], |passages| {
+        .verification_page(claim, &shown, |passages| {
             within_share(llm, share, evidence.iter().chain(passages))
         })
         .await?;
@@ -435,13 +455,22 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
     // Retrieval still chooses the current evidence, including conflicts. Once
     // selected, use a stable order for BOTH the actual judge input and its key.
     // Corpus-dependent ranking changes must not repeat an identical comparison.
+    // The section's own cited passages come first.
     evidence.sort_by(|a, b| {
-        (&a.source_id, a.start_byte, a.end_byte, &a.text).cmp(&(
-            &b.source_id,
-            b.start_byte,
-            b.end_byte,
-            &b.text,
-        ))
+        (
+            a.retrieval_kind != CITED,
+            &a.source_id,
+            a.start_byte,
+            a.end_byte,
+            &a.text,
+        )
+            .cmp(&(
+                b.retrieval_kind != CITED,
+                &b.source_id,
+                b.start_byte,
+                b.end_byte,
+                &b.text,
+            ))
     });
 }
 
@@ -670,8 +699,15 @@ async fn check_evidence(
             ));
         }
     }
-    let results =
-        evidence_checks::check(llm, references, &inventory, &executions, completed).await?;
+    let results = evidence_checks::check_with_citations(
+        llm,
+        references,
+        &inventory,
+        &executions,
+        completed,
+        &section_citations(candidate, references)?,
+    )
+    .await?;
     let findings: Vec<_> = results
         .into_iter()
         .map(|(_, key, finding, _)| {
