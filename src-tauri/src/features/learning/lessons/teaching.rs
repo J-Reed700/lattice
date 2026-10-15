@@ -195,6 +195,167 @@ fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
     restored
 }
 
+fn content_terms(text: &str) -> std::collections::HashSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 4)
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Whole-sentence byte ranges of `text`; a line break also ends a sentence.
+fn sentence_spans(text: &str) -> Vec<(usize, usize)> {
+    let characters: Vec<(usize, char)> = text.char_indices().collect();
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for (position, (offset, character)) in characters.iter().enumerate() {
+        let ends = match character {
+            '\n' => true,
+            '.' | '!' | '?' => characters
+                .get(position + 1)
+                .is_none_or(|(_, next)| next.is_whitespace()),
+            _ => false,
+        };
+        if ends {
+            let end = offset + character.len_utf8();
+            if !text[start..end].trim().is_empty() {
+                spans.push((start, end));
+            }
+            start = end;
+        }
+    }
+    if !text[start..].trim().is_empty() {
+        spans.push((start, text.len()));
+    }
+    spans
+}
+
+/// The run of one to four whole sentences of `excerpt` that shares the largest
+/// share of `target`'s terms and passes the quote rules. This chooses
+/// provenance text for a citation, never evidence: every factual claim is
+/// checked separately against independently retrieved passages before
+/// publication.
+fn nearest_passage_span(excerpt: &str, target: &str) -> Option<(f64, usize, String)> {
+    let wanted = content_terms(target);
+    if wanted.is_empty() {
+        return None;
+    }
+    let spans = sentence_spans(excerpt);
+    let mut best: Option<(f64, usize, String)> = None;
+    for first in 0..spans.len() {
+        for last in first..spans.len().min(first + 4) {
+            let text = excerpt[spans[first].0..spans[last].1].trim();
+            if text.chars().count() > crate::features::learning::generation::MAX_QUOTE_CHARS {
+                break;
+            }
+            if crate::features::learning::generation::validate_excerpt_quote(text, excerpt).is_err() {
+                continue;
+            }
+            let shared = content_terms(text).intersection(&wanted).count();
+            let share = shared as f64 / wanted.len() as f64;
+            if best.as_ref().is_none_or(|(top, _, kept)| share > *top || (share == *top && text.len() < kept.len())) {
+                best = Some((share, shared, text.to_owned()));
+            }
+        }
+    }
+    best
+}
+
+/// Every text of a lesson block or question except its citation.
+fn item_text(item: &Value) -> String {
+    let mut parts = Vec::new();
+    for (key, value) in item.as_object().into_iter().flatten() {
+        if matches!(key.as_str(), "quote" | "kind" | "id") {
+            continue;
+        }
+        match value {
+            Value::String(text) => parts.push(text.clone()),
+            Value::Array(values) => parts.extend(values.iter().filter_map(Value::as_str).map(str::to_owned)),
+            _ => {}
+        }
+    }
+    parts.join(" ")
+}
+
+/// After the author has had its chance to correct its quotations, cite the
+/// real passage it meant instead of discarding the lesson: the span closest
+/// to its quotation (at least 60% of its terms) in the cited or another
+/// supplied excerpt, otherwise the span that shares the most terms (at least
+/// two) with the item itself. Citations are provenance; the final review below and claim
+/// verification still check every claim before anything is published.
+fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
+    let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
+        return 0;
+    };
+    let excerpts: Vec<(u64, &str)> = sources
+        .iter()
+        .filter_map(|source| {
+            Some((
+                source.get("sourceIndex")?.as_u64()?,
+                source.get("excerpt")?.as_str()?,
+            ))
+        })
+        .collect();
+    if excerpts.is_empty() {
+        return 0;
+    }
+    let mut changed = 0;
+    for field in ["blocks", "questions"] {
+        for item in candidate
+            .get_mut(field)
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            let index = item.get("sourceIndex").and_then(Value::as_u64);
+            let quote = item
+                .get("quote")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let valid = index
+                .and_then(|index| excerpts.iter().find(|(source, _)| *source == index))
+                .is_some_and(|(_, excerpt)| {
+                    crate::features::learning::generation::validate_excerpt_quote(&quote, excerpt)
+                        .is_ok()
+                });
+            if valid {
+                continue;
+            }
+            let nearest = |target: &str, minimum: f64, terms: usize| {
+                excerpts
+                    .iter()
+                    .filter_map(|(source, excerpt)| {
+                        nearest_passage_span(excerpt, target)
+                            .filter(|(_, shared, _)| *shared >= terms)
+                            .map(|(share, _, text)| (share, *source, text))
+                    })
+                    // The cited source wins a tie.
+                    .max_by(|a, b| {
+                        a.0.partial_cmp(&b.0)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| (Some(a.1) == index).cmp(&(Some(b.1) == index)))
+                    })
+                    .filter(|(share, _, _)| *share >= minimum && *share > 0.0)
+            };
+            let own_text = item_text(item);
+            let Some((_, source, text)) = (!quote.trim().is_empty())
+                .then(|| nearest(&quote, 0.6, 1))
+                .flatten()
+                .or_else(|| nearest(&own_text, 0.0, 2))
+            else {
+                continue;
+            };
+            if let Some(object) = item.as_object_mut() {
+                object.insert("sourceIndex".into(), json!(source));
+                object.insert("quote".into(), json!(text));
+                changed += 1;
+                tracing::info!(field, source, "Cited the nearest real passage for a quotation the author could not match");
+            }
+        }
+    }
+    changed
+}
+
 fn structural_issues(schema: &Value, candidate: &str) -> Result<Vec<String>> {
     let value: Value = match serde_json::from_str(candidate) {
         Ok(value) => value,
@@ -450,6 +611,16 @@ async fn review_material(
                     restored,
                     "Restored lesson quotation typography from source bytes"
                 );
+            }
+        }
+        if attempt > 0 && !is_outline {
+            let reanchored = reanchor_lesson_quotes(&mut candidate_value, &authoring_context);
+            if reanchored > 0 {
+                crate::features::learning::lesson_progress::stage(
+                    "Citing the saved passages the revised quotations referred to",
+                );
+                candidate = serde_json::to_string(&candidate_value)?;
+                crate::features::learning::lesson_drafts::save(&candidate).await?;
             }
         }
         if let Some(references) = &references {
@@ -787,6 +958,51 @@ mod citation_tests {
         .await?;
         assert_eq!(serde_json::from_str::<Value>(&result)?, corrected);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_paraphrased_repaired_quotation_is_cited_as_the_real_passage() -> Result<()> {
+        let model = ScriptedModel {
+            outputs: Mutex::new(vec![approval().to_string(), json!({"edits":[{"path":"/blocks/0/quote","before":"An invented quotation that does not appear in the selected source.","after":"This saved reference describes exactly how the example tool behaves."}]}).to_string(), approval().to_string()].into()),
+            prompts: Mutex::new(Vec::new()),
+        };
+        let result = review_and_repair(
+            &model,
+            LESSON_REPAIR_SYSTEM,
+            &context().to_string(),
+            &json!({"type":"object"}),
+            lesson("An invented quotation that does not appear in the selected source.").to_string(),
+            4000,
+        )
+        .await?;
+        assert_eq!(serde_json::from_str::<Value>(&result)?, lesson(EXCERPT));
+        // The final review saw the real passage, not the paraphrase.
+        let prompts = model.prompts.lock().unwrap();
+        assert!(prompts.last().unwrap().contains(EXCERPT));
+        Ok(())
+    }
+
+    #[test]
+    fn reanchoring_prefers_the_quote_then_the_item_and_never_invents_a_relation() {
+        let authoring = json!({"sources":[
+            {"sourceIndex":0,"excerpt":"Navigation home page. The cache stores computed values so repeated requests return quickly."},
+            {"sourceIndex":1,"excerpt":"Replication copies each write to several machines so a single failure loses nothing."}
+        ]});
+        // A paraphrase of a sentence in another source moves to that source.
+        let mut candidate = json!({"blocks":[{"body":"Why replicas matter.","sourceIndex":0,"quote":"Replication copies every write to several machines so one failure loses nothing."}],"questions":[]});
+        assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+        assert_eq!(candidate["blocks"][0]["sourceIndex"], 1);
+        assert_eq!(candidate["blocks"][0]["quote"], "Replication copies each write to several machines so a single failure loses nothing.");
+        // No usable quote: the item's own text chooses the passage.
+        let mut candidate = json!({"blocks":[{"body":"A cache returns repeated requests quickly from stored values.","sourceIndex":null,"quote":""}],"questions":[]});
+        assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+        assert_eq!(candidate["blocks"][0]["sourceIndex"], 0);
+        assert_eq!(candidate["blocks"][0]["quote"], "The cache stores computed values so repeated requests return quickly.");
+        // Nothing in common with any excerpt: left alone for the strict check.
+        let mut candidate = json!({"blocks":[{"body":"Unrelated material.","sourceIndex":0,"quote":"Completely different wording appears here instead."}],"questions":[]});
+        let before = candidate.clone();
+        assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 0);
+        assert_eq!(candidate, before);
     }
 
     #[tokio::test]
