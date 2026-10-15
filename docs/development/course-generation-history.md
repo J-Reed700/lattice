@@ -1,8 +1,8 @@
 # Course generation: live run history
 
-Every live course-generation run of 2026-10-14 is kept under `artifacts/course-e2e-2026-10-14/` (gitignored). Each run used a fresh throwaway SQLite database, but the real Qwen llama-server and real web search. Runs were started with `run-all.sh <binary> <label>` or `run-requests.sh <binary> <label> <requests-dir>` in that folder, which call the ignored test `live_topic_course_passes_review_and_prepares_its_first_lesson` with `LATTICE_LLAMACPP_SETTINGS`, `LATTICE_COURSE_REQUEST` and `LATTICE_COURSE_ARTIFACTS`. Those scripts are now `scripts/live-course-e2e.sh` in the repo, with the requests in `evals/courses/requests/`. For how to run them, see [course-generation-testing.md](course-generation-testing.md).
+Every live course-generation run is kept under `artifacts/course-e2e-<date>/` (gitignored): the 2026-10-14 runs in `course-e2e-2026-10-14/`, the acceptance runs of 2026-10-15 in `course-e2e-2026-10-15/` (their binaries are in `course-e2e-2026-10-14/bin/`). Each run used a fresh throwaway SQLite database, but the real Qwen llama-server and real web search. Runs were started with `run-all.sh <binary> <label>` or `run-requests.sh <binary> <label> <requests-dir>` in that folder, which call the ignored test `live_topic_course_passes_review_and_prepares_its_first_lesson` with `LATTICE_LLAMACPP_SETTINGS`, `LATTICE_COURSE_REQUEST` and `LATTICE_COURSE_ARTIFACTS`. Those scripts are now `scripts/live-course-e2e.sh` in the repo, with the requests in `evals/courses/requests/`. For how to run them, see [course-generation-testing.md](course-generation-testing.md).
 
-All times are 2026-10-14, local time (UTC-5). "Request" is the .NET interview request (`requests/1-dotnet-interview.json`) unless stated. Postgres, music theory and system design requests are now in `requests-later/`.
+All times are local (UTC-5); dates are 2026-10-14 unless stated. "Request" is the .NET interview request (`requests/1-dotnet-interview.json`) unless stated. Postgres, music theory and system design requests are now in `requests-later/`.
 
 ## Summary
 
@@ -18,6 +18,9 @@ All times are 2026-10-14, local time (UTC-5). "Request" is the .NET interview re
 | final-4 | 19:58-20:10 | same | system design fundamentals | Passed, 28 references, 49/49 linked | stopped mid-writing | not recorded | Stopped, no result |
 | final2-1 | 20:12-22:24 | `bin/final2-37c6ef57` (37c6ef57) | .NET | Passed, 36 references, 60/64 linked | Failed: context overflow in repair | 132 | Failed at lesson |
 | final2-2, -3, -4 | 22:24 | same | Postgres, music, system design | not run | not run | 0 | Never ran |
+| accept1 | 10-15 02:49-02:50 | `bin/accept-f90f440c` (f90f440c) | .NET | Failed at 81 s: server 503 while gathering references | not reached | 1 | Failed: model server outage |
+| accept2 | 10-15 02:52-06:14 | `bin/accept-f90f440c` (f90f440c) | .NET | Passed, 0 findings, 46 references, 39/64 linked | Stopped by the lead in evidence deepening (page 8, 22 claims) | 202 | Stopped, superseded |
+| accept3 | 10-15 from 06:14 | `bin/accept-09d5a552` (09d5a552) | .NET | running | running | running | Running |
 
 ## Runs
 
@@ -76,11 +79,32 @@ All times are 2026-10-14, local time (UTC-5). "Request" is the .NET interview re
   - No DDD source was among the 36 references. Research ran only after writing.
   - Repair sent all evidence of all failed claims of a section in one request.
   - The checker was right: the unresolved claims were statistics, intensifiers and explanations the sources do not state.
-- Next: 4f4a2ef6, "Gather a lesson's evidence by topic before writing it" (design section 15): plan topics, retrieve per topic, research before writing, an evidence pack bounded only by the model's window (the design's 48,000-token ceiling was not built), repair split by token budget. Design section 16 (label unsupported but uncontradicted claims as general knowledge) followed; as of this writing it is not committed.
-- Josh then cut the acceptance bar to this one request and moved the other three to `requests-later/`. No live run of the 4f4a2ef6 code is recorded here.
+- Next: 4f4a2ef6, "Gather a lesson's evidence by topic before writing it" (design section 15): plan topics, retrieve per topic, research before writing, an evidence pack bounded only by the model's window (the design's 48,000-token ceiling was not built), repair split by token budget. Design section 16 (label unsupported but uncontradicted claims as general knowledge) followed; it landed in 569a76f7.
+- Josh then cut the acceptance bar to this one request and moved the other three to `requests-later/`. The first runs of that code are accept2 and accept3 (2026-10-15).
 
 ### final2-2, final2-3, final2-4
 - Never ran. Each log is a 521-byte `Error: Io ... NotFound` from the test, 0 minutes, at 22:24. `run-all.sh` expands `requests/*.json` once at the start; the three request files were moved to `requests-later/` at 21:10, so they were gone when the loop reached them. This explanation is inferred from the file times and the script; it was not logged.
+
+### accept1
+- Run with `scripts/live-course-e2e.sh`, binary `accept-f90f440c`, the acceptance request only.
+- Outline: planned the reference searches (one model call), then failed at 81 s in `GatheringReferences`: "llama.cpp returned HTTP 503 Service Unavailable from /v1/chat/completions". The server was reloading. The test exited 101 after one recorded call.
+- Cause: outline generation failed fast on any model error; only lesson jobs deferred transient errors.
+- Next: 04021807 (`patient_model.rs`): in the app, outline generation and Repair wait out transient errors, retrying after 30 s growing to 5 min. The live test calls the service directly and does not use that wrapper, so a 503 still fails a test run.
+
+### accept2
+- Binary `accept-f90f440c`, started 02:52, the acceptance request only.
+- Outline: Passed at 1,313 s (about 22 min). 10 subtopics and 30 searches gathered 46 references. Linking packed all 64 items into one 66k-token call (call 13: 65,998 input tokens) and linked 39 of 64 (`removed_unchosen` 34). One full review of 8 modules, 0 findings.
+- Lesson 1, "Recall Drill: DDD, CQRS, and SOLID Under Pressure":
+  - Evidence: 5 topics planned; 3 uncovered against the saved references (90 passages, depth 17). Research before writing saved 9 references, after which 0 were uncovered (149 passages).
+  - Pack: 149 passages from 38 sources in a room of 80,615 tokens. The draft call took 69,399 input tokens (answer step 73,954).
+  - Claims: 15 sections extracted, 95 claims. The first page settled 53; 42 stayed unsupported.
+  - Deepening (pages 2 to 7) settled 7, 4, 4, 1, 0 and 4 claims (42, 35, 31, 27, 26, 26 claims checked per round). Each round took 10 to 24 minutes, and the batch calls carried up to 106,310 input tokens.
+  - Names the lesson invented for its examples (`IOrderRepository` and similar) appeared in claims; no page can contain them, so those claims could not be supported, and the names kept walks going.
+- Stopped by the lead at 06:14 on page 8 with 22 claims, after 3h20m and 201 model calls, superseded by `accept-09d5a552`. No `result.json`.
+- Next: 09d5a552: extraction leaves invented example names out of claims; deepening runs another round only while the previous round settled a claim; the subject test ignores terms that appear in no passage or in every passage; linking returns to batches of 8 items.
+
+### accept3
+- Binary `accept-09d5a552`, started 06:14, the acceptance request only. **Running.** Result to be added.
 
 ## What the runs taught
 
@@ -92,3 +116,5 @@ All times are 2026-10-14, local time (UTC-5). "Request" is the .NET interview re
 - A writer given thin evidence invents specifics, and repair that sends everything overflows the context. final2-1 failed on both after 132 minutes. Fixed in 4f4a2ef6 (evidence by topic before writing; repair split by token budget).
 - A single live run is slow and a long batch breaks on state changes. final2-1 took 132 minutes, and final2-2 to -4 failed because their request files moved mid-batch. Hence one acceptance request, and `requests-later/` for the rest.
 - A lesson retry can reuse the saved draft and saved claim checks, so a fix to the later stages can be tested without rerunning the outline (lesson-fix-1, `live_small_lesson_resumes_to_ready`).
+- A model server can disappear for a minute while it reloads. A run that fails on the first 503 measures the server, not the pipeline (accept1). Fixed for the app in 04021807; the live test still fails fast.
+- Paging through evidence must stop when it stops paying. accept2 spent three hours deepening rounds that settled 0 to 7 claims each, and invented example names made some claims unsupportable by any page. Fixed in 09d5a552.

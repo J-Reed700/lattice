@@ -19,7 +19,7 @@ cd src-tauri
 CARGO_INCREMENTAL=0 cargo test --lib features::learning -j 2
 ```
 
-At `62b3151f` this ran 414 tests, all passing. Use a narrower filter while working, for example `outline_linking`, `outline_review`, `outline_repair`, `generation::evidence`, `content_verification::research`, `course_generation`. Keep `-j 2` and `CARGO_INCREMENTAL=0`: the build cache has filled the disk before, and many agents may share the machine. A fresh worktree needs `src-tauri/binaries/` (the sidecar stub) and `dist/` copied from another worktree before the lib test binary builds.
+At `09d5a552` this runs 448 tests, all passing (414 at `62b3151f`). Use a narrower filter while working, for example `outline_linking`, `outline_review`, `outline_repair`, `generation::evidence`, `content_verification::research`, `evidence_paging`, `content_caps`, `patient_model`, `course_generation`. Keep `-j 2` and `CARGO_INCREMENTAL=0`: the build cache has filled the disk before, and many agents may share the machine. A fresh worktree needs `src-tauri/binaries/` (the sidecar stub) and `dist/` copied from another worktree before the lib test binary builds.
 
 Where the tests live (paths under `src-tauri/src/features/learning/`):
 
@@ -32,6 +32,11 @@ Where the tests live (paths under `src-tauri/src/features/learning/`):
 | Outline loop end to end (scripted) | `lessons/course_generation_tests.rs`, `planning/generation_context_tests.rs` |
 | Lesson evidence before writing | `lessons/generation/evidence_tests.rs`, `lessons/generation/tests.rs` |
 | Reason-first calls and checkpoints | `lessons/structured_call_tests.rs` |
+| No fixed caps: retrieval, catalog, web paging, research, assessments, tutor context | `content_caps_tests.rs` |
+| Outline outage wait | `patient_model_tests.rs` |
+| Evidence paging and deepening, subject test | `lessons/content_verification/evidence_paging_tests.rs`, `lessons/reference_collection/tests.rs` |
+| General-knowledge gate | `lessons/content_verification/general_knowledge.rs` (inline), `content_verification/tests.rs` |
+| Repair progress stop | `lessons/content_verification/repair_progress_tests.rs` |
 | Claim extraction, coverage, checks, research, repair, resume | `lessons/content_verification/*_tests.rs`, `tests.rs`, and the `*_cases.json` fixtures beside them |
 | Quote re-anchoring | `lessons/teaching/citation_tests.rs` |
 | Retrieval | `lessons/reference_collection/tests.rs` |
@@ -69,6 +74,7 @@ All live tests are `#[ignore]` lib tests in `src-tauri/src/features/learning/les
 - **Model:** the llama.cpp server configured in the settings file named by `LATTICE_LLAMACPP_SETTINGS` (its `settings.llm` block). On Josh's machine this is his real remote Qwen3.8-27B llama-server with a 131k window. It is single-slot: while a run is going, the app's own chat queues behind it, and a run takes the server for hours.
 - **Web:** real searches (DuckDuckGo, Bing) and real page fetches through `WebService`, with its cache in `<run>/web/`.
 - **Disk:** every model call is recorded (`call-N.json`), so a run directory can reach hundreds of files.
+- **Outages:** the test calls the outline service directly, without the app's `PatientModel` wrapper, so a 503 while the server reloads fails the outline stage at once (accept1 failed this way after 81 seconds). The lesson job inside the test runs through the job runtime and does defer transient errors. Check the server is up and not reloading before a run.
 
 Run one live course at a time, and only one local llama-server at a time.
 
@@ -153,6 +159,7 @@ Never print a whole log or call file; they are large.
 RUN=artifacts/course-e2e-2026-10-14/final2-1-dotnet-interview
 grep -a -E 'LIVE COURSE|panicked at|Lesson preparation stage changed' $RUN.log | tail -20
 jq '{status, error, progressMessage}' $RUN/result.json
+grep -a -o 'Checking [0-9]* unsupported claims against their next page of evidence (page [0-9]*)' $RUN.log   # deepening rounds
 sqlite3 $RUN/course.sqlite "select key, length(data_json) from job_checkpoints order by updated_at" | tail
 sqlite3 $RUN/course.sqlite "select state_json from learning_outline_drafts" | jq '.review | {status, note, issues: (.issues|length)}'
 # the largest requests
@@ -214,7 +221,7 @@ mkdir -p /tmp/accept && cp evals/courses/requests/1-dotnet-interview.json /tmp/a
 scripts/live-course-e2e.sh <binary> accept-1 /tmp/accept
 ```
 
-The run passes when its log ends with `LIVE COURSE CONFIRMED` and `course-summary.json` exists. Not met as of 2026-10-15: the last attempt (`final2-1`) passed the outline and failed lesson 1. The §15 fix (`4f4a2ef6`) and the §16 labelling have not yet run live.
+The run passes when its log ends with `LIVE COURSE CONFIRMED` and `course-summary.json` exists. Not met as of 2026-10-15: accept2 (`f90f440c`) passed the outline and was stopped during lesson 1's evidence deepening after 3h20m; accept3 (`09d5a552`) is running. No run has yet reached the §16 general-knowledge gate.
 
 Also record per run: wall time per stage, the outline's linked-item count, references gathered, claims checked, claims left unsupported, and the largest request in tokens.
 
