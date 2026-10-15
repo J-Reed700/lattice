@@ -324,6 +324,7 @@ async fn live_source_passage_judgments() -> Result<()> {
     for case in cases {
         let passages: Vec<String> = if let Some(references) = &references {
             crate::features::learning::content_verification::live_retrieved_passages(
+                &model,
                 case["claim"].as_str().unwrap(),
                 references,
             )

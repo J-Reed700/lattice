@@ -201,7 +201,6 @@ pub async fn generate_learning_practical_activity(
         .sources
         .iter()
         .filter_map(|source| source.active_version_id.clone())
-        .take(12)
         .collect::<Vec<_>>();
     if source_ids.is_empty()
         && LearningRepository::new(container.db_pool().clone())

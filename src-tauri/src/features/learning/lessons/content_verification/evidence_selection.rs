@@ -294,10 +294,24 @@ pub(super) async fn select(
                 // relevant new sources. Keep the old comparison inputs verbatim.
                 // Do not trim new evidence to the old character budget: that could
                 // drop counterevidence. The checker enforces its real context size.
+                let found = references
+                    .retrieve_for_verification_within(&claim.statement, |passages| {
+                        check_fits(
+                            llm,
+                            &claim.statement,
+                            evidence
+                                .iter()
+                                .chain(
+                                    passages
+                                        .iter()
+                                        .filter(|p| added.contains(p.source_id.as_str())),
+                                )
+                                .map(|passage| passage.text.clone()),
+                        )
+                    })
+                    .await?;
                 evidence.extend(
-                    references
-                        .retrieve_for_verification(&claim.statement, 8)
-                        .await?
+                    found
                         .into_iter()
                         .filter(|passage| added.contains(passage.source_id.as_str())),
                 );
@@ -305,7 +319,7 @@ pub(super) async fn select(
             (evidence, saved.sources != current)
         } else {
             // This preserves exact keys for existing durable factual receipts.
-            let evidence = evidence_for(&claim.statement, unit, references, executions)
+            let evidence = evidence_for(llm, &claim.statement, unit, references, executions)
                 .await?
                 .into_iter()
                 .filter(|passage| passage.retrieval_kind != "execution")

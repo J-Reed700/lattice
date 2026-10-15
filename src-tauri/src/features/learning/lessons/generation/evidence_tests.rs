@@ -225,3 +225,19 @@ fn the_pack_goes_round_robin_across_topics_within_the_room_without_cutting_passa
         5
     );
 }
+
+#[test]
+fn a_short_collection_is_measured_per_character_not_as_one_passage() {
+    let llm = scripted(Vec::new());
+    let short =
+        ReferenceCollection::lexical(&[source("a", "Forty characters of saved reference text.")])
+            .unwrap();
+    let long_text = "Saved reference text. ".repeat(PASSAGE_CHARS);
+    let long = ReferenceCollection::lexical(&[source("b", &long_text)]).unwrap();
+    // A full passage of either text costs about the same tokens.
+    let full = llm.count_tokens(&"x".repeat(PASSAGE_CHARS));
+    assert!(passage_tokens(&llm, &short).abs_diff(full) <= full / 20);
+    assert!(passage_tokens(&llm, &long).abs_diff(full) <= full / 20);
+    let topics = vec![topic("Saved reference")];
+    assert_eq!(depth(&llm, &short, &topics, 10 * full), 10);
+}

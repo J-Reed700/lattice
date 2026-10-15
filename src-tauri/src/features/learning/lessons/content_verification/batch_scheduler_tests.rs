@@ -602,7 +602,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     };
     let input = inventory(8);
     let claim = &input.units[7].claims[0];
-    let evidence = evidence_for(&claim.statement, 7, &references, &[]).await?;
+    let evidence = evidence_for(&model, &claim.statement, 7, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(7, claim, &evidence));
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
         let mut retained=ClaimChecks::default();let candidate=candidate(GOOD);

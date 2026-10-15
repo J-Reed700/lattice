@@ -394,7 +394,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         }],
     };
     let claim = &inventory.units[0].claims[0];
-    let evidence = evidence_for(GOOD, 0, &references, &[]).await?;
+    let evidence = evidence_for(&model, GOOD, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let candidate = candidate(GOOD);
     // The server cannot finish the group, so the claims are checked one at a

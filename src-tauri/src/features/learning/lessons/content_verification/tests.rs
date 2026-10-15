@@ -454,6 +454,9 @@ mod coverage_resume_tests;
 #[path = "coverage_adoption_tests.rs"]
 mod coverage_adoption_tests;
 
+#[path = "repair_progress_tests.rs"]
+mod repair_progress_tests;
+
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
 
@@ -671,6 +674,7 @@ fn pending_repairs_require_identical_content_sources_and_instructions() -> Resul
         defects: 1,
         issue_fingerprint: Some(repair_issue_fingerprint(&[BAD.into()])),
         context: json!({"candidate":original,"failedClaims":[{"statement":BAD}]}),
+        progress: Default::default(),
     };
     let restored: PendingRepair = serde_json::from_str(&serde_json::to_string(&pending)?)?;
     assert!(restored.matches(&model, "instructions", &schema, &original, &references));
@@ -1085,6 +1089,59 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
     Ok(())
 }
 
+#[tokio::test]
+async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result<()> {
+    let sources: Vec<_> = (0..12)
+        .map(|i| LearningSourceDto {
+            id: format!("source-{i}"),
+            title: format!("Reference {i}"),
+            url: None,
+            excerpt: format!("DictReader whitespace handling is described in note {i}."),
+            acquired_at: 1,
+        })
+        .collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let evidence = evidence_for(
+        &Model::new(),
+        "DictReader whitespace handling",
+        0,
+        &references,
+        &[],
+    )
+    .await?;
+    assert_eq!(evidence.len(), 12, "not the former eight");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_gate_passes_a_lesson_whose_only_unsupported_claims_are_general_knowledge() -> Result<()>
+{
+    let model = Model::new();
+    let (raw, report) = verify_and_repair(
+        &model,
+        "{}",
+        &json!({"type":"object"}),
+        candidate("A short factual definition.").to_string(),
+        &[],
+        3000,
+    )
+    .await?;
+    assert!(report.issues.is_empty());
+    assert!(report
+        .findings
+        .iter()
+        .all(|f| f.verdict == ClaimVerdict::Unsupported && f.general_knowledge()));
+    assert!(
+        !*model.repaired.lock().unwrap(),
+        "general knowledge is never repaired"
+    );
+    assert_eq!(raw, candidate("A short factual definition.").to_string());
+    // An absolute in the same unsupported claim is still an issue.
+    let absolute = verify(&model, &candidate("A definition always applies."), &[]).await?;
+    assert!(!absolute.issues.is_empty());
+    Ok(())
+}
+
 #[test]
 fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     let content = units(&candidate(GOOD)).unwrap();
@@ -1148,7 +1205,9 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
 #[tokio::test]
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();
-    let no_evidence = verify(&model, &candidate("A short factual definition."), &[]).await?;
+    // Without evidence a claim stating a figure stays an issue; a plain one
+    // is kept as general knowledge (see the gate test below).
+    let no_evidence = verify(&model, &candidate("A short definition from 2019."), &[]).await?;
     assert_eq!(no_evidence.findings[0].verdict, ClaimVerdict::Unsupported);
     assert!(!no_evidence.issues.is_empty());
     let offline = Model {

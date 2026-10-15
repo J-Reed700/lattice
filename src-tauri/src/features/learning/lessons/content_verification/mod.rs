@@ -26,6 +26,7 @@ mod claim_reuse;
 mod evidence_checks;
 mod evidence_selection;
 mod execution;
+mod general_knowledge;
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
@@ -68,14 +69,14 @@ pub(in crate::features::learning) use repair_loop::{
 };
 #[cfg(test)]
 use repair_loop::{repair_context, repair_issue_fingerprint};
-use repair_loop::{repair_fingerprint, PendingRepair};
+use repair_loop::{repair_fingerprint, PendingRepair, RepairProgress};
 #[cfg(test)]
 use report::content_hash;
 pub(in crate::features::learning) use report::persist_report;
-const POLICY: &str = "lesson-evidence-v17";
+const POLICY: &str = "lesson-evidence-v18";
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v5";
+const INVENTORY_POLICY: &str = "lesson-evidence-v6";
 
 pub(in crate::features::learning) async fn normalize_example_fences(
     llm: &dyn LLMPort,
@@ -334,7 +335,29 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     }
     Ok(())
 }
+/// Whether `passages`, with the claim, fit one strict claim check beside its
+/// answer: the checker's window, not a count, bounds a claim's evidence.
+pub(in crate::features::learning) fn check_fits(
+    llm: &dyn LLMPort,
+    claim: &str,
+    passages: impl Iterator<Item = String>,
+) -> bool {
+    ClaimChecker::new(
+        llm,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Strict,
+    )
+    .batch_fits(&[
+        lattice_core::application::services::claim_verification::LocatedClaim {
+            claim: claim.to_owned(),
+            passages: passages.collect(),
+        },
+    ])
+}
+
 async fn evidence_for(
+    llm: &dyn LLMPort,
     claim: &str,
     unit: usize,
     references: &ReferenceCollection<'_>,
@@ -357,8 +380,21 @@ async fn evidence_for(
     // Each claim searches the entire pinned collection independently of the
     // author's selected passages. Contradictory passages are not filtered out.
     // Execution output must not erase retrieved references when it is lengthy.
-    // The checker batches by its actual context budget, not a character count.
-    evidence.extend(references.retrieve_for_verification(claim, 8).await?);
+    // The checker batches by its actual context budget, not a character count,
+    // and a claim takes as many passages as one check of it can hold.
+    let found = references
+        .retrieve_for_verification_within(claim, |passages| {
+            check_fits(
+                llm,
+                claim,
+                evidence
+                    .iter()
+                    .chain(passages)
+                    .map(|passage| passage.text.clone()),
+            )
+        })
+        .await?;
+    evidence.extend(found);
     canonicalize_evidence(&mut evidence);
     Ok(evidence)
 }
@@ -379,10 +415,11 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
 
 #[cfg(test)]
 pub(in crate::features::learning) async fn live_retrieved_passages(
+    llm: &dyn LLMPort,
     claim: &str,
     references: &ReferenceCollection<'_>,
 ) -> Result<Vec<String>> {
-    Ok(evidence_for(claim, 0, references, &[])
+    Ok(evidence_for(llm, claim, 0, references, &[])
         .await?
         .into_iter()
         .map(|passage| passage.text)
@@ -610,8 +647,10 @@ async fn check_evidence(
             finding
         })
         .collect();
+    // An unsupported claim without invented specifics is kept as general
+    // knowledge, not checked against a source; it is never an issue.
     for finding in &findings {
-        if finding.verdict != ClaimVerdict::Supported {
+        if finding.verdict != ClaimVerdict::Supported && !finding.general_knowledge() {
             issues.push(format!(
                 "Section {}: {} — {}",
                 finding.unit + 1,

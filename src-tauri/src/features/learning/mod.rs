@@ -79,3 +79,5 @@ mod tests;
 
 #[cfg(test)]
 mod consistency_tests;
+#[cfg(test)]
+mod content_caps_tests;

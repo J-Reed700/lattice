@@ -260,10 +260,10 @@ pub(super) async fn generate_from_conversation(
     Ok(cards)
 }
 
-/// Share the prompt budget across documents and leave room for the answers.
+/// Share the prompt budget across documents, round-robin, and leave room
+/// for the answers: the window, not a count, decides how many passages.
 pub(super) fn bounded_sources(
     sources: &[StudySourceDto],
-    max_sources: usize,
     mut token_budget: usize,
     count_tokens: impl Fn(&str) -> usize,
 ) -> Vec<StudySourceDto> {
@@ -284,7 +284,7 @@ pub(super) fn bounded_sources(
         for group in &groups {
             if let Some(source) = group.get(index) {
                 let tokens = count_tokens(&source.excerpt) + count_tokens(&source.file_name) + 64;
-                if tokens <= token_budget && selected.len() < max_sources {
+                if tokens <= token_budget {
                     selected.push((*source).clone());
                     token_budget -= tokens;
                 }
@@ -293,10 +293,6 @@ pub(super) fn bounded_sources(
     }
     selected
 }
-
-/// Ceiling on the passages one deck request carries, below what a large
-/// window would allow, so its cost stays bounded.
-const SOURCE_EVIDENCE_CEILING: usize = 6000;
 
 fn deck_prompt(
     request: &GenerateStudyDeckRequestDto,
@@ -316,10 +312,8 @@ pub(super) async fn generate(
     let output_tokens = request.count * 400;
     let mut skeleton = GroundedRequest::new(system, deck_prompt(request, Vec::new())?);
     skeleton.output_tokens = output_tokens;
-    let room = model_call::source_room(llm, &skeleton, SOURCE_EVIDENCE_CEILING);
-    let sources = bounded_sources(sources, request.count * 2, room, |text| {
-        llm.count_tokens(text)
-    });
+    let room = model_call::source_room(llm, &skeleton, usize::MAX);
+    let sources = bounded_sources(sources, room, |text| llm.count_tokens(text));
     if sources.is_empty() {
         return Err(AppError::InvalidInput("The model context is too small for these passages and questions. Try fewer cards or increase the model context window.".into()));
     }

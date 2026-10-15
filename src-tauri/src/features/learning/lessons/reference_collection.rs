@@ -23,6 +23,9 @@ pub(in crate::features::learning) const PASSAGE_CHARS: usize = CHUNK_CHARS + 2 *
 const STEP_CHARS: usize = 900;
 /// Reciprocal-rank constant for merging library and keyword rankings.
 const RANK_K: usize = 60;
+/// How many passages a filled retrieval asks for first; it pages deeper,
+/// doubling, while everything found still fits.
+const FIRST_PAGE: usize = 16;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReferencePassage {
@@ -249,31 +252,50 @@ impl<'a> ReferenceCollection<'a> {
 
     /// Library hits and keyword hits come from disjoint sources, so they are
     /// merged by rank, each list contributing equally. Scores rank evidence
-    /// only; they are never a factual-correctness confidence.
+    /// only; they are never a factual-correctness confidence. The library is
+    /// asked for more hits while overlaps keep `limit` from being reached.
     pub async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<ReferencePassage>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let limit = limit.clamp(1, 50);
-        let mut ranked: Vec<(Span, f64, &'static str)> = Vec::new();
-        if let Some(library) = self.library.filter(|_| !self.library_documents.is_empty()) {
-            let hits = library
-                .search(query, &self.library_documents, limit * 3)
-                .await?;
-            let spans = hits
-                .iter()
-                .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied());
-            for (rank, span) in spans.enumerate() {
-                ranked.push((span, 1.0 / (RANK_K + rank + 1) as f64, "hybrid"));
+        let limit = limit.max(1);
+        let keyword = self.keyword_ranking(query);
+        let mut fetch = limit;
+        loop {
+            let mut library_spans = Vec::new();
+            let mut exhausted = true;
+            if let Some(library) = self.library.filter(|_| !self.library_documents.is_empty()) {
+                let hits = library
+                    .search(query, &self.library_documents, fetch)
+                    .await?;
+                exhausted = hits.len() < fetch;
+                library_spans.extend(
+                    hits.iter()
+                        .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied()),
+                );
             }
+            let selected = self.merge(&library_spans, &keyword, limit)?;
+            if selected.len() >= limit || exhausted {
+                return Ok(selected);
+            }
+            fetch = fetch.saturating_mul(2);
         }
-        for (rank, span) in self
-            .keyword_ranking(query)
-            .into_iter()
-            .take(100)
-            .enumerate()
-        {
-            ranked.push((span, 1.0 / (RANK_K + rank + 1) as f64, "lexical_fallback"));
+    }
+
+    /// Merge library and keyword rankings by rank and widen each hit to
+    /// paragraph edges, each source byte at most once, up to `limit`.
+    fn merge(
+        &self,
+        library: &[Span],
+        keyword: &[Span],
+        limit: usize,
+    ) -> Result<Vec<ReferencePassage>> {
+        let mut ranked: Vec<(Span, f64, &'static str)> = Vec::new();
+        for (rank, span) in library.iter().enumerate() {
+            ranked.push((*span, 1.0 / (RANK_K + rank + 1) as f64, "hybrid"));
+        }
+        for (rank, span) in keyword.iter().enumerate() {
+            ranked.push((*span, 1.0 / (RANK_K + rank + 1) as f64, "lexical_fallback"));
         }
         // Equal ranks keep library hits ahead; the sort is stable.
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -320,6 +342,57 @@ impl<'a> ReferenceCollection<'a> {
         Ok(selected)
     }
 
+    /// Passages for `query`, best first, for as long as `fits` accepts them:
+    /// the caller's window decides how many, not a count. Retrieval pages
+    /// deeper while every passage found so far still fits.
+    pub(in crate::features::learning) async fn retrieve_within(
+        &self,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
+        self.fill(query, fits, Ok).await
+    }
+
+    /// Passages for verifying `query`, each widened to its surrounding source
+    /// text (see `verification_context`), filled to what `fits` accepts.
+    pub(in crate::features::learning) async fn retrieve_for_verification_within(
+        &self,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
+        self.fill(query, fits, |passages| self.verification_context(passages))
+            .await
+    }
+
+    async fn fill(
+        &self,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+        shape: impl Fn(Vec<ReferencePassage>) -> Result<Vec<ReferencePassage>>,
+    ) -> Result<Vec<ReferencePassage>> {
+        let mut depth = FIRST_PAGE;
+        loop {
+            let found = self.retrieve(query, depth).await?;
+            let exhausted = found.len() < depth;
+            let mut passages = shape(found)?;
+            // The longest prefix that fits; `fits` holds for shorter prefixes.
+            let (mut low, mut high) = (0, passages.len());
+            while low < high {
+                let middle = (low + high).div_ceil(2);
+                if fits(passages.get(..middle).unwrap_or_default()) {
+                    low = middle;
+                } else {
+                    high = middle - 1;
+                }
+            }
+            if low < passages.len() || exhausted {
+                passages.truncate(low);
+                return Ok(passages);
+            }
+            depth = depth.saturating_mul(2);
+        }
+    }
+
     /// BM25 over the keyword passages, best first.
     fn keyword_ranking(&self, query: &str) -> Vec<Span> {
         let query_terms = terms(query);
@@ -357,14 +430,6 @@ impl<'a> ReferenceCollection<'a> {
     /// Verification needs nearby conditions as well as the matching paragraph.
     /// Keep retrieval ranking unchanged, then restore surrounding source bytes
     /// and remove overlapping windows so repeated hits do not crowd out sources.
-    pub(in crate::features::learning) async fn retrieve_for_verification(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<ReferencePassage>> {
-        self.verification_context(self.retrieve(query, limit).await?)
-    }
-
     fn verification_context(
         &self,
         passages: Vec<ReferencePassage>,
@@ -454,9 +519,10 @@ impl<'a> ReferenceCollection<'a> {
                 .lines()
                 .filter(|line| line.trim_start().starts_with('#'))
             {
-                let title: String = line.chars().take(120).collect();
+                // Whole headings, as many as the catalog's share of the window holds.
+                let title = line.trim().to_owned();
                 let cost = llm.count_tokens(&serde_json::json!(title).to_string()) + 1;
-                if used + base + cost > budget || headings.len() >= 40 {
+                if used + base + cost > budget {
                     omitted = true;
                     continue;
                 }
@@ -477,6 +543,94 @@ impl<'a> ReferenceCollection<'a> {
             "omittedFromThisPrompt":self.sources.len()-entries.len(),"sources":entries,
             "scope":"A partial catalog for orientation. Retrieval searches all saved sources."})
     }
+}
+
+/// The room a request built with an empty snapshot list leaves for passages.
+pub(in crate::features::learning) fn snapshot_room(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    system: &str,
+    skeleton: &serde_json::Value,
+    output_tokens: usize,
+) -> usize {
+    let mut request =
+        lattice_core::application::services::grounded_generation::GroundedRequest::new(
+            system,
+            skeleton.to_string(),
+        );
+    request.output_tokens = output_tokens;
+    crate::features::learning::model_call::source_room(llm, &request, usize::MAX)
+}
+
+/// The passages of full source snapshots that `query` retrieves, grouped per
+/// snapshot, as many as `room` tokens hold. Requests that cite snapshots
+/// carry these instead of a character prefix of each text; a quote is still
+/// checked against the whole snapshot.
+pub(in crate::features::learning) async fn snapshot_passages(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    sources: &[crate::features::learning::dto::LearningSourceVersionDto],
+    query: &str,
+    room: usize,
+) -> Result<serde_json::Value> {
+    let documents: Vec<LearningSourceDto> = sources
+        .iter()
+        .map(|source| LearningSourceDto {
+            id: source.version.id.clone(),
+            title: source.version.title.clone(),
+            url: None,
+            excerpt: source.full_text.clone(),
+            acquired_at: 0,
+        })
+        .collect();
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let entry = |source: &crate::features::learning::dto::LearningSourceVersionDto,
+                 passages: &[&str]| {
+        serde_json::json!({"sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,"passages":passages})
+    };
+    let snapshot = |passage: &ReferencePassage| {
+        sources
+            .iter()
+            .find(|source| source.version.id == passage.source_id)
+    };
+    let passages = collection
+        .retrieve_within(query, |passages| {
+            let mut seen = HashSet::new();
+            passages
+                .iter()
+                .map(|passage| {
+                    llm.count_tokens(&serde_json::json!(passage.text).to_string())
+                        + 2
+                        + snapshot(passage)
+                            .filter(|source| seen.insert(source.version.id.as_str()))
+                            .map_or(0, |source| {
+                                llm.count_tokens(&entry(source, &[]).to_string()) + 2
+                            })
+                })
+                .sum::<usize>()
+                <= room
+        })
+        .await?;
+    let mut grouped: Vec<(
+        &crate::features::learning::dto::LearningSourceVersionDto,
+        Vec<&str>,
+    )> = Vec::new();
+    for passage in &passages {
+        let Some(source) = snapshot(passage) else {
+            continue;
+        };
+        match grouped
+            .iter_mut()
+            .find(|(known, _)| known.version.id == source.version.id)
+        {
+            Some((_, texts)) => texts.push(passage.text.as_str()),
+            None => grouped.push((source, vec![passage.text.as_str()])),
+        }
+    }
+    Ok(serde_json::Value::Array(
+        grouped
+            .iter()
+            .map(|(source, texts)| entry(source, texts))
+            .collect(),
+    ))
 }
 
 #[cfg(test)]

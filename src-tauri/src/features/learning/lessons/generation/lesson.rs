@@ -68,15 +68,17 @@ struct GeneratedQuestion {
     quote: String,
 }
 
-fn course_context(program: &LearningProgramDto, lesson_id: &str) -> serde_json::Value {
-    let sequence: Vec<_> = program.modules.iter().map(|m| json!({"title":m.title,"milestone":m.project,"prerequisites":m.prerequisite_module_ids,"outcomes":m.outcomes,"lessons":m.lessons.iter().map(|l|json!({"title":l.title,"objective":l.objective.chars().take(300).collect::<String>()})).collect::<Vec<_>>()})).collect();
+pub(super) fn course_context(program: &LearningProgramDto, lesson_id: &str) -> serde_json::Value {
+    // Whole objectives and every earlier recap: the writer's window, measured
+    // with this context in its prompt, decides what fits.
+    let sequence: Vec<_> = program.modules.iter().map(|m| json!({"title":m.title,"milestone":m.project,"prerequisites":m.prerequisite_module_ids,"outcomes":m.outcomes,"lessons":m.lessons.iter().map(|l|json!({"title":l.title,"objective":l.objective})).collect::<Vec<_>>()})).collect();
     let previous: Vec<_> = program
         .modules
         .iter()
         .flat_map(|m| m.lessons.iter())
         .take_while(|l| l.id != lesson_id)
         .collect();
-    let recaps: Vec<_> = previous.iter().rev().filter(|l|l.preparation == LearningPreparation::Ready).take(3).map(|l|json!({"title":l.title,"recap":l.blocks.iter().filter(|b|b.kind==LearningBlockKind::Recap).map(|b|b.body.chars().take(1600).collect::<String>()).collect::<Vec<_>>()})).collect();
+    let recaps: Vec<_> = previous.iter().rev().filter(|l|l.preparation == LearningPreparation::Ready).map(|l|json!({"title":l.title,"recap":l.blocks.iter().filter(|b|b.kind==LearningBlockKind::Recap).map(|b|b.body.as_str()).collect::<Vec<_>>()})).collect();
     json!({"curriculum":sequence,"recentTeaching":recaps})
 }
 

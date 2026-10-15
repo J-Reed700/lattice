@@ -168,7 +168,7 @@ async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_ap
         let collection = ReferenceCollection::lexical(&sources)?;
         let original = claims(1);
         let claim = &original.units[0].claims[0];
-        let evidence = evidence_for(&claim.statement, 0, &collection, &[]).await?;
+        let evidence = evidence_for(&model, &claim.statement, 0, &collection, &[]).await?;
         let passages: Vec<_> = evidence.iter().map(|p|(&p.source_id,&p.text,p.start_byte,p.end_byte)).collect();
         let comparison = digest(&json!({"unit":0,"claim":claim,"passages":passages}).to_string());
         lesson_drafts::record_checkpoint(&claim_receipt_key(&model,&comparison), json!({"verdict":"supported","reason":"Prior complete comparison","supporting_quote":claim.statement})).await?;
@@ -355,9 +355,11 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
 async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    // Long sources that rank equally: a claim's evidence fills the checker's
+    // window with some of them, so reordering the collection changes which.
     let mut sources = references(10);
-    for source in &mut sources {
-        source.excerpt = "mineral0 property0".into();
+    for (index, source) in sources.iter_mut().enumerate() {
+        source.excerpt = format!("mineral0 property0 note{index} ").repeat(3000);
     }
     let model = IncrementalModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
@@ -378,7 +380,7 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
             acquired_at: 1,
         });
         let references = ReferenceCollection::lexical(&sources)?;
-        let fresh = evidence_for("mineral0 property0", 0, &references, &[]).await?;
+        let fresh = evidence_for(&model, "mineral0 property0", 0, &references, &[]).await?;
         let claim = &claims(1).units[0].claims[0];
         assert_ne!(
             ClaimChecks::key(0, claim, &fresh),

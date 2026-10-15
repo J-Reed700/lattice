@@ -26,10 +26,6 @@ pub(in crate::features::learning) use outline::{decode_outline, draft_outline, o
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
-/// Ceiling on the source excerpts one recall-draft request carries, below
-/// what a large window would allow, so its cost stays bounded. A lesson's
-/// evidence is bounded by its model's window alone.
-const SOURCE_EVIDENCE_CEILING: usize = 7000;
 const MIN_TEXT: usize = 3;
 const MAX_BODY: usize = 5000;
 const MAX_QUESTION: usize = 1200;
@@ -234,36 +230,6 @@ fn fits(llm: &dyn LLMPort, system: &str, prompt: &str, output_tokens: usize) -> 
     let mut request = GroundedRequest::new(system, prompt);
     request.output_tokens = output_tokens;
     model_call::fits(llm, &request)
-}
-
-/// The room left for source excerpts by a prompt built without them.
-fn source_room(llm: &dyn LLMPort, system: &str, skeleton: String, output_tokens: usize) -> usize {
-    let mut request = GroundedRequest::new(system, skeleton);
-    request.output_tokens = output_tokens;
-    model_call::source_room(llm, &request, SOURCE_EVIDENCE_CEILING)
-}
-
-fn bounded_sources(
-    llm: &dyn LLMPort,
-    sources: &[LearningSourceDto],
-    room: usize,
-) -> Result<Vec<LearningSourceDto>> {
-    let mut remaining = room;
-    let mut bounded = Vec::new();
-    for source in sources.iter().take(12) {
-        let mut source = source.clone();
-        source.title = source.title.chars().take(180).collect();
-        source.excerpt = source.excerpt.chars().take(2400).collect();
-        let token_cost = llm.count_tokens(&source.title) + llm.count_tokens(&source.excerpt) + 96;
-        if token_cost <= remaining {
-            remaining -= token_cost;
-            bounded.push(source);
-        }
-    }
-    if bounded.is_empty() && !sources.is_empty() {
-        return Err(invalid("The supplied sources exceed this model's context window or contain no usable excerpts. Choose fewer or shorter sources."));
-    }
-    Ok(bounded)
 }
 
 #[cfg(test)]

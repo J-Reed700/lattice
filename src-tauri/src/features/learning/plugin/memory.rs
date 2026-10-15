@@ -110,10 +110,23 @@ pub async fn generate_learning_card_drafts(
     container: State<'_, Container>,
 ) -> Result<LearningMemoryDto, ApiError> {
     let repo = LearningRepository::new(container.db_pool().clone());
-    let program = repo
+    let mut program = repo
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)?;
+    // The program's sources carry stored previews; the model reads the whole
+    // captured text of each cited version.
+    let texts = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+        container.db_pool().clone(),
+    )
+    .version_texts(&request.program_id)
+    .await
+    .map_err(ApiError::from)?;
+    for source in &mut program.sources {
+        if let Some(text) = texts.get(&source.id) {
+            source.excerpt.clone_from(text);
+        }
+    }
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     let drafts = crate::features::learning::generation::generate_recall_drafts(
         llm.as_ref(),

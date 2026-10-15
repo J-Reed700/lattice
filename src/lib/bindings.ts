@@ -6486,7 +6486,13 @@ export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
 export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; available: boolean; version: string | null; reason: string | null }
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
-export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
+/**
+ * Of `claim_count`, the claims kept as general knowledge: no saved
+ * reference supports or contradicts them, and they were not checked
+ * against a source.
+ */
+generalKnowledgeCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }

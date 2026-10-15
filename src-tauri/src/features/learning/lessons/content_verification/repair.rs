@@ -326,6 +326,7 @@ pub(in crate::features::learning) async fn candidate(
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
     defects: usize,
+    progress: &RepairProgress,
 ) -> Result<String> {
     let candidate = repair_sections(
         llm,
@@ -335,6 +336,7 @@ pub(in crate::features::learning) async fn candidate(
         output_tokens,
         references,
         defects,
+        progress,
     )
     .await?;
     crate::features::learning::teaching::review_lesson(
@@ -361,6 +363,7 @@ async fn repair_sections(
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
     defects: usize,
+    progress: &RepairProgress,
 ) -> Result<Value> {
     let pending = targets(&context)?;
     if pending.is_empty() {
@@ -470,6 +473,7 @@ async fn repair_sections(
                 defects,
                 issue_fingerprint: None,
                 context: context.clone(),
+                progress: progress.clone(),
             };
             let remaining = if !groups.is_empty() || position + 1 < pending.len() {
                 Some(serde_json::to_string(&checkpoint)?)
@@ -604,8 +608,17 @@ mod tests {
         };
         let references = ReferenceCollection::lexical(&[])?;
 
-        let repaired =
-            repair_sections(&llm, "{}", &schema, context, output_tokens, &references, 6).await?;
+        let repaired = repair_sections(
+            &llm,
+            "{}",
+            &schema,
+            context,
+            output_tokens,
+            &references,
+            6,
+            &RepairProgress::default(),
+        )
+        .await?;
 
         let requests = llm.requests.lock().unwrap();
         assert!(requests.len() >= 3, "{} requests", requests.len());

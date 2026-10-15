@@ -256,3 +256,46 @@ fn recall_parser_rejects_unknown_fields_and_choice_payloads() {
     });
     assert!(parse_recall_drafts(&recall_response(json!([with_choices])), 1, &allowed,).is_err());
 }
+
+#[test]
+fn course_context_carries_whole_objectives_and_every_earlier_recap() {
+    use crate::features::learning::dto::{
+        LearningBlockDto, LearningBlockKind, LearningPreparation,
+    };
+    let mut program = crate::features::learning::tests::fixture();
+    let long = "A detailed objective sentence. ".repeat(40);
+    let recap = "Recap of what the lesson established. ".repeat(80);
+    let lessons = &mut program.modules[0].lessons;
+    let template = lessons[0].clone();
+    for index in 0..4 {
+        let mut extra = template.clone();
+        extra.id = format!("extra-lesson-{index}");
+        lessons.insert(0, extra);
+    }
+    let current = lessons.last().unwrap().id.clone();
+    for lesson in lessons.iter_mut() {
+        lesson.objective = long.clone();
+        if lesson.id != current {
+            lesson.preparation = LearningPreparation::Ready;
+            lesson.blocks = vec![LearningBlockDto {
+                kind: LearningBlockKind::Recap,
+                title: "Recap".into(),
+                body: recap.clone(),
+                source_ids: vec![],
+                rubric: vec![],
+            }];
+        }
+    }
+    let earlier = program.modules[0].lessons.len() - 1;
+    assert!(earlier > 3, "more than the former three recaps");
+    let context = super::lesson::course_context(&program, &current);
+    assert_eq!(
+        context["curriculum"][0]["lessons"][0]["objective"],
+        long.as_str()
+    );
+    let recaps = context["recentTeaching"].as_array().unwrap();
+    assert_eq!(recaps.len(), earlier);
+    assert!(recaps
+        .iter()
+        .all(|entry| entry["recap"][0] == recap.as_str()));
+}

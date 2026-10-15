@@ -157,8 +157,10 @@ fn parse_plan(raw: &str) -> Option<Vec<Topic>> {
 }
 
 /// How many passages each search retrieves: the evidence room shared among
-/// every search, in passages of the size retrieval returns, measured on the
-/// saved text with this model's tokenizer.
+/// every search, in passages of the size retrieval returns. A passage's
+/// tokens are measured on the saved text with this model's tokenizer; when
+/// the sources hold less text than one passage, the sample's tokens per
+/// character are scaled up to a passage.
 fn depth(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
@@ -166,14 +168,23 @@ fn depth(
     room: usize,
 ) -> usize {
     let searches: usize = topics.iter().map(|topic| topic.queries.len()).sum();
+    (room / (searches.max(1) * passage_tokens(llm, references))).max(1)
+}
+
+fn passage_tokens(llm: &dyn LLMPort, references: &ReferenceCollection<'_>) -> usize {
     let sample: String = references
         .sources
         .iter()
         .flat_map(|source| source.excerpt.chars())
         .take(PASSAGE_CHARS)
         .collect();
-    let passage = llm.count_tokens(&sample).max(1);
-    (room / (searches.max(1) * passage)).max(1)
+    let characters = sample.chars().count();
+    if characters == 0 {
+        return 1;
+    }
+    (llm.count_tokens(&sample) * PASSAGE_CHARS)
+        .div_ceil(characters)
+        .max(1)
 }
 
 /// The index of `passage` in `store`, adding it unless a passage of the same

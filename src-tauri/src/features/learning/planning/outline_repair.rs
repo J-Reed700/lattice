@@ -327,10 +327,21 @@ async fn resolve_factual(
     let (passages, base) = if sources.is_empty() {
         (vec![], vec![])
     } else {
+        // As many passages as one check of the claim holds, not a count.
         let collection = ReferenceCollection::lexical(sources)?;
+        let fits =
+            |passages: &[crate::features::learning::reference_collection::ReferencePassage]| {
+                crate::features::learning::content_verification::check_fits(
+                    llm,
+                    &claim,
+                    passages.iter().map(|passage| passage.text.clone()),
+                )
+            };
         (
-            collection.retrieve_for_verification(&claim, 8).await?,
-            collection.retrieve(&claim, 8).await?,
+            collection
+                .retrieve_for_verification_within(&claim, fits)
+                .await?,
+            collection.retrieve_within(&claim, fits).await?,
         )
     };
     if passages.is_empty() {
