@@ -1263,3 +1263,40 @@ fn an_addition_quoting_a_forgotten_span_is_dropped_with_what_depends_on_it() {
     );
     assert!(commit.inserts.is_empty() && commit.updates.is_empty());
 }
+
+#[test]
+fn a_refold_is_needed_only_while_the_summary_ends_before_the_window_gap() {
+    let refold = SummaryRefold {
+        window_start_sequence: 9,
+        through_sequence: 12,
+    };
+    // Messages 5 to 8 were dropped and nothing covers them.
+    assert!(refold.is_needed(4));
+    // No summary at all covers nothing.
+    assert!(refold.is_needed(0));
+    // An earlier refold already reached the window: asking again would only
+    // change the prompt's prefix a second time.
+    assert!(!refold.is_needed(8));
+    assert!(!refold.is_needed(12));
+}
+
+#[test]
+fn the_summary_covers_through_its_boundary_or_trusts_the_watermark() {
+    let mut state = ConversationMemoryState::empty("c1");
+    state.processed_through_sequence = 20;
+    let mut snapshot = MemorySnapshot {
+        state,
+        transcript_revision: 1,
+        active_items: vec![],
+        summary: None,
+        summary_through_sequence: Some(12),
+        latest_sequence: 24,
+    };
+    // A dropped summary covers nothing, whatever boundary was read.
+    assert_eq!(snapshot.summary_covers_through(), 0);
+    snapshot.summary = Some("Earlier: the plan.".into());
+    assert_eq!(snapshot.summary_covers_through(), 12);
+    // A boundary that cannot be placed reads as the watermark.
+    snapshot.summary_through_sequence = None;
+    assert_eq!(snapshot.summary_covers_through(), 20);
+}

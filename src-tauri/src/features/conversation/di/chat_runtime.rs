@@ -196,8 +196,16 @@ impl ChatPolicy for Container {
     ) -> Result<()> {
         crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
     }
-    fn consolidate_after_turn(&self, id: String) {
-        crate::features::conversation::compaction::consolidate_after_turn(self.share(), id);
+    fn consolidate_after_turn(
+        &self,
+        id: String,
+        summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
+    ) {
+        crate::features::conversation::compaction::consolidate_after_turn(
+            self.share(),
+            id,
+            summary_refold,
+        );
     }
     async fn check_read_rate_limit(&self, name: &str) -> Result<()> {
         self.security_context()

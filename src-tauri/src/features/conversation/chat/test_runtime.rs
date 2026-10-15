@@ -226,7 +226,12 @@ impl ChatPolicy for FakeRuntime {
     ) -> Result<()> {
         unreachable!("{UNUSED}")
     }
-    fn consolidate_after_turn(&self, _id: String) {}
+    fn consolidate_after_turn(
+        &self,
+        _id: String,
+        _summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
+    ) {
+    }
     async fn check_read_rate_limit(&self, _name: &str) -> Result<()> {
         Ok(())
     }

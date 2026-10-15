@@ -65,6 +65,9 @@ pub(super) struct FinishedAnswer {
     pub(super) memory_usage: Option<serde_json::Value>,
     pub(super) retrieval_trace: Option<RetrievalTraceDto>,
     pub(super) turn_record: Option<TurnRecordDto>,
+    /// The turn's plan asking for the working summary to be refolded, passed
+    /// on to consolidation.
+    pub(super) summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
 }
 
 /// Save `answer` against the question saved as `user_message_id`, and return
@@ -91,6 +94,7 @@ pub(super) async fn finalize_successful_turn(
         memory_usage,
         retrieval_trace,
         turn_record,
+        summary_refold,
     } = answer;
     super::source_snapshots::attach_cited_web_snapshots(
         container,
@@ -140,7 +144,7 @@ pub(super) async fn finalize_successful_turn(
     .await?;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
-    container.consolidate_after_turn(conversation_id.to_string());
+    container.consolidate_after_turn(conversation_id.to_string(), summary_refold);
 
     spawn_memory_indexing(
         container.share(),

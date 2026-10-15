@@ -4,6 +4,7 @@
 
 use super::budget::{BudgetAllocation, TokenAccounting};
 use crate::application::ports::llm_port::CompletionInput;
+use crate::domain::conversation::memory::SummaryRefold;
 
 /// One passage selected from the original transcript.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +124,16 @@ pub struct ContextPlan {
     /// The assembler reports it rather than triggering it: a compaction is a
     /// model call, and the assembler does not own one.
     pub compaction_required: bool,
+    /// Set when the window had to drop turns the working summary does not
+    /// cover. It names where the window started and where the summary should
+    /// now end.
+    ///
+    /// Reported for the same reason as `compaction_required`: a refold is a
+    /// model call. It does not hold the turn. A dropped turn extraction had
+    /// not reached already sets `compaction_required`, and the rest are in
+    /// the ledger. Consolidation after the answer refolds, and the summary
+    /// changes only then.
+    pub summary_refold: Option<SummaryRefold>,
     /// Output cap to apply to the request, so reserving output room is actually
     /// enforced rather than merely accounted for.
     pub max_output_tokens: usize,

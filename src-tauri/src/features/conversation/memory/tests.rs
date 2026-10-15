@@ -28,7 +28,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
-    SourceRole, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
+    SourceRole, SummaryRefold, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
     MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -274,6 +274,19 @@ impl FakePort {
 
     fn summary(&self) -> Option<String> {
         self.inner.lock().summary.clone()
+    }
+
+    /// A summary an earlier run folded through the message at `through`.
+    fn summarized_through(&self, text: &str, through: i64) {
+        let mut inner = self.inner.lock();
+        let up_to = inner
+            .messages
+            .iter()
+            .find(|message| message.sequence == through)
+            .map(|message| message.id.clone())
+            .expect("a message at the summary's end");
+        inner.summary = Some(text.to_string());
+        inner.summary_up_to = Some(up_to);
     }
 
     /// Sequence of the message the stored summary was folded through.
@@ -1748,9 +1761,21 @@ fn maintenance() -> CompactionRequest {
     }
 }
 
-/// Regenerate takes back the last answer. Consolidation had ended the summary
-/// on that answer, so the delete took the summary with it while the clamped
-/// watermark still covers the earlier turn. The next run must fold that turn
+/// Consolidation after a turn whose window had to start after `through`, so
+/// its prompt asked for the summary to cover through there.
+fn refolding(through: i64) -> CompactionRequest {
+    CompactionRequest {
+        summary_refold: Some(SummaryRefold {
+            window_start_sequence: through + 1,
+            through_sequence: through,
+        }),
+        ..maintenance()
+    }
+}
+
+/// Regenerate takes back the last answer. A refold had ended the summary on
+/// that answer, so the delete took the summary with it while the clamped
+/// watermark still covers the earlier turn. The next fold must fold that turn
 /// back in, not summarise only the new answer.
 #[tokio::test]
 async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
@@ -1768,12 +1793,12 @@ async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
     );
     let job = job(port.clone(), llm.clone(), small_config());
 
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(4)).await.unwrap();
     assert_eq!(port.watermark(), 4);
     assert_eq!(
         port.summary_boundary(),
         Some(4),
-        "consolidation ends the summary on the latest answer"
+        "the refold the prompt asked for ends the summary on the latest answer"
     );
 
     // Regenerate: the answer goes, and nothing in the ledger cites it.
@@ -1787,7 +1812,7 @@ async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
         "Noted again: staging only.",
     ));
 
-    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+    let outcome = job.run(CONVERSATION, refolding(5)).await.unwrap();
 
     assert_eq!(outcome.status, CompactionStatus::Committed);
     assert_eq!(
@@ -1820,8 +1845,9 @@ async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
 
 /// Deleting an early message drops the summary that covered it, since it may
 /// repeat the deleted text, but leaves the ledger and the watermark standing.
-/// The next run, of any trigger and with no new turn, rebuilds the summary from
-/// the messages that remain.
+/// The next fold, even with no new turn, rebuilds the summary from the
+/// messages that remain: a `/compact` here, or the consolidation after a turn
+/// whose window asks for one.
 #[tokio::test]
 async fn deleting_an_early_message_refolds_the_summary_from_the_messages_that_remain() {
     let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 0);
@@ -1834,7 +1860,7 @@ async fn deleting_an_early_message_refolds_the_summary_from_the_messages_that_re
         ],
     );
     let job = job(port.clone(), llm.clone(), small_config());
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(4)).await.unwrap();
 
     port.delete_uncited("m1");
     assert_eq!(port.summary(), None);
@@ -1896,8 +1922,8 @@ async fn a_watermark_over_only_failed_outputs_does_not_refold() {
     assert_eq!(port.summary(), None);
 }
 
-/// In the ordinary state the summary ends at the watermark, so later runs fold
-/// only what is new and a run with nothing new does nothing at all.
+/// A summary that ends at the watermark is extended: a later fold reads only
+/// what is new, and a run with nothing new does nothing at all.
 #[tokio::test]
 async fn a_summary_that_reaches_the_watermark_is_extended_never_refolded() {
     let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 0);
@@ -1913,7 +1939,7 @@ async fn a_summary_that_reaches_the_watermark_is_extended_never_refolded() {
         ],
     );
     let job = job(port.clone(), llm.clone(), small_config());
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(4)).await.unwrap();
 
     let idle = job
         .run(CONVERSATION, CompactionRequest::default())
@@ -1925,7 +1951,7 @@ async fn a_summary_that_reaches_the_watermark_is_extended_never_refolded() {
     let turns = four_turns();
     port.append(turns[4].clone());
     port.append(turns[5].clone());
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(6)).await.unwrap();
 
     assert_eq!(
         llm.folded_sequences(),
@@ -2030,8 +2056,8 @@ async fn a_long_refold_resumes_from_the_summary_boundary_across_runs() {
     assert_eq!(llm.count(Task::Summarize), 4, "a finished refold stops");
 }
 
-/// Consolidation, which no one waits on, folds the whole backlog in one run,
-/// one committed page at a time. New turns are extracted with the first page, so
+/// Consolidation asked to refold, which no one waits on, folds the whole
+/// backlog in one run, one committed page at a time. New turns are extracted with the first page, so
 /// the ledger never waits on the summary, and their text is folded once the
 /// refold reaches them, which keeps the summary's coverage free of gaps.
 #[tokio::test]
@@ -2047,7 +2073,7 @@ async fn consolidation_folds_a_long_refold_page_by_page_in_one_run() {
     );
     let job = job(port.clone(), llm.clone(), two_message_refolds());
 
-    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+    let outcome = job.run(CONVERSATION, refolding(8)).await.unwrap();
 
     assert_eq!(outcome.status, CompactionStatus::Committed);
     assert!(!outcome.refold_pending);
@@ -2091,7 +2117,7 @@ async fn consolidation_stopped_between_pages_keeps_what_it_folded() {
             CONVERSATION,
             CompactionRequest {
                 cancellation: Some(cancellation),
-                ..maintenance()
+                ..refolding(8)
             },
         )
         .await
@@ -2102,7 +2128,8 @@ async fn consolidation_stopped_between_pages_keeps_what_it_folded() {
     assert_eq!(port.summary_boundary(), Some(2));
     assert!(port.errors().is_empty(), "stopping is not an error");
 
-    let resumed = job.run(CONVERSATION, maintenance()).await.unwrap();
+    // The next turn's window still has to move, so it asks again.
+    let resumed = job.run(CONVERSATION, refolding(8)).await.unwrap();
     assert_eq!(resumed.status, CompactionStatus::Committed);
     assert_eq!(
         llm.folded_sequences(),
@@ -2135,7 +2162,7 @@ async fn an_unfoldable_refold_page_does_not_stall_the_summary() {
     );
     let job = job(port.clone(), llm.clone(), two_message_refolds());
 
-    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+    let outcome = job.run(CONVERSATION, refolding(4)).await.unwrap();
 
     assert_eq!(outcome.status, CompactionStatus::Committed);
     assert_eq!(llm.folded_sequences(), vec![vec![3, 4]]);
@@ -2207,7 +2234,7 @@ async fn every_forgotten_fact_is_named_to_the_summariser() {
     );
     let job = job(port.clone(), llm.clone(), small_config());
     port.forget("item-badge");
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(4)).await.unwrap();
     let named = llm.forgotten_labels().pop().unwrap();
     assert_eq!(named.len(), 41, "{named:?}");
     assert!(named.contains(&"Older forgotten fact 0".to_string()));
@@ -2236,7 +2263,7 @@ async fn a_forgotten_span_never_reaches_the_summariser() {
 
     // Forgotten before the message was ever summarised: the normal fold.
     port.forget("item-badge");
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(4)).await.unwrap();
     let first = llm.folded_texts().pop().unwrap();
     assert!(!first.contains("9930"), "the forgotten badge number leaked");
     assert!(
@@ -2302,7 +2329,7 @@ async fn a_restated_forgotten_value_is_named_for_the_summariser_to_leave_out() {
     );
     let job = job(port.clone(), llm.clone(), small_config());
 
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(6)).await.unwrap();
 
     assert_eq!(llm.folded_sequences(), vec![vec![1, 2, 3, 4, 5, 6]]);
     let folded = llm.folded_texts().pop().unwrap();
@@ -2337,7 +2364,7 @@ async fn a_rebuild_folds_forgotten_spans_out_of_the_summary() {
     );
     let job = job(port.clone(), llm.clone(), small_config());
 
-    job.run(CONVERSATION, maintenance()).await.unwrap();
+    job.run(CONVERSATION, refolding(4)).await.unwrap();
 
     assert_eq!(port.operations(), vec!["rebuild".to_string()]);
     let folded = llm.folded_texts().pop().unwrap();
@@ -2380,7 +2407,7 @@ async fn a_rebuild_does_not_extract_a_forgotten_span_again() {
     );
     let job = job(port.clone(), llm.clone(), small_config());
 
-    let outcome = job.run(CONVERSATION, maintenance()).await.unwrap();
+    let outcome = job.run(CONVERSATION, refolding(4)).await.unwrap();
 
     let stored: Vec<&str> = outcome
         .commit
@@ -2397,4 +2424,151 @@ async fn a_rebuild_does_not_extract_a_forgotten_span_again() {
         summary["active_requirement_labels_supplied_separately"],
         serde_json::json!(["Badge number 9930"])
     );
+}
+
+// ---------------------------------------------------------------------------
+// The summary moves only when a prompt's window has to
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn consolidation_extracts_without_touching_the_summary_when_no_refold_is_asked() {
+    // The first turn was extracted and summarized earlier; the second has
+    // just been answered, and its prompt's window did not have to move.
+    let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 2);
+    port.summarized_through("Deployment waits for approval.", 2);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["m3:s0", "m4:s0"]))],
+        vec![],
+        vec![Ok("A summary nobody asked for.".into())],
+    );
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, maintenance())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(port.watermark(), 4, "extraction still moves on");
+    assert_eq!(llm.count(Task::Summarize), 0, "no summarizer call");
+    assert_eq!(
+        port.summary().as_deref(),
+        Some("Deployment waits for approval."),
+        "the prompt's summary stays as it was"
+    );
+    assert_eq!(
+        port.summary_boundary(),
+        Some(2),
+        "and so does the window it anchors"
+    );
+    assert_eq!(
+        outcome.summary.as_deref(),
+        Some("Deployment waits for approval.")
+    );
+    assert_eq!(outcome.boundary_message_id, None);
+}
+
+#[tokio::test]
+async fn consolidation_refolds_the_summary_over_the_turns_the_window_dropped() {
+    // Extraction reached message 6 on earlier answers; the summary still ends
+    // at message 2. The last prompt's window had to start at message 5, so it
+    // asked for the summary to cover through 4.
+    let port = FakePort::new(four_turns()[..8].to_vec(), Vec::new(), 6);
+    port.summarized_through("Deployment waits for approval.", 2);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["m7:s0", "m8:s0"]))],
+        vec![],
+        vec![Ok("Approval required; staging may deploy.".into())],
+    );
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, refolding(4))
+        .await
+        .unwrap();
+
+    assert_eq!(port.watermark(), 8);
+    assert_eq!(llm.count(Task::Summarize), 1);
+    // The fold reads the dropped turns back from below the watermark, and
+    // nothing the window still carries.
+    assert_eq!(llm.folded_sequences(), vec![vec![3, 4]]);
+    let fold = llm
+        .prompts_for(Task::Summarize)
+        .pop()
+        .expect("a summarizer prompt");
+    assert!(fold.contains("Actually you may deploy staging."), "{fold}");
+    assert!(fold.contains("Noted, staging only."), "{fold}");
+    assert!(!fold.contains("What about production?"), "{fold}");
+    assert_eq!(
+        llm.previous_summaries(),
+        vec![Some("Deployment waits for approval.".to_string())]
+    );
+    assert_eq!(
+        port.summary().as_deref(),
+        Some("Approval required; staging may deploy.")
+    );
+    assert_eq!(port.summary_boundary(), Some(4));
+    assert_eq!(outcome.boundary_message_id.as_deref(), Some("m4"));
+
+    // A later turn that asked before this refold landed asks for nothing new:
+    // its consolidation extracts the next turn and leaves the summary alone.
+    port.append(message("m9", 9, SourceRole::User, "Ship staging tonight."));
+    port.append(message(
+        "m10",
+        10,
+        SourceRole::Assistant,
+        "Staging tonight.",
+    ));
+    let again = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![],
+            vec![],
+            &["m9:s0", "m10:s0"],
+        ))],
+        vec![],
+        vec![],
+    );
+    job(port.clone(), again.clone(), small_config())
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                summary_refold: Some(SummaryRefold {
+                    window_start_sequence: 5,
+                    through_sequence: 6,
+                }),
+                ..maintenance()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(port.watermark(), 10);
+    assert_eq!(again.count(Task::Summarize), 0);
+    assert_eq!(port.summary_boundary(), Some(4));
+}
+
+#[tokio::test]
+async fn a_refold_never_runs_past_what_extraction_accepted() {
+    // The window asked for everything through message 6, but the work cap
+    // stops extraction after the second turn: the summary ends where the
+    // watermark does.
+    let port = FakePort::new(four_turns()[..6].to_vec(), Vec::new(), 2);
+    let llm = FakeLlm::new(
+        vec![
+            Ok(extraction_response(vec![], vec![], &["m3:s0", "m4:s0"])),
+            Ok(extraction_response(vec![], vec![], &["m5:s0", "m6:s0"])),
+        ],
+        vec![],
+        vec![Ok("Staging may deploy.".into())],
+    );
+    let outcome = job(
+        port.clone(),
+        llm.clone(),
+        CompactionConfig {
+            max_source_messages_per_attempt: 2,
+            ..small_config()
+        },
+    )
+    .run(CONVERSATION, refolding(6))
+    .await
+    .unwrap();
+    assert_eq!(outcome.processed_through_sequence, 4);
+    assert_eq!(llm.folded_sequences(), vec![vec![1, 2, 3, 4]]);
+    assert_eq!(port.summary().as_deref(), Some("Staging may deploy."));
+    assert_eq!(port.summary_boundary(), Some(4));
 }

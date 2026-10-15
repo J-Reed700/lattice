@@ -354,7 +354,13 @@ pub trait ChatPolicy: Send + Sync {
         id: &str,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
-    fn consolidate_after_turn(&self, id: String);
+    /// `summary_refold` is the turn's plan asking for the working summary to
+    /// be refolded; consolidation leaves the summary alone without it.
+    fn consolidate_after_turn(
+        &self,
+        id: String,
+        summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
+    );
     /// The rate limit a conversation read (list/get) spends before it runs.
     async fn check_read_rate_limit(&self, name: &str) -> Result<()>;
     /// The rate limit a user-initiated delete spends.

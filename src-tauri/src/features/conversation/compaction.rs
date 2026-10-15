@@ -189,7 +189,16 @@ pub async fn compact_for_turn(
 /// interactive work. The conversation's compaction slot coalesces queued
 /// requests through the durable watermark: a consolidation waiting behind
 /// another of the same conversation finds nothing left to do.
-pub fn consolidate_after_turn(runtime: Arc<dyn ChatRuntime>, conversation_id: String) {
+///
+/// `summary_refold` is the turn's plan asking for the working summary to
+/// move, because its window had to drop turns the summary does not cover.
+/// Without it consolidation extracts and leaves the summary alone, so the
+/// next request still opens the same way.
+pub fn consolidate_after_turn(
+    runtime: Arc<dyn ChatRuntime>,
+    conversation_id: String,
+    summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
+) {
     let background = runtime.background();
     let cancel = background.token();
     background.spawn(async move {
@@ -212,6 +221,7 @@ pub fn consolidate_after_turn(runtime: Arc<dyn ChatRuntime>, conversation_id: St
                 CompactionRequest {
                     trigger: CompactionTrigger::Maintenance,
                     cancellation: Some(cancel.clone()),
+                    summary_refold,
                     ..Default::default()
                 },
             )
