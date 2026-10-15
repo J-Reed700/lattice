@@ -7,8 +7,8 @@
 //!
 //! This is a CRITICAL SECURITY FIX - never store API keys in plaintext!
 
-use crate::shared::error::{AppError, Result};
 use keyring::Entry;
+use lattice_core::shared::error::{AppError, Result};
 use tracing::{error, info, warn};
 
 /// Service name for keyring entries

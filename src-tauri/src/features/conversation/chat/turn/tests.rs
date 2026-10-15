@@ -3,9 +3,11 @@ use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
 use super::research::{self, AssembledTurn, ResearchJournal, ResearchRound, Rounds};
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
 use std::sync::Mutex;
 
 /// A model that never answers, and says when it has been asked.
@@ -275,7 +277,7 @@ impl ResearchJournal for RecordingJournal {
 
 fn research_request(turn: &PreparedTurn) -> PlannedRequest {
     PlannedRequest {
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "web_search".into(),
             description: "Search the web".into(),
             parameters: serde_json::json!({

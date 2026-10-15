@@ -4,8 +4,6 @@ use std::time::Instant;
 
 use tracing::{info, warn};
 
-use crate::application::contracts::search::CorpusDocument;
-use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::turn_record::TurnStepKind;
@@ -13,6 +11,8 @@ use crate::features::conversation::chat::ChatTurn;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::use_cases::RerankOptions;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
+use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::domain::qa::hyde::QueryType;
 
 pub(super) async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
@@ -48,7 +48,7 @@ pub(super) async fn run_kb_retrieval(
                 "Unable to resolve hard space scope; failing closed before retrieval"
             );
             return super::KbRetrievalOutcome {
-                interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+                interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
                     validated_message.to_string(),
                     QueryType::Question,
                 ),
@@ -86,7 +86,7 @@ pub(super) async fn run_kb_retrieval(
             "Focus documents are outside this conversation's space; searching nothing"
         );
         return super::KbRetrievalOutcome {
-            interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
                 validated_message.to_string(),
                 QueryType::Question,
             ),
@@ -109,7 +109,7 @@ pub(super) async fn run_kb_retrieval(
             "Space scope contains no indexed documents; skipping KB retrieval"
         );
         return super::KbRetrievalOutcome {
-            interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
                 validated_message.to_string(),
                 QueryType::Question,
             ),
@@ -195,7 +195,7 @@ pub(super) async fn run_kb_retrieval(
     // The queries themselves: the one thing a reader can judge a search by.
     plan_step.done(Some(plan.queries.join(" · ")));
     info!(queries = ?plan.queries, opening_documents = ?plan.opening_document_ids, "Corpus retrieval plan");
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         validated_message.to_string(),
         if search_flags.force_followup_mode {
             QueryType::Followup
@@ -447,7 +447,7 @@ const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
 /// the frontend's trace schema and drop the "search unavailable" notice on
 /// exactly the turn that needs it.
 fn unavailable_reason(error: &str) -> String {
-    crate::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
+    lattice_core::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
 }
 
 fn passage_count_line(results: &[SearchResultDto]) -> String {
@@ -512,7 +512,7 @@ async fn planned(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
-    utility: &dyn crate::application::ports::LLMPort,
+    utility: &dyn lattice_core::application::ports::LLMPort,
     catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
     summaries: &std::collections::HashMap<String, String>,

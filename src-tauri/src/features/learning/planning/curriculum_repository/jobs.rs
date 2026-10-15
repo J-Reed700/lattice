@@ -11,8 +11,8 @@ use crate::features::learning::persistence::{db, decode, hash};
 use crate::features::learning::plan_dto::{
     LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob};
 use sqlx::Row;
 
 impl LearningCurriculumRepository {

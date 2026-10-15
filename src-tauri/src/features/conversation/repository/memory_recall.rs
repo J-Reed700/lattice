@@ -22,9 +22,9 @@
 //! the evaluation suite, never claimed here.
 
 use super::ConversationRepository;
-use crate::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
-use crate::domain::conversation::memory::{MemoryId, SourceRole};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
+use lattice_core::domain::conversation::memory::{MemoryId, SourceRole};
+use lattice_core::shared::error::{AppError, Result};
 use std::str::FromStr;
 
 /// Cap on terms in one `MATCH` expression (§9.1 rule 1).

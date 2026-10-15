@@ -3,7 +3,7 @@
 use crate::features::health::backend_logs;
 use crate::features::health::commands as health_commands;
 use crate::interfaces::di::Container;
-use crate::shared::ipc::{ApiError, ErrorCode};
+use lattice_core::shared::ipc::{ApiError, ErrorCode};
 use tauri::State;
 
 pub use super::types::*;

@@ -4,8 +4,8 @@
 //! NO GATEWAY WRAPPER - calls *_impl functions directly like search plugin does
 
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::ipc::{ApiError, ErrorCode};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -21,7 +21,7 @@ use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl, download_model_impl,
 };
 
-use crate::domain::download::DownloadOperationState;
+use lattice_core::domain::download::DownloadOperationState;
 
 pub use crate::features::model_management::commands_extra::DownloadedModelResponse;
 

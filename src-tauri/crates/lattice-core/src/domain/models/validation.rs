@@ -43,7 +43,7 @@ impl FileExpectation {
 /// # Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::models::validation::ModelFileValidator;
+/// use lattice_core::domain::models::validation::ModelFileValidator;
 /// use std::path::Path;
 ///
 /// let validator = ModelFileValidator::new();

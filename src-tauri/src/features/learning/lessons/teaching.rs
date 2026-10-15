@@ -2,7 +2,7 @@
 use crate::features::learning::dto::{
     LearningPracticeCriterionDto, LearningPracticeEvidenceDimension,
 };
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

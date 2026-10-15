@@ -267,10 +267,10 @@ fn colliding_citation_numbers_across_messages_in_one_conversation_remap_and_sour
             &format!("Evidence passage {index}"),
             1,
         );
-        raw_messages.push(crate::domain::conversation::ConversationMessage {
+        raw_messages.push(lattice_core::domain::conversation::ConversationMessage {
             id: format!("message-{index}"),
             conversation_id: Default::default(),
-            role: crate::domain::conversation::MessageRole::Assistant,
+            role: lattice_core::domain::conversation::MessageRole::Assistant,
             content: format!("Claim {index} [1]. {}", "x".repeat(1_000)),
             tokens: 100,
             created_at: Utc::now(),
@@ -391,10 +391,10 @@ fn sparse_local_citation_ids_map_by_source_identity_and_orphans_are_removed() {
 fn legacy_sources_without_explicit_citation_ids_use_chat_order_fallback() {
     let mut legacy = source("doc-a", "chunk-a", "Evidence A", 1);
     legacy.citation_id = None;
-    let message = crate::domain::conversation::ConversationMessage {
+    let message = lattice_core::domain::conversation::ConversationMessage {
         id: "message-1".into(),
         conversation_id: Default::default(),
-        role: crate::domain::conversation::MessageRole::Assistant,
+        role: lattice_core::domain::conversation::MessageRole::Assistant,
         content: "Claim [1]".into(),
         tokens: 1,
         created_at: Utc::now(),

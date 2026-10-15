@@ -3,7 +3,7 @@
 
 use super::super::embedded_runtime::{cancelled, BuiltinLabExecutionSpec};
 use super::super::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use rquickjs::{function::Rest, Coerced, Context, Function, Module, Object, Runtime};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

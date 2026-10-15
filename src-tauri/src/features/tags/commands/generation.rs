@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Generates tags for a document using LLM analysis
 ///

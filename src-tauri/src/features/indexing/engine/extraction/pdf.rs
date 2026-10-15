@@ -11,8 +11,8 @@
 use super::pdf_layout;
 use super::types::{ContentMetadata, ExtractedContent};
 use super::ExtractionWorkers;
-use crate::application::ports::{OcrError, OcrPort};
 use crate::features::indexing::engine::error::{IndexingError, Result};
+use lattice_core::application::ports::{OcrError, OcrPort};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;

@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```rust
-/// use lattice::shared::types::DocumentId;
+/// use lattice_core::shared::types::DocumentId;
 ///
 /// let id = DocumentId::new();
 /// let id_str = id.to_string();

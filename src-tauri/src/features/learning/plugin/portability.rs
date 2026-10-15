@@ -2,8 +2,8 @@ use super::*;
 use crate::features::learning::pack_repository::{
     DestinationPicker, LearningPackRepository, PACK_EXTENSION,
 };
-use crate::shared::error::{AppError, Result as AppResult};
 use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result as AppResult};
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;

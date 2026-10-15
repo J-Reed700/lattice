@@ -38,12 +38,12 @@
 //! }
 //! ```
 
-use crate::application::ports::LLMPort;
-use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::search::hyde::hyde_generator::HyDEGenerator;
 use crate::features::search::hyde::query_classifier::QueryClassifier;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::qa::hyde::{HyDEInterpretation, QueryType};
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -59,7 +59,7 @@ use tracing::{debug, info};
 ///
 /// ```rust,no_run
 /// use lattice::features::search::hyde::HyDEService;
-/// use lattice::domain::qa::hyde::QueryType;
+/// use lattice_core::domain::qa::hyde::QueryType;
 /// use std::sync::Arc;
 ///
 /// async fn example(llm: Arc<dyn LLMPort>) -> Result<()> {
@@ -282,7 +282,7 @@ impl HyDEService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::qa::hyde::QueryType;
+    /// use lattice_core::domain::qa::hyde::QueryType;
     ///
     /// // Force treating a query as a question
     /// let interpretation = service.interpret_query_with_type(
@@ -293,7 +293,7 @@ impl HyDEService {
     pub async fn interpret_query_with_type(
         &self,
         query: impl Into<String>,
-        query_type: crate::domain::qa::hyde::QueryType,
+        query_type: lattice_core::domain::qa::hyde::QueryType,
     ) -> Result<HyDEInterpretation> {
         let query = query.into();
 

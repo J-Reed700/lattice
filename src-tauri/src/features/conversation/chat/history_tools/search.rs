@@ -4,8 +4,8 @@ use super::{
     clip_to_bytes, FunctionResult, HistoryToolMemo, HistoryToolScope, SearchArgs, MAX_CANDIDATES,
     MIN_RESPONSE_BYTES, TOOL_READ_CONVERSATION_HISTORY,
 };
-use crate::application::ports::conversation_memory::ConversationMemoryReadPort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::conversation_memory::ConversationMemoryReadPort;
+use lattice_core::shared::error::Result;
 
 pub(super) async fn execute_search(
     port: &dyn ConversationMemoryReadPort,

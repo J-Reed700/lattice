@@ -8,7 +8,7 @@
 
 use sqlx::SqlitePool;
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ExportConversationRow {

@@ -1,8 +1,8 @@
 use super::*;
-use crate::domain::conversation::MessageRole;
 use crate::features::conversation::{
     repository::ConversationRepository, service::ConversationService, ConversationServiceTrait,
 };
+use lattice_core::domain::conversation::MessageRole;
 
 async fn service_with_pending_question() -> (
     Arc<dyn ConversationServiceTrait>,
@@ -44,7 +44,7 @@ async fn status_of(pool: &sqlx::SqlitePool, id: &str) -> String {
 #[tokio::test]
 async fn failed_question_retains_request_identity_and_attachments() {
     let (service, pool, id, _) = service_with_pending_question().await;
-    let llm: Arc<dyn crate::application::ports::LLMPort> =
+    let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
         Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
     let (user_id, _) = persist_user_message_pending(
         &service,

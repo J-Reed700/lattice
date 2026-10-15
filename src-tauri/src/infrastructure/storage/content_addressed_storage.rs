@@ -33,12 +33,12 @@
 //! what stops a delete arriving *after* the copy but *before* the document row
 //! commits from removing a blob that is about to be referenced.
 
-use crate::application::ports::content_addressed_storage_port::{
+use async_trait::async_trait;
+use lattice_core::application::ports::content_addressed_storage_port::{
     is_blob_hash, BlobLeases, BlobReferenceCheck, BlobRemoval, ContentAddressedStoragePort,
     ImportedBlob, RetainReason,
 };
-use crate::shared::error::{AppError, Result};
-use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -103,7 +103,7 @@ impl ContentAddressedStorage {
     ///
     /// - `AppError::InvalidState` if home directory cannot be determined
     pub(crate) fn default_library_root() -> Result<PathBuf> {
-        crate::shared::fs::roots::library_root()
+        lattice_core::shared::fs::roots::library_root()
     }
 
     /// The lock guarding mutations of one blob.

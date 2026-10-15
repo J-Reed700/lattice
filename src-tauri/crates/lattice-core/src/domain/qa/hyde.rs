@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use lattice::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
+//! use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
 //!
 //! // Create interpretation for a greeting
 //! let greeting = HyDEInterpretation::for_greeting("Hello!");
@@ -133,7 +133,7 @@ impl std::fmt::Display for ToolIntent {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
+/// use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
 ///
 /// let interpretation = HyDEInterpretation {
 ///     query_type: QueryType::Question,
@@ -167,7 +167,7 @@ impl HyDEInterpretation {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy};
+    /// use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy};
     ///
     /// let greeting = HyDEInterpretation::for_greeting("Hello!");
     /// assert_eq!(greeting.query_type, QueryType::Greeting);
@@ -189,7 +189,7 @@ impl HyDEInterpretation {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::qa::HyDEInterpretation;
+    /// use lattice_core::domain::qa::HyDEInterpretation;
     ///
     /// let question = HyDEInterpretation::for_question(
     ///     "What is DDD?",
@@ -268,7 +268,7 @@ impl HyDEInterpretation {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::qa::{EnrichedContext, HyDEInterpretation, DocumentChunk};
+/// use lattice_core::domain::qa::{EnrichedContext, HyDEInterpretation, DocumentChunk};
 ///
 /// let interpretation = HyDEInterpretation::for_greeting("Hello");
 /// let context = EnrichedContext::new(interpretation);
@@ -453,7 +453,7 @@ impl ChunkMetadata {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::qa::{ChatResponse, ResponseMetadata};
+/// use lattice_core::domain::qa::{ChatResponse, ResponseMetadata};
 ///
 /// let response = ChatResponse {
 ///     answer: "Domain-Driven Design is...".to_string(),

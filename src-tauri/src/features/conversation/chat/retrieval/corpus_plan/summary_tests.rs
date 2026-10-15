@@ -2,8 +2,8 @@
 //! shown, and who gets to choose the opening documents.
 
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
@@ -246,7 +246,7 @@ fn unknown_or_absent_summary_documents_leave_the_plan_alone() {
 
 #[test]
 fn explicit_reading_order_outranks_summary_similarity() {
-    use crate::domain::value_objects::source_context::{SourceContext, SourceGroup};
+    use lattice_core::domain::value_objects::source_context::{SourceContext, SourceGroup};
 
     let ordered = |id: &str, position: u32| CorpusDocument {
         source_context: Some(SourceContext {

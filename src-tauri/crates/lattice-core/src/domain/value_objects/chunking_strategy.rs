@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
-/// use lattice::shared::types::DocumentId;
+/// use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
+/// use lattice_core::shared::types::DocumentId;
 ///
 /// let strategy = ChunkingStrategy::FixedSize { size: 512 };
 /// let doc_id = DocumentId::new();
@@ -109,8 +109,8 @@ impl ChunkingStrategy {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
-    /// use lattice::shared::types::DocumentId;
+    /// use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
+    /// use lattice_core::shared::types::DocumentId;
     ///
     /// let strategy = ChunkingStrategy::FixedSize { size: 100 };
     /// let chunks = strategy.chunk("Document text here", &DocumentId::new())?;

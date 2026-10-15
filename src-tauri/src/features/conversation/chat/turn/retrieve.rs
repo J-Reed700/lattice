@@ -3,8 +3,8 @@ use super::carry::CarriedMaterial;
 use super::classify::Route;
 use super::prepare::PreparedTurn;
 use super::*;
-use crate::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 use crate::features::conversation::chat::retrieval::RetrievalPipelineOutcome;
+use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
 /// What the turn found to read, before it is fitted and numbered.
 pub(super) struct Retrieved {

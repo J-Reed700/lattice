@@ -9,14 +9,14 @@ use std::time::Duration;
 use futures::{stream, StreamExt};
 use tracing::debug;
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::ports::{LLMPort, RepositoryPort};
-use crate::application::services::grounded_generation::{
+use crate::features::compare::di::CompareDeps;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::{LLMPort, RepositoryPort};
+use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
-use crate::features::compare::di::CompareDeps;
-use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 
 use super::dto::{
     CompareCellDto, CompareCitationDto, CompareDocumentsRequestDto, CompareRowDto, CompareTableDto,

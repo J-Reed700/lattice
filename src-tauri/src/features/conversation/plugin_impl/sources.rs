@@ -6,7 +6,7 @@ use crate::features::conversation::workspace_dto::{
     ConversationLinkedDocumentDto, ConversationWebSourceDto, SpaceDocumentDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 
 /// File a chat's attachments in the library, where they become ordinary
 /// documents.

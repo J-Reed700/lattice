@@ -41,8 +41,8 @@ pub use factory::StoredDocument;
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::entities::document::Document;
-/// use lattice::shared::types::{DocumentId, ValidatedFilePath};
+/// use lattice_core::domain::entities::document::Document;
+/// use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
 /// use std::path::PathBuf;
 ///
 /// let path = ValidatedFilePath::new(PathBuf::from("/docs/file.txt")).unwrap();

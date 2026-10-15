@@ -11,7 +11,7 @@ use crate::features::learning::{
     source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     tests::{fixture, pool},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 mod destinations;
 mod evidence_entries;
@@ -65,9 +65,11 @@ pub(super) fn picks(path: &std::path::Path) -> Picks {
 pub(super) fn saved(result: SaveLearningPackAsResultDto) -> Result<LearningPackExportDto> {
     match result {
         SaveLearningPackAsResultDto::Saved { export } => Ok(*export),
-        SaveLearningPackAsResultDto::Cancelled => Err(
-            crate::shared::error::AppError::InvalidState("the save dialog was dismissed".into()),
-        ),
+        SaveLearningPackAsResultDto::Cancelled => {
+            Err(lattice_core::shared::error::AppError::InvalidState(
+                "the save dialog was dismissed".into(),
+            ))
+        }
     }
 }
 

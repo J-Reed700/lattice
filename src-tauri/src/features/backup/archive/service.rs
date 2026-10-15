@@ -21,7 +21,7 @@ use crate::features::backup::dto::{
     archive_availability, ArchiveErrorDto, ArchiveFileDto, ArchiveRunDto, ArchiveSetupDto,
     ArchiveStatusDto, WordConfirmationDto,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::config::{self, ArchiveConfig, DEFAULT_KEEP_COUNT};
 use super::crypto::{self, Argon2Params, MasterKey, RecoveryCode};

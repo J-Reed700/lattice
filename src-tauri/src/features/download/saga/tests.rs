@@ -1,8 +1,8 @@
 use super::DownloadSaga;
-use crate::domain::entities::model_file::ModelFile;
-use crate::domain::models::downloaded::ModelLocation;
-use crate::domain::value_objects::model_status::FileStatus;
 use chrono::Utc;
+use lattice_core::domain::entities::model_file::ModelFile;
+use lattice_core::domain::models::downloaded::ModelLocation;
+use lattice_core::domain::value_objects::model_status::FileStatus;
 use std::path::PathBuf;
 
 fn make_file(file_name: &str, file_path: &str) -> ModelFile {

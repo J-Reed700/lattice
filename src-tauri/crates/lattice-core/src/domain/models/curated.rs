@@ -18,7 +18,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use lattice::domain::models::curated::get_curated_llm_models;
+//! use lattice_core::domain::models::curated::get_curated_llm_models;
 //!
 //! let llms = get_curated_llm_models();
 //! for model in llms {

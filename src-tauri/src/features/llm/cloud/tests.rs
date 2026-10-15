@@ -151,7 +151,7 @@ fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
         ..Default::default()
     };
     let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
-    let tool = crate::application::ports::ToolDefinition {
+    let tool = lattice_core::application::ports::ToolDefinition {
         name: "search".into(),
         description: "Search".into(),
         parameters: json!({"type":"object"}),
@@ -193,7 +193,7 @@ fn openai_sends_the_tool_choice_with_tools() {
     };
     let openai = CloudLlm::new(&settings, "test".into()).unwrap();
     let request = CompletionRequest {
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search".into(),
             parameters: json!({"type":"object"}),

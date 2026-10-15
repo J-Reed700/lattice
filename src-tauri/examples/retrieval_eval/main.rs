@@ -32,13 +32,13 @@
 
 mod production;
 
-use lattice::application::ports::EmbeddingPort;
 use lattice::features::embedding::candle_service::CandleEmbeddingService;
 use lattice::features::embedding::late_chunking::EmbeddingStrategy;
 use lattice::features::search::engine::reranker::{blend_rerank_scores, load_reranker, Reranker};
 use lattice::features::search::engine::vector_search::{
     VectorIndexCompression, VectorQuantization,
 };
+use lattice_core::application::ports::EmbeddingPort;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -158,7 +158,7 @@ pub struct FusionSpec {
 impl Default for FusionSpec {
     fn default() -> Self {
         Self {
-            rrf_k: lattice::shared::constants::DEFAULT_RRF_K,
+            rrf_k: lattice_core::shared::constants::DEFAULT_RRF_K,
             vector_weight: 0.7,
             keyword_weight: 0.3,
         }

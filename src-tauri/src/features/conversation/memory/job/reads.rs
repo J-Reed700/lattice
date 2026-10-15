@@ -2,8 +2,8 @@
 //! user asked to forget, and the evidence a review cites.
 use tracing::warn;
 
-use crate::application::ports::conversation_memory::{SourceReadLimits, SourceSpanRef};
-use crate::domain::conversation::memory::{
+use lattice_core::application::ports::conversation_memory::{SourceReadLimits, SourceSpanRef};
+use lattice_core::domain::conversation::memory::{
     EvidenceSpan, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan, ValidatedPatch,
     ValidatedTransitionTarget,
 };

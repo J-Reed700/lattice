@@ -18,11 +18,11 @@ use crate::features::llm::use_cases::{
 use crate::features::tags::use_cases::{AutoTagAllDocumentsUseCase, GenerateTagsUseCase};
 
 // Application Ports
-use crate::application::ports::{CredentialsPort, ModelCatalogPort};
+use lattice_core::application::ports::{CredentialsPort, ModelCatalogPort};
 
 // Service Traits
-use crate::application::ports::LoadedChatModelPort;
 use crate::features::conversation::ConversationServiceTrait;
+use lattice_core::application::ports::LoadedChatModelPort;
 
 /// AI module for LLM operations, Q&A, and conversations
 ///
@@ -51,7 +51,7 @@ impl AIModule {
         _llm_endpoint: &str,
         _llm_model: &str,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         let conversation = crate::features::conversation::di::build(db_pool.clone());
         let llm = crate::features::llm::di::build(
             db_pool.clone(),
@@ -130,19 +130,20 @@ impl AIModule {
 
     pub fn document_scope(
         &self,
-    ) -> &Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
+    ) -> &Arc<dyn lattice_core::application::ports::document_scope::DocumentScopePort> {
         &self.conversation.document_scope
     }
 
     pub fn conversation_history(
         &self,
-    ) -> &Arc<dyn crate::application::ports::ConversationHistoryPort> {
+    ) -> &Arc<dyn lattice_core::application::ports::ConversationHistoryPort> {
         &self.conversation.conversation_history
     }
 
     pub fn conversation_context(
         &self,
-    ) -> &Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
+    ) -> &Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>
+    {
         &self.conversation.conversation_context
     }
 
@@ -164,7 +165,8 @@ impl AIModule {
 
     pub fn conversation_memory(
         &self,
-    ) -> &Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+    ) -> &Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>
+    {
         &self.conversation.conversation_memory
     }
 

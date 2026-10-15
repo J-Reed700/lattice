@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// How long a cancellation that arrived before its turn registered stays armed.
 /// Long enough to cover a cold model load, short enough that a stop press for a

@@ -1,6 +1,6 @@
 //! Apply explicit edits atomically. Unmentioned lesson bytes and items cannot
 //! change as a side effect of asking a model to correct one fact.
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 

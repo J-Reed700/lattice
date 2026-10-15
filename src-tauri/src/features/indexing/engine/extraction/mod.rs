@@ -51,8 +51,8 @@ pub use types::{ContentMetadata, ExtractedContent};
 
 pub use streaming::extract_text_streaming;
 
-use crate::application::ports::OcrPort;
 use crate::features::indexing::engine::error::Result;
+use lattice_core::application::ports::OcrPort;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncRead;

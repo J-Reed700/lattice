@@ -13,7 +13,7 @@ use crate::features::learning::{
     },
     repository::LearningRepository,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 

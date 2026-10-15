@@ -4,10 +4,10 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::contracts::search::CorpusDocument;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
-use crate::application::ports::LLMPort;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 
 use super::{
     ordered_learning_plan, prompt, shortlist, CorpusSearchPlan, PlannerTurn, PLANNER_SYSTEM,
@@ -162,7 +162,7 @@ async fn plan_with(
                 }, "required":["queries","opening_document_ids","start_at_beginning"]
             })),
             max_output_tokens: Some(prompt::PLANNER_OUTPUT_TOKENS),
-            priority: crate::application::ports::llm_port::InferencePriority::Interactive,
+            priority: lattice_core::application::ports::llm_port::InferencePriority::Interactive,
             // A stop press takes the plan out of the backend's queue.
             cancel: Some(cancel.clone()),
             ..Default::default()

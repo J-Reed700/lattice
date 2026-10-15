@@ -7,8 +7,8 @@
 use super::state::{ActiveDownload, DownloadManagerService, StopReason};
 use super::types::DownloadEvent;
 use super::validation::{recover_resume_offset, validate_downloaded_file};
-use crate::domain::download::DownloadError;
 use crate::features::download::engine::{DownloadOptions, ProgressCallback};
+use lattice_core::domain::download::DownloadError;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};

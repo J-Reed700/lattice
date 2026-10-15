@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{SettingsRepositoryPort, SettingsSideEffectsPort};
 use crate::features::function_calling::FunctionExecutorTrait;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::interfaces::di::container::{ChatLlmCache, NamedLlmCache};
-use crate::shared::error::Result;
+use lattice_core::application::ports::{SettingsRepositoryPort, SettingsSideEffectsPort};
+use lattice_core::shared::error::Result;
 
 /// Container-bound implementation of `SettingsSideEffectsPort`. Holds
 /// references to the same primitive caches the legacy
@@ -55,7 +55,7 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
     async fn on_settings_updated(
         &self,
         category: Option<crate::features::settings::dto::SettingsCategory>,
-        hints: crate::application::ports::settings_side_effects_port::SettingsTransitionHints,
+        hints: lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints,
     ) {
         use crate::features::settings::dto::SettingsCategory;
 

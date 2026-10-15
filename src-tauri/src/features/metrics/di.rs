@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::MetricsPort;
 use crate::features::metrics::adapter::MetricsAdapter;
 use crate::features::metrics::use_cases::GetMetricsUseCase;
 use crate::infrastructure::observability::metrics::Metrics;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::MetricsPort;
 
 #[derive(Clone)]
 pub struct MetricsDi {

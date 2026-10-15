@@ -10,7 +10,7 @@ use std::path::Path;
 
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 
-use crate::application::ports::OcrError;
+use lattice_core::application::ports::OcrError;
 
 /// Nominal rendering resolution. 150 dpi keeps 8-point type legible.
 const RENDER_DPI: f64 = 150.0;
@@ -150,7 +150,7 @@ mod macos {
     };
 
     use super::{encode_png, render_size, PageImage};
-    use crate::application::ports::OcrError;
+    use lattice_core::application::ports::OcrError;
 
     pub(super) fn render(path: &Path, page: u32) -> Result<PageImage, OcrError> {
         let fail = |reason: &str| OcrError::PageRender {

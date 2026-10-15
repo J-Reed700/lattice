@@ -5,7 +5,7 @@
 //! app; learner programs run on it only inside the lab runner's child process.
 
 use crate::features::learning::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;

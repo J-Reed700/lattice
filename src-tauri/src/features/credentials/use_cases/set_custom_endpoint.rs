@@ -21,9 +21,9 @@
 //! use_case.execute("ollama".into(), "http://localhost:11434".into()).await?;
 //! ```
 
-use crate::application::ports::CredentialsPort;
 use crate::features::credentials::dto::CredentialOperationResultDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::CredentialsPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct SetCustomEndpointUseCase {

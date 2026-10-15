@@ -3,11 +3,11 @@ use super::{
     clip_to_bytes, floor_boundary, FunctionResult, HistoryToolMemo, HistoryToolScope, ReadArgs,
     ReadCursor, MAX_READ_MESSAGES, MIN_RESPONSE_BYTES,
 };
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryReadPort, SourceReadLimits,
 };
-use crate::domain::conversation::memory::SourceMessage;
-use crate::shared::error::Result;
+use lattice_core::domain::conversation::memory::SourceMessage;
+use lattice_core::shared::error::Result;
 
 pub(super) async fn execute_read(
     port: &dyn ConversationMemoryReadPort,

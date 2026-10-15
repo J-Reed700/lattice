@@ -3,11 +3,11 @@
 
 use super::files::{candidate, prepare, walk, Candidate, Prepared, Walked};
 use super::{per_second, Indexer, Outcome};
-use crate::application::ports::vector_search_port::VectorSearchPort;
 use crate::features::explorer::fs;
 use crate::features::explorer::index::dto::FolderIndexState;
 use crate::features::explorer::index::store::{self, FileRow, TooLarge};
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::shared::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;

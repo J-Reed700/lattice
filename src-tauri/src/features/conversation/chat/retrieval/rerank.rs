@@ -15,7 +15,7 @@ use crate::features::settings::dto::RetrievalTuningSettingsDto;
 pub(super) async fn apply_rerank_stage(
     container: &dyn ChatRetrieval,
     validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
     search_response: SearchResponseDto,
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
@@ -36,7 +36,7 @@ pub(super) async fn apply_rerank_stage(
 /// passage when there is one, and up to ten follow-up anchor terms.
 fn build_rerank_query(
     validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
     followup_anchor_terms: Option<&HashSet<String>>,
 ) -> String {
     let mut query = validated_message.trim().to_string();

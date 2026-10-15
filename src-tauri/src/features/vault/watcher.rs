@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
 use crate::features::settings::use_cases::GetSettingsUseCase;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
 

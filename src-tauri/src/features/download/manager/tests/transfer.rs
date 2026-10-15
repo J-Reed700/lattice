@@ -1,8 +1,6 @@
 //! End-to-end transfer behaviour: completion, resume offsets, checksums.
 
 use super::{poll_until, temp_file, temp_root};
-use crate::domain::download::{Checksum, ChecksumAlgorithm};
-use crate::domain::download::{DownloadSession, DownloadState};
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
@@ -10,6 +8,8 @@ use crate::features::download::manager::DownloadEvent;
 use crate::features::download::manager::{
     DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use lattice_core::domain::download::{Checksum, ChecksumAlgorithm};
+use lattice_core::domain::download::{DownloadSession, DownloadState};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

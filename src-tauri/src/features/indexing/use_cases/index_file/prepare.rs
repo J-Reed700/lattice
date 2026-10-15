@@ -4,15 +4,15 @@ use std::path::{Path, PathBuf};
 
 use tracing::instrument;
 
-use crate::application::factories::{ChecksumFactory, FileMetadataFactory};
-use crate::application::ports::ImportedBlob;
-use crate::domain::entities::Document;
-use crate::domain::value_objects::SparseEmbedding;
 use crate::features::indexing::dto::IndexFileRequestDto;
 use crate::features::indexing::mapper::IndexingMapper;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::application::factories::{ChecksumFactory, FileMetadataFactory};
+use lattice_core::application::ports::ImportedBlob;
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::ValidatedFilePath;
 
 use super::{
     Embedding, EmbeddingWithVector, IndexFileUseCase, PrepareForIndexingOutcome, PreparedDocument,
@@ -35,15 +35,17 @@ impl IndexFileUseCase {
             .file_storage
             .compute_hash(source_path.as_path())
             .await?;
-        let content_checksum = crate::domain::value_objects::Checksum::new(content_hash.clone())?;
+        let content_checksum =
+            lattice_core::domain::value_objects::Checksum::new(content_hash.clone())?;
 
-        let requested_context: Option<crate::domain::value_objects::source_context::SourceContext> =
-            request
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("source_context"))
-                .map(|s| serde_json::from_str(s))
-                .transpose()?;
+        let requested_context: Option<
+            lattice_core::domain::value_objects::source_context::SourceContext,
+        > = request
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("source_context"))
+            .map(|s| serde_json::from_str(s))
+            .transpose()?;
         if let Some(context) = &requested_context {
             context.group.validate()?;
         }
@@ -126,7 +128,9 @@ impl IndexFileUseCase {
         library_path: &Path,
         chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto,
         existing: Option<Document>,
-        requested_context: Option<crate::domain::value_objects::source_context::SourceContext>,
+        requested_context: Option<
+            lattice_core::domain::value_objects::source_context::SourceContext,
+        >,
     ) -> Result<(Document, Vec<EmbeddingWithVector>, Vec<SparseEmbedding>)> {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
         let metadata = FileMetadataFactory::from_path(library_path)?;

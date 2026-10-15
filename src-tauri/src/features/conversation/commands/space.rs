@@ -4,7 +4,7 @@ use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
 use crate::interfaces::di::container::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 pub async fn create_conversation_space_impl(

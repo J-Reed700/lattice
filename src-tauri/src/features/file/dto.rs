@@ -4,7 +4,7 @@
 //!
 //! These DTOs represent file metadata and content across application boundaries.
 
-use crate::application::services::FileType;
+use lattice_core::application::services::FileType;
 use serde::{Deserialize, Serialize};
 
 /// File metadata representation.

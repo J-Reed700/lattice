@@ -6,13 +6,13 @@ use std::sync::Arc;
 use candle_core::{DType, Tensor};
 use tokenizers::Tokenizer;
 
-use crate::application::ports::EmbeddingPort;
 use crate::features::embedding::late_chunking::{
     l2_normalize_in_place, mean_pool_rows, pooling_token_indices, validate_chunk_ranges,
     window_groups, LateChunkingError,
 };
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 use super::forward::{run_encoder, run_inference};
 use super::{CandleEmbeddingService, LoadError, ModelVariant};
@@ -22,7 +22,7 @@ impl CandleEmbeddingService {
     /// `embed_batch` — we just unwrap the contextualized text first.
     pub async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::domain::value_objects::ContextualizedChunk],
+        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         if chunks.is_empty() {
             return Ok(vec![]);

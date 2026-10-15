@@ -13,13 +13,13 @@ use std::time::Duration;
 
 use tracing::info;
 
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
     COMPACTION_DEADLINE,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Messages kept raw when a request names no number.
 pub const KEEP_RECENT_DEFAULT: i64 = 4;
@@ -107,7 +107,9 @@ const LOCAL_SIDECAR_COMPACTION_DEADLINE: Duration = Duration::from_secs(15 * 60)
 /// wrong commit.
 pub fn summary_pool_for(llm: &Arc<dyn LLMPort>) -> usize {
     let fixed = llm
-        .count_tokens(crate::application::services::context_assembler::render::MEMORY_USE_POLICY)
+        .count_tokens(
+            lattice_core::application::services::context_assembler::render::MEMORY_USE_POLICY,
+        )
         .saturating_add(TYPICAL_TURN_FIXED_TOKENS);
     summary_pool(llm.model_name(), llm.max_context_tokens(), fixed)
 }
@@ -118,7 +120,7 @@ pub fn summary_pool_for(llm: &Arc<dyn LLMPort>) -> usize {
 const TYPICAL_TURN_FIXED_TOKENS: usize = 1_200;
 
 fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
-    use crate::application::services::context_assembler::{
+    use lattice_core::application::services::context_assembler::{
         BudgetAllocation, BudgetRequest, ModelCapacity,
     };
     let capacity = ModelCapacity::new(model, context_tokens);
@@ -231,7 +233,7 @@ pub fn consolidate_after_turn(runtime: Arc<dyn ChatRuntime>, conversation_id: St
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
-    use crate::application::services::context_assembler::{
+    use lattice_core::application::services::context_assembler::{
         BudgetAllocation, BudgetRequest, ModelCapacity,
     };
 
@@ -259,7 +261,7 @@ mod tests {
     /// queue as upkeep — while compaction the user is waiting on must not.
     #[test]
     fn consolidation_queues_as_upkeep_and_a_waited_on_compaction_does_not() {
-        use crate::application::ports::llm_port::InferencePriority;
+        use lattice_core::application::ports::llm_port::InferencePriority;
         assert_eq!(
             CompactionTrigger::Maintenance.priority(),
             InferencePriority::Maintenance

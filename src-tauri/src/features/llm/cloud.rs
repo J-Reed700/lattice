@@ -1,13 +1,13 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
-use crate::application::{
+use async_trait::async_trait;
+use lattice_core::application::{
     contracts::settings::{LLMProvider, LLMSettingsDto},
     ports::llm_port::{
         CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingMode, ToolChoice,
     },
 };
-use crate::shared::error::{AppError, Result};
-use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
@@ -58,7 +58,7 @@ impl CloudLlm {
         };
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
-        let client = crate::shared::http::reqwest_client_builder()
+        let client = lattice_core::shared::http::reqwest_client_builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .build()

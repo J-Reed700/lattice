@@ -1,9 +1,9 @@
 //! Durable coalesced summary admission: one worker, one active generation,
 //! and no task/body allocated per indexing notification.
-use crate::application::ports::DocumentIndexObserver;
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
-use crate::shared::runtime::background::BackgroundTasks;
 use async_trait::async_trait;
+use lattice_core::application::ports::DocumentIndexObserver;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::{Arc, RwLock};

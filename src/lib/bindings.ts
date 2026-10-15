@@ -3969,7 +3969,7 @@ export type AdoptLearningSourceVersionRequestDto = { operationId: string; progra
  * # Examples
  *
  * ```rust
- * # use lattice::shared::ipc::{ApiError, ErrorCode};
+ * # use lattice_core::shared::ipc::{ApiError, ErrorCode};
  * let error = ApiError {
  * code: ErrorCode::NotFound,
  * message: "Document not found".to_string(),
@@ -4180,8 +4180,8 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::DomainError;
  * let domain_err = DomainError::EntityNotFound {
  * entity_type: "Document".to_string(),
  * identifier: "doc-123".to_string(),
@@ -4197,7 +4197,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::InvalidConfig {
  * details: "Missing required field 'api_key'".to_string(),
  * };
@@ -4212,7 +4212,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::ServiceNotAvailable {
  * service: "EmbeddingService".to_string(),
  * reason: "Model not loaded".to_string(),
@@ -4228,7 +4228,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::QueueFull {
  * queue_name: "indexing_queue".to_string(),
  * };
@@ -4243,7 +4243,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::SerializationFailed {
  * context: "DocumentDTO".to_string(),
  * reason: "Invalid UTF-8 in field 'content'".to_string(),
@@ -4258,7 +4258,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::DeserializationFailed {
  * context: "SearchRequest".to_string(),
  * reason: "Missing required field 'query'".to_string(),
@@ -4273,7 +4273,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::JsonError {
  * message: "Expected comma".to_string(),
  * line: 42,
@@ -4290,7 +4290,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::ParsingError {
  * context: "CSV file".to_string(),
  * reason: "Unexpected end of file".to_string(),
@@ -4305,7 +4305,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::UseCaseFailed {
  * use_case: "IndexDocumentUseCase".to_string(),
  * reason: "Embedding generation timed out".to_string(),
@@ -4320,7 +4320,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::MappingError {
  * context: "Document -> DocumentDTO".to_string(),
  * reason: "Missing required field".to_string(),
@@ -4437,7 +4437,7 @@ compressBackups: boolean }
  *
  * # Example
  * ```rust
- * use lattice::application::dtos::batch_dto::BatchImportOptionsDto;
+ * use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
  *
  * let options = BatchImportOptionsDto {
  * extract_article: Some(true),
@@ -5270,7 +5270,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::EntityNotFound {
  * entity_type: "Document".to_string(),
  * identifier: "doc-123".to_string(),
@@ -5286,7 +5286,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::InvalidState {
  * details: "Document is archived and cannot be modified".to_string(),
  * };
@@ -5300,7 +5300,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ValidationFailed {
  * field: "email".to_string(),
  * reason: "Invalid email format".to_string(),
@@ -5316,7 +5316,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * # use std::path::PathBuf;
  * let error = DomainError::UnsupportedFileType {
  * path: PathBuf::from("/path/to/file.xyz"),
@@ -5332,7 +5332,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * # use std::path::PathBuf;
  * let error = DomainError::FileTooLarge {
  * path: PathBuf::from("/path/to/huge.pdf"),
@@ -5350,7 +5350,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ConcurrentModification {
  * resource: "Document doc-123".to_string(),
  * details: "Version mismatch: expected v2, found v3".to_string(),
@@ -5366,7 +5366,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ConstraintViolation {
  * constraint: "A document must have at least one chunk".to_string(),
  * };
@@ -5446,7 +5446,7 @@ export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: 
  * # Examples
  *
  * ```rust
- * # use lattice::shared::ipc::ErrorCode;
+ * # use lattice_core::shared::ipc::ErrorCode;
  * let code = ErrorCode::NotFound;
  * let json = serde_json::to_string(&code).unwrap();
  * assert_eq!(json, "\"NOT_FOUND\"");
@@ -7958,7 +7958,7 @@ jobId: string }
  *
  * # Example
  * ```rust,no_run
- * use lattice::application::dtos::batch_dto::{
+ * use lattice_core::application::dtos::batch_dto::{
  * StartBatchUrlImportRequestDto, BatchImportOptionsDto
  * };
  *

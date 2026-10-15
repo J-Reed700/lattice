@@ -1,7 +1,7 @@
 //! Performance Index Creation
 //! Composite database indexes for significantly faster queries
 
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use tracing::{debug, info};
 

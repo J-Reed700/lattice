@@ -23,7 +23,7 @@
 //!
 //! ```rust,no_run
 //! use lattice::infrastructure::adapters::system_info::SystemInfoAdapter;
-//! use lattice::application::ports::SystemInfoPort;
+//! use lattice_core::application::ports::SystemInfoPort;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let adapter = SystemInfoAdapter::new(Default::default());
@@ -35,10 +35,10 @@
 //! # }
 //! ```
 
-use crate::application::ports::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort};
 use crate::features::llm::engine::system::BackendDevices;
-use crate::shared::error::AppError;
 use async_trait::async_trait;
+use lattice_core::application::ports::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort};
+use lattice_core::shared::error::AppError;
 use std::process::Command;
 use std::sync::Arc;
 use sysinfo::System;

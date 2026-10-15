@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::indexing::index_file::IndexFileUseCase;
-//! use lattice::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
+//! use lattice_core::application::use_cases::indexing::index_file::IndexFileUseCase;
+//! use lattice_core::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
 //!
 //! # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IndexFileRequestDto {
@@ -32,18 +32,18 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
+use crate::features::embedding::entity::Embedding;
+use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
+use crate::features::indexing::LibraryGc;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
     BlobLease, ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort,
     DocumentIndexObserver, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
     FileStoragePort, SearchResultCachePort, SparseTermStorePort, VectorSearchPort,
 };
-use crate::domain::entities::Document;
-use crate::domain::value_objects::SparseEmbedding;
-use crate::features::embedding::entity::Embedding;
-use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
-use crate::features::indexing::LibraryGc;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::{AppError, Result};
 use tracing::instrument;
 
 mod prepare;
@@ -103,7 +103,7 @@ pub(crate) async fn publish_chunks_to_live_index(
     let entries: Vec<_> = chunks
         .into_iter()
         .map(
-            |chunk| crate::application::ports::vector_search_port::VectorIndexEntry {
+            |chunk| lattice_core::application::ports::vector_search_port::VectorIndexEntry {
                 id: format!("emb_{}", chunk.chunk_id),
                 embedding: chunk.embedding,
                 content: chunk.content,
@@ -262,8 +262,8 @@ impl IndexFileUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::indexing::index_file::IndexFileUseCase;
-    /// # use lattice::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
+    /// # use lattice_core::application::use_cases::indexing::index_file::IndexFileUseCase;
+    /// # use lattice_core::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
     /// # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = IndexFileRequestDto {
     ///     path: "/docs/paper.pdf".to_string(),

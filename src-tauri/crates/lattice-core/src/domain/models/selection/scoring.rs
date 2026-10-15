@@ -127,7 +127,7 @@ impl ModelRecommendation {
 /// # Example
 ///
 /// ```rust
-/// use lattice::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata, ModelCategory, PerformanceTier, GpuAcceleration, GpuType, CpuArchitecture};
+/// use lattice_core::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata, ModelCategory, PerformanceTier, GpuAcceleration, GpuType, CpuArchitecture};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let scorer = CompatibilityScorer::new();

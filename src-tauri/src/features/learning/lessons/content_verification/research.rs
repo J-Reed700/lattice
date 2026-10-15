@@ -1,7 +1,7 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps.
 use super::*;
-use crate::application::contracts::web::{WebSearchInput, WebSearchResult};
 use crate::features::web::WebServiceTrait;
+use lattice_core::application::contracts::web::{WebSearchInput, WebSearchResult};
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]

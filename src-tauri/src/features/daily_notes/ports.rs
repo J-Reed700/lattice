@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// A cited web page's text as a conversation archived it when it cited the
 /// page: the copy a journal citation is recovered from.

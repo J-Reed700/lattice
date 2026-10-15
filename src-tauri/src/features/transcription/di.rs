@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::TranscriptionPort;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::WhisperTranscriptionService;
 use crate::interfaces::di::Container;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::application::ports::TranscriptionPort;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// Transcription wiring: one shared port.
 #[derive(Clone)]

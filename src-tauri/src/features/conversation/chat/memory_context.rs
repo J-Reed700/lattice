@@ -14,16 +14,16 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort, SourceReadLimits,
 };
-use crate::application::ports::LLMPort;
-use crate::application::services::context_assembler::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::context_assembler::{
     ContextAssembler, ContextPlan, ContextRequest, InlineEvidence, ModelCapacity, RankedEvidence,
     TokenAccounting, TokenCounter,
 };
-use crate::domain::conversation::memory::{MemorySnapshot, SourceMessage};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::conversation::memory::{MemorySnapshot, SourceMessage};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::history_tools::{self, HistoryToolBudget, HistoryToolScope, RecallRequest};
 
@@ -197,7 +197,7 @@ pub async fn build_memory_plan_for_query(
     // with documents. Compare against the raw query before removing it.
     if recent.last().is_some_and(|m| {
         m.status == "pending"
-            && m.role == crate::domain::conversation::memory::SourceRole::User
+            && m.role == lattice_core::domain::conversation::memory::SourceRole::User
             && m.content == query
     }) {
         recent.pop();

@@ -259,7 +259,7 @@ impl SidecarManager {
         // The drain below runs in the app's background scope, so shutdown
         // joins it. A host without one cannot supervise a server.
         let Some(background) =
-            app.try_state::<Arc<crate::shared::runtime::background::BackgroundTasks>>()
+            app.try_state::<Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
         else {
             return Err(AttemptError::fatal(
                 "No background scope is managed; the sidecar cannot be supervised".into(),

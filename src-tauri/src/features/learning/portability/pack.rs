@@ -5,7 +5,7 @@
 //! and only then writes through the domain repositories. Archive paths are
 //! treated as hostile input on every platform.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};

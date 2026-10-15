@@ -20,7 +20,7 @@
 //! }
 //! ```
 
-use crate::application::ports::SettingsRepositoryPort;
+use lattice_core::application::ports::SettingsRepositoryPort;
 use std::sync::Arc;
 
 /// Returns true if the user has opted in to upstream telemetry.
@@ -58,8 +58,8 @@ pub async fn should_send_crash_reports(repo: &Arc<dyn SettingsRepositoryPort>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::settings_port::MockSettingsRepository;
     use crate::features::settings::dto::SettingsDto;
+    use lattice_core::application::ports::settings_port::MockSettingsRepository;
 
     #[tokio::test]
     async fn telemetry_off_by_default() {

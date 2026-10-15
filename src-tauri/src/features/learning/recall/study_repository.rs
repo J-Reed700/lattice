@@ -4,7 +4,7 @@ use super::{
     study_dto::*,
 };
 use crate::features::learning::persistence::db;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};

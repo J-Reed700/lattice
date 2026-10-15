@@ -6,7 +6,7 @@ use crate::features::learning::lab_runtime::{
     self, LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
 use crate::features::learning::{lab_runner, python_runtime};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use python_runtime::PythonRuntime;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

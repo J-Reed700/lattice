@@ -31,9 +31,9 @@
 // Until then, keep it simple with hardcoded constants.
 
 use crate::infrastructure::services::traits::ModelManagerTrait;
-use crate::shared::constants::RERANKER_MODEL_DIR;
-use crate::shared::error::{AppError, Result, ResultExt};
 use async_trait::async_trait;
+use lattice_core::shared::constants::RERANKER_MODEL_DIR;
+use lattice_core::shared::error::{AppError, Result, ResultExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

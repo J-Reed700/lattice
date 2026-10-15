@@ -2,8 +2,8 @@ use super::ports::{LinkedConversationArchive, NoteProjection};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
 use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
-use crate::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use uuid::Uuid;
 
 pub(super) use super::dto::row_to_dto;

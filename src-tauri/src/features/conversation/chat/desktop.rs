@@ -1,6 +1,6 @@
 //! Tauri adapter for the transport-independent turn workflow.
 use super::{ChatResponse, ChatRuntime, ToolPreferences};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tauri::Emitter;
 

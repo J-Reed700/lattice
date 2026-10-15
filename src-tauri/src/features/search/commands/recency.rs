@@ -3,7 +3,7 @@
 use crate::features::search::dto::{RecencySearchOptions, SearchRequestDto, SearchResultDto};
 use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
 use crate::interfaces::di::container::Container;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 use super::enrichment::enrich_hybrid_results;
 

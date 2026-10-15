@@ -1,12 +1,12 @@
 //! The branching port over this repository: tangents, forks, truncation and
 //! the regenerate lift.
 use super::ConversationRepository;
-use crate::domain::conversation::{Conversation, ConversationMessage, MessageRole};
 use crate::features::conversation::chat::ports::ConversationBranches;
 use crate::features::conversation::dto::ConversationDto;
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::domain::conversation::{Conversation, ConversationMessage, MessageRole};
+use lattice_core::shared::error::Result;
 
 #[async_trait]
 impl ConversationBranches for ConversationRepository {

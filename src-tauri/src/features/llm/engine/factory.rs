@@ -22,9 +22,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
-use crate::application::contracts::settings::{LLMSettingsDto, SpeculativeDecodingDto};
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
 use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
@@ -35,8 +32,13 @@ use crate::features::llm::engine::types::LLMError;
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
 use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::application::contracts::settings::{LLMSettingsDto, SpeculativeDecodingDto};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 /// Configuration for LLM client creation.
 ///
@@ -250,7 +252,8 @@ async fn create_local_llm_sidecar(
     }
     // Whether this GGUF can draft is the model catalog's to say; the user's
     // choice only applies to a model that can.
-    config.mtp_capable = crate::domain::models::curated::chat_model_uses_mtp_draft(model_path);
+    config.mtp_capable =
+        lattice_core::domain::models::curated::chat_model_uses_mtp_draft(model_path);
     config.speculative_decoding = server.speculative_decoding;
 
     if n_gpu_layers >= 0 {
@@ -287,7 +290,7 @@ async fn create_local_llm_sidecar(
     let supports_tools = model_path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(crate::domain::models::curated::chat_model_file_supports_tool_calling);
+        .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling);
 
     let model_thinking =
         crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);

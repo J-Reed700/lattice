@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tracing::warn;
 
 use super::{DownloadedOcrModel, LlamaServerLauncher, VisionOcr};
-use crate::application::ports::{ModelStoragePort, NoopOcr, OcrPort};
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::application::ports::{ModelStoragePort, NoopOcr, OcrPort};
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// The app's OCR port: the bundled `llama-server` reading pages with whichever
 /// catalog OCR model is downloaded. Until one is, every page answers

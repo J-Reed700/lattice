@@ -1,12 +1,12 @@
 //! Loads embedding artifacts and validates compatibility before publication.
 
-use crate::application::ports::EmbeddingPort;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
 use crate::infrastructure::security::SecurityContext;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// The search index a loaded model binds before it is published. Search
@@ -175,7 +175,7 @@ impl EmbeddingLoader {
     }
 
     pub(crate) async fn load(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        use crate::application::ports::MockEmbeddingPort;
+        use lattice_core::application::ports::MockEmbeddingPort;
 
         tracing::debug!("Step 1: Checking for active downloaded embedding model...");
         match self.try_load_active_embedding_model().await {

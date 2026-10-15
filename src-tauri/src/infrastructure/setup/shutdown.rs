@@ -16,7 +16,7 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     // but SidecarRegistry closes admission atomically during kill_all() and
     // kills any child that tries to register afterwards.
     if let Some(tasks) = app_handle
-        .try_state::<std::sync::Arc<crate::shared::runtime::background::BackgroundTasks>>()
+        .try_state::<std::sync::Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
     {
         tasks.close();
     }
@@ -47,7 +47,7 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
             let mut cleanup_results = Vec::new();
 
             if let Some(tasks) = app_handle
-                .try_state::<std::sync::Arc<crate::shared::runtime::background::BackgroundTasks>>()
+                .try_state::<std::sync::Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
             {
                 // Critical writes finish or remain durably queued. The outer
                 // process deadline handles a stuck worker without closing its DB.

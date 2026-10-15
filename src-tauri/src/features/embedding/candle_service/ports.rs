@@ -5,14 +5,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::ports::embedding_port::sparse_not_supported;
-use crate::application::ports::EmbeddingPort;
-use crate::domain::value_objects::SparseEmbedding;
 use crate::features::embedding::late_chunking::vector_identity;
 use crate::features::embedding::sparse_head::MAX_QUERY_TERMS;
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::application::ports::embedding_port::sparse_not_supported;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 use super::CandleEmbeddingService;
 
@@ -65,7 +65,7 @@ impl EmbeddingPort for CandleEmbeddingService {
         &self,
         text: &str,
         prefix: &str,
-    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+    ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>> {
         // The model's document prefix is part of every passage the runtime
         // embeds, so it has to be part of what the splitter measures against
         // the window — otherwise a chunk sized to exactly fit overflows by the
@@ -81,7 +81,7 @@ impl EmbeddingPort for CandleEmbeddingService {
     fn window_parts(
         &self,
         text: &str,
-    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+    ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
@@ -92,7 +92,7 @@ impl EmbeddingPort for CandleEmbeddingService {
             return <Self as EmbeddingPort>::split_text(self, text, "");
         }
         Ok(vec![
-            crate::application::ports::embedding_port::EmbeddingTextChunk {
+            lattice_core::application::ports::embedding_port::EmbeddingTextChunk {
                 text: text.to_owned(),
                 start: 0,
                 end: text.len(),
@@ -165,7 +165,7 @@ impl EmbeddingServiceTrait for CandleEmbeddingService {
         &self,
         text: &str,
         prefix: &str,
-    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+    ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>> {
         <Self as EmbeddingPort>::split_text(self, text, prefix)
     }
 
@@ -183,7 +183,7 @@ impl EmbeddingServiceTrait for CandleEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::domain::value_objects::ContextualizedChunk],
+        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         self.embed_contextualized_chunks(chunks).await
     }

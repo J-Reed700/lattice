@@ -29,7 +29,7 @@ fn assistant(response: &CompletionResponse) -> Value {
 
 /// Plain text through the typed path, as string-only callers make it.
 async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
-    crate::application::services::completion_input::complete_text(
+    lattice_core::application::services::completion_input::complete_text(
         client,
         prompt,
         context,
@@ -298,7 +298,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
                 role: "user".into(),
                 content: "Find rust".into(),
             }],
-            tools: vec![crate::application::ports::ToolDefinition {
+            tools: vec![lattice_core::application::ports::ToolDefinition {
                 name: "search".into(),
                 description: "Search".into(),
                 parameters: json!({"type":"object"}),
@@ -1431,14 +1431,16 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
                 output: "Found Rust docs".into(),
             },
         ],
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search".into(),
             parameters: json!({"type":"object"}),
         }],
         json_schema: Some(json!({"type":"object"})),
         reasoning_effort: Some("low".into()),
-        sampling: Some(crate::application::ports::llm_port::SamplingOverride::deterministic()),
+        sampling: Some(
+            lattice_core::application::ports::llm_port::SamplingOverride::deterministic(),
+        ),
         max_output_tokens: Some(512),
         want_logprobs: true,
         assigned_slot: Some(2),

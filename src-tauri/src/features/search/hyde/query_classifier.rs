@@ -1,4 +1,4 @@
-use crate::domain::qa::hyde::QueryType;
+use lattice_core::domain::qa::hyde::QueryType;
 use lazy_regex::regex;
 
 // Compile-time validated regexes using lazy_regex (eliminates runtime panics)

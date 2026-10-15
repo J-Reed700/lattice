@@ -8,7 +8,7 @@ use crate::features::conversation::ConversationServiceTrait;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{GetDocumentOutput, SemanticSearchOutput};
 use crate::features::search::dto::SearchResultDto;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 pub(super) async fn load_space_document_scope(
     container: &dyn ChatRuntime,
@@ -60,7 +60,7 @@ pub(super) async fn build_hyde_context_window_for_conversation(
 }
 
 fn query_planning_context(
-    messages: &[crate::domain::conversation::ConversationMessage],
+    messages: &[lattice_core::domain::conversation::ConversationMessage],
     question: &str,
 ) -> Option<String> {
     // This is a query-planning view, not the answering model's memory. Keep
@@ -101,7 +101,7 @@ fn query_planning_context(
             format!(
                 "{}: {}",
                 message.role,
-                crate::shared::text::build_excerpt(&message.content, &terms, 1000)
+                lattice_core::shared::text::build_excerpt(&message.content, &terms, 1000)
             )
         })
         .collect();
@@ -218,15 +218,15 @@ const SAME_TURN_WINDOW: chrono::Duration = chrono::Duration::seconds(60);
 /// with neighbour-expansion passages (score 0) at the end, so the newest row is
 /// the weakest evidence that turn found.
 pub(super) fn followup_reference(
-    document_context: &[crate::domain::conversation::DocumentReference],
-) -> Option<&crate::domain::conversation::DocumentReference> {
+    document_context: &[lattice_core::domain::conversation::DocumentReference],
+) -> Option<&lattice_core::domain::conversation::DocumentReference> {
     let newest = document_context.iter().map(|r| r.added_at).max()?;
     document_context
         .iter()
         .filter(|r| newest - r.added_at <= SAME_TURN_WINDOW)
         // `max_by` keeps the later of equals, and the list is oldest first.
         .max_by(|a, b| {
-            let score = |r: &crate::domain::conversation::DocumentReference| {
+            let score = |r: &lattice_core::domain::conversation::DocumentReference| {
                 r.relevance_score.unwrap_or(f32::MIN)
             };
             score(a).total_cmp(&score(b))
@@ -235,7 +235,7 @@ pub(super) fn followup_reference(
 
 pub(super) async fn load_recent_document_metadata(
     container: &dyn ChatRuntime,
-    document_context: &[crate::domain::conversation::DocumentReference],
+    document_context: &[lattice_core::domain::conversation::DocumentReference],
 ) -> Option<super::RecentDocumentMetadata> {
     let last_ref = followup_reference(document_context)?;
     let document_id = last_ref.document_id.clone();
@@ -253,7 +253,7 @@ pub(super) async fn load_recent_document_metadata(
 #[cfg(test)]
 mod planning_context_tests {
     use super::*;
-    use crate::domain::conversation::{ConversationAggregate, MessageRole};
+    use lattice_core::domain::conversation::{ConversationAggregate, MessageRole};
 
     #[test]
     fn planning_is_bounded_but_can_recover_an_old_subject() {
@@ -287,7 +287,7 @@ mod planning_context_tests {
 #[cfg(test)]
 mod followup_reference_tests {
     use super::*;
-    use crate::domain::conversation::DocumentReference;
+    use lattice_core::domain::conversation::DocumentReference;
 
     fn reference(document_id: &str, score: f32, seconds: i64) -> DocumentReference {
         DocumentReference {

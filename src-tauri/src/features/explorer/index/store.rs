@@ -12,7 +12,7 @@
 //! `lattice.db` names the folders; these directories hold what each index is.
 
 use super::chunker::Chunk;
-use crate::shared::{AppError, Result};
+use lattice_core::shared::{AppError, Result};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};

@@ -12,7 +12,7 @@ pub(super) async fn practical_source_versions(
     container: &Container,
     program_id: &str,
     version_ids: &[String],
-) -> crate::shared::error::Result<Vec<LearningSourceVersionDto>> {
+) -> lattice_core::shared::error::Result<Vec<LearningSourceVersionDto>> {
     let library = source_library(container);
     let workspace = library.workspace(program_id).await?;
     let mut sources = Vec::with_capacity(version_ids.len());
@@ -27,7 +27,7 @@ pub(super) async fn practical_source_versions(
                     .any(|version| &version.id == version_id)
             })
             .ok_or_else(|| {
-                crate::shared::error::AppError::InvalidInput(
+                lattice_core::shared::error::AppError::InvalidInput(
                     "A practical source version is outside this program.".into(),
                 )
             })?;
@@ -177,7 +177,7 @@ pub async fn generate_learning_practical_activity(
         || program.summary.status != LearningProgramStatus::Active
     {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "The learning program changed; reload before generating this activity.".into(),
             ),
         ));
@@ -189,7 +189,7 @@ pub async fn generate_learning_practical_activity(
         .find(|lesson| lesson.id == request.lesson_id)
         .cloned()
         .ok_or_else(|| {
-            ApiError::from(crate::shared::error::AppError::NotFound(
+            ApiError::from(lattice_core::shared::error::AppError::NotFound(
                 "Learning lesson not found".into(),
             ))
         })?;
@@ -210,7 +210,7 @@ pub async fn generate_learning_practical_activity(
             .map_err(ApiError::from)?
     {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Add or adopt at least one source before generating a practical activity.".into(),
             ),
         ));
@@ -321,7 +321,7 @@ pub async fn send_learning_simulation_turn(
         .map_err(ApiError::from)?;
     if session.program_id != request.program_id || session.revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Simulation changed; reload and retry.".into(),
             ),
         ));
@@ -392,7 +392,7 @@ pub async fn finish_learning_simulation(
         .map_err(ApiError::from)?;
     if session.program_id != request.program_id || session.revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Simulation changed; reload and retry.".into(),
             ),
         ));

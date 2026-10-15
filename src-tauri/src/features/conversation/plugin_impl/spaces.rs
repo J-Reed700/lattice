@@ -17,7 +17,7 @@ use crate::features::conversation::space_dto::{
 };
 use crate::features::conversation::workspace_dto::DocumentSpaceMembershipDto;
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 
 pub async fn create_conversation_space(
     request: CreateConversationSpaceRequestDto,

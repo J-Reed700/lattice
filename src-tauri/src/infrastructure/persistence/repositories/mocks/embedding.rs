@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use parking_lot::RwLock;
 
-use crate::application::ports::EmbeddingRepositoryPort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::EmbeddingRepositoryPort;
+use lattice_core::shared::error::Result;
 
 use super::{DomainEmbedding, Embedding, EmbeddingDTO, EmbeddingMapper};
 
@@ -166,7 +166,7 @@ impl EmbeddingRepositoryTrait for MockEmbeddingRepository {
 #[async_trait]
 impl EmbeddingRepositoryPort for MockEmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
-        use crate::shared::types::ChunkId;
+        use lattice_core::shared::types::ChunkId;
         let chunk_id_typed = ChunkId::from(chunk_id.to_string());
         let embedding = DomainEmbedding::new(chunk_id_typed, model.to_string(), vector.len());
         self.save(&embedding, vector.to_vec()).await?;

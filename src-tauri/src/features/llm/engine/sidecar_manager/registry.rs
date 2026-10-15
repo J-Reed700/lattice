@@ -308,8 +308,8 @@ pub(super) struct JobObjectGuard {
 
 #[cfg(windows)]
 impl JobObjectGuard {
-    pub(super) fn create() -> crate::shared::error::Result<Self> {
-        use crate::shared::error::AppError;
+    pub(super) fn create() -> lattice_core::shared::error::Result<Self> {
+        use lattice_core::shared::error::AppError;
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::JobObjects::{
             CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
@@ -374,8 +374,8 @@ impl JobObjectGuard {
         Ok(Self { handle })
     }
 
-    pub(super) fn assign_pid(&self, pid: u32) -> crate::shared::error::Result<()> {
-        use crate::shared::error::AppError;
+    pub(super) fn assign_pid(&self, pid: u32) -> lattice_core::shared::error::Result<()> {
+        use lattice_core::shared::error::AppError;
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::JobObjects::AssignProcessToJobObject;
         use windows::Win32::System::Threading::{

@@ -1,5 +1,5 @@
 use super::*;
-use crate::shared::types::DocumentId;
+use lattice_core::shared::types::DocumentId;
 
 /// In-memory pool with the real migrations applied, so the tests exercise the
 /// production `text_chunks` schema (`language`, `token_count`, `word_count`,

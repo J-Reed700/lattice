@@ -7,8 +7,8 @@
 //! - Just the core business data and logic
 //! - Rich behavior for mention management
 
-use crate::shared::types::{ChunkId, DocumentId, MentionId};
 use chrono::{DateTime, Utc};
+use lattice_core::shared::types::{ChunkId, DocumentId, MentionId};
 use serde::{Deserialize, Serialize};
 
 /// Mention type categorization
@@ -71,8 +71,8 @@ impl std::str::FromStr for MentionType {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::entities::mention::{Mention, MentionType};
-/// use lattice::shared::types::{DocumentId, ChunkId};
+/// use lattice_core::domain::entities::mention::{Mention, MentionType};
+/// use lattice_core::shared::types::{DocumentId, ChunkId};
 ///
 /// let doc_id = DocumentId::new();
 /// let chunk_id = ChunkId::new();
@@ -116,8 +116,8 @@ impl Mention {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::mention::{Mention, MentionType};
-    /// use lattice::shared::types::{DocumentId, ChunkId};
+    /// use lattice_core::domain::entities::mention::{Mention, MentionType};
+    /// use lattice_core::shared::types::{DocumentId, ChunkId};
     ///
     /// let mention = Mention::new(
     ///     DocumentId::new(),

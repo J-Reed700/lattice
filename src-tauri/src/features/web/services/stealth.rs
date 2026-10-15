@@ -408,7 +408,7 @@ impl FlareSolverrClient {
 ///
 /// Does **not** set `User-Agent` — use [`browser_headers`] per-request for rotation.
 pub fn stealth_client_builder() -> reqwest::ClientBuilder {
-    let mut builder = crate::shared::http::reqwest_client_builder().cookie_store(false);
+    let mut builder = lattice_core::shared::http::reqwest_client_builder().cookie_store(false);
 
     if let Some(proxy_url) = random_proxy_url() {
         let shown = redact_url_credentials(proxy_url);

@@ -1,7 +1,7 @@
 //! SQLite-backed document scope persistence shared by import workflows.
 
-use crate::application::ports::document_scope::DocumentScopePort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::document_scope::DocumentScopePort;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 pub struct SqliteDocumentScope {

@@ -11,9 +11,11 @@ use super::health::{
 use super::prompt::PLANNER_OUTPUT_TOKENS;
 use super::shortlist::{shortlist, SHORTLIST_CAP};
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
-use crate::domain::value_objects::source_context::{SourceContext, SourceGroup, StructureMode};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::value_objects::source_context::{
+    SourceContext, SourceGroup, StructureMode,
+};
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 

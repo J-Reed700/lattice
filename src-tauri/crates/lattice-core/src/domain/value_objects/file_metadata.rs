@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::value_objects::file_metadata::FileMetadata;
+/// use lattice_core::domain::value_objects::file_metadata::FileMetadata;
 /// use chrono::Utc;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,7 +59,7 @@ impl FileMetadata {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::value_objects::file_metadata::FileMetadata;
+    /// use lattice_core::domain::value_objects::file_metadata::FileMetadata;
     /// use chrono::Utc;
     ///
     /// let metadata = FileMetadata::new(

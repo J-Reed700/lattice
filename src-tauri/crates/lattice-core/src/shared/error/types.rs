@@ -718,7 +718,7 @@ pub type Result<T, E = AppError> = std::result::Result<T, E>;
 /// # Examples
 ///
 /// ```
-/// use lattice::shared::error::{ResultExt, AppError};
+/// use lattice_core::shared::error::{ResultExt, AppError};
 ///
 /// fn read_config(path: &str) -> Result<String, AppError> {
 ///     std::fs::read_to_string(path)

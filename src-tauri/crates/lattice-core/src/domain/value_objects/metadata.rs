@@ -10,12 +10,12 @@
 //! ## Example
 //!
 //! ```rust
-//! use lattice::domain::value_objects::metadata::ValidatedMetadata;
+//! use lattice_core::domain::value_objects::metadata::ValidatedMetadata;
 //!
 //! let json = r#"{"sources": [{"id": 1}]}"#.to_string();
 //! let validated = ValidatedMetadata::new(json)?;
 //! assert!(validated.size_bytes() < 65_000);
-//! # Ok::<(), lattice::shared::errors::AppError>(())
+//! # Ok::<(), lattice_core::shared::errors::AppError>(())
 //! ```
 
 use crate::shared::error::AppError;
@@ -61,11 +61,11 @@ impl ValidatedMetadata {
     /// # Example
     ///
     /// ```rust
-    /// use lattice::domain::value_objects::metadata::ValidatedMetadata;
+    /// use lattice_core::domain::value_objects::metadata::ValidatedMetadata;
     ///
     /// let json = r#"{"key": "value"}"#.to_string();
     /// let metadata = ValidatedMetadata::new(json)?;
-    /// # Ok::<(), lattice::shared::errors::AppError>(())
+    /// # Ok::<(), lattice_core::shared::errors::AppError>(())
     /// ```
     pub fn new(json: String) -> Result<Self, AppError> {
         if json.is_empty() {

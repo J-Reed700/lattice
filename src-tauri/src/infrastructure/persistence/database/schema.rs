@@ -1,7 +1,7 @@
 //! Database Schema Constants and Utilities
 //! All table creation is handled by migrations
 
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 pub const SCHEMA_VERSION: i32 = 18;
@@ -12,7 +12,7 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations")
         .run(pool)
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
 
     Ok(())
 }

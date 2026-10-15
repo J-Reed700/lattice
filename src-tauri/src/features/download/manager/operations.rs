@@ -6,8 +6,8 @@
 use super::state::{DownloadManagerService, StopReason};
 use super::task::{send_control_event, send_terminal_event};
 use super::types::{DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest};
-use crate::domain::download::{DownloadError, DownloadSession, DownloadState};
 use async_trait::async_trait;
+use lattice_core::domain::download::{DownloadError, DownloadSession, DownloadState};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info};

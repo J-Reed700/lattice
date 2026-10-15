@@ -22,7 +22,7 @@ pub(super) fn truncate_for_synthesis(text: &str, max_chars: usize) -> String {
 }
 
 pub(super) fn build_synthesis_transcript(
-    messages: &[crate::domain::conversation::ConversationMessage],
+    messages: &[lattice_core::domain::conversation::ConversationMessage],
 ) -> String {
     let mut lines = Vec::new();
     for message in messages {
@@ -208,7 +208,7 @@ pub(super) fn rewrite_citation_ids(text: &str, remap: &HashMap<u32, u32>) -> Str
 }
 
 pub(super) fn source_keys_by_message(
-    messages: &[crate::domain::conversation::ConversationMessage],
+    messages: &[lattice_core::domain::conversation::ConversationMessage],
 ) -> (Vec<SourceDto>, Vec<SynthesisMessage>) {
     let mut unique = Vec::new();
     let mut seen = HashSet::new();

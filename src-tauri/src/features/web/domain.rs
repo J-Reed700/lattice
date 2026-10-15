@@ -20,7 +20,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use lattice::domain::web_archive::*;
+//! use lattice_core::domain::web_archive::*;
 //! use url::Url;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,9 +40,9 @@
 //! # }
 //! ```
 
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::DocumentId;
 use chrono::{DateTime, Utc};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::DocumentId;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -65,7 +65,7 @@ use url::Url;
 /// # Example
 ///
 /// ```
-/// # use lattice::domain::web_archive::validate_domain;
+/// # use lattice_core::domain::web_archive::validate_domain;
 /// assert!(validate_domain("example.com").is_ok());
 /// assert!(validate_domain("..").is_err());
 /// assert!(validate_domain("evil/path").is_err());
@@ -137,7 +137,7 @@ pub fn validate_domain(domain: &str) -> Result<()> {
 /// # Example
 ///
 /// ```
-/// # use lattice::domain::web_archive::sanitize_title;
+/// # use lattice_core::domain::web_archive::sanitize_title;
 /// let sanitized = sanitize_title("Hello, World! 2024");
 /// assert_eq!(sanitized, "hello-world-2024");
 /// ```
@@ -182,8 +182,8 @@ pub fn sanitize_title(title: &str) -> String {
 /// # Example
 ///
 /// ```rust,no_run
-/// # use lattice::domain::web_archive::WebArchivePath;
-/// # use lattice::shared::types::DocumentId;
+/// # use lattice_core::domain::web_archive::WebArchivePath;
+/// # use lattice_core::shared::types::DocumentId;
 /// # use url::Url;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let url = Url::parse("https://github.com/rust-lang/rust")?;
@@ -254,8 +254,8 @@ impl WebArchivePath {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::domain::web_archive::WebArchivePath;
-    /// # use lattice::shared::types::DocumentId;
+    /// # use lattice_core::domain::web_archive::WebArchivePath;
+    /// # use lattice_core::shared::types::DocumentId;
     /// # use url::Url;
     /// # use std::path::PathBuf;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -420,7 +420,7 @@ pub struct IngestedContent {
 /// # Example
 ///
 /// ```rust,no_run
-/// # use lattice::domain::web_archive::*;
+/// # use lattice_core::domain::web_archive::*;
 /// # use url::Url;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let url = Url::parse("https://blog.rust-lang.org/2024/article")?;

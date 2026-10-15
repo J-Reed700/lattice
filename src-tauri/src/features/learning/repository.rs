@@ -5,7 +5,7 @@ use super::recall::{
     study_dto::{StudyCardDto, StudyCardFormat, StudySourceDto},
     study_repository::StudyRepository,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 

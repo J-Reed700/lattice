@@ -132,8 +132,8 @@ impl Document {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::document::Document;
-    /// use lattice::shared::types::ValidatedFilePath;
+    /// use lattice_core::domain::entities::document::Document;
+    /// use lattice_core::shared::types::ValidatedFilePath;
     /// use std::path::PathBuf;
     ///
     /// let path = ValidatedFilePath::new(PathBuf::from("/docs/report.pdf")).unwrap();
@@ -255,10 +255,10 @@ impl Document {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::domain::entities::Document;
-    /// # use lattice::domain::entities::chunk::Chunk;
-    /// # use lattice::shared::types::TagId;
-    /// # use lattice::shared::error::Result;
+    /// # use lattice_core::domain::entities::Document;
+    /// # use lattice_core::domain::entities::chunk::Chunk;
+    /// # use lattice_core::shared::types::TagId;
+    /// # use lattice_core::shared::error::Result;
     /// # fn example(metadata: Document, chunks: Vec<Chunk>, tags: Vec<TagId>) -> Result<Document> {
     /// // Repository loads metadata, chunks, and tags separately, then reconstructs:
     /// let complete_entity = metadata.from_parts(chunks, tags)?;

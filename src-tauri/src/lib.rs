@@ -10,14 +10,14 @@
 //!
 //! Product behavior lives in [`features`], grouped by capability (conversation,
 //! embedding, search, learning, and so on). A feature owns its commands, use
-//! cases, services, and repositories. Cross-feature contracts and ports live
-//! in [`application`]; shared business types live in [`domain`].
+//! cases, services, and repositories. Cross-feature contracts and ports, shared
+//! business types, and foundational utilities live in the [`lattice_core`]
+//! crate, which this crate depends on and which never depends on it.
 //!
 //! [`infrastructure`] contains reusable technical implementations: persistence,
 //! messaging, model caching, filesystem access, security, and app setup.
 //! [`interfaces`] wires dependencies and exposes shared command adapters;
-//! [`plugins`] registers the feature-owned Tauri plugins. [`shared`] provides
-//! foundational types and utilities used across these modules.
+//! [`plugins`] registers the feature-owned Tauri plugins.
 //!
 //! Features still reference each other directly in places; the checker counts
 //! those edges against a baseline that may only shrink.
@@ -30,8 +30,6 @@
 //! `desktop_e2e/` belongs to the instrumented executable, not this library.
 
 #![deny(unsafe_code)]
-
-pub use lattice_core::{application, domain, shared};
 
 /// Product capabilities, each owning its feature-specific implementation.
 pub mod features;
@@ -53,7 +51,7 @@ pub use interfaces::di::Container;
 /// Registration of feature-owned Tauri plugins.
 pub mod plugins;
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 

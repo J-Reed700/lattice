@@ -11,9 +11,9 @@
 use super::fs::{self, SearchRequest};
 use super::index::tool::{self as folder_index_tool, TOOL_SEARCH_FOLDER};
 use super::scope::Scope;
-use crate::application::ports::ToolDefinition;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::{AppError, Result};
 use serde_json::Value;
 
 pub const TOOL_LIST_DIRECTORY: &str = "list_directory";

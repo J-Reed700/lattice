@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::value_objects::checksum::Checksum;
+/// use lattice_core::domain::value_objects::checksum::Checksum;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create from existing hash
@@ -52,7 +52,7 @@ impl Checksum {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::value_objects::checksum::Checksum;
+    /// use lattice_core::domain::value_objects::checksum::Checksum;
     ///
     /// let hash = "a".repeat(64); // Valid SHA-256 length
     /// let checksum = Checksum::new(hash)?;

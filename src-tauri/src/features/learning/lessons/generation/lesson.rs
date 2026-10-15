@@ -7,7 +7,6 @@ use super::{
     validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
     MAX_BODY, MAX_EXPLANATION, MAX_QUESTION,
 };
-use crate::application::ports::LLMPort;
 use crate::features::learning::dto::{
     LearningAnswerKey, LearningAssessmentKind, LearningBlockDto, LearningBlockKind,
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningQuestionDto,
@@ -17,7 +16,8 @@ use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;

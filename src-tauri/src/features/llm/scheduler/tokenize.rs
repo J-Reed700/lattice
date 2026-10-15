@@ -12,7 +12,7 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Distinct texts remembered. A turn counts a handful; this covers many
 /// conversations' worth of system prompts and histories.

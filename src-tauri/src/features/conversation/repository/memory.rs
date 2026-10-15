@@ -20,13 +20,13 @@
 //! transaction did the rewrite and no new call site can forget it.
 
 use super::ConversationRepository;
-use crate::domain::conversation::memory::{
+use chrono::{DateTime, Utc};
+use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, SourceMessage, SourceRole,
     MAX_ACTIVE_ITEMS, MAX_RELATED_ITEMS,
 };
-use crate::shared::error::{AppError, Result};
-use chrono::{DateTime, Utc};
+use lattice_core::shared::error::{AppError, Result};
 use std::str::FromStr;
 
 mod source_reads;

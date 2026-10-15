@@ -7,8 +7,8 @@
 //! the structure for future implementation.
 
 use crate::features::tags::dto::{CreateTagRequestDto, TagDto};
-use crate::shared::error::AppError;
-use crate::shared::types::TagId;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::types::TagId;
 
 /// Mapper for tag-related conversions.
 pub struct TagMapper;
@@ -66,7 +66,7 @@ impl TagMapper {
     /// # Errors
     ///
     /// Returns error if the string is not a valid UUID
-    pub fn string_to_id(id_str: &str) -> crate::shared::error::Result<TagId> {
+    pub fn string_to_id(id_str: &str) -> lattice_core::shared::error::Result<TagId> {
         TagId::from_string(id_str.to_string())
             .map_err(|e| AppError::ValidationFailed(format!("Invalid tag ID: {}", e)))
     }

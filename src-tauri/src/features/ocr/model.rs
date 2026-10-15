@@ -6,8 +6,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tracing::warn;
 
-use crate::application::ports::{ModelStoragePort, OcrError};
-use crate::domain::models::curated::{CURATED_OCR_MODELS, OCR_MODEL_FILE, OCR_PROJECTOR_FILE};
+use lattice_core::application::ports::{ModelStoragePort, OcrError};
+use lattice_core::domain::models::curated::{
+    CURATED_OCR_MODELS, OCR_MODEL_FILE, OCR_PROJECTOR_FILE,
+};
 
 /// The two files one OCR server is started with, and the instruction that
 /// model expects.
@@ -116,7 +118,7 @@ impl OcrModelSource for FixedOcrModel {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_storage::{DownloadedModel, MockModelStoragePort};
+    use lattice_core::application::ports::model_storage::{DownloadedModel, MockModelStoragePort};
 
     fn storage_with(path: PathBuf) -> Arc<dyn ModelStoragePort> {
         let storage = MockModelStoragePort::new();

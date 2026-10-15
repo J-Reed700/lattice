@@ -35,11 +35,11 @@
 //! println!("Freed {} GB", response.freed_space_gb);
 //! ```
 
-use crate::application::ports::model_storage::ModelStoragePort;
-use crate::domain::models::curated::get_all_curated_models;
-use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_storage::ModelStoragePort;
+use lattice_core::domain::models::curated::get_all_curated_models;
+use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -263,12 +263,12 @@ mod tests {
     //! observe filesystem-side effects.
 
     use super::*;
-    use crate::application::ports::model_storage::{
-        DownloadedModel as StoredModel, MockModelStoragePort,
-    };
-    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use crate::features::download::downloaded_model_repository::DownloadedModelRepository as ConcreteRepo;
     use chrono::Utc;
+    use lattice_core::application::ports::model_storage::{
+        DownloadedModel as StoredModel, MockModelStoragePort,
+    };
+    use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;
 

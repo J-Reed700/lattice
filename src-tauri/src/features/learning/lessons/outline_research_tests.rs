@@ -1,13 +1,13 @@
 use super::*;
-use crate::application::contracts::web::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-};
 use crate::features::{
     learning::{
         outline_draft::LearningOutlineReviewStatus,
         outline_progress::{OutlineProgress, OutlineRunRegistry, OutlineStage},
     },
     web::{mocks::MockWebService, traits::WebServiceTrait},
+};
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };
 use serde_json::Value;
 use std::sync::{Arc, Mutex};

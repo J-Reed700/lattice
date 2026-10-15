@@ -1,9 +1,9 @@
 //! Saving, renaming and deleting documents.
 
 use super::parts::{save_chunks, save_tags};
-use crate::domain::entities::Document as DocumentEntity;
 use crate::infrastructure::persistence::mappers::DocumentModel;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::entities::Document as DocumentEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 use std::time::Instant;
 use tracing::{info, instrument};
@@ -26,7 +26,7 @@ pub async fn delete(conn: &mut SqliteConnection, id: &str) -> Result<()> {
 
 #[instrument(skip(conn, aggregate), fields(document_id = %aggregate.id().as_str()))]
 pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEntity) -> Result<()> {
-    use crate::domain::entities::document::DocumentStatus as EntityStatus;
+    use lattice_core::domain::entities::document::DocumentStatus as EntityStatus;
 
     let start = Instant::now();
 

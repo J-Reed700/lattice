@@ -6,7 +6,7 @@
 //! errors so these contracts do not depend on those implementations.
 //!
 //! ```rust
-//! use lattice::shared::error::{AppError, Result};
+//! use lattice_core::shared::error::{AppError, Result};
 //!
 //! fn require_document(document: Option<String>) -> Result<String> {
 //!     document.ok_or_else(|| AppError::NotFound("Document not found".into()))

@@ -13,7 +13,7 @@ impl Container {
         self.core.db_pool()
     }
 
-    pub fn jobs(&self) -> &Arc<crate::shared::runtime::jobs::JobRuntime> {
+    pub fn jobs(&self) -> &Arc<lattice_core::shared::runtime::jobs::JobRuntime> {
         &self.jobs
     }
 
@@ -114,7 +114,7 @@ impl Container {
     /// Must be called at startup once settings are readable, and again after
     /// any change to the vault path or the indexed-folder list; otherwise a
     /// newly added folder is unreadable, or a removed one stays readable.
-    pub async fn refresh_allowed_roots(&self) -> crate::shared::error::Result<()> {
+    pub async fn refresh_allowed_roots(&self) -> lattice_core::shared::error::Result<()> {
         let settings = self.system.settings_repo().get_all().await?;
 
         let mut roots = vec![
@@ -154,7 +154,7 @@ impl Container {
             let scope = handle.asset_protocol_scope();
             for root in &roots {
                 scope.allow_directory(root, true).map_err(|e| {
-                    crate::shared::error::AppError::InternalError(format!(
+                    lattice_core::shared::error::AppError::InternalError(format!(
                         "could not open {} to the asset protocol: {e}",
                         root.display()
                     ))

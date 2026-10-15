@@ -4,7 +4,7 @@
 //! `ask_question` commands were removed with the use case behind them.
 
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 /// Checks LLM availability and returns health status information

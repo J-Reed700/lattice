@@ -7,9 +7,9 @@ use super::trait_def::{BM25SearchTrait, SearchServiceTrait};
 #[cfg(test)]
 use crate::features::search::engine::service::SearchResult;
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 #[cfg(test)]
 use std::sync::{Arc, RwLock};
 
@@ -262,7 +262,7 @@ pub struct EmptyTextSearch;
 
 #[async_trait]
 #[cfg(test)]
-impl crate::application::ports::TextSearchPort for EmptyTextSearch {
+impl lattice_core::application::ports::TextSearchPort for EmptyTextSearch {
     async fn search(
         &self,
         _query: &str,
@@ -293,7 +293,7 @@ impl crate::application::ports::TextSearchPort for EmptyTextSearch {
 pub fn empty_hybrid_search() -> Arc<crate::features::search::use_cases::HybridSearchUseCase> {
     Arc::new(
         crate::features::search::use_cases::HybridSearchUseCase::new(
-            Arc::new(crate::application::ports::MockEmbeddingPort::new_degraded()),
+            Arc::new(lattice_core::application::ports::MockEmbeddingPort::new_degraded()),
             Arc::new(
                 crate::features::search::engine::vector_search::USearchVectorIndex::new(4, None)
                     .expect("an in-memory vector index"),

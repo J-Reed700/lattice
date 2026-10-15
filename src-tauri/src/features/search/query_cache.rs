@@ -1,7 +1,7 @@
 //! The app's cache of search results, keyed by query and corpus generation.
 //! Indexing invalidates it; the cache commands report and clear it.
 
-use crate::application::ports::SearchResultCachePort;
+use lattice_core::application::ports::SearchResultCachePort;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

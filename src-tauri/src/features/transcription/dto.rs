@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::ports::transcription_port::Transcript;
+use lattice_core::application::ports::transcription_port::Transcript;
 
 /// One contiguous run of transcribed speech.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

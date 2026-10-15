@@ -17,7 +17,7 @@ use zeroize::Zeroize;
 
 use super::crypto::MasterKey;
 use super::format::ArchiveError;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// Keyring service name. Distinct from the credentials adapter's service so
 /// "forget my API keys" can never take the backup key with it.

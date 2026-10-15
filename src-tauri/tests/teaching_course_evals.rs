@@ -12,12 +12,14 @@
 )]
 
 use async_trait::async_trait;
-use lattice::{
+use lattice::features::learning::{
+    dto::*, practice_generation, repository::LearningRepository, service,
+};
+use lattice_core::{
     application::ports::{
         llm_port::{CompletionInput, CompletionRequest, CompletionResponse},
         LLMPort,
     },
-    features::learning::{dto::*, practice_generation, repository::LearningRepository, service},
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Value};
@@ -106,12 +108,12 @@ impl ConfiguredModel {
         let context = p["models"][model]["limit"]["context"]
             .as_u64()
             .unwrap_or(32768) as usize;
-        let settings = lattice::application::contracts::settings::LLMSettingsDto {
+        let settings = lattice_core::application::contracts::settings::LLMSettingsDto {
             model: model.into(),
             max_tokens: output,
             context_window: context as u32,
             temperature: 0.2,
-            llama_cpp: lattice::application::contracts::settings::LlamaCppSettingsDto {
+            llama_cpp: lattice_core::application::contracts::settings::LlamaCppSettingsDto {
                 url: p["options"]["baseURL"].as_str().expect("Endpoint").into(),
                 model: model.into(),
                 auth_header_name,

@@ -1,9 +1,9 @@
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::features::download::saga::DownloadSaga;
 use crate::infrastructure::events::event_bus::EventBus;
-use crate::shared::error::AppError;
-use crate::shared::runtime::supervised_task::supervise_cancellable;
+use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::runtime::supervised_task::supervise_cancellable;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
 use std::path::PathBuf;
@@ -93,7 +93,7 @@ async fn create_container(
     ollama_endpoint: String,
     ollama_model: String,
     app_handle: tauri::AppHandle,
-    background: Arc<crate::shared::runtime::background::BackgroundTasks>,
+    background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
 ) -> Result<crate::interfaces::di::Container, AppError> {
     use crate::interfaces::di::Container;
 
@@ -182,7 +182,8 @@ pub fn initialize_app(app: &mut tauri::App) {
 /// Components go directly to heap via Tauri State.
 #[tracing::instrument(skip(app_handle))]
 async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), StartupFailure> {
-    let background = Arc::new(crate::shared::runtime::background::BackgroundTasks::default());
+    let background =
+        Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default());
     let shutdown_token = background.token();
     app_handle.manage(Arc::clone(&background));
     app_handle.manage(shutdown_token.clone());
@@ -446,13 +447,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository::new(
             container.db_pool().clone()
         )
-    ) as Arc<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort>;
+    ) as Arc<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort>;
 
     let uow_factory = Arc::new(
         crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory::new(
             container.db_pool().clone()
         )
-    ) as Arc<dyn crate::application::ports::UnitOfWorkFactory>;
+    ) as Arc<dyn lattice_core::application::ports::UnitOfWorkFactory>;
 
     let download_saga = Arc::new(DownloadSaga::new(
         Arc::clone(&event_bus),
@@ -553,8 +554,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 /// Read the stored `summary_index_enabled` search setting, defaulting to off
 /// when settings cannot be read so startup never depends on it.
 async fn read_summary_tier_flag(data_dir: &std::path::Path) -> bool {
-    use crate::application::ports::SettingsRepositoryPort;
     use crate::features::settings::repository::SettingsRepository;
+    use lattice_core::application::ports::SettingsRepositoryPort;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {

@@ -4,10 +4,6 @@
 use super::final_round::FINAL_ROUND_INSTRUCTION;
 use super::research_notes::{CONDENSE_INSTRUCTION, NOTES_HEADER};
 use super::*;
-use crate::application::ports::llm_port::{
-    CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
-};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation;
 use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::ports::ChatTools;
@@ -15,6 +11,10 @@ use crate::features::conversation::chat::test_runtime::FakeRuntime;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepDto, TurnStepState};
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
+};
+use lattice_core::application::ports::LLMPort;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};

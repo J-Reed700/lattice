@@ -2,14 +2,14 @@
 
 use super::super::ConversationRepository;
 use super::related_ids_to_json;
-use crate::application::ports::conversation_memory::{
+use chrono::Utc;
+use lattice_core::application::ports::conversation_memory::{
     CommittedMemorySnapshot, MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions,
 };
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     compute_digest, MemoryItem, MemoryKind, MEMORY_SCHEMA_VERSION,
 };
-use crate::shared::error::{AppError, Result};
-use chrono::Utc;
+use lattice_core::shared::error::{AppError, Result};
 use std::str::FromStr;
 
 impl ConversationRepository {

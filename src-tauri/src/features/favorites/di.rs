@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::FavoritesRepositoryPort;
 use crate::features::favorites::repository::FavoritesRepository;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::FavoritesRepositoryPort;
 
 #[derive(Clone)]
 pub struct FavoritesDi {

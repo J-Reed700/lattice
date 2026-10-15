@@ -60,7 +60,7 @@ use crate::features::mentions::dto::{
     SearchMentionsResultDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use tauri::State;
 
 /// Extract and store mentions from document content

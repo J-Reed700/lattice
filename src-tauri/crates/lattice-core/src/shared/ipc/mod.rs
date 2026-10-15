@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use lattice::shared::ipc::{ApiResult, ErrorCode};
+//! use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 //!
 //! // Success response
 //! let result = ApiResult::success(vec![1, 2, 3]);
@@ -53,7 +53,7 @@ mod conversions;
 /// # Examples
 ///
 /// ```rust
-/// # use lattice::shared::ipc::{ApiResult, ErrorCode};
+/// # use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 /// let success = ApiResult::success("hello");
 /// assert!(success.is_ok());
 ///
@@ -85,7 +85,7 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use lattice::shared::ipc::ApiResult;
+    /// # use lattice_core::shared::ipc::ApiResult;
     /// let result = ApiResult::success(42);
     /// assert!(result.is_ok());
     /// ```
@@ -98,7 +98,7 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use lattice::shared::ipc::{ApiResult, ErrorCode};
+    /// # use lattice_core::shared::ipc::{ApiResult, ErrorCode};
     /// let result = ApiResult::<()>::error(ErrorCode::NotFound, "Resource not found");
     /// assert!(!result.is_ok());
     /// ```
@@ -118,7 +118,7 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use lattice::shared::ipc::{ApiResult, ErrorCode};
+    /// # use lattice_core::shared::ipc::{ApiResult, ErrorCode};
     /// let result = ApiResult::<()>::error_with_details(
     ///     ErrorCode::ValidationError,
     ///     "Invalid request",
@@ -146,8 +146,8 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use lattice::shared::ipc::ApiResult;
-    /// # use lattice::application::error::ApplicationError;
+    /// # use lattice_core::shared::ipc::ApiResult;
+    /// # use lattice_core::application::error::ApplicationError;
     /// let ok: Result<i32, ApplicationError> = Ok(42);
     /// let result = ApiResult::from_result(ok);
     /// assert!(result.is_ok());
@@ -179,12 +179,12 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use lattice::shared::ipc::ApiResult;
+    /// # use lattice_core::shared::ipc::ApiResult;
     /// let success = ApiResult::success(42);
     /// assert!(success.is_ok());
     ///
     /// let error = ApiResult::<i32>::error(
-    ///     lattice::shared::ipc::ErrorCode::NotFound,
+    ///     lattice_core::shared::ipc::ErrorCode::NotFound,
     ///     "Not found"
     /// );
     /// assert!(!error.is_ok());
@@ -198,12 +198,12 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use lattice::shared::ipc::ApiResult;
+    /// # use lattice_core::shared::ipc::ApiResult;
     /// let success = ApiResult::success(42);
     /// assert!(!success.is_err());
     ///
     /// let error = ApiResult::<i32>::error(
-    ///     lattice::shared::ipc::ErrorCode::NotFound,
+    ///     lattice_core::shared::ipc::ErrorCode::NotFound,
     ///     "Not found"
     /// );
     /// assert!(error.is_err());
@@ -233,7 +233,7 @@ impl<T> ApiResult<T> {
 /// # Examples
 ///
 /// ```rust
-/// # use lattice::shared::ipc::{ApiError, ErrorCode};
+/// # use lattice_core::shared::ipc::{ApiError, ErrorCode};
 /// let error = ApiError {
 ///     code: ErrorCode::NotFound,
 ///     message: "Document not found".to_string(),
@@ -264,7 +264,7 @@ pub struct ApiError {
 /// # Examples
 ///
 /// ```rust
-/// # use lattice::shared::ipc::ErrorCode;
+/// # use lattice_core::shared::ipc::ErrorCode;
 /// let code = ErrorCode::NotFound;
 /// let json = serde_json::to_string(&code).unwrap();
 /// assert_eq!(json, "\"NOT_FOUND\"");
@@ -389,7 +389,7 @@ pub enum ErrorCode {
 /// # Examples
 ///
 /// ```rust
-/// # use lattice::shared::ipc::sanitize_database_error;
+/// # use lattice_core::shared::ipc::sanitize_database_error;
 /// let error = "error in SQL: SELECT * FROM users WHERE password = 'secret'";
 /// let sanitized = sanitize_database_error(error);
 /// assert!(!sanitized.contains("SELECT"));

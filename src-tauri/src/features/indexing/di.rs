@@ -4,14 +4,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
-    ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
-    DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
-    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, TranscriptionPort,
-    VectorSearchPort,
-};
-use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::engine::extraction::{ContentExtractor, ExtractionWorkers};
@@ -28,7 +20,15 @@ use crate::infrastructure::persistence::repositories::{
 };
 use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
+    DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
+    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, TranscriptionPort,
+    VectorSearchPort,
+};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::Result;
 
 #[derive(Clone)]
 pub struct IndexingDi {
@@ -67,12 +67,12 @@ pub struct IndexingShared {
 
 pub fn build(
     db_pool: SqlitePool,
-    model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn VectorSearchPort>,
     web_archive: Arc<dyn ArticleArchive>,
     ocr: Arc<dyn OcrPort>,
     shared: IndexingShared,
-    background: Arc<crate::shared::runtime::background::BackgroundTasks>,
+    background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
 ) -> Result<IndexingDi> {
     let IndexingShared {
         query_cache,
@@ -96,7 +96,7 @@ pub fn build(
     // loaded model actually has one, so this is inert for a dense-only model.
     let sparse_term_store = Arc::new(
         crate::features::search::engine::sparse_search::SqliteSparseTermStore::new(db_pool.clone()),
-    ) as Arc<dyn crate::application::ports::SparseTermStorePort>;
+    ) as Arc<dyn lattice_core::application::ports::SparseTermStorePort>;
     // Build the transcription port once and share the same Arc with the
     // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
     let transcription = crate::features::transcription::di::build(db_pool, background).port;

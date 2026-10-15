@@ -20,7 +20,7 @@ use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// File magic. The trailing byte is the format version.
 pub const MAGIC: [u8; 8] = *b"LATTBKP\x01";

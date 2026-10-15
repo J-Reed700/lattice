@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Example
 /// ```rust
-/// use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
+/// use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
 ///
 /// let request = GenerateSingleEmbeddingRequestDto {
 ///     text: "This is the text to embed".to_string(),
@@ -36,8 +36,8 @@ pub struct GenerateSingleEmbeddingRequestDto {
 ///
 /// # Example
 /// ```rust
-/// # use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingResponseDto;
-/// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+/// # use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingResponseDto;
+/// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 /// let response = GenerateSingleEmbeddingResponseDto {
 ///     embedding: vec![0.1, 0.2, 0.3], // DEFAULT_EMBEDDING_DIM values
 ///     dimension: DEFAULT_EMBEDDING_DIM,
@@ -59,7 +59,7 @@ pub struct GenerateSingleEmbeddingResponseDto {
 ///
 /// # Example
 /// ```rust
-/// use lattice::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
+/// use lattice_core::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
 ///
 /// let request = GenerateBatchEmbeddingsRequestDto {
 ///     texts: vec![
@@ -81,7 +81,7 @@ pub struct GenerateBatchEmbeddingsRequestDto {
 ///
 /// # Example
 /// ```rust
-/// # use lattice::application::dtos::embedding_dto::GenerateBatchEmbeddingsResponseDto;
+/// # use lattice_core::application::dtos::embedding_dto::GenerateBatchEmbeddingsResponseDto;
 /// let response = GenerateBatchEmbeddingsResponseDto {
 ///     embeddings: vec![
 ///         vec![0.1, 0.2, 0.3], // First text embedding
@@ -102,8 +102,8 @@ pub struct GenerateBatchEmbeddingsResponseDto {
 ///
 /// # Example
 /// ```rust
-/// # use lattice::application::dtos::embedding_dto::EmbeddingModelInfoDto;
-/// use lattice::domain::models::embedding_defaults::{
+/// # use lattice_core::application::dtos::embedding_dto::EmbeddingModelInfoDto;
+/// use lattice_core::domain::models::embedding_defaults::{
 ///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
 /// };
 /// let info = EmbeddingModelInfoDto {

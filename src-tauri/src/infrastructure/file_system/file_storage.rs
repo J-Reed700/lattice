@@ -21,7 +21,7 @@
 //!
 //! ```rust,no_run
 //! use lattice::infrastructure::file_system::SecureFileStorage;
-//! use lattice::application::ports::FileStoragePort;
+//! use lattice_core::application::ports::FileStoragePort;
 //! use std::path::Path;
 //!
 //! #[tokio::main]
@@ -43,11 +43,11 @@
 //! }
 //! ```
 
-use crate::application::ports::{FileMetadata, FileStoragePort};
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
-use crate::shared::fs::atomic::AtomicFs;
 use async_trait::async_trait;
+use lattice_core::application::ports::{FileMetadata, FileStoragePort};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::fs::atomic::AtomicFs;
 use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 use std::path::Path;

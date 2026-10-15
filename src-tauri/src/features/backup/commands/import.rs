@@ -1,7 +1,7 @@
 //! Imports from third-party knowledge tools (Obsidian, Notion, Roam).
 
-use crate::shared::error::AppError;
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Imports documents from an Obsidian lattice

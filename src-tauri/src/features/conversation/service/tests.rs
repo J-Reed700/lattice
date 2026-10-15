@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 #[tokio::test]
 async fn invalid_input_never_reaches_repository() {
-    use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+    use lattice_core::application::ports::conversation_repository::MockConversationRepositoryPort;
     // An unexpected call fails: validation must happen before persistence.
     let service = ConversationService::new(Arc::new(MockConversationRepositoryPort::new()));
     assert!(matches!(
@@ -23,7 +23,7 @@ async fn invalid_input_never_reaches_repository() {
 
 #[tokio::test]
 async fn clearing_prompt_is_forwarded_as_none() {
-    use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+    use lattice_core::application::ports::conversation_repository::MockConversationRepositoryPort;
     let mut repository = MockConversationRepositoryPort::new();
     repository
         .expect_update_system_prompt()
@@ -36,7 +36,7 @@ async fn clearing_prompt_is_forwarded_as_none() {
 
 #[tokio::test]
 async fn repository_failure_is_preserved() {
-    use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+    use lattice_core::application::ports::conversation_repository::MockConversationRepositoryPort;
     let mut repository = MockConversationRepositoryPort::new();
     repository
         .expect_update_message_status()
@@ -52,7 +52,7 @@ async fn repository_failure_is_preserved() {
 
 #[tokio::test]
 async fn missing_conversation_stops_pruning_before_write() {
-    use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+    use lattice_core::application::ports::conversation_repository::MockConversationRepositoryPort;
     let mut repository = MockConversationRepositoryPort::new();
     repository
         .expect_load_aggregate()

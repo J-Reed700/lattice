@@ -385,7 +385,7 @@ async fn a_fully_scanned_pdf_still_asks_for_ocr() {
         .await
         .unwrap_err()
         .to_string();
-    let noop: Arc<dyn OcrPort> = Arc::new(crate::application::ports::NoopOcr);
+    let noop: Arc<dyn OcrPort> = Arc::new(lattice_core::application::ports::NoopOcr);
     let with_noop = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop), &ExtractionWorkers::new())
         .await
         .unwrap_err()
@@ -514,7 +514,7 @@ async fn unavailable_ocr_is_asked_once_and_named_in_the_error() {
 async fn a_scan_without_an_ocr_model_points_at_the_download() {
     let dir = tempfile::tempdir().unwrap();
     let path = write_pdf(dir.path(), "scan.pdf", vec![TestPage::scan()]);
-    let noop: Arc<dyn OcrPort> = Arc::new(crate::application::ports::NoopOcr);
+    let noop: Arc<dyn OcrPort> = Arc::new(lattice_core::application::ports::NoopOcr);
 
     let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop), &ExtractionWorkers::new())
         .await

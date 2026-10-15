@@ -3,9 +3,6 @@
 //! activates it, and the corpus imported through the import use case.
 
 use crate::Res;
-use lattice::application::contracts::settings::SettingsDto;
-use lattice::application::ports::SettingsRepositoryPort;
-use lattice::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use lattice::features::model_management::commands_extra::{
     set_active_embedding_model_impl, set_active_utility_model_impl,
@@ -13,6 +10,9 @@ use lattice::features::model_management::commands_extra::{
 use lattice::features::settings::repository::SettingsRepository;
 use lattice::infrastructure::setup::database::setup_database;
 use lattice::Container;
+use lattice_core::application::contracts::settings::SettingsDto;
+use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};

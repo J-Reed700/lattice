@@ -13,8 +13,8 @@
 //!
 //! Token-aware truncation:
 //! ```rust,no_run
-//! use lattice::application::services::context_window_builder::ContextWindowBuilder;
-//! use lattice::application::ports::ConversationHistoryPort;
+//! use lattice_core::application::services::context_window_builder::ContextWindowBuilder;
+//! use lattice_core::application::ports::ConversationHistoryPort;
 //! use std::sync::Arc;
 //!
 //! # async fn example(conversation_history: Arc<dyn ConversationHistoryPort>) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,9 +55,9 @@ impl ContextWindowBuilder {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::services::context_window_builder::ContextWindowBuilder;
+    /// # use lattice_core::application::services::context_window_builder::ContextWindowBuilder;
     /// # use std::sync::Arc;
-    /// # async fn example(conversation_history: Arc<dyn lattice::application::ports::ConversationHistoryPort>) {
+    /// # async fn example(conversation_history: Arc<dyn lattice_core::application::ports::ConversationHistoryPort>) {
     /// let token_counter = Arc::new(|text: &str| text.split_whitespace().count());
     /// let builder = ContextWindowBuilder::new(conversation_history, 100_000, token_counter);
     /// # }
@@ -99,7 +99,7 @@ impl ContextWindowBuilder {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::services::context_window_builder::ContextWindowBuilder;
+    /// # use lattice_core::application::services::context_window_builder::ContextWindowBuilder;
     /// # async fn example(builder: ContextWindowBuilder) -> Result<(), Box<dyn std::error::Error>> {
     /// let context = builder.build("conversation_id").await?;
     /// assert!(!context.is_empty());
@@ -192,7 +192,7 @@ impl ContextWindowBuilder {
 /// # Example
 ///
 /// ```
-/// # use lattice::application::services::context_window_builder::estimate_tokens;
+/// # use lattice_core::application::services::context_window_builder::estimate_tokens;
 /// assert_eq!(estimate_tokens("hello world"), 2);
 /// assert_eq!(estimate_tokens("the quick brown fox"), 5);
 /// ```

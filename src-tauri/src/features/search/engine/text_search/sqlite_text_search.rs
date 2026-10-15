@@ -8,11 +8,11 @@
 //!
 //! [`BM25Search`]: crate::features::search::engine::bm25::BM25Search
 
-use crate::application::ports::TextSearchPort;
 use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::ports::TextSearchPort;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 

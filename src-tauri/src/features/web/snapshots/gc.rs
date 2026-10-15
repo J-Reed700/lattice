@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use super::repository::SnapshotRepository;
 use super::store::{is_valid_id, SnapshotStore, HTML_SUFFIX, PART_SUFFIX};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// How old an unfinished write must be before it is treated as abandoned.
 pub const STALE_PART_AGE: Duration = Duration::from_secs(60 * 60);

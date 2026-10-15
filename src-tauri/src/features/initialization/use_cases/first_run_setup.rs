@@ -1,9 +1,9 @@
-use crate::application::ports::system_info::SystemInfoPort;
-use crate::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
-use crate::domain::models::embedding_defaults::default_embedding_model;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::infrastructure::ml::compute_device::gpu_acceleration_available;
-use crate::shared::error::Result;
+use lattice_core::application::ports::system_info::SystemInfoPort;
+use lattice_core::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
+use lattice_core::domain::models::embedding_defaults::default_embedding_model;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -133,7 +133,7 @@ impl CheckFirstRunStatusUseCase {
 fn embedding_recommendation() -> Option<RecommendedModel> {
     // Qwen3 where there is a GPU to run it, MiniLM where there is not.
     let default = default_embedding_model(gpu_acceleration_available());
-    let entry = crate::domain::models::curated::get_curated_embedding_models()
+    let entry = lattice_core::domain::models::curated::get_curated_embedding_models()
         .into_iter()
         .find(|m| m.id == default.curated_id);
     if entry.is_none() {
@@ -163,7 +163,7 @@ fn embedding_recommendation() -> Option<RecommendedModel> {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {
@@ -318,7 +318,9 @@ mod tests {
 
     #[tokio::test]
     async fn gpu_memory_never_promotes_a_system_ram_tier() {
-        use crate::application::ports::system_info::{ComputeType, GpuInfo, MockSystemInfoPort};
+        use lattice_core::application::ports::system_info::{
+            ComputeType, GpuInfo, MockSystemInfoPort,
+        };
 
         let repo = setup_repo().await;
         // Exercise the actual onboarding response, including the AMD APU case
@@ -357,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_chat_recommendation_uses_hardware_probe_when_available() {
-        use crate::application::ports::system_info::MockSystemInfoPort;
+        use lattice_core::application::ports::system_info::MockSystemInfoPort;
 
         let repo = setup_repo().await;
 

@@ -35,9 +35,9 @@
 //! Commands delegate directly to SQLite with internal helper functions for
 //! idempotent operations and data enrichment via document JOIN queries.
 
-use crate::application::ports::FavoritesRepositoryPort;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::FavoritesRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

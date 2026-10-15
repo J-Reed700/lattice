@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::contracts::search::CorpusDocument;
 use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
 use crate::features::search::{
     trait_def::LibrarySearchTrait,
     use_cases::{BranchKind, RankedBranch},
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::shared::error::{AppError, Result};
 
 use super::{select_informative_terms, tokenize_keyword_terms};
 

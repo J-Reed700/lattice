@@ -19,7 +19,7 @@ use crate::features::extraction::use_cases::{
 };
 
 // Application Ports
-use crate::application::ports::{
+use lattice_core::application::ports::{
     DocumentRepository, FileStoragePort, FileSystemPort, RepositoryPort,
 };
 
@@ -34,13 +34,15 @@ use crate::features::tags::TagServiceTrait;
 /// - Document repository (read-only for paths)
 #[derive(Clone)]
 pub struct FileOpsModule {
-    library: Arc<dyn crate::application::ports::file_library::FileLibraryPort>,
+    library: Arc<dyn lattice_core::application::ports::file_library::FileLibraryPort>,
     file: crate::features::file::di::FileDi,
     extraction: crate::features::extraction::di::ExtractionDi,
 }
 
 impl FileOpsModule {
-    pub fn library(&self) -> &Arc<dyn crate::application::ports::file_library::FileLibraryPort> {
+    pub fn library(
+        &self,
+    ) -> &Arc<dyn lattice_core::application::ports::file_library::FileLibraryPort> {
         &self.library
     }
     /// Build FileOpsModule by composing the file + extraction feature builders.
@@ -48,7 +50,7 @@ impl FileOpsModule {
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         use crate::features::indexing::engine::extraction::ContentExtractor;
         use crate::features::tags::service::TagService;
         use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
@@ -91,7 +93,7 @@ impl FileOpsModule {
             preview_extractor,
         );
         let extraction = crate::features::extraction::di::build(
-            document_repo as Arc<dyn RepositoryPort<crate::domain::entities::Document>>,
+            document_repo as Arc<dyn RepositoryPort<lattice_core::domain::entities::Document>>,
         );
 
         Ok(Self {

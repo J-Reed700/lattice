@@ -20,10 +20,6 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, StatusCode};
 use tracing::{debug, warn};
 
-use crate::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode,
-};
-use crate::application::ports::LLMPort;
 use crate::features::llm::engine::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
 };
@@ -32,8 +28,12 @@ use crate::features::llm::engine::types::{
     OllamaToolCallFunction,
 };
 use crate::features::llm::engine::GenerationConfig;
-use crate::shared::error::{AppError, Result};
-use crate::shared::http::reqwest_client_builder;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::reqwest_client_builder;
 
 const DEFAULT_OLLAMA_MAX_CONCURRENCY: usize = 3;
 

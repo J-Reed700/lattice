@@ -1,7 +1,7 @@
 //! The Chat Completions body one request becomes: messages, the output
 //! reservation, sampling for the thinking mode, the thinking switch and tools.
 use super::*;
-use crate::application::ports::llm_port::ThinkingMode;
+use lattice_core::application::ports::llm_port::ThinkingMode;
 
 impl LlamaCppLlm {
     /// What the server can still be asked to generate once this prompt is in
@@ -30,9 +30,9 @@ impl LlamaCppLlm {
             .iter()
             .map(|message| message.to_string().chars().count())
             .sum();
-        let prompt_tokens = crate::application::ports::llm_port::tokens_for_chars(
+        let prompt_tokens = lattice_core::application::ports::llm_port::tokens_for_chars(
             prompt_chars,
-            crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+            lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
         ) * ESTIMATE_SAFETY
             / ESTIMATE_SAFETY_DIVISOR;
         let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
@@ -142,7 +142,7 @@ impl LlamaCppLlm {
             body.insert("logprobs".into(), json!(true));
             body.insert(
                 "top_logprobs".into(),
-                json!(crate::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
+                json!(lattice_core::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
             );
         }
         if let Some(schema) = &request.json_schema {

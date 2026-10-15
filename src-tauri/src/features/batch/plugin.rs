@@ -12,7 +12,7 @@ use super::items::BatchItems;
 use super::url_job::UrlImporter;
 use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use crate::interfaces::di::Container;
-use crate::shared::{error::AppError, ipc::ApiError};
+use lattice_core::shared::{error::AppError, ipc::ApiError};
 use std::sync::Arc;
 use tauri::{
     plugin::{Builder, TauriPlugin},

@@ -16,7 +16,7 @@
 //! resumed one starts at stage 6 from there.
 //!
 //! Every pool the prompt carries is sized from one
-//! [`BudgetAllocation`](crate::application::services::context_assembler::BudgetAllocation):
+//! [`BudgetAllocation`](lattice_core::application::services::context_assembler::BudgetAllocation):
 //! the turn's [`budget::TurnBudget`] before retrieval, and the context
 //! assembler's plan when the request is assembled.
 use super::dto::SourceDto;

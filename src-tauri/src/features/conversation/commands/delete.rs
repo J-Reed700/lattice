@@ -2,7 +2,7 @@
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::interfaces::di::container::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use tauri::State;
 
 /// Deletes a conversation and all associated messages

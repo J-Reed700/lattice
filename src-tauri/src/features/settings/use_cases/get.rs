@@ -1,8 +1,8 @@
 //! Get Settings Use Case
 
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::settings::dto::{SettingsCategory, SettingsDto};
-use crate::shared::error::Result;
+use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Use case for retrieving application settings.
@@ -74,7 +74,7 @@ impl GetSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockSettingsRepository;
+    use lattice_core::application::ports::MockSettingsRepository;
 
     #[tokio::test]
     async fn test_get_all_settings() {

@@ -2,18 +2,11 @@
 
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::loading::ModelLoader;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::llm_port::OptionalLlmLoader;
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
-    CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
-};
-use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
-use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use crate::features::download::download_repository::SqliteDownloadRepository;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::engine::HttpDownloadEngine;
@@ -32,7 +25,14 @@ use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
+    CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
+};
+use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
+use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 
 /// Output ceiling for the shared utility model.

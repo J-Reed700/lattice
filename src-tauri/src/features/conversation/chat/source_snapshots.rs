@@ -267,7 +267,7 @@ fn capped_snapshot_text(content: &str) -> Option<(String, bool)> {
     }
     if content.chars().count() > SNAPSHOT_MAX_CHARS {
         Some((
-            crate::shared::text::safe_truncate(content, SNAPSHOT_MAX_CHARS),
+            lattice_core::shared::text::safe_truncate(content, SNAPSHOT_MAX_CHARS),
             true,
         ))
     } else {

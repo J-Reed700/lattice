@@ -4,7 +4,7 @@
 use super::{
     id, text, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 pub fn validate_generation_job(job: &LearningGenerationJob) -> Result<()> {
     id(&job.id, "generation job")?;

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::timestamps::parse_db_timestamp;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 use super::{
     emit_note_imported, import_one, DailyNotesRepository, RescanLock, WriteSuppressionRegistry,

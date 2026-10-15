@@ -3,7 +3,8 @@ use super::{
     portability_dto::*, practical_dto::*, repository::LearningRepository, service,
 };
 use crate::features::web::traits::WebServiceTrait;
-use crate::{interfaces::di::Container, shared::ipc::ApiError};
+use crate::interfaces::di::Container;
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,

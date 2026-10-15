@@ -1,8 +1,8 @@
 //! `create_backup`: writes a full database snapshot for disaster recovery.
 
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Creates a database backup for disaster recovery

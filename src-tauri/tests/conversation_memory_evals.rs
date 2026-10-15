@@ -109,21 +109,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Row, SqlitePool};
 
-use lattice::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
-use lattice::application::ports::conversation_memory::{
-    ConversationMemoryPort, ConversationMemoryReadPort, RecallCandidates, SourcePage,
-    SourceReadLimits,
-};
-use lattice::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, ToolDefinition,
-};
-use lattice::application::ports::LLMPort;
-use lattice::domain::conversation::memory::{
-    parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
-    SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
-};
-use lattice::domain::conversation::MessageRole;
 use lattice::features::conversation::chat::memory_context::build_memory_plan;
 use lattice::features::conversation::memory::{
     prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
@@ -132,7 +117,22 @@ use lattice::features::conversation::memory::{
 use lattice::features::conversation::repository::ConversationRepository;
 use lattice::features::llm::engine::ollama_client::OllamaClient;
 use lattice::features::llm::llama_cpp::LlamaCppLlm;
-use lattice::shared::error::{AppError, Result};
+use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
+use lattice_core::application::ports::conversation_memory::{
+    ConversationMemoryPort, ConversationMemoryReadPort, RecallCandidates, SourcePage,
+    SourceReadLimits,
+};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse, ToolDefinition,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
+    parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
+    SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
+    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+};
+use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
 // Fixtures

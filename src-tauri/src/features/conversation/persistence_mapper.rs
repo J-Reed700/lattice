@@ -7,12 +7,12 @@
 //! - Conversation messages
 //! - Document references
 
-use crate::domain::conversation::{
+use chrono::{DateTime, Utc};
+use lattice_core::domain::conversation::{
     CompactionRecord, Conversation, ConversationMessage, DocumentReference, MessageRole,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::ConversationId;
-use chrono::{DateTime, Utc};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::ConversationId;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 

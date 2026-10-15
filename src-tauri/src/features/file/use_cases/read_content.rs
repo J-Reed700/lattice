@@ -2,10 +2,10 @@
 //!
 //! Reads the content of a text file with security limits.
 
-use crate::application::ports::{ContentExtractionPort, FileStoragePort};
 use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
 use crate::infrastructure::security::{FileAccessConfig, ValidatedFile};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{ContentExtractionPort, FileStoragePort};
+use lattice_core::shared::error::{AppError, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -289,7 +289,10 @@ mod tests {
             })
         }
 
-        async fn metadata(&self, path: &Path) -> Result<crate::application::ports::FileMetadata> {
+        async fn metadata(
+            &self,
+            path: &Path,
+        ) -> Result<lattice_core::application::ports::FileMetadata> {
             let path_str = path.to_string_lossy().to_string();
             let path_with_slash = format!("{}/", path_str);
             self.files
@@ -300,7 +303,7 @@ mod tests {
                 .map(|(p, _, size)| {
                     let is_directory = p.ends_with('/');
 
-                    crate::application::ports::FileMetadata {
+                    lattice_core::application::ports::FileMetadata {
                         size: *size,
                         modified_at: 0,
                         is_file: !is_directory,

@@ -14,7 +14,7 @@ use tracing;
 /// # Examples
 ///
 /// ```rust
-/// use lattice::shared::resilience::retry::RetryConfig;
+/// use lattice_core::shared::resilience::retry::RetryConfig;
 /// use std::time::Duration;
 ///
 /// // Default configuration (3 attempts, 100ms initial delay)
@@ -124,7 +124,7 @@ impl RetryConfig {
 /// # Examples
 ///
 /// ```rust
-/// use lattice::shared::resilience::retry::{retry_with_backoff, RetryConfig};
+/// use lattice_core::shared::resilience::retry::{retry_with_backoff, RetryConfig};
 /// use std::io;
 ///
 /// async fn example() -> Result<String, io::Error> {
@@ -209,8 +209,8 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use lattice::shared::error::Result;
-/// use lattice::shared::resilience::retry::retry_async;
+/// use lattice_core::shared::error::Result;
+/// use lattice_core::shared::resilience::retry::retry_async;
 ///
 /// async fn example() -> Result<String> {
 ///     retry_async(|| async {
@@ -246,7 +246,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use lattice::shared::resilience::retry::{retry_with_jitter, RetryConfig};
+/// use lattice_core::shared::resilience::retry::{retry_with_jitter, RetryConfig};
 ///
 /// async fn example() -> Result<String, reqwest::Error> {
 ///     retry_with_jitter(

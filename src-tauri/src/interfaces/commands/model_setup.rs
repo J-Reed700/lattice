@@ -13,12 +13,12 @@
 //! All commands are routed through the Gateway pattern which provides async dispatch.
 //! Async functions store state on the heap (in Future objects), not the stack.
 
-use crate::domain::download::DownloadOperationState;
-use crate::domain::models::embedding_defaults::default_embedding_model;
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::domain::download::DownloadOperationState;
+use lattice_core::domain::models::embedding_defaults::default_embedding_model;
+use lattice_core::shared::error::AppError;
 
 #[derive(Debug, serde::Serialize)]
 struct DownloadDefaultModelResponse {

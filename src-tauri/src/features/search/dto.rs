@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
+pub use lattice_core::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 
 /// Search request from the frontend.
 ///
@@ -37,8 +37,8 @@ impl SearchRequestDto {
             limit: Some(limit),
             threshold: None,
             mode: SearchModeDto::Hybrid {
-                vector_weight: crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                bm25_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+                vector_weight: lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                bm25_weight: lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
             },
         }
     }

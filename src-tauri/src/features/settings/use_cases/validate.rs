@@ -1,7 +1,7 @@
 //! Validate Settings Use Case
 
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::settings::dto::{SettingsDto, ValidationResult};
+use lattice_core::application::ports::SettingsRepositoryPort;
 use std::sync::Arc;
 
 /// Use case for validating application settings.
@@ -62,7 +62,7 @@ impl ValidateSettingsUseCase {
     /// # Errors
     ///
     /// Returns error if settings cannot be loaded from repository
-    pub async fn validate_current(&self) -> crate::shared::error::Result<ValidationResult> {
+    pub async fn validate_current(&self) -> lattice_core::shared::error::Result<ValidationResult> {
         let settings = self.repository.get_all().await?;
         Ok(self.execute(&settings))
     }
@@ -93,8 +93,8 @@ impl ValidateSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockSettingsRepository;
-    use crate::shared::testing::paths as test_paths;
+    use lattice_core::application::ports::MockSettingsRepository;
+    use lattice_core::shared::testing::paths as test_paths;
 
     #[test]
     fn test_validate_default_settings() {

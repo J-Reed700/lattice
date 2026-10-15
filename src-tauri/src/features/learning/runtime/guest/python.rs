@@ -9,7 +9,7 @@
 use super::super::embedded_runtime::BuiltinLabExecutionSpec;
 use super::super::lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus};
 use super::super::python_runtime::{self, PythonBundle, WASM_NAME};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};

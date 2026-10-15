@@ -4,8 +4,8 @@
 //! observe, and `DownloadManager` is the trait the rest of the application
 //! depends on rather than on a concrete manager.
 
-use crate::domain::download::{Checksum, DownloadError, DownloadSession};
 use async_trait::async_trait;
+use lattice_core::domain::download::{Checksum, DownloadError, DownloadSession};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};

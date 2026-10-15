@@ -11,14 +11,14 @@
 //! cannot hold what the old constant handed it. So the total is the web pages'
 //! share of the turn's evidence budget, divided between the pages.
 
-use crate::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
+use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
 /// The characters of page text the turn's evidence budget lets fetched pages
 /// carry, erring short so dense text under-fills rather than overflows.
 pub(super) fn page_budget_chars(evidence: &EvidenceBudget) -> usize {
-    crate::application::ports::llm_port::chars_within_tokens(
+    lattice_core::application::ports::llm_port::chars_within_tokens(
         evidence.allowance(EvidenceShare::WEB_PAGES),
-        crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
     )
 }
 

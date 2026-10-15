@@ -102,7 +102,7 @@ pub async fn repair_learning_outline(
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     uuid::Uuid::parse_str(&request.program_id).map_err(|_| {
-        ApiError::from(crate::shared::error::AppError::InvalidInput(
+        ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
             "Invalid program ID".into(),
         ))
     })?;
@@ -139,7 +139,7 @@ pub async fn cancel_learning_outline(
     container: State<'_, Container>,
 ) -> Result<bool, ApiError> {
     uuid::Uuid::parse_str(&request_id).map_err(|_| {
-        ApiError::from(crate::shared::error::AppError::InvalidInput(
+        ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
             "Invalid outline request ID".into(),
         ))
     })?;
@@ -171,14 +171,14 @@ pub async fn prepare_learning_lesson(
         .map_err(ApiError::from)?;
     if program.summary.revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Program changed; reload and retry.".into(),
             ),
         ));
     }
     if program.summary.status != LearningProgramStatus::Active {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Accept this program before preparing lessons.".into(),
             ),
         ));
@@ -246,7 +246,7 @@ pub async fn delete_learning_program(
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
     uuid::Uuid::parse_str(&id).map_err(|_| {
-        ApiError::from(crate::shared::error::AppError::InvalidInput(
+        ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
             "Invalid program ID".into(),
         ))
     })?;

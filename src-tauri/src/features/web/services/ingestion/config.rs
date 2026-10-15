@@ -8,7 +8,7 @@ use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::WebArchiveServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
@@ -66,8 +66,8 @@ pub struct WebIngestionServiceBuilder {
     embedding_service: Option<Arc<dyn EmbeddingServiceTrait>>,
     index_storage: Option<Arc<dyn IndexStorageTrait>>,
     tokenizer: Option<Arc<Tokenizer>>,
-    vector_search: Option<Arc<dyn crate::application::ports::VectorSearchPort>>,
-    query_cache: Option<Arc<dyn crate::application::ports::SearchResultCachePort>>,
+    vector_search: Option<Arc<dyn lattice_core::application::ports::VectorSearchPort>>,
+    query_cache: Option<Arc<dyn lattice_core::application::ports::SearchResultCachePort>>,
     config: WebIngestionConfig,
 }
 
@@ -114,7 +114,7 @@ impl WebIngestionServiceBuilder {
     /// same instance search reads. Without it an article is only in SQLite.
     pub fn vector_search(
         mut self,
-        value: Arc<dyn crate::application::ports::VectorSearchPort>,
+        value: Arc<dyn lattice_core::application::ports::VectorSearchPort>,
     ) -> Self {
         self.vector_search = Some(value);
         self
@@ -124,7 +124,7 @@ impl WebIngestionServiceBuilder {
     /// the search commands read.
     pub fn query_cache(
         mut self,
-        value: Arc<dyn crate::application::ports::SearchResultCachePort>,
+        value: Arc<dyn lattice_core::application::ports::SearchResultCachePort>,
     ) -> Self {
         self.query_cache = Some(value);
         self

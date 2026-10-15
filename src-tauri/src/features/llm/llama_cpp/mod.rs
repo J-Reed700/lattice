@@ -5,19 +5,19 @@
 //! `/tokenize` and slot pinning. The two differ only in where the server is
 //! (the base URL), how it authenticates (default headers) and who owns its
 //! process: a sidecar's client holds the handle that keeps it running.
-use crate::application::{
+use crate::features::llm::engine::sidecar_manager::SidecarHandle;
+use crate::features::llm::engine::GenerationConfig;
+use crate::features::llm::scheduler::SchedulerRegistry;
+use async_trait::async_trait;
+use futures::StreamExt;
+use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
         CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingPolicy,
         ToolDefinition,
     },
 };
-use crate::features::llm::engine::sidecar_manager::SidecarHandle;
-use crate::features::llm::engine::GenerationConfig;
-use crate::features::llm::scheduler::SchedulerRegistry;
-use crate::shared::error::{AppError, Result};
-use async_trait::async_trait;
-use futures::StreamExt;
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -472,7 +472,7 @@ fn remote_headers(connection: &LlamaCppSettingsDto) -> Result<HeaderMap> {
 /// No client-wide read or total timeout: generations are bounded by their time
 /// budget and stall detection, probes by per-request timeouts.
 fn http_client(headers: HeaderMap) -> Result<reqwest::Client> {
-    crate::shared::http::reqwest_client_builder()
+    lattice_core::shared::http::reqwest_client_builder()
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -557,7 +557,7 @@ pub(crate) fn invalid_tool_call_problem(arguments: &Value) -> Option<String> {
     let problem = object.get("error")?.as_str()?;
     Some(format!(
         "Tool call not run: {problem}. You wrote: {}. Call the tool again with a complete JSON object of arguments, or answer from what you have.",
-        crate::shared::text::safe_truncate(raw, 400)
+        lattice_core::shared::text::safe_truncate(raw, 400)
     ))
 }
 
@@ -708,6 +708,6 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
                         .is_some_and(|text| !text.is_empty())
                 })
             })
-            .and_then(crate::application::ports::llm_port::first_token_logprobs),
+            .and_then(lattice_core::application::ports::llm_port::first_token_logprobs),
     })
 }

@@ -15,8 +15,8 @@
 
 use tracing::{debug, warn};
 
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::SourceMessage;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::SourceMessage;
 
 use super::prompts::{
     render_summary_prompt, render_summary_shrink_prompt, SummaryPassage, SUMMARIZER_SYSTEM,

@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use lattice::application::ports::OcrPort;
 use lattice::features::indexing::engine::ContentExtractor;
 use lattice::features::ocr::{render, FixedOcrModel, LlamaServerLauncher, OcrModel, VisionOcr};
+use lattice_core::application::ports::OcrPort;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

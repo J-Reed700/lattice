@@ -39,12 +39,12 @@ use std::sync::Arc;
 use tokenizers::Tokenizer;
 use tokio::sync::Mutex;
 
-use crate::domain::value_objects::ArtifactIdentity;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
 use crate::features::embedding::qwen3_encoder::Qwen3Encoder;
 use crate::features::embedding::sparse_head::SparseHead;
-use crate::shared::error::AppError;
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::AppError;
 
 mod batching;
 mod config;

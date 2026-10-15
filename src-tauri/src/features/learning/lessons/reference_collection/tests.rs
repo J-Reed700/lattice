@@ -129,12 +129,12 @@ impl LibraryPassagesPort for FakeLibrary {
     async fn document_text(
         &self,
         document_id: &str,
-    ) -> Result<Option<crate::application::ports::LibraryDocumentText>> {
+    ) -> Result<Option<lattice_core::application::ports::LibraryDocumentText>> {
         if self.importing.contains(document_id) {
             return Err(invalid("The document is not fully indexed."));
         }
         Ok(self.documents.get(document_id).map(|chunks| {
-            crate::application::ports::LibraryDocumentText {
+            lattice_core::application::ports::LibraryDocumentText {
                 title: format!("{document_id}.md"),
                 file_path: format!("/library/{document_id}"),
                 chunks: chunks.clone(),
@@ -146,7 +146,7 @@ impl LibraryPassagesPort for FakeLibrary {
         query: &str,
         document_ids: &HashSet<String>,
         limit: usize,
-    ) -> Result<Vec<crate::application::ports::LibraryPassageHit>> {
+    ) -> Result<Vec<lattice_core::application::ports::LibraryPassageHit>> {
         self.scopes.lock().unwrap().push(document_ids.clone());
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut scoped: Vec<_> = document_ids.iter().collect();
@@ -156,7 +156,7 @@ impl LibraryPassagesPort for FakeLibrary {
             for chunk in self.documents.get(document_id).into_iter().flatten() {
                 let text = chunk.text.to_lowercase();
                 if words.iter().any(|word| text.contains(word.as_str())) {
-                    hits.push(crate::application::ports::LibraryPassageHit {
+                    hits.push(lattice_core::application::ports::LibraryPassageHit {
                         document_id: document_id.clone(),
                         chunk_id: chunk.id.clone(),
                         score: 1.0,

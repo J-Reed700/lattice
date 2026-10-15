@@ -1,15 +1,15 @@
 //! Opt-in real-model lifecycle check. All state lives in a temporary directory.
 use super::*;
-use crate::application::factories::ChecksumFactory;
-use crate::application::ports::{EmbeddingPort, VectorSearchPort};
-use crate::domain::entities::document::Document;
-use crate::domain::value_objects::{ChunkingStrategy, FileMetadata};
 use crate::features::embedding::{candle_service::CandleEmbeddingService, encoding, generation};
 use crate::features::indexing::use_cases::embedding_input::{
     embed_prepared_chunks, prepare_structured_with_spans,
 };
 use crate::features::search::engine::vector_search::{VectorIndexCompression, VectorQuantization};
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::application::factories::ChecksumFactory;
+use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
+use lattice_core::domain::entities::document::Document;
+use lattice_core::domain::value_objects::{ChunkingStrategy, FileMetadata};
+use lattice_core::shared::types::ValidatedFilePath;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 #[tokio::test]

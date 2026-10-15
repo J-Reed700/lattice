@@ -9,7 +9,7 @@ use crate::features::explorer::index::search::FolderSearch;
 use crate::features::explorer::index::store;
 use crate::features::explorer::index::watcher::{self, Change, FolderWatcher};
 use crate::features::explorer::scope::Scope;
-use crate::shared::{runtime::jobs::JobStatus, Result};
+use lattice_core::shared::{runtime::jobs::JobStatus, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};

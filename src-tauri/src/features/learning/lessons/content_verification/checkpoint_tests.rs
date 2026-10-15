@@ -8,7 +8,7 @@ use crate::features::learning::{
     plan_dto::StartLearningGenerationJobRequestDto,
     repository::LearningRepository,
 };
-use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
+use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[tokio::test]
 async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories() -> Result<()> {
@@ -635,7 +635,7 @@ fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts()
         (ClaimVerdict::Contradicted, None, false),
         (
             ClaimVerdict::Unsupported,
-            Some(crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
+            Some(lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
             true,
         ),
     ] {

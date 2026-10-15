@@ -5,11 +5,11 @@ use super::message::{MessageFrame, TurnMessage};
 use super::prepare::PreparedTurn;
 use super::retrieve::Retrieved;
 use super::*;
-use crate::application::ports::llm_port::CompletionInput;
-use crate::application::ports::{LLMPort, ToolDefinition};
-use crate::application::services::context_assembler::{render, InlineEvidence};
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
 use crate::features::conversation::chat::prompting::{kb_passage, kb_passages};
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::ports::{LLMPort, ToolDefinition};
+use lattice_core::application::services::context_assembler::{render, InlineEvidence};
 
 /// The rendered prompt and the numbered sources it cites.
 pub(super) struct RenderedPrompt {
@@ -492,7 +492,7 @@ pub(super) async fn plan_request(
         None => PlannedRequest {
             // The date leads the final message here too, never the system
             // prompt: that would change the head of the request every day.
-            input: crate::application::services::completion_input::from_context(
+            input: lattice_core::application::services::completion_input::from_context(
                 &turn.prompt_settings.system_prompt,
                 &turn.context,
                 &format!(

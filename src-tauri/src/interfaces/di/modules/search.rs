@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 
 // Application Ports
-use crate::application::ports::{DocumentRepository, VectorSearchPort};
+use lattice_core::application::ports::{DocumentRepository, VectorSearchPort};
 
 // Service Traits
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
@@ -42,8 +42,8 @@ impl SearchModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
-        model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
-    ) -> crate::shared::error::Result<Self> {
+        model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    ) -> lattice_core::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
         let models_path = core.data_dir().join("models");
         let active_dim = resolve_active_embedding_dimension(&db_pool).await;
@@ -130,8 +130,8 @@ impl SearchModule {
 async fn read_search_settings(
     data_dir: &std::path::Path,
 ) -> crate::features::settings::dto::SearchSettingsDto {
-    use crate::application::ports::SettingsRepositoryPort;
     use crate::features::settings::repository::SettingsRepository;
+    use lattice_core::application::ports::SettingsRepositoryPort;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {
@@ -190,7 +190,7 @@ async fn resolve_vector_compression(
         );
         return VectorIndexCompression::None;
     };
-    if !crate::domain::models::curated::embedding_model_supports_matryoshka(&model_id) {
+    if !lattice_core::domain::models::curated::embedding_model_supports_matryoshka(&model_id) {
         tracing::warn!(
             model_id = %model_id,
             "Ignoring truncated vector compression: this embedding model does not advertise \

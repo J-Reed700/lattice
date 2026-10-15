@@ -4,10 +4,10 @@
 //! identity is computed (or reused from the row) here and recorded with the
 //! activation, so launch never hashes model files.
 
-use crate::domain::value_objects::ArtifactIdentity;
 use crate::features::download::artifact_identity;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::{AppError, Result};
 use tracing::info;
 
 pub struct SetActiveEmbeddingModelUseCase {
@@ -71,7 +71,7 @@ impl SetActiveEmbeddingModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::Path;
 

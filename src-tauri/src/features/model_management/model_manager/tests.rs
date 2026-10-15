@@ -16,8 +16,8 @@
 
 use super::{DownloadProgress, ModelManager};
 use crate::infrastructure::services::traits::ModelManagerTrait;
-use crate::shared::constants::RERANKER_MODEL_DIR;
-use crate::shared::error::AppError;
+use lattice_core::shared::constants::RERANKER_MODEL_DIR;
+use lattice_core::shared::error::AppError;
 use mockito;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

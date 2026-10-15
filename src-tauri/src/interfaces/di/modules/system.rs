@@ -35,7 +35,7 @@ use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUse
 use crate::infrastructure::observability::metrics::Metrics;
 
 // Application Ports
-use crate::application::ports::{BackupPort, SettingsRepositoryPort, SystemInfoPort};
+use lattice_core::application::ports::{BackupPort, SettingsRepositoryPort, SystemInfoPort};
 
 // Service Traits
 use crate::features::model_management::model_manager::ModelManager;
@@ -71,7 +71,7 @@ impl SystemModule {
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 
         let settings = crate::features::settings::di::build(core.data_dir()).await?;

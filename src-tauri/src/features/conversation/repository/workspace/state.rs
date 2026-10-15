@@ -57,7 +57,7 @@ async fn fetch_conversation_state(
 }
 
 fn to_conversation_dto(
-    c: &crate::domain::conversation::Conversation,
+    c: &lattice_core::domain::conversation::Conversation,
     state: Option<ConversationStateRow>,
     compaction: Option<CompactionRecordDto>,
 ) -> crate::features::conversation::dto::ConversationDto {
@@ -254,7 +254,7 @@ impl ConversationRepository {
 
     pub async fn project_conversation(
         &self,
-        conversation: &crate::domain::conversation::Conversation,
+        conversation: &lattice_core::domain::conversation::Conversation,
     ) -> Result<ConversationDto, AppError> {
         let state = fetch_conversation_state(&self.pool, &conversation.id.to_string()).await?;
         let compaction = match self.get_summary(&conversation.id.to_string()).await {

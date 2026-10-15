@@ -33,7 +33,7 @@ use crate::features::conversation::space_dto::{
 use crate::features::conversation::starters_dto::ChatStartersDto;
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 use tauri::State;
 
 use crate::features::conversation::chat::ports::ChatRuntime;

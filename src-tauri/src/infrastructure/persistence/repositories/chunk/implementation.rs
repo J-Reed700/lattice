@@ -2,10 +2,10 @@
 //!
 //! SQLite pool-based implementation of ChunkRepository that delegates to ops.rs.
 
-use crate::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
-use crate::domain::entities::chunk::Chunk as ChunkEntity;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
+use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 use super::ops;
@@ -161,7 +161,7 @@ impl ChunkRepositoryPort for SqliteChunkRepository {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<ChunkEntity> {
-        use crate::shared::types::DocumentId;
+        use lattice_core::shared::types::DocumentId;
         let doc_id = DocumentId::from(document_id.to_string());
         let chunk = ChunkEntity::new(doc_id, content.to_string(), index);
         RepositoryPort::save(self, &chunk).await?;

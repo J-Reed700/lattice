@@ -23,10 +23,10 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::entities::embedding::Embedding;
-/// use lattice::shared::types::ChunkId;
+/// use lattice_core::domain::entities::embedding::Embedding;
+/// use lattice_core::shared::types::ChunkId;
 ///
-/// use lattice::domain::models::embedding_defaults::{
+/// use lattice_core::domain::models::embedding_defaults::{
 ///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
 /// };
 /// let chunk_id = ChunkId::new();
@@ -69,10 +69,10 @@ impl Embedding {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::embedding::Embedding;
-    /// use lattice::shared::types::ChunkId;
+    /// use lattice_core::domain::entities::embedding::Embedding;
+    /// use lattice_core::shared::types::ChunkId;
     ///
-    /// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
+    /// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
     /// let embedding = Embedding::new(
     ///     ChunkId::new(),
     ///     DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
@@ -167,8 +167,8 @@ impl Embedding {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::embedding::Embedding;
-    /// use lattice::shared::types::ChunkId;
+    /// use lattice_core::domain::entities::embedding::Embedding;
+    /// use lattice_core::shared::types::ChunkId;
     ///
     /// let emb1 = Embedding::new(
     ///     ChunkId::new(),

@@ -21,7 +21,7 @@ use crate::features::mentions::use_cases::{
 };
 
 // Application Ports
-use crate::application::ports::{
+use lattice_core::application::ports::{
     FavoritesRepositoryPort, MentionRepositoryPort, RecentDocumentsRepositoryPort,
 };
 
@@ -47,7 +47,7 @@ impl LibraryModule {
     pub async fn new(
         db_pool: SqlitePool,
         _core: Arc<CoreModule>,
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         Ok(Self {
             tags: crate::features::tags::di::build(db_pool.clone()),
             favorites: crate::features::favorites::di::build(db_pool.clone()),

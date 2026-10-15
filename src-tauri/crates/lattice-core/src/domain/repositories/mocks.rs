@@ -6,7 +6,7 @@
 //! # Example Usage
 //!
 //! ```rust
-//! use lattice::domain::repositories::mocks::{MockUnitOfWork, MockUnitOfWorkFactory};
+//! use lattice_core::domain::repositories::mocks::{MockUnitOfWork, MockUnitOfWorkFactory};
 //! use mockall::predicate::*;
 //!
 //! #[tokio::test]
@@ -343,7 +343,7 @@ mock! {
     /// # Example
     ///
     /// ```rust
-    /// use lattice::domain::repositories::mocks::MockModelRepository;
+    /// use lattice_core::domain::repositories::mocks::MockModelRepository;
     /// use mockall::predicate::*;
     ///
     /// #[tokio::test]
@@ -387,7 +387,7 @@ mock! {
     /// # Example
     ///
     /// ```rust
-    /// use lattice::domain::repositories::mocks::MockUnitOfWork;
+    /// use lattice_core::domain::repositories::mocks::MockUnitOfWork;
     /// use mockall::predicate::*;
     ///
     /// #[tokio::test]
@@ -428,7 +428,7 @@ mock! {
     /// # Example
     ///
     /// ```rust
-    /// use lattice::domain::repositories::mocks::{MockUnitOfWorkFactory, MockUnitOfWork};
+    /// use lattice_core::domain::repositories::mocks::{MockUnitOfWorkFactory, MockUnitOfWork};
     /// use mockall::predicate::*;
     ///
     /// #[tokio::test]

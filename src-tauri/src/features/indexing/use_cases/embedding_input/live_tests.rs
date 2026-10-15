@@ -1,7 +1,7 @@
 use super::*;
-use crate::application::ports::ContentExtractionPort;
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
+use lattice_core::application::ports::ContentExtractionPort;
 
 #[tokio::test]
 #[ignore = "requires LATTICE_STRUCTURE_MODEL and LATTICE_STRUCTURE_PDF (read-only)"]
@@ -12,18 +12,18 @@ async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> 
     let extracted = ContentExtractionAdapter::new()
         .extract_content(&path)
         .await?;
-    let metadata = crate::application::factories::FileMetadataFactory::from_path(&path)?;
-    let checksum = crate::application::factories::ChecksumFactory::from_path(&path)?;
+    let metadata = lattice_core::application::factories::FileMetadataFactory::from_path(&path)?;
+    let checksum = lattice_core::application::factories::ChecksumFactory::from_path(&path)?;
     let mut doc = Document::from_file(
-        crate::shared::types::ValidatedFilePath::new(path)?,
+        lattice_core::shared::types::ValidatedFilePath::new(path)?,
         metadata,
         checksum,
         extracted.text.clone(),
-        crate::domain::value_objects::ChunkingStrategy::default(),
+        lattice_core::domain::value_objects::ChunkingStrategy::default(),
     )?;
     doc.set_source_context(Some(
-        crate::domain::value_objects::source_context::SourceContext {
-            group: crate::domain::value_objects::source_context::SourceGroup {
+        lattice_core::domain::value_objects::source_context::SourceContext {
+            group: lattice_core::domain::value_objects::source_context::SourceGroup {
                 id: uuid::Uuid::new_v4().to_string(),
                 title: "Manual of Patent Examining Procedure".into(),
                 edition: Some("Rev. 01.2024".into()),

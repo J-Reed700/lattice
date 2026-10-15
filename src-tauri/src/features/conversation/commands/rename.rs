@@ -1,7 +1,7 @@
 //! Renaming a conversation.
 
 use crate::interfaces::di::container::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 /// Renames a conversation with a new title

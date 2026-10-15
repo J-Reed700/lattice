@@ -27,7 +27,7 @@ type Result<T> = std::result::Result<T, AppError>;
 /// ## Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::entities::search_result::SearchResult;
+/// use lattice_core::domain::entities::search_result::SearchResult;
 ///
 /// let result = SearchResult::new(
 ///     "chunk-123".to_string(),
@@ -103,14 +103,14 @@ impl SearchResult {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::search_result::SearchResult;
+    /// use lattice_core::domain::entities::search_result::SearchResult;
     ///
     /// let result = SearchResult::new(
     ///     "doc-456".to_string(),
     ///     0.87,
     ///     Some("Matched content here...".to_string()),
     /// )?;
-    /// # Ok::<(), lattice::shared::error::AppError>(())
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
     /// ```
     ///
     /// ```rust,no_run
@@ -310,7 +310,7 @@ impl SearchResult {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::entities::search_result::SearchResult;
+    /// use lattice_core::domain::entities::search_result::SearchResult;
     ///
     /// let result = SearchResult::new("id".to_string(), 0.75, None);
     /// assert!(result.is_relevant(0.7));

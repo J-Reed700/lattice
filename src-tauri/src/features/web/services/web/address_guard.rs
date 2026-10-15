@@ -7,7 +7,7 @@
 //! privately and hands the connector exactly the addresses it checked, so a
 //! second lookup cannot rebind to a private one.
 use super::parse_fetchable_url;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use tracing::{debug, warn};

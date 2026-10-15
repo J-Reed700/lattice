@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::features::conversation::chat::ports::ChatRecords;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::{
     BranchKind, CorpusSearchPlan, LibrarySearchTrait, RankedBranch, SearchRequestDto,
@@ -75,8 +75,8 @@ pub(in super::super) async fn retrieve(
                 None,
                 Some(search_ids),
                 limit,
-                crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+                lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
             )
             .await;
         successful_branches += query_branches.answered;
@@ -173,7 +173,7 @@ pub(in super::super) async fn retrieve(
 }
 
 pub(super) fn passage_result(
-    p: crate::application::contracts::search::CorpusPassage,
+    p: lattice_core::application::contracts::search::CorpusPassage,
     method: &str,
 ) -> SearchResultDto {
     let mut metadata = HashMap::from([
@@ -205,7 +205,7 @@ pub(super) fn section_identifiers(question: &str) -> Vec<String> {
     question
         .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
         .filter_map(
-            crate::domain::value_objects::section_identifier::SectionIdentifier::from_query_token,
+            lattice_core::domain::value_objects::section_identifier::SectionIdentifier::from_query_token,
         )
         .map(|identifier| identifier.text)
         .filter(|identifier| seen.insert(*identifier))

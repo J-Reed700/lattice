@@ -1,4 +1,4 @@
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 

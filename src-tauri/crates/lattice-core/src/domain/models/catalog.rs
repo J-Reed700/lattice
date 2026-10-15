@@ -17,8 +17,8 @@
 //! ## Example
 //!
 //! ```rust
-//! use lattice::domain::models::catalog::{SearchFilters, ModelCatalogService};
-//! use lattice::domain::models::selection::{ModelMetadata, ModelCategory};
+//! use lattice_core::domain::models::catalog::{SearchFilters, ModelCatalogService};
+//! use lattice_core::domain::models::selection::{ModelMetadata, ModelCategory};
 //!
 //! let filters = SearchFilters {
 //!     category: Some(ModelCategory::LLM),
@@ -214,8 +214,8 @@ impl ModelSearchResult {
 /// # Example
 ///
 /// ```rust
-/// use lattice::domain::models::catalog::{SearchFilters, ModelCatalogService, ModelSource};
-/// use lattice::domain::models::selection::{ModelMetadata, ModelCategory, PerformanceTier};
+/// use lattice_core::domain::models::catalog::{SearchFilters, ModelCatalogService, ModelSource};
+/// use lattice_core::domain::models::selection::{ModelMetadata, ModelCategory, PerformanceTier};
 ///
 /// let service = ModelCatalogService::new();
 ///

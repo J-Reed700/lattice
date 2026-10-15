@@ -9,11 +9,11 @@
 
 use std::time::Duration;
 
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Streaming,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Whether authoring calls — outline and lesson drafts and the reviews that
 /// judge them — work through the task in prose before the schema-constrained
@@ -120,7 +120,7 @@ pub(in crate::features::learning) fn source_room(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use std::sync::Mutex;
 
     struct Recorder {

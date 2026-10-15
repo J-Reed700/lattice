@@ -19,7 +19,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use lattice::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata};
+//! use lattice_core::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let capabilities = SystemCapabilities {

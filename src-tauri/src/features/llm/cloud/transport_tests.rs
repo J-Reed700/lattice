@@ -129,7 +129,7 @@ async fn typed_tool_calls_keep_native_call_ids_and_replay_them() {
                 content: "find".into(),
             },
         ],
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search documents".into(),
             parameters: json!({"type":"object","properties":{}}),

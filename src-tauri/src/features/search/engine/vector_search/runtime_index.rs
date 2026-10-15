@@ -1,13 +1,13 @@
 //! A shared index handle that can bind the first downloaded model without restarting.
 //! Once bound, changing vector spaces still requires the normal restart migration.
 use super::{IndexPersistence, USearchVectorIndex, VectorIndexCompression};
-use crate::application::contracts::search::SearchResultRecord;
-use crate::application::ports::vector_search_port::VectorIndexEntry;
-use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::features::embedding::loading::EmbeddingIndexBinding;
 use crate::features::search::{engine::service::SearchResult, SearchServiceTrait};
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::application::contracts::search::SearchResultRecord;
+use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
+use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::{
     collections::HashSet,
     path::PathBuf,

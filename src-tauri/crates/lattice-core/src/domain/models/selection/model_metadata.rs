@@ -12,7 +12,7 @@ use super::*;
 /// # Examples
 ///
 /// ```rust
-/// use lattice::domain::models::selection::{ModelMetadata, ModelCategory, PerformanceTier};
+/// use lattice_core::domain::models::selection::{ModelMetadata, ModelCategory, PerformanceTier};
 ///
 /// let phi3 = ModelMetadata {
 ///     id: "phi-3-mini-4k-instruct-q4".into(),
@@ -126,8 +126,8 @@ impl ModelMetadata {
     ///
     /// # Example
     /// ```
-    /// use lattice::domain::models::selection::ModelMetadata;
-    /// use lattice::domain::models::selection::{ModelCategory, PerformanceTier};
+    /// use lattice_core::domain::models::selection::ModelMetadata;
+    /// use lattice_core::domain::models::selection::{ModelCategory, PerformanceTier};
     ///
     /// let model = ModelMetadata {
     ///     id: "phi-3-mini".into(),

@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Synthetic single-user owner. Spaces always have an "owner" membership
 /// pointing at this profile so the per-space membership table has a
