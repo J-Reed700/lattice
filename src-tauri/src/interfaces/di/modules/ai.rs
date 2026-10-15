@@ -180,6 +180,12 @@ impl AIModule {
         &self.conversation.intent_pace
     }
 
+    pub(crate) fn judge_pace(
+        &self,
+    ) -> &Arc<lattice_core::application::services::prompt_pace::PromptPace> {
+        &self.conversation.judge_pace
+    }
+
     pub fn conversation_memory(
         &self,
     ) -> &Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>

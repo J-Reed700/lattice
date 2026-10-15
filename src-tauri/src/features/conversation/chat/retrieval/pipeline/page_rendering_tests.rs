@@ -28,19 +28,22 @@ fn a_clipped_page_says_how_much_is_shown_and_how_to_get_the_rest() {
     assert!(!body.contains("complete"), "{body}");
 }
 
-/// How many results are opened comes from the page budget, not a setting: a
-/// large window reads every result it was handed, a small one fewer.
+/// How many results are opened comes from the page budget and a useful share
+/// of a page, not a setting: a large window opens many, a small one at least
+/// one, and a budget with room for one useful share opens one, not one per
+/// 400 characters as when every result was opened and shared out equally.
 #[test]
 fn the_pages_read_follow_the_page_budget() {
     assert_eq!(pages_the_budget_carries(0), 0);
     assert_eq!(pages_the_budget_carries(MIN_USEFUL_PAGE_CHARS - 1), 0);
-    assert_eq!(pages_the_budget_carries(MIN_USEFUL_PAGE_CHARS * 2), 2);
+    assert_eq!(pages_the_budget_carries(MIN_USEFUL_PAGE_CHARS * 2), 1);
+    assert_eq!(pages_the_budget_carries(USEFUL_PAGE_SHARE_CHARS * 5), 5);
     let large = super::super::page_budget::page_budget_chars(
         &lattice_core::application::services::context_assembler::EvidenceBudget::new(98_000),
     );
     assert!(
         pages_the_budget_carries(large) >= 10,
-        "a 131k-class budget reads every result of a deep search"
+        "a 131k-class budget has a useful share for every result of a deep search"
     );
 }
 

@@ -317,23 +317,7 @@ impl ExternalLookup<'_> {
                                     self.excerpt_chars,
                                 );
 
-                                searched.context = output
-                                    .results
-                                    .iter()
-                                    .take(tuning.wiki_context_limit as usize)
-                                    .map(|item| WebContextItem {
-                                        url: item.url.clone(),
-                                        title: item.title.clone(),
-                                        detail: format!(
-                                            "URL: {}\nSnippet: {}",
-                                            item.url,
-                                            safe_truncate(
-                                                &item.snippet,
-                                                tuning.wiki_snippet_max_chars as usize,
-                                            )
-                                        ),
-                                    })
-                                    .collect();
+                                searched.context = wiki_context(&web_like_results);
                             }
                         }
                         Err(error) => {
@@ -362,5 +346,40 @@ impl ExternalLookup<'_> {
         }
         searched.elapsed_ms = elapsed_ms(wiki_search_start);
         searched
+    }
+}
+
+/// The prompt items of a wiki search: every result, its snippet whole. The
+/// turn's budget decides how many the prompt shows; three, each cut at 1,200
+/// characters, was a setting's guess.
+fn wiki_context(results: &[WebSearchResult]) -> Vec<WebContextItem> {
+    results
+        .iter()
+        .map(|item| WebContextItem {
+            url: item.url.clone(),
+            title: item.title.clone(),
+            detail: format!("URL: {}\nSnippet: {}", item.url, item.snippet.trim()),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod wiki_context_tests {
+    use super::*;
+
+    #[test]
+    fn every_wiki_result_reaches_the_turn_with_its_whole_snippet() {
+        let results: Vec<WebSearchResult> = (0..6)
+            .map(|index| WebSearchResult {
+                title: format!("Article {index}"),
+                url: format!("https://en.wikipedia.org/wiki/{index}"),
+                snippet: format!("{index} {}", "long snippet text ".repeat(100)),
+                published_date: None,
+                source: Some("wikipedia".to_string()),
+            })
+            .collect();
+        let context = wiki_context(&results);
+        assert_eq!(context.len(), 6);
+        assert!(context[5].detail.ends_with(results[5].snippet.trim()));
     }
 }

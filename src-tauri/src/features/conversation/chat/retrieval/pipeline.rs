@@ -416,12 +416,26 @@ enum PageOutcome {
 /// waits on the network.
 const MAX_PAGE_FETCH_WAVES: usize = 3;
 
-/// How many pages a page budget of `budget_chars` can carry, each given at
-/// least a useful share. Derived from the budget, so a large window reads every
-/// result it was handed and a small one only what it can show; a page given
-/// less than its length is clipped and says so.
+/// The least of a page worth carrying when it cannot go whole: a few
+/// screens of article text, enough to answer from. A page given this or more
+/// and cut short says so, and the rest is read by offset.
+const USEFUL_PAGE_SHARE_CHARS: usize = 8_000;
+
+/// A useful share of a page within `budget_chars`: the whole budget when it is
+/// smaller than the usual share, so a small window still reads one page.
+fn useful_page_share(budget_chars: usize) -> usize {
+    USEFUL_PAGE_SHARE_CHARS.min(budget_chars)
+}
+
+/// How many more pages a budget of `budget_chars` has a useful share for:
+/// the pages opened next, in rank order. The pages read are then given room
+/// by rank (see [`page_budget::by_rank`]), and a wave that leaves room opens
+/// more; one that does not, none.
 fn pages_the_budget_carries(budget_chars: usize) -> usize {
-    budget_chars / MIN_USEFUL_PAGE_CHARS
+    if budget_chars < MIN_USEFUL_PAGE_CHARS {
+        return 0;
+    }
+    (budget_chars / useful_page_share(budget_chars)).max(1)
 }
 
 struct ExternalLookup<'a> {

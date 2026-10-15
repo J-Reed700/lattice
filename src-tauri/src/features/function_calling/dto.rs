@@ -30,6 +30,11 @@ pub struct SemanticSearchInput {
     #[serde(default = "default_limit")]
     pub limit: usize,
 
+    /// Results to skip: 0, or the `next_offset` a previous search named, so
+    /// results past the first page are reachable.
+    #[serde(default)]
+    pub offset: usize,
+
     /// Minimum similarity score (0.0-1.0). Lower = more results
     #[serde(default = "default_threshold")]
     pub threshold: f32,
@@ -162,6 +167,11 @@ pub struct SemanticSearchOutput {
 
     /// Original search query
     pub query: String,
+
+    /// Where the next page of results starts, when the search filled this
+    /// page and may have more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<usize>,
 }
 
 /// Input for get_document function.
@@ -514,6 +524,7 @@ mod tests {
         let input = SemanticSearchInput {
             query: "test query".to_string(),
             limit: 10,
+            offset: 0,
             threshold: 0.5,
             search_mode: SearchMode::Hybrid,
             file_types: Some(vec!["pdf".to_string()]),

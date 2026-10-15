@@ -42,7 +42,11 @@ use lattice_core::application::services::evidence_retrieval::{
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
+use lattice_core::application::services::prompt_pace::PromptPace;
+
 use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
+
+mod paced;
 
 /// Wall-clock ceiling for all judging in one turn.
 ///
@@ -51,6 +55,12 @@ use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
 /// side by side as far as the backend's slots allow, covers a long research
 /// answer on the local utility model.
 pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(90);
+
+/// A pace for the judge's deadline, one per chat runtime: how much source
+/// text its model reads in time, learned from every answered call.
+pub(crate) fn judge_pace() -> PromptPace {
+    PromptPace::new(DEFAULT_TIME_BUDGET)
+}
 
 /// Output room for the model's reasoning followed by the public verdict,
 /// factual explanation, and exact source quote. Reasoning tokens count toward
@@ -83,6 +93,9 @@ pub(super) struct ClaimJudge {
     /// How the verdict is decoded. Greedy unless the user says otherwise.
     sampling: SamplingOverride,
     max_output_tokens: u32,
+    /// What the judge's model reads within the time budget. Without one,
+    /// parts are sized by the window alone.
+    pace: Option<Arc<PromptPace>>,
 }
 
 impl ClaimJudge {
@@ -97,7 +110,16 @@ impl ClaimJudge {
             // twenty-one runs of the same request.
             sampling: SamplingOverride::deterministic(),
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            pace: None,
         }
+    }
+
+    /// Size each claim's parts to what the model reads in the time budget,
+    /// and teach `pace` from every call the judge makes.
+    pub(super) fn with_pace(mut self, pace: Arc<PromptPace>) -> Self {
+        self.llm = Arc::new(paced::PacedLlm::new(self.llm, Arc::clone(&pace)));
+        self.pace = Some(pace);
+        self
     }
 
     /// Apply the user's sampling settings while retaining enough output room
@@ -124,11 +146,24 @@ impl ClaimJudge {
         self.llm.model_name()
     }
 
-    /// Characters of source text one judge call about `claim` can carry: the
-    /// judge model's window less its prompt and answer, measured with its own
-    /// token count and erring short.
-    pub(super) fn evidence_room_chars(&self, claim: &str) -> usize {
-        let tokens = self.checker().evidence_room_tokens(claim);
+    /// Characters of source text one judge call about `claim` can carry when
+    /// `open_claims` share the time budget.
+    ///
+    /// The window less the prompt and answer is the ceiling, never the
+    /// target: a part of a 32K window's worth cannot be read inside the
+    /// budget on a local model, and the claim ran out of time with the slot
+    /// held. Each part is what the model's measured reading speed gets
+    /// through in its share of the budget, divided among the claims waiting
+    /// for it; what does not fit is judged in a further part.
+    pub(super) fn evidence_room_chars(&self, claim: &str, open_claims: usize) -> usize {
+        let window = self.checker().evidence_room_tokens(claim);
+        let tokens = self.pace.as_deref().map_or(window, |pace| {
+            let model = self.llm.model_name();
+            let readable = pace
+                .readable_within(model, self.time_budget / 2)
+                .unwrap_or_else(|| pace.tokens(model));
+            window.min(readable / open_claims.max(1))
+        });
         chars_within_tokens(tokens, self.llm.chars_per_token())
     }
 

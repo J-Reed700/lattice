@@ -180,16 +180,23 @@ async fn run(hook: Arc<Hook>) {
                     .read()
                     .unwrap_or_else(|error| error.into_inner())
                     .clone();
-                let result = hook
-                    .use_case
-                    .execute_cancellable(&id, &generation_cancel)
-                    .await;
+                let result = hook.use_case.run(&id, &revision, &generation_cancel).await;
                 *hook
                     .generation_cancel
                     .write()
                     .unwrap_or_else(|error| error.into_inner()) = hook.cancel.child_token();
                 match result {
-                    Ok(_) => {
+                    Ok(super::use_cases::generate_summaries::SummaryRun::Paused) => {
+                        // Its share done: to the back of the queue, so other
+                        // documents get a turn before it resumes.
+                        if let Err(error) =
+                            super::repository::requeue_work(&hook.pool, &id, &revision).await
+                        {
+                            tracing::warn!(%error, "Could not requeue summary work");
+                        }
+                        continue;
+                    }
+                    Ok(super::use_cases::generate_summaries::SummaryRun::Published(_)) => {
                         if let Err(error) =
                             super::repository::acknowledge_work(&hook.pool, &id, &revision).await
                         {

@@ -352,8 +352,17 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
             title: Some(source.file_name.trim())
                 .filter(|value| !value.is_empty() && *value != url)
                 .map(ToOwned::to_owned),
-            excerpt: Some(source.content.trim())
+            // The pointer the sources panel shows, not the page: a page the
+            // turn read is archived whole beside this row (`content`), and
+            // storing it again here doubled it on disk and had every later
+            // turn load it to list a link. A search result's pointer is its
+            // snippet.
+            excerpt: source
+                .excerpt
+                .as_deref()
+                .map(str::trim)
                 .filter(|value| !value.is_empty())
+                .or_else(|| Some(source.content.trim()).filter(|value| !value.is_empty()))
                 .map(ToOwned::to_owned),
             score: source.score,
         });

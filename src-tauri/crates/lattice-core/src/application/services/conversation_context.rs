@@ -11,17 +11,37 @@ use std::sync::Arc;
 /// newest first.
 const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO: f64 = 0.08;
 
+/// Linked sources read per query while the list is being filled.
+const LINKED_SOURCE_PAGE_ROWS: usize = 64;
+
 async fn build_linked_web_sources_prompt_context(
     supplemental: &dyn ConversationContextPort,
     conversation_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     max_tokens: usize,
 ) -> Result<Option<String>> {
-    let rows = supplemental.linked_sources(conversation_id).await?;
     let token_budget =
         ((max_tokens as f64) * LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO).round() as usize;
-    let (entries, unlisted) =
-        linked_source_entries(&rows, token_budget, |text| llm.count_tokens(text));
+    let count = |text: &str| llm.count_tokens(text);
+    // Read a page of rows at a time, newest first, only until the list no
+    // longer fits: a long-running research chat links hundreds of pages, and
+    // every turn loaded all of them to show the few its share holds.
+    let mut rows = Vec::new();
+    let total = loop {
+        let page = supplemental
+            .linked_sources(conversation_id, rows.len(), LINKED_SOURCE_PAGE_ROWS)
+            .await?;
+        let fetched = page.len();
+        rows.extend(page);
+        if fetched < LINKED_SOURCE_PAGE_ROWS {
+            break rows.len();
+        }
+        if linked_source_entries(&rows, token_budget, count).1 > 0 {
+            break supplemental.linked_source_count(conversation_id).await?;
+        }
+    };
+    let (entries, _) = linked_source_entries(&rows, token_budget, count);
+    let unlisted = total.saturating_sub(entries.len());
 
     if entries.is_empty() {
         return Ok(None);
@@ -244,12 +264,23 @@ mod tests {
             }
             Ok(self.prompt.clone())
         }
-        async fn linked_sources(&self, _: &str) -> Result<Vec<LinkedConversationSource>> {
+        async fn linked_sources(
+            &self,
+            _: &str,
+            offset: usize,
+            _: usize,
+        ) -> Result<Vec<LinkedConversationSource>> {
             Ok(vec![LinkedConversationSource {
                 title: Some(" source ".into()),
                 url: " https://example.com ".into(),
                 excerpt: Some("excerpt".into()),
-            }])
+            }]
+            .into_iter()
+            .skip(offset)
+            .collect())
+        }
+        async fn linked_source_count(&self, _: &str) -> Result<usize> {
+            Ok(1)
         }
     }
 
@@ -396,5 +427,49 @@ mod tests {
         assert_eq!(unlisted, 10 - entries.len());
         assert!(entries[0].starts_with("- page 0 ("));
         assert!(entries.iter().all(|entry| !entry.contains("Excerpt")));
+    }
+
+    /// Hundreds of linked pages, a share that lists a few: the rows are read a
+    /// page at a time until the list is full, not all of them every turn, and
+    /// the ones left out are still counted.
+    #[tokio::test]
+    async fn linked_sources_are_read_only_as_far_as_the_share_lists() {
+        struct Many(std::sync::Mutex<usize>);
+        #[async_trait::async_trait]
+        impl ConversationContextPort for Many {
+            async fn space_prompt(&self, _: &str) -> Result<Option<String>> {
+                Ok(None)
+            }
+            async fn linked_sources(
+                &self,
+                _: &str,
+                offset: usize,
+                limit: usize,
+            ) -> Result<Vec<LinkedConversationSource>> {
+                *self.0.lock().unwrap() += limit.min(500usize.saturating_sub(offset));
+                Ok((offset..500.min(offset + limit))
+                    .map(|index| row(index, "note"))
+                    .collect())
+            }
+            async fn linked_source_count(&self, _: &str) -> Result<usize> {
+                Ok(500)
+            }
+        }
+        let source = Many(std::sync::Mutex::new(0));
+        let llm: Arc<dyn crate::application::ports::LLMPort> = Arc::new(Counter);
+        let text = build_linked_web_sources_prompt_context(&source, "chat", &llm, 4_096)
+            .await
+            .unwrap()
+            .expect("some are listed");
+        let read = *source.0.lock().unwrap();
+        assert!(read < 500, "read {read} of 500 rows");
+        let listed = text
+            .lines()
+            .filter(|line| line.starts_with("- page "))
+            .count();
+        assert!(
+            text.contains(&format!("…and {} older linked pages", 500 - listed)),
+            "{text}"
+        );
     }
 }

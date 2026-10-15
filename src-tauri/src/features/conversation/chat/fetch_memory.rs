@@ -56,6 +56,14 @@ pub(in crate::features::conversation::chat) enum Recall {
     /// what was delivered, not the text): read it again, from the
     /// conversation's archive, starting at `offset`.
     Reread { offset: usize },
+    /// The offset asked for is at or past the end of the page, which is
+    /// `chars` characters long. `unread` is the first stretch still not
+    /// given, if there is one.
+    PastTheEnd {
+        offset: usize,
+        chars: usize,
+        unread: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -199,7 +207,13 @@ impl FetchMemory {
         if page.text.is_empty() {
             return Some(Recall::Reread { offset: start });
         }
-        let start = start.min(page.chars);
+        if start >= page.chars {
+            return Some(Recall::PastTheEnd {
+                offset: start,
+                chars: page.chars,
+                unread: page.unread_from(0),
+            });
+        }
         let end = start.saturating_add(room.max(1)).min(page.chars);
         let text: String = page
             .text
@@ -568,6 +582,26 @@ mod tests {
                 unread: Some(2),
             })
         );
+    }
+
+    /// An offset at or past the end used to come back as an empty part with
+    /// no word of why; it says how long the page is, and what is unread.
+    #[test]
+    fn an_offset_past_the_end_says_how_long_the_page_is() {
+        let mut memory = FetchMemory::default();
+        memory.record_page("https://example.com/long", "0123456789", first(2));
+        assert_eq!(
+            memory.recall("https://example.com/long", Some(10), 5),
+            Some(Recall::PastTheEnd {
+                offset: 10,
+                chars: 10,
+                unread: Some(2),
+            })
+        );
+        assert!(matches!(
+            memory.recall("https://example.com/long", Some(400), 5),
+            Some(Recall::PastTheEnd { offset: 400, .. })
+        ));
     }
 
     #[test]

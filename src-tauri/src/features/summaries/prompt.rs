@@ -28,6 +28,10 @@ pub const PART_SUMMARIES_HEADING: &str = "Summaries of the text's parts, in orde
 /// Heading a section's text is written under.
 pub const SECTION_BODY_HEADING: &str = "Section text:";
 
+/// Evidence heading for a long document summarized from its sections.
+pub const SECTION_SUMMARIES_HEADING: &str =
+    "Summaries of the document's sections, in order, then any text under no heading:";
+
 /// A document with fewer top-level sections than this gets no section
 /// summaries — its document summary already covers the same ground.
 pub const MIN_SECTIONS: usize = 3;

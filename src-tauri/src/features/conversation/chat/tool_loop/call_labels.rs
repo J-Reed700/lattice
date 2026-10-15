@@ -119,6 +119,22 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
         } => format!(
             "Continuation of {url}: characters {shown_chars} to {next}, as much as this result has room for. The page goes on: call fetch_url_content with this url and offset={next} for the next part.\n\n{text}",
         ),
+        Recall::PastTheEnd {
+            offset,
+            chars,
+            unread,
+        } => {
+            let unread = unread.map_or_else(
+                || " Every part of it has been given to you.".to_string(),
+                |unread| {
+                    format!(" The part starting at character {unread} has not been given to you yet: call fetch_url_content with this url and offset={unread} to read it.")
+                },
+            );
+            format!(
+                "Nothing at character {offset} of {url}: the page is {chars} characters long, so offsets run from 0 to {}.{unread}",
+                chars.saturating_sub(1)
+            )
+        }
         // Never answered from memory: the call runs and reads the archive.
         Recall::Reread { offset } => format!(
             "Read {url} again from character {offset}: call fetch_url_content with this url and offset={offset}."

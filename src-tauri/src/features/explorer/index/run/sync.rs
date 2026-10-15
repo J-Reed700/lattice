@@ -32,8 +32,12 @@ impl Indexer {
         let max_files = self.limits.max_files;
         let cancel = self.cancel.clone();
         let status = Arc::clone(&self.status);
+        // Read before the walk, so a folder past the bound keeps the files it
+        // already indexed rather than whichever the disk lists first.
+        let existing = self.store.files_under(&self.prefix).await?;
+        let indexed: HashSet<String> = existing.keys().cloned().collect();
         let walked = tokio::task::spawn_blocking(move || {
-            walk(&scope, &prefix, max_files, &cancel, Some(&status))
+            walk(&scope, &prefix, max_files, &indexed, &cancel, Some(&status))
         })
         .await
         .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
@@ -57,7 +61,6 @@ impl Indexer {
                 self.store.delete_meta(store::META_TOO_LARGE).await?;
             }
         }
-        let existing = self.store.files_under(&self.prefix).await?;
         let total = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
         self.status.update(|status| status.files_total = total);
 
@@ -184,12 +187,11 @@ impl Indexer {
         let start = relative.to_string();
         let max_files = self.limits.max_files;
         let cancel = self.cancel.clone();
-        let walked =
-            tokio::task::spawn_blocking(move || walk(&scope, &start, max_files, &cancel, None))
-                .await
-                .map_err(|error| {
-                    AppError::InternalError(format!("Folder walk failed: {error}"))
-                })??;
+        let walked = tokio::task::spawn_blocking(move || {
+            walk(&scope, &start, max_files, &HashSet::new(), &cancel, None)
+        })
+        .await
+        .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
         let candidates = match walked {
             Walked::Files { files, skipped: 0 } => files,
             Walked::Cancelled => return Ok(Outcome::Cancelled),

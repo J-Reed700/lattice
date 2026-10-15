@@ -212,6 +212,7 @@ fn render(
                 "instruction": CORRECTION_INSTRUCTION,
                 "queries_already_tried": correction.queries_already_tried,
                 "top_result_titles": correction.top_result_titles,
+                "more_titles_not_shown": correction.more_titles_not_shown,
                 "why_insufficient": correction.why_insufficient,
             }),
         );

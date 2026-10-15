@@ -762,3 +762,55 @@ fn locate_file_does_not_auto_open_a_match_from_an_incomplete_search() {
         ["src/main.rs"]
     );
 }
+
+/// A file with no newline in it used to be read as one line into one buffer
+/// the size of the file. It streams in pieces, each part of line 1, never
+/// longer than a piece, and nothing of it is lost.
+#[test]
+fn a_newline_free_file_streams_in_bounded_pieces() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two-byte characters, so a piece boundary would fall mid-character.
+    let text = "é".repeat(fs::LINE_PIECE_BYTES * 2);
+    write(dir.path(), "one-line.txt", text.as_bytes());
+    let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
+
+    let mut pieces: Vec<(u32, String)> = Vec::new();
+    let total = fs::scan_lines(&scope, "one-line.txt", &mut |number, piece| {
+        pieces.push((number, piece.to_string()));
+        true
+    })
+    .unwrap();
+    assert_eq!(total, 1);
+    assert!(pieces.len() > 1);
+    assert!(pieces
+        .iter()
+        .all(|(number, piece)| *number == 1 && piece.len() <= fs::LINE_PIECE_BYTES));
+    let joined: String = pieces.into_iter().map(|(_, piece)| piece).collect();
+    assert_eq!(joined, text, "no character split or replaced");
+}
+
+/// A match in a later piece of a very long line reports its true column.
+#[test]
+fn search_in_a_very_long_line_reports_the_true_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = "x".repeat(fs::LINE_PIECE_BYTES + 10);
+    write(
+        dir.path(),
+        "long.txt",
+        format!("{before}needle\n").as_bytes(),
+    );
+    let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
+    let result = fs::search(
+        &scope,
+        &SearchRequest {
+            query: "needle",
+            regex: false,
+            path_prefix: None,
+            max_results: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(result.matches[0].line, 1);
+    assert_eq!(result.matches[0].column as usize, before.len() + 1);
+}

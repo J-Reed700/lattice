@@ -164,6 +164,7 @@ async fn start_background_verification(
             }
         }),
         background: container.background(),
+        judge_pace: container.judge_pace(),
     }
     .spawn()
     .await;

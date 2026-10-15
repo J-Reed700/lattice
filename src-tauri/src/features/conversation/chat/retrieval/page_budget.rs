@@ -60,9 +60,58 @@ pub(in crate::features::conversation::chat) fn allocate(
     given
 }
 
+/// Split `total` characters between pages in rank order, best first, as a
+/// chat answer reads them: each page in turn gets its whole text when it fits
+/// what is left, otherwise what is left when that is at least `useful`,
+/// otherwise nothing, and the next page is considered.
+///
+/// Shared out equally, every result was opened and the best page got the
+/// same quarter as the tenth (about 4,000 characters of a 13,000-character
+/// article). By rank, the best pages are read whole before a lower one is
+/// opened, and a page cut short is cut at a useful length and read on by
+/// offset.
+pub(in crate::features::conversation::chat) fn by_rank(
+    lengths: &[usize],
+    total: usize,
+    useful: usize,
+) -> Vec<usize> {
+    let mut remaining = total;
+    lengths
+        .iter()
+        .map(|&length| {
+            let grant = if length <= remaining {
+                length
+            } else if remaining >= useful {
+                remaining
+            } else {
+                0
+            };
+            remaining -= grant;
+            grant
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The best page goes whole, the next whole while it fits, the one after
+    /// gets what is left when that is a useful share; a short page further
+    /// down still goes whole into what remains.
+    #[test]
+    fn pages_are_given_room_in_rank_order() {
+        assert_eq!(
+            by_rank(&[13_000, 9_000, 30_000, 900], 40_000, 8_000),
+            vec![13_000, 9_000, 18_000, 0]
+        );
+        assert_eq!(
+            by_rank(&[13_000, 30_000, 900], 20_000, 8_000),
+            vec![13_000, 0, 900],
+            "7,000 left is not a useful share of a long page"
+        );
+        assert_eq!(by_rank(&[50_000], 6_000, 6_000), vec![6_000]);
+    }
 
     /// The measured failure: a 3,521-word page and a 1,394-word page on a
     /// 131k-token model were each clipped to 6,000 characters. Both fit whole.

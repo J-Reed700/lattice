@@ -20,8 +20,39 @@ use super::{
 #[derive(Debug, Default, Serialize)]
 pub(in super::super) struct CorrectionRequest {
     pub queries_already_tried: Vec<String>,
+    /// Every distinct title the first pass returned, best first.
     pub top_result_titles: Vec<String>,
     pub why_insufficient: Vec<&'static str>,
+    /// Titles past those the prompt has room for, counted.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more_titles_not_shown: usize,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
+}
+
+impl CorrectionRequest {
+    /// This correction with as many of its titles, best first, as `room`
+    /// tokens hold, and the rest counted.
+    pub(super) fn fitted(&self, llm: &dyn LLMPort, room: usize) -> Self {
+        let mut used = 0usize;
+        let shown: Vec<String> = self
+            .top_result_titles
+            .iter()
+            .take_while(|title| {
+                used += llm.count_tokens(title) + 1;
+                used <= room
+            })
+            .cloned()
+            .collect();
+        Self {
+            queries_already_tried: self.queries_already_tried.clone(),
+            more_titles_not_shown: self.top_result_titles.len() - shown.len(),
+            top_result_titles: shown,
+            why_insufficient: self.why_insufficient.clone(),
+        }
+    }
 }
 
 /// Plan retrieval from a shortlist of the catalog, showing each document's
@@ -118,16 +149,20 @@ async fn plan_with(
             "Document retrieval planning skipped: {reason}"
         )));
     }
-    let target = turn.health.prompt_tokens();
+    let target = turn.health.prompt_tokens(llm.model_name());
     // Built to the planner's history share from whole turns by the caller;
     // held to it here in whole lines, with the rest counted.
     let history = prompt::recent_history(llm, history, target.min(llm.max_context_tokens()));
     let ranked = shortlist::shortlist(catalog, turn.candidate_ids(), question);
+    // The first pass's titles, best first, as many as the history's share of
+    // the prompt holds, and the rest counted.
+    let correction =
+        correction.map(|correction| correction.fitted(llm, prompt::history_tokens(target)));
     let parts = prompt::PromptParts {
         question,
         history: &history,
         catalog_total: catalog.len(),
-        correction,
+        correction: correction.as_ref(),
         summaries,
     };
     let prompt = prompt::build(llm, &parts, &ranked, catalog, target).await?;
@@ -172,11 +207,11 @@ async fn plan_with(
     .await;
     let response = match response {
         Err(_) => {
-            turn.record_timeout(prompt.tokens);
+            turn.record_timeout(llm.model_name(), prompt.tokens);
             tracing::warn!(
                 timeout_s = PLANNER_TIMEOUT.as_secs(),
                 prompt_tokens = prompt.tokens,
-                next_prompt_tokens = turn.health.prompt_tokens(),
+                next_prompt_tokens = turn.health.prompt_tokens(llm.model_name()),
                 "Corpus planner timed out; the next attempt gets a smaller prompt"
             );
             return Err(AppError::InvalidState(
@@ -185,7 +220,7 @@ async fn plan_with(
         }
         Ok(Err(error)) => {
             if is_window_overflow(&error) {
-                turn.health.overflowed(prompt.tokens);
+                turn.health.overflowed(llm.model_name(), prompt.tokens);
                 tracing::warn!(
                     prompt_tokens = prompt.tokens,
                     exact_count = prompt.exact,
@@ -197,7 +232,8 @@ async fn plan_with(
             return Err(error);
         }
         Ok(Ok(response)) => {
-            turn.health.answered(response.prefill, prompt.tokens);
+            turn.health
+                .answered(llm.model_name(), response.prefill, prompt.tokens);
             response.text
         }
     };

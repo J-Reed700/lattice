@@ -175,12 +175,22 @@ pub(super) fn format_tool_result(
                         .replace("{shown}", &shown.to_string())
                 };
                 let framing = template("", blocks.len()).chars().count();
+                // Results past this page are a call away, and the result says
+                // which: without an offset, the 51st hit could never be read.
+                let more = output.next_offset.map_or_else(String::new, |next| {
+                    format!(
+                        "\n[More results may follow: call semantic_search with the same query and offset={next}.]"
+                    )
+                });
                 let (results_text, shown) = fit_blocks(
                     &blocks,
-                    allowance.saturating_sub(framing),
+                    allowance.saturating_sub(framing + more.chars().count()),
                     "Call get_document with a doc_id above to read a document, or search again more narrowly.",
                 );
-                return keep_note(&template(&results_text, shown), allowance);
+                return keep_note(
+                    &format!("{}{more}", template(&results_text, shown)),
+                    allowance,
+                );
             }
         }
         "wiki_search" => {
@@ -541,9 +551,28 @@ mod fetched_page_tests {
                 total_found: 0,
                 search_time_ms: 1.0,
                 query: "q".to_string(),
+                next_offset: None,
             })
             .unwrap_or_default(),
         )
+    }
+
+    /// A search held at 50 results a page had no way past the 50th. A page
+    /// that may have more says the offset the next starts at.
+    #[test]
+    fn a_full_search_page_names_the_offset_of_the_next() {
+        let mut result = search_output(2, 1, "text");
+        if let Some(data) = result.data.as_mut() {
+            data["next_offset"] = serde_json::json!(20);
+        }
+        let rendered = render(&result, "semantic_search", 4_000, 0);
+        assert!(
+            rendered.contains("call semantic_search with the same query and offset=20"),
+            "{rendered}"
+        );
+        assert!(
+            !render(&search_output(2, 1, "text"), "semantic_search", 4_000, 0).contains("offset=")
+        );
     }
 
     /// Search results used to show at most three matches a document, each cut

@@ -327,6 +327,7 @@ pub(super) async fn run_kb_retrieval(
             queries_already_tried: plan.queries.clone(),
             top_result_titles: top_result_titles(&search_response.results),
             why_insufficient: verdict.reasons.clone(),
+            more_titles_not_shown: 0,
         };
         let retry = corrective_pass(
             container,
@@ -509,14 +510,15 @@ fn sufficiency_line(verdict: &super::SufficiencyVerdict) -> String {
     format!("not enough support: {}", reasons.join(", "))
 }
 
-/// Titles the first pass surfaced, deduplicated, so the corrective planner can
-/// see what it already reached and steer somewhere else.
+/// Titles the first pass surfaced, deduplicated and best first, so the
+/// corrective planner can see what it already reached and steer somewhere
+/// else. All of them: the planner's prompt shows what its room holds and
+/// counts the rest.
 fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
     let mut seen = HashSet::new();
     results
         .iter()
         .filter(|result| seen.insert(result.title.as_str()))
-        .take(5)
         .map(|result| result.title.clone())
         .collect()
 }
@@ -544,7 +546,7 @@ async fn planned(
         conversation_id,
         validated_message,
         utility,
-        Some(planner_turn.history_tokens()),
+        Some(planner_turn.history_tokens(utility.model_name())),
     )
     .await;
     shortlist_candidates(
@@ -621,7 +623,7 @@ async fn corrective_pass(
         turn.conversation_id,
         validated_message,
         utility.as_ref(),
-        Some(planner_turn.history_tokens()),
+        Some(planner_turn.history_tokens(utility.model_name())),
     )
     .await;
     shortlist_candidates(

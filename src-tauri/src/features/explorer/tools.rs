@@ -395,12 +395,25 @@ pub(super) fn read_window(
     let budget = max_chars.saturating_sub(FRAMING_CHARS);
     let mut selected: Vec<(u32, String)> = Vec::new();
     let mut used = 0usize;
+    // Characters of the last selected line past the room, when a streamed
+    // line too long to read at once arrived in more pieces than fit.
+    let mut unshown_tail = 0usize;
     let mut select = |number: u32, line: &str| -> bool {
         if number < start {
             return true;
         }
         if end_line.is_some_and(|end| number > end) {
             return false;
+        }
+        if let Some((_, text)) = selected.last_mut().filter(|(last, _)| *last == number) {
+            // Another piece of the same long line.
+            if unshown_tail == 0 && used + line.len() <= budget {
+                used += line.len();
+                text.push_str(line);
+            } else {
+                unshown_tail += line.chars().count();
+            }
+            return true;
         }
         // The number column and its separator, at most this wide.
         let cost = line.len() + 14;
@@ -435,9 +448,15 @@ pub(super) fn read_window(
     let last = selected.last().map_or(start - 1, |(number, _)| *number);
     let width = number_width(last);
     let mut body = String::new();
-    for (number, line) in &selected {
+    let lines_selected = selected.len();
+    for (index, (number, line)) in selected.iter().enumerate() {
         let numbered = number_line(*number, line, width);
-        if numbered.len() > budget {
+        let tail = if index + 1 == lines_selected {
+            unshown_tail
+        } else {
+            0
+        };
+        if numbered.len() > budget || tail > 0 {
             // One line longer than the whole room: the room's worth of it,
             // and how much more the line holds.
             let kept = &numbered[..lattice_core::shared::text::floor_char_boundary(
@@ -446,7 +465,7 @@ pub(super) fn read_window(
             )];
             body.push_str(&format!(
                 "{kept} […line continues: {} more characters not shown]\n",
-                numbered[kept.len()..].chars().count()
+                numbered[kept.len()..].chars().count() + tail
             ));
             continue;
         }

@@ -165,6 +165,70 @@ pub(super) fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(BINARY_SNIFF_BYTES).any(|&byte| byte == 0)
 }
 
+/// The most of one line read at a time. A file with no newline in gigabytes
+/// is read in pieces this long, each handed on as part of the same line, so
+/// a line is never held whole and memory stays flat whatever the file.
+pub(super) const LINE_PIECE_BYTES: usize = 64 * 1024;
+
+/// The length of the longest prefix of `bytes` that does not end partway
+/// through a UTF-8 character, so a piece cut mid-line decodes cleanly.
+fn utf8_prefix_len(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    for back in 1..=len.min(4) {
+        let Some(&byte) = bytes.get(len - back) else {
+            break;
+        };
+        if byte & 0xC0 == 0x80 {
+            continue;
+        }
+        let width = match byte {
+            0x00..=0x7F => 1,
+            0xC0..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            _ => 4,
+        };
+        return if back < width { len - back } else { len };
+    }
+    len
+}
+
+/// Reads the next piece of a line into `piece`: through the next newline, or
+/// [`LINE_PIECE_BYTES`] of a longer line, cut on a character boundary.
+/// Returns whether the piece ends its line; an empty `piece` is the end of
+/// the file.
+pub(super) fn read_line_piece(
+    reader: &mut impl std::io::BufRead,
+    piece: &mut Vec<u8>,
+) -> std::io::Result<bool> {
+    piece.clear();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(true);
+        }
+        let room = LINE_PIECE_BYTES - piece.len();
+        let window = available
+            .get(..available.len().min(room))
+            .unwrap_or_default();
+        if let Some(newline) = window.iter().position(|&byte| byte == b'\n') {
+            piece.extend_from_slice(window.get(..=newline).unwrap_or_default());
+            reader.consume(newline + 1);
+            return Ok(true);
+        }
+        let full = window.len() == room;
+        let take = if full {
+            utf8_prefix_len(window).max(1)
+        } else {
+            window.len()
+        };
+        piece.extend_from_slice(window.get(..take).unwrap_or_default());
+        reader.consume(take);
+        if full {
+            return Ok(false);
+        }
+    }
+}
+
 /// Reads up to `limit` bytes, and says whether the file had more.
 pub(super) fn read_prefix(path: &Path, limit: u64) -> std::io::Result<(Vec<u8>, bool)> {
     let file = std::fs::File::open(path)?;
@@ -177,14 +241,14 @@ pub(super) fn read_prefix(path: &Path, limit: u64) -> std::io::Result<(Vec<u8>, 
 
 /// Streams the lines of a file too large to load, numbering them from 1 and
 /// handing each to `visit` until it returns false, and counts them all. Read
-/// in one pass with constant memory; invalid UTF-8 is replaced, as the
-/// viewer replaces it.
+/// in one pass with constant memory: a line longer than [`LINE_PIECE_BYTES`]
+/// arrives in pieces, each with the line's number. Invalid UTF-8 is
+/// replaced, as the viewer replaces it.
 pub(super) fn scan_lines(
     scope: &Scope,
     path: &str,
     visit: &mut dyn FnMut(u32, &str) -> bool,
 ) -> Result<u32> {
-    use std::io::BufRead;
     let file = scope.resolve(path)?;
     let read_error = |error: std::io::Error| AppError::FileRead {
         path: file.relative.clone(),
@@ -195,12 +259,16 @@ pub(super) fn scan_lines(
     let mut buffer = Vec::new();
     let mut total = 0u32;
     let mut visiting = true;
+    let mut continuing = false;
     loop {
-        buffer.clear();
-        if reader.read_until(b'\n', &mut buffer).map_err(read_error)? == 0 {
+        let ends_line = read_line_piece(&mut reader, &mut buffer).map_err(read_error)?;
+        if buffer.is_empty() {
             break;
         }
-        total = total.saturating_add(1);
+        if !continuing {
+            total = total.saturating_add(1);
+        }
+        continuing = !ends_line;
         if visiting {
             let line = String::from_utf8_lossy(&buffer);
             visiting = visit(total, line.trim_end_matches(['\n', '\r']));
@@ -364,27 +432,38 @@ pub fn search_counting(
             return true;
         };
         let mut number = 0u32;
+        // Characters of the current line in its earlier pieces, so a match in
+        // a later piece of a very long line has its true column.
+        let mut column_base = 0usize;
+        let mut continuing = false;
         loop {
-            buffer.clear();
-            match reader.read_until(b'\n', &mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
+            match read_line_piece(&mut reader, &mut buffer) {
+                Ok(_) if buffer.is_empty() => break,
+                Err(_) => break,
+                Ok(ends_line) => {
+                    if !continuing {
+                        number = number.saturating_add(1);
+                        column_base = 0;
+                    }
+                    continuing = !ends_line;
+                }
             }
-            number = number.saturating_add(1);
             let text = String::from_utf8_lossy(&buffer);
             let line = text.trim_end_matches(['\n', '\r']);
             if let Some(found) = matcher.find(line) {
                 if matches.len() < max_results {
+                    let column = column_base + line[..found.start()].chars().count();
                     matches.push(ExplorerSearchMatchDto {
                         path: relative.clone(),
                         line: number,
-                        column: line[..found.start()].chars().count() as u32 + 1,
+                        column: u32::try_from(column + 1).unwrap_or(u32::MAX),
                         preview: preview(line, found.start()),
                     });
                 } else {
                     more += 1;
                 }
             }
+            column_base += line.chars().count();
             if number.is_multiple_of(4096) && Instant::now() >= deadline {
                 truncated = true;
                 return false;

@@ -163,6 +163,12 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "minimum": 1,
                     "maximum": 50
                 },
+                "offset": {
+                    "type": "integer",
+                    "description": "Results to skip: 0, or the next_offset a previous search named, to read past the first page",
+                    "default": 0,
+                    "minimum": 0
+                },
                 "threshold": {
                     "type": "number",
                     "description": "Minimum similarity score (0.0-1.0). Lower = more results",

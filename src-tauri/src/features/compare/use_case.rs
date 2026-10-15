@@ -250,16 +250,18 @@ pub(super) async fn build_row(
 ) -> Result<CompareRowDto> {
     let mut cells = Vec::with_capacity(columns.len());
     let mut degraded = None;
+    let mut error = None;
     for group in columns.chunks(columns_per_call(llm.as_ref())) {
         let filled = tokio::time::timeout(
             Duration::from_secs(PER_CALL_TIMEOUT_SECS),
             fill_columns(deps, llm, document, group),
         )
         .await;
-        match filled {
+        let failure = match filled {
             Ok(Ok(Some((group_cells, group_degraded)))) => {
                 cells.extend(group_cells);
                 degraded = degraded.or(group_degraded);
+                continue;
             }
             Ok(Ok(None)) => {
                 return Ok(empty_row(
@@ -268,16 +270,27 @@ pub(super) async fn build_row(
                     "No indexed text for this document.".to_string(),
                 ))
             }
-            Ok(Err(error)) => return Err(error),
-            Err(_) => return Ok(empty_row(document, columns, "Timed out.".to_string())),
-        }
+            Ok(Err(error)) if cells.is_empty() => return Err(error),
+            Ok(Err(error)) => error.to_string(),
+            Err(_) => "Timed out.".to_string(),
+        };
+        // The cells earlier calls filled are kept; the columns not reached
+        // are left empty and named, rather than the whole row thrown away.
+        let missing = columns.get(cells.len()..).unwrap_or_default();
+        error = Some(if cells.is_empty() {
+            failure
+        } else {
+            format!("{failure} Not filled: {}.", missing.join(", "))
+        });
+        cells.extend(empty_cells(missing));
+        break;
     }
     Ok(CompareRowDto {
         document_id: document.id.clone(),
         title: document.title.clone(),
         file_path: document.file_path.clone(),
         cells,
-        error: None,
+        error,
         degraded,
     })
 }

@@ -145,12 +145,11 @@ pub struct RetrievalTuningSettingsDto {
     pub shortlist_gate_min_candidates: u32,
     pub shortlist_gate_min_docs: u32,
 
-    /// External source retrieval limits and snippet shaping
+    /// How many results a wiki or web search asks for. Every result a search
+    /// returns reaches the turn with its whole snippet; how many the prompt
+    /// shows is the turn's budget's to decide.
     pub wiki_search_max_results: u32,
-    pub wiki_snippet_max_chars: u32,
-    pub wiki_context_limit: u32,
     pub web_search_max_results: u32,
-    pub web_snippet_max_chars: u32,
     /// Whether a web search opens its results and reads the pages. Off, a
     /// search answers from the results' snippets alone. How many pages are
     /// read, and how much of each, follows the model's window.
@@ -311,10 +310,7 @@ impl Default for RetrievalTuningSettingsDto {
             shortlist_gate_min_candidates: 8,
             shortlist_gate_min_docs: 4,
             wiki_search_max_results: 5,
-            wiki_snippet_max_chars: 1200,
-            wiki_context_limit: 3,
             web_search_max_results: 5,
-            web_snippet_max_chars: 1200,
             read_web_pages: default_read_web_pages(),
             web_page_fetch_timeout_secs: default_web_page_fetch_timeout_secs(),
             deep_research_depth: default_deep_research_depth(),

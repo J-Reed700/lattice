@@ -43,6 +43,8 @@ pub struct ConversationDi {
     pub planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
     /// What the turn-intent classifier's model reads inside its deadline.
     pub intent_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
+    /// What the grounding judge's model reads inside the judge's budget.
+    pub judge_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
 }
 
 pub fn build(db_pool: SqlitePool) -> ConversationDi {
@@ -61,6 +63,7 @@ pub fn build(db_pool: SqlitePool) -> ConversationDi {
         handoffs_in_flight: Arc::new(HandoffsInFlight::default()),
         planner_health: Arc::default(),
         intent_pace: Arc::new(crate::features::conversation::chat::intent::intent_pace()),
+        judge_pace: Arc::new(crate::features::conversation::chat::verification::judge_pace()),
         conversation_history: conversation_service.clone(),
         create_conversation_use_case: Arc::new(CreateConversationUseCase::new(
             conversation_service.clone(),

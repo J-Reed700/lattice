@@ -4818,7 +4818,8 @@ export type CompareRowDto = { documentId: string; title: string; filePath: strin
 cells: CompareCellDto[];
 /**
  * Set when this document could not be processed (timeout, no chunks, LLM
- * unavailable). Cells are all-null in that case. Rendered as a muted row note.
+ * unavailable), in whole or in part. Cells filled before the failure are
+ * kept; the rest are null. Rendered as a muted row note.
  */
 error: string | null;
 /**
@@ -7381,9 +7382,11 @@ docShortlistDocMin: number; docShortlistDocMax: number;
  */
 shortlistGateMinCandidates: number; shortlistGateMinDocs: number;
 /**
- * External source retrieval limits and snippet shaping
+ * How many results a wiki or web search asks for. Every result a search
+ * returns reaches the turn with its whole snippet; how many the prompt
+ * shows is the turn's budget's to decide.
  */
-wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number;
+wikiSearchMaxResults: number; webSearchMaxResults: number;
 /**
  * Whether a web search opens its results and reads the pages. Off, a
  * search answers from the results' snippets alone. How many pages are

@@ -15,6 +15,14 @@ pub trait ConversationContextPort: Send + Sync {
     /// thread's folder instructions when the folder has some, otherwise its
     /// space's prompt. A conversation's own prompt still wins over either.
     async fn space_prompt(&self, conversation_id: &str) -> Result<Option<String>>;
-    /// Every source linked to the conversation, most recently added first.
-    async fn linked_sources(&self, conversation_id: &str) -> Result<Vec<LinkedConversationSource>>;
+    /// Up to `limit` of the sources linked to the conversation, most recently
+    /// added first, starting `offset` rows in.
+    async fn linked_sources(
+        &self,
+        conversation_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<LinkedConversationSource>>;
+    /// How many sources are linked to the conversation.
+    async fn linked_source_count(&self, conversation_id: &str) -> Result<usize>;
 }

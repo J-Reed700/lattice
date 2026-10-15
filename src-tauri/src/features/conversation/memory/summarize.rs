@@ -70,7 +70,17 @@ pub async fn fold_summary(
 ) -> std::result::Result<FittedSummary, CompactionError> {
     let mut current = previous_summary.map(str::to_string);
     let mut calls = 0usize;
-    let output_tokens = summary_output_tokens(budget_tokens);
+    // `budget_tokens` is what the next turn can carry: the ceiling a summary
+    // is accepted under. What the fold asks for is sized from what it folds.
+    let target = summary_target(
+        previous_summary.map_or(0, |summary| llm.count_tokens(summary)),
+        passages
+            .iter()
+            .map(|passage| llm.count_tokens(&passage.content))
+            .sum(),
+        budget_tokens,
+    );
+    let output_tokens = summary_output_tokens(target);
 
     // Nothing new to fold. This happens when a compacted prefix held only
     // ineligible material; spending a call to rewrite an unchanged summary would
@@ -78,7 +88,7 @@ pub async fn fold_summary(
     let steps = if passages.is_empty() {
         Vec::new()
     } else {
-        let room = fold_room_chars(llm, mandatory_labels, forgotten_labels, budget_tokens);
+        let room = fold_room_chars(llm, mandatory_labels, forgotten_labels, target);
         plan_fold(passages, room)
     };
 
@@ -96,7 +106,7 @@ pub async fn fold_summary(
             &rendered,
             mandatory_labels,
             forgotten_labels,
-            budget_tokens,
+            target,
             index + 1 == steps.len(),
         );
         calls += 1;
@@ -154,7 +164,7 @@ pub async fn fold_summary(
     let mut attempt = candidate;
     let mut measured = tokens;
     for _ in 0..MAX_SUMMARY_REGENERATIONS {
-        let prompt = render_summary_shrink_prompt(&attempt, measured, budget_tokens);
+        let prompt = render_summary_shrink_prompt(&attempt, measured, target);
         calls += 1;
         let text = complete_json_within(
             llm,
@@ -192,39 +202,58 @@ pub async fn fold_summary(
     })
 }
 
-/// Answer room a summariser call reserves: the summary's budget and half
+/// How much of the new passages a fold carries forward: a quarter.
+const NEW_TEXT_SHARE: usize = 4;
+
+/// The summary a fold asks for: the previous summary carried whole and a
+/// quarter of what the new passages add, never under the smallest useful
+/// summary and never over `pool`, what the next turn can carry.
+///
+/// Sized from the pool alone, a two-line exchange was asked for a tenth of
+/// the continuation window (4.9K tokens on a 32K window, 39K on a 262K one)
+/// with half as much again of answer room, which held the model for minutes
+/// after every answer and ran the job past its deadline.
+fn summary_target(previous_tokens: usize, new_tokens: usize, pool: usize) -> usize {
+    previous_tokens
+        .saturating_add(new_tokens / NEW_TEXT_SHARE)
+        .max(MIN_FOLD_TOKENS)
+        .min(pool)
+}
+
+/// Answer room a summariser call reserves: the summary's target and half
 /// again, so a candidate that overruns can still be measured and shrunk
 /// rather than cut off mid-sentence by the provider.
-fn summary_output_tokens(budget_tokens: usize) -> usize {
-    budget_tokens
-        .saturating_add(budget_tokens / 2)
+fn summary_output_tokens(target_tokens: usize) -> usize {
+    target_tokens
+        .saturating_add(target_tokens / 2)
         .max(MIN_FOLD_TOKENS)
 }
 
 /// Characters of new passages one fold step can carry in the summariser's
 /// own window, after its answer room, a 5% margin, the system prompt, the
-/// request's fixed fields and a running summary as long as an answer may be.
+/// request's fixed fields and the running summary, written to its target.
 fn fold_room_chars(
     llm: &dyn LLMPort,
     mandatory_labels: &[String],
     forgotten_labels: &[String],
-    budget_tokens: usize,
+    target_tokens: usize,
 ) -> usize {
     let window = llm.max_context_tokens();
-    let output = summary_output_tokens(budget_tokens);
+    let output = summary_output_tokens(target_tokens);
     let template = render_summary_prompt(
         None,
         &[],
         mandatory_labels,
         forgotten_labels,
-        budget_tokens,
+        target_tokens,
         false,
     );
     let fixed = llm
         .count_tokens(SUMMARIZER_SYSTEM)
         .saturating_add(llm.count_tokens(&template))
-        // The running summary rides in every step after the first.
-        .saturating_add(output);
+        // The running summary rides in every step after the first; the answer
+        // room above is the next one being written, not this one again.
+        .saturating_add(target_tokens);
     let room = window
         .saturating_sub(output)
         .saturating_sub(window / 20)
@@ -334,6 +363,59 @@ mod tests {
             let chars: usize = step.iter().map(|piece| piece.text.chars().count()).sum();
             assert!(chars <= 2_000, "{chars}");
         }
+    }
+
+    /// A short exchange is folded into a short summary, not one the size of
+    /// the whole pool; a long one grows toward the pool and stops there.
+    #[test]
+    fn the_target_follows_what_is_folded_and_the_pool_is_its_ceiling() {
+        let pool = 4_900;
+        assert_eq!(summary_target(0, 120, pool), MIN_FOLD_TOKENS);
+        assert_eq!(summary_target(600, 2_000, pool), 1_100);
+        assert_eq!(summary_target(3_000, 20_000, pool), pool);
+        assert_eq!(
+            summary_target(0, 120, 100),
+            100,
+            "a tiny pool still bounds it"
+        );
+    }
+
+    struct Window;
+
+    #[async_trait::async_trait]
+    impl LLMPort for Window {
+        async fn complete(
+            &self,
+            _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> lattice_core::shared::error::Result<
+            lattice_core::application::ports::llm_port::CompletionResponse,
+        > {
+            unreachable!("sizing makes no call")
+        }
+        fn model_name(&self) -> &str {
+            "window"
+        }
+        fn max_context_tokens(&self) -> usize {
+            32_768
+        }
+        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// The answer room and the running summary in the prompt are two
+    /// different things, each counted once: the summary at its target.
+    #[test]
+    fn a_fold_step_counts_the_answer_room_once() {
+        let target = 1_000;
+        let template = render_summary_prompt(None, &[], &[], &[], target, false);
+        let fixed =
+            Window.count_tokens(SUMMARIZER_SYSTEM) + Window.count_tokens(&template) + target;
+        let room_tokens = 32_768 - summary_output_tokens(target) - 32_768 / 20 - fixed;
+        assert_eq!(
+            fold_room_chars(&Window, &[], &[], target),
+            chars_within_tokens(room_tokens, Window.chars_per_token())
+        );
     }
 
     /// Passages that fit one step are folded in one call, unmarked.

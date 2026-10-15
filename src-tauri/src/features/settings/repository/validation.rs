@@ -93,7 +93,9 @@ impl SettingsRepository {
                     .to_string(),
             );
         }
-        if tuning.web_page_fetch_timeout_secs == 0 {
+        // The timeout bounds only the pipeline's own page reads, so it is
+        // only wrong when those are on.
+        if tuning.read_web_pages && tuning.web_page_fetch_timeout_secs == 0 {
             result.add_error(
                 "search",
                 "web_page_fetch_timeout_secs must be greater than 0".to_string(),
@@ -111,14 +113,10 @@ impl SettingsRepository {
                 "deep_research_branch_queries must be between 1 and 4".to_string(),
             );
         }
-        if tuning.wiki_snippet_max_chars == 0
-            || tuning.web_snippet_max_chars == 0
-            || tuning.external_search_query_max_chars == 0
-            || tuning.rerank_query_max_chars == 0
-        {
+        if tuning.external_search_query_max_chars == 0 || tuning.rerank_query_max_chars == 0 {
             result.add_error(
                 "search",
-                "snippet/query character limits must be greater than 0".to_string(),
+                "query character limits must be greater than 0".to_string(),
             );
         }
         if tuning.external_search_max_wiki_terms == 0 || tuning.external_search_max_web_terms == 0 {

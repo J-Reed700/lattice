@@ -15,7 +15,7 @@ use super::call_labels::{
 use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
-use super::tool_sources::{citable_passages, collect_tool_sources};
+use super::tool_sources::{collect_tool_sources, render_with_citations};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
     tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
@@ -647,10 +647,9 @@ impl<'a> ToolCalls<'a> {
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();
-        let whole = format_tool_result(tool, &result, settings, allowance, page_offset);
-        let (citations, allowance) = citable_passages(&citable, &whole, allowance);
-        let mut result_text = format_tool_result(tool, &result, settings, allowance, page_offset);
-        result_text.push_str(&citations);
+        let result_text = render_with_citations(&citable, allowance, |room| {
+            format_tool_result(tool, &result, settings, room, page_offset)
+        });
         let result_text = self
             .document_evidence
             .render(tool, &result, result_text, |excerpt| {

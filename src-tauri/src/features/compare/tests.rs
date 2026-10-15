@@ -430,3 +430,66 @@ async fn a_row_of_many_columns_is_filled_across_calls() {
         assert_eq!(asked, 1, "{column} asked {asked} times");
     }
 }
+
+/// Answers the first call with a value for every column it asks about and
+/// fails every call after it.
+#[derive(Default)]
+struct FailsAfterFirstCall(std::sync::Mutex<usize>);
+
+#[async_trait::async_trait]
+impl LLMPort for FailsAfterFirstCall {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut calls = self.0.lock().unwrap();
+        *calls += 1;
+        if *calls > 1 {
+            return Err(lattice_core::shared::error::AppError::Network(
+                "server went away".into(),
+            ));
+        }
+        let answer: serde_json::Map<String, serde_json::Value> = (0..9)
+            .map(|n| format!("column {n}"))
+            .filter(|column| request.user_text().contains(&format!("- {column}\n")))
+            .map(|column| (column, serde_json::json!({"value": "found", "quote": null})))
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::Value::Object(answer).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "fails-after-first"
+    }
+    fn max_context_tokens(&self) -> usize {
+        2_048
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A row split across calls used to be all or nothing: the second call
+/// failing threw away the cells the first had filled. They are kept, and the
+/// columns not reached are left empty and named.
+#[tokio::test]
+async fn a_failed_later_call_keeps_the_cells_earlier_calls_filled() {
+    let contents: Vec<String> = (0..6).map(|index| format!("passage {index}")).collect();
+    let container = container_with_chunks(&contents).await;
+    let model: Arc<dyn LLMPort> = Arc::new(FailsAfterFirstCall::default());
+    let deps = retrieval_deps(&container);
+    let columns: Vec<String> = (0..9).map(|n| format!("column {n}")).collect();
+    let document = super::use_case::ResolvedDocument {
+        id: "doc".to_string(),
+        title: "doc.md".to_string(),
+        file_path: "/lib/doc.md".to_string(),
+        error: None,
+    };
+    let row = super::use_case::build_row(&deps, &model, &document, &columns)
+        .await
+        .unwrap();
+
+    assert_eq!(row.cells.len(), 9);
+    let filled = row.cells.iter().filter(|cell| cell.value.is_some()).count();
+    assert_eq!(filled, 4, "the first call's four cells are kept");
+    let error = row.error.expect("the row says what is missing");
+    assert!(error.contains("Not filled: column 4"), "{error}");
+    assert!(error.contains("column 8"), "{error}");
+}

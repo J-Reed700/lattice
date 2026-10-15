@@ -334,6 +334,9 @@ pub trait ChatRetrieval: Send + Sync {
     /// How much prompt the turn-intent classifier's model reads inside the
     /// classifier's deadline, learned the same way.
     fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
+    /// How much source text the grounding judge's model reads inside the
+    /// judge's budget, learned the same way.
+    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
 }
 
 #[async_trait]

@@ -207,3 +207,25 @@ fn create_impl_stores_a_long_note_whole() {
     let built = build_create_record(request).unwrap();
     assert_eq!(built.note.as_deref(), Some(note.as_str()));
 }
+
+/// A title was cut at 200 characters and a locator at 120 when saved, with
+/// nothing said. Both are kept as given; a chunk id too long to be one is
+/// refused rather than cut into a different id.
+#[test]
+fn create_impl_keeps_long_titles_and_locators_and_refuses_an_overlong_id() {
+    let title = format!("{}the end", "A very long saved title ".repeat(20));
+    let locator = format!("{}p. 4", "Chapter 3 › Section 2 › ".repeat(10));
+    let mut request = create_request("A passage.");
+    request.title = Some(title.clone());
+    request.locator = Some(locator.clone());
+    let built = build_create_record(request).unwrap();
+    assert_eq!(built.title.as_deref(), Some(title.as_str()));
+    assert_eq!(built.locator.as_deref(), Some(locator.as_str()));
+
+    let mut request = create_request("A passage.");
+    request.chunk_id = Some("x".repeat(201));
+    assert!(matches!(
+        build_create_record(request),
+        Err(AppError::InvalidInput(_))
+    ));
+}

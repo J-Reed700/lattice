@@ -111,28 +111,33 @@ pub(super) async fn recall(
 
 /// How many of `sources`, from the front, `budget_chars` gives every one a
 /// useful share of.
+///
+/// Adding a source never raises another's share, so once a prefix leaves one
+/// short every longer prefix does too, and the longest that works is found by
+/// halving: a few allocations, not one for every prefix (which made recalling
+/// a long research chat's sources cubic in their number).
 fn useful_count(sources: &[SourceDto], budget_chars: usize) -> usize {
     let lengths: Vec<usize> = sources
         .iter()
         .map(|source| source.content.trim().chars().count())
         .collect();
-    let useful = |length: usize| length.clamp(1, MIN_RECALLED_PASSAGE_CHARS);
-    let mut taken = 0;
-    for count in 1..=lengths.len() {
-        let Some(prefix) = lengths.get(..count) else {
-            break;
-        };
-        let trial = super::retrieval::page_budget::allocate(prefix, budget_chars);
-        if !trial
+    let all_useful = |count: usize| {
+        let prefix = lengths.get(..count).unwrap_or_default();
+        super::retrieval::page_budget::allocate(prefix, budget_chars)
             .iter()
             .zip(prefix)
-            .all(|(share, length)| *share >= useful(*length))
-        {
-            break;
+            .all(|(share, length)| *share >= (*length).clamp(1, MIN_RECALLED_PASSAGE_CHARS))
+    };
+    let (mut works, mut fails) = (0usize, lengths.len() + 1);
+    while fails - works > 1 {
+        let middle = works + (fails - works) / 2;
+        if all_useful(middle) {
+            works = middle;
+        } else {
+            fails = middle;
         }
-        taken = count;
     }
-    taken
+    works
 }
 
 /// Every ranked source the budget can carry, best first, each given a fair
@@ -488,5 +493,52 @@ mod tests {
         assert!(note.contains("7 more source(s)"), "{note}");
         assert!(render(&[], 2).unwrap().contains("2 more source(s)"));
         assert_eq!(render(&[], 0), None);
+    }
+
+    /// The longest prefix every source of which gets a useful share, found
+    /// by halving, is the one trying every prefix in turn found; and two
+    /// thousand sources take a handful of allocations, not two thousand.
+    #[test]
+    fn the_useful_count_is_found_by_halving_and_matches_every_prefix() {
+        let every_prefix =
+            |lengths: &[usize], budget: usize| {
+                let mut taken = 0;
+                for count in 1..=lengths.len() {
+                    let prefix = &lengths[..count];
+                    let shares = super::super::retrieval::page_budget::allocate(prefix, budget);
+                    if !shares.iter().zip(prefix).all(|(share, length)| {
+                        *share >= (*length).clamp(1, MIN_RECALLED_PASSAGE_CHARS)
+                    }) {
+                        break;
+                    }
+                    taken = count;
+                }
+                taken
+            };
+        let mut seed = 7u64;
+        for case in 0..60 {
+            let count = (case % 12) + 1;
+            let lengths: Vec<usize> = (0..count)
+                .map(|_| {
+                    seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    (seed >> 33) as usize % 4_000 + 1
+                })
+                .collect();
+            let sources: Vec<SourceDto> = lengths
+                .iter()
+                .map(|length| source("doc", &"x".repeat(*length)))
+                .collect();
+            for budget in [0, 500, 2_400, 9_000, 40_000] {
+                assert_eq!(
+                    useful_count(&sources, budget),
+                    every_prefix(&lengths, budget),
+                    "{lengths:?} in {budget}"
+                );
+            }
+        }
+        let many: Vec<SourceDto> = (0..2_000).map(|_| source("doc", "short note")).collect();
+        assert_eq!(useful_count(&many, 2_000 * 10), 2_000);
     }
 }

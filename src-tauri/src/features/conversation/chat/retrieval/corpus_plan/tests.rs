@@ -850,6 +850,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         queries_already_tried: vec!["noncompete clauses".into()],
         top_result_titles: vec!["Quarterly revenue".into()],
         why_insufficient: vec!["low_term_coverage"],
+        more_titles_not_shown: 0,
     };
 
     let plan = plan_correction(
@@ -915,6 +916,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         queries_already_tried: vec!["noncompete clauses".into()],
         top_result_titles: Vec::new(),
         why_insufficient: vec!["low_top_score"],
+        more_titles_not_shown: 0,
     };
 
     let result = plan_correction(
@@ -1071,6 +1073,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
             .map(|i| format!("An unhelpful document {i}"))
             .collect(),
         why_insufficient: vec!["low_term_coverage", "low_top_score"],
+        more_titles_not_shown: 0,
     };
 
     plan_correction(
@@ -1090,4 +1093,28 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         used <= window,
         "correction built a {used}-token request for a {window}-token window"
     );
+}
+
+/// The corrective planner was shown the first pass's top five titles and no
+/// word of the rest. It is shown as many, best first, as its share of the
+/// prompt holds, and the rest are counted.
+#[test]
+fn a_correction_shows_the_titles_its_room_holds_and_counts_the_rest() {
+    let stub = NarrowWindowStub::new(8192);
+    let correction = CorrectionRequest {
+        top_result_titles: (0..40).map(|i| format!("Document title {i}")).collect(),
+        ..Default::default()
+    };
+    let roomy = correction.fitted(&stub, 100_000);
+    assert_eq!(roomy.top_result_titles.len(), 40);
+    assert_eq!(roomy.more_titles_not_shown, 0);
+
+    let tight = correction.fitted(&stub, 20);
+    assert!(!tight.top_result_titles.is_empty());
+    assert_eq!(tight.top_result_titles[0], "Document title 0");
+    assert_eq!(
+        tight.top_result_titles.len() + tight.more_titles_not_shown,
+        40
+    );
+    assert!(tight.more_titles_not_shown > 0);
 }

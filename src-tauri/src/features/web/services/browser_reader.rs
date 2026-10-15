@@ -107,40 +107,99 @@ struct Report {
     part: usize,
     #[serde(default = "one_part")]
     parts: usize,
+    /// Which reading of the page the part belongs to. A page that replaces
+    /// its document mid-transfer starts a new reading, and parts of two
+    /// different texts must never be joined.
+    #[serde(default)]
+    snapshot: String,
 }
 
 fn one_part() -> usize {
     1
 }
 
+/// Characters in one part of a report, as the check script cuts them (UTF-16
+/// units there, so never more characters than this here).
+const PART_CHARS: usize = 100_000;
+
+/// The most parts a report may claim: 16 Mi characters of page text, about
+/// eight thousand printed pages. The page writes the part count, so it is
+/// checked before anything is kept; a page claiming more is refused, and the
+/// read says why, rather than the app trying to hold what it claims.
+const MAX_REPORT_PARTS: usize = (16 * 1024 * 1024usize).div_ceil(PART_CHARS);
+
 /// The parts of one report received so far. Parts may arrive more than once
 /// (the page sends them round until the window closes) and in any order.
+/// Storage grows with the parts that arrive, never with the count a part
+/// claims.
 #[derive(Default)]
 struct Assembly {
-    parts: Vec<Option<String>>,
+    snapshot: String,
+    parts: usize,
+    received: std::collections::BTreeMap<usize, String>,
+    title: String,
+    blocked: bool,
+    /// The part count of a report refused as larger than the reader takes.
+    refused: Option<usize>,
 }
 
 impl Assembly {
     /// Add `report`'s part; the whole report once every part is in.
     fn add(&mut self, report: Report) -> Option<Report> {
-        let count = report.parts.max(1);
-        if self.parts.len() != count {
-            self.parts = vec![None; count];
-        }
-        let slot = self.parts.get_mut(report.part)?;
-        if slot.is_none() {
-            *slot = Some(report.text.clone());
-        }
-        if !self.parts.iter().all(Option::is_some) {
+        let parts = report.parts.max(1);
+        if parts > MAX_REPORT_PARTS {
+            self.refused = Some(parts);
             return None;
         }
-        let text: String = self.parts.drain(..).flatten().collect();
-        Some(Report {
+        if report.part >= parts || report.text.chars().count() > PART_CHARS {
+            return None;
+        }
+        // A new reading of the page, or a different cut of it: start over.
+        if self.snapshot != report.snapshot || self.parts != parts {
+            *self = Self {
+                snapshot: report.snapshot.clone(),
+                parts,
+                ..Self::default()
+            };
+        }
+        self.title = report.title;
+        self.blocked = report.blocked;
+        self.received.entry(report.part).or_insert(report.text);
+        if self.received.len() < self.parts {
+            return None;
+        }
+        Some(self.take(false))
+    }
+
+    /// What has arrived when time runs out: the parts in order, each missing
+    /// one marked where it belongs. `None` when nothing has.
+    fn partial(&mut self) -> Option<Report> {
+        (!self.received.is_empty()).then(|| self.take(true))
+    }
+
+    fn take(&mut self, mark_gaps: bool) -> Report {
+        let parts = self.parts;
+        let mut received = std::mem::take(&mut self.received);
+        let mut text = String::new();
+        for index in 0..parts {
+            match received.remove(&index) {
+                Some(part) => text.push_str(&part),
+                None if mark_gaps => text.push_str(&format!(
+                    "\n\n[Part {} of {parts} of this page's text did not arrive before the \
+                     reader's time ran out.]\n\n",
+                    index + 1
+                )),
+                None => {}
+            }
+        }
+        Report {
+            title: std::mem::take(&mut self.title),
             text,
+            blocked: self.blocked,
             part: 0,
             parts: 1,
-            ..report
-        })
+            snapshot: std::mem::take(&mut self.snapshot),
+        }
     }
 }
 
@@ -184,7 +243,12 @@ impl BrowserReader {
         let sender = Arc::new(Mutex::new(Some(sender)));
 
         let reporter = Arc::clone(&sender);
-        let assembly = Mutex::new(Assembly::default());
+        let assembly = Arc::new(Mutex::new(Assembly::default()));
+        let collector = Arc::clone(&assembly);
+        // A part in, more to come: look again now rather than at the next
+        // tick, so a long page is not read at one part per poll.
+        let part_arrived = Arc::new(tokio::sync::Notify::new());
+        let arrival = Arc::clone(&part_arrived);
         let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(target))
             .title("Lattice page reader")
             .visible(false)
@@ -196,13 +260,17 @@ impl BrowserReader {
                 if next.host_str() == Some(REPORT_HOST) {
                     debug!(chars = next.as_str().len(), "Page reader report arrived");
                     let whole = decode_report(next).and_then(|part| {
-                        assembly.lock().ok().and_then(|mut parts| parts.add(part))
+                        collector.lock().ok().and_then(|mut parts| parts.add(part))
                     });
-                    if let Some(report) = whole {
-                        if let Some(sender) = reporter.lock().ok().and_then(|mut slot| slot.take())
-                        {
-                            let _ = sender.send(report);
+                    match whole {
+                        Some(report) => {
+                            if let Some(sender) =
+                                reporter.lock().ok().and_then(|mut slot| slot.take())
+                            {
+                                let _ = sender.send(report);
+                            }
                         }
+                        None => arrival.notify_one(),
                     }
                     return false;
                 }
@@ -229,13 +297,13 @@ impl BrowserReader {
             loop {
                 tokio::select! {
                     report = &mut receiver => return report,
-                    _ = ticker.tick() => {
-                        let elapsed = started.elapsed();
-                        let script = check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT);
-                        if let Err(error) = window.eval(script) {
-                            debug!(%error, "Page reader could not run its check");
-                        }
-                    }
+                    _ = ticker.tick() => {}
+                    () = part_arrived.notified() => {}
+                }
+                let elapsed = started.elapsed();
+                let script = check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT);
+                if let Err(error) = window.eval(script) {
+                    debug!(%error, "Page reader could not run its check");
                 }
             }
         };
@@ -257,10 +325,26 @@ impl BrowserReader {
                 ))
             }
             Err(_) => {
-                return Err(AppError::Network(format!(
-                    "the page did not get past its check within {}s",
-                    timeout.as_secs()
-                )))
+                let mut assembly = assembly
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if let Some(parts) = assembly.refused {
+                    return Err(AppError::Network(format!(
+                        "the page reported its text in {parts} parts, more than the \
+                         {MAX_REPORT_PARTS} the reader takes in"
+                    )));
+                }
+                // Time ran out partway through a long page: what arrived is
+                // kept, with each missing part marked, rather than thrown away.
+                match assembly.partial() {
+                    Some(report) => report,
+                    None => {
+                        return Err(AppError::Network(format!(
+                            "the page did not get past its check within {}s",
+                            timeout.as_secs()
+                        )))
+                    }
+                }
             }
         };
         let page = page_from_report(report, landed)?;
@@ -356,23 +440,25 @@ fn check_script(give_up_on_check: bool, settle_now: bool) -> String {
             if give_up_on_check { "true" } else { "false" },
         )
         .replace("__SETTLE_NOW__", if settle_now { "true" } else { "false" })
+        .replace("__PART__", &PART_CHARS.to_string())
 }
 
 const CHECK_SCRIPT: &str = r#"
 (() => {
   if (!/^https?:$/.test(location.protocol) || document.readyState === 'loading') return;
-  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, parts: null, next: 0 };
+  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, parts: null, next: 0, id: '' };
 
   // A report travels in a URL, so a long page goes in parts, one per look,
   // round and round until the window closes: a part the app missed comes by
   // again. Each part is whole characters; a cut between the halves of a
   // surrogate pair could not be encoded.
-  const PART = 100000;
+  const PART = __PART__;
   const send = () => {
     const index = state.next;
     state.next = (index + 1) % state.parts.length;
     const payload = JSON.stringify({
-      title: state.title, blocked: state.blocked, part: index, parts: state.parts.length, text: state.parts[index]
+      title: state.title, blocked: state.blocked, part: index, parts: state.parts.length, text: state.parts[index],
+      snapshot: state.id
     });
     location.href = 'https://lattice-page-reader.invalid/#' + encodeURIComponent(payload);
   };
@@ -387,6 +473,7 @@ const CHECK_SCRIPT: &str = r#"
       start = end;
     } while (start < text.length);
     state.parts = parts; state.title = document.title || ''; state.blocked = blocked; state.next = 0;
+    state.id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     send();
   };
 
@@ -420,153 +507,4 @@ const CHECK_SCRIPT: &str = r#"
 "#;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn allowed(url: &str) -> bool {
-        navigation_allowed(&Url::parse(url).unwrap())
-    }
-
-    #[test]
-    fn only_the_public_web_is_reachable() {
-        assert!(allowed(
-            "https://www.thespruce.com/best-houseplants-for-sun-4147670"
-        ));
-        assert!(allowed("http://example.com/"));
-        assert!(allowed("https://93.184.216.34/"));
-        assert!(allowed("about:blank"));
-        assert!(allowed("about:srcdoc"));
-
-        for blocked in [
-            "file:///etc/passwd",
-            "ftp://example.com/",
-            "tauri://localhost/",
-            "javascript:alert(1)",
-            "http://localhost:1420/",
-            "http://app.localhost/",
-            "http://127.0.0.1:8080/",
-            "http://10.0.0.1/",
-            "http://192.168.1.1/",
-            "http://169.254.169.254/latest/meta-data/",
-            "http://[::1]/",
-            "http://[fd00::1]/",
-            "http://[::ffff:127.0.0.1]/",
-            "http://100.64.0.1/",
-            "http://0.0.0.0/",
-            "http://printer.local/",
-            "http://router/",
-        ] {
-            assert!(!allowed(blocked), "{blocked} should be refused");
-        }
-    }
-
-    fn report(text: &str) -> Report {
-        Report {
-            title: "Title".to_string(),
-            text: text.to_string(),
-            blocked: false,
-            part: 0,
-            parts: 1,
-        }
-    }
-
-    #[test]
-    fn a_page_is_located_by_the_browser_not_by_its_report() {
-        // The page's script claims to be Wikipedia; the webview says otherwise.
-        let payload = serde_json::json!({
-            "url": "https://en.wikipedia.org/wiki/Rust",
-            "title": "Rust",
-            "text": "forged"
-        })
-        .to_string();
-        let posted = Url::parse(&format!(
-            "https://{REPORT_HOST}/#{}",
-            urlencoding::encode(&payload)
-        ))
-        .unwrap();
-        let forged = decode_report(&posted).expect("decodes");
-        let landed = Url::parse("https://attacker.example/page").unwrap();
-
-        let page = page_from_report(forged, Some(landed)).unwrap();
-        assert_eq!(page.final_url, "https://attacker.example/page");
-        assert_eq!(page.text, "forged");
-    }
-
-    #[test]
-    fn a_page_the_browser_cannot_place_is_not_returned() {
-        assert!(page_from_report(report("text"), None).is_err());
-        for landed in ["about:blank", "data:text/html,hi", "http://192.168.1.1/"] {
-            let landed = Url::parse(landed).unwrap();
-            assert!(page_from_report(report("text"), Some(landed)).is_err());
-        }
-        let blocked = Report {
-            blocked: true,
-            ..report("text")
-        };
-        let landed = Url::parse("https://example.com/").unwrap();
-        assert!(page_from_report(blocked, Some(landed)).is_err());
-    }
-
-    #[test]
-    fn a_report_is_decoded_from_the_fragment() {
-        let payload = serde_json::json!({
-            "title": "A — page",
-            "text": "First paragraph.\n\nSecond, with #hash & ünïcode."
-        })
-        .to_string();
-        let url = Url::parse(&format!(
-            "https://{REPORT_HOST}/#{}",
-            urlencoding::encode(&payload)
-        ))
-        .unwrap();
-        let report = decode_report(&url).expect("decodes");
-        assert_eq!(report.title, "A — page");
-        assert!(report.text.contains("ünïcode"));
-    }
-
-    /// A page's text used to be cut at 60,000 UTF-16 units before it was
-    /// sent. It now goes in parts, which arrive in any order and more than
-    /// once, and come back together whole.
-    #[test]
-    fn a_report_sent_in_parts_comes_back_whole() {
-        assert!(!CHECK_SCRIPT.contains(".slice(0, 60000)"));
-        let piece = |part: usize, text: &str| Report {
-            part,
-            parts: 3,
-            ..report(text)
-        };
-        let mut assembly = Assembly::default();
-        assert!(assembly.add(piece(2, "three")).is_none());
-        assert!(assembly.add(piece(0, "one ")).is_none());
-        assert!(assembly.add(piece(2, "ignored repeat")).is_none());
-        let whole = assembly.add(piece(1, "two ")).expect("every part is in");
-        assert_eq!(whole.text, "one two three");
-        assert_eq!(whole.title, "Title");
-
-        let mut single = Assembly::default();
-        assert_eq!(
-            single.add(report("short")).map(|r| r.text).as_deref(),
-            Some("short")
-        );
-        assert!(Assembly::default().add(piece(7, "out of range")).is_none());
-    }
-
-    #[test]
-    fn the_check_script_carries_its_deadlines_and_no_placeholders() {
-        let early = check_script(false, false);
-        assert!(early.contains("if (false) report(true, '')"));
-        let late = check_script(true, true);
-        assert!(late.contains("if (true) report(true, '')"));
-        assert!(!late.contains("__"));
-        assert!(late.contains(REPORT_HOST));
-    }
-
-    /// A web service with no reader attached reports this for every browser
-    /// read, so its callers keep the HTTP result.
-    #[test]
-    fn without_a_reader_a_read_is_unavailable() {
-        let error = unavailable();
-        assert!(matches!(error, AppError::ServiceNotAvailable(_)));
-        assert!(error.to_string().contains("no browser"));
-    }
-}
+mod tests;

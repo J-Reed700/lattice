@@ -46,7 +46,7 @@ const PLANNER_TIMEOUT: Duration = Duration::from_secs(20);
 /// is unchanged — plan retrieval from this catalog — so the system prompt must
 /// stay one prompt with one cached prefix; only the evidence about the failed
 /// attempt is new.
-const CORRECTION_INSTRUCTION: &str = "The previous retrieval pass for this same request was judged insufficient. Return different queries: other wording, narrower or broader phrasing, or the specific terms the request implies but does not state. Do not repeat any query in queries_already_tried. top_result_titles is what that pass returned; prefer queries that would reach different material. Leave opening_document_ids empty and start_at_beginning false.";
+const CORRECTION_INSTRUCTION: &str = "The previous retrieval pass for this same request was judged insufficient. Return different queries: other wording, narrower or broader phrasing, or the specific terms the request implies but does not state. Do not repeat any query in queries_already_tried. top_result_titles is what that pass returned, best first, and more_titles_not_shown counts the titles past them; prefer queries that would reach different material. Leave opening_document_ids empty and start_at_beginning false.";
 
 /// A short message is a continuation, not a new research request, when it
 /// carries this few informative terms.

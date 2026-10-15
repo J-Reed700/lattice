@@ -123,19 +123,25 @@ fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_
 }
 
 /// Room flows down the pools in order: recalled passages get what the pools
-/// above them left before any document does. When a recalled passage is
-/// denied room, no document is given room either.
+/// above them left before any document does. One recalled passage too long
+/// for that room used to end recall and leave documents nothing as well; it
+/// is passed over and named, the shorter passages after it go in, and the
+/// documents get what recall did not use.
 #[test]
-fn a_document_never_takes_room_a_recalled_passage_was_denied() {
+fn a_recalled_passage_too_long_for_the_room_is_passed_over_and_named() {
     let recent = vec![message(1, SourceRole::User, "Question.")];
     let memory = snapshot(Vec::new(), None, 1);
     let mut base = request(Some(&memory), &recent, 4_096);
-    base.recalled = vec![SelectedPassage {
-        message_id: "m9".into(),
-        sequence: 9,
+    let passage = |id: &str, sequence: i64, text: String| SelectedPassage {
+        message_id: id.into(),
+        sequence,
         role: SourceRole::User,
-        text: "recalled ".repeat(4_000),
-    }];
+        text,
+    };
+    base.recalled = vec![
+        passage("m9", 9, "recalled ".repeat(4_000)),
+        passage("m4", 4, "The short recalled passage.".into()),
+    ];
     base.document_evidence = vec![RankedEvidence {
         label: "doc".into(),
         content: "A short document passage.".into(),
@@ -143,9 +149,14 @@ fn a_document_never_takes_room_a_recalled_passage_was_denied() {
     }];
     let plan = assembler().assemble(&base).expect("plan");
     let (_, last) = last_message(&plan);
-    assert!(!last.contains("[conversation history retrieval context"));
+    assert!(last.contains("The short recalled passage."), "{last}");
     assert!(
-        !last.contains(render::EVIDENCE_LABEL),
-        "a document took room a recalled passage was denied"
+        last.contains("1 more recalled passage did not fit here; message id: m9"),
+        "{last}"
     );
+    assert!(
+        last.contains("A short document passage."),
+        "documents get the room recall did not use"
+    );
+    assert_eq!(plan.retrieval.selected_message_ids, ["m4"]);
 }

@@ -51,20 +51,64 @@ pub(super) fn citable_passages(
         let header = format!("\n\nCitable passage [{number}] — {}\n", source.file_name);
         let room = share.saturating_sub(header.chars().count());
         text.push_str(&header);
-        if content.chars().count() <= room {
+        let total = content.chars().count();
+        if total <= room {
             text.push_str(content);
         } else {
-            let mark = " […passage continues past this result's room]";
+            // Where the passage stops and how to read on, so the rest is a
+            // call away rather than gone: the note is sized with a worst-case
+            // offset before the cut is made.
+            let mark = |at: usize| continues_note(source, at, total);
             let part = lattice_core::shared::text::split_into_parts(
                 content,
-                room.saturating_sub(mark.chars().count()).max(1),
+                room.saturating_sub(mark(total).chars().count()).max(1),
             );
-            text.push_str(part.first().copied().unwrap_or_default());
-            text.push_str(mark);
+            let part = part.first().copied().unwrap_or_default();
+            text.push_str(part);
+            text.push_str(&mark(part.chars().count()));
         }
     }
     let used = text.chars().count();
     (text, allowance.saturating_sub(used))
+}
+
+/// The note a cut passage ends with: the character it stops at, and the call
+/// that reads on from there.
+fn continues_note(source: &SourceDto, at: usize, total: usize) -> String {
+    use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
+    let how = match source.document_id.strip_prefix(WEB_SOURCE_PREFIX) {
+        Some(url) => format!("fetch_url_content with url \"{url}\" and offset {at} reads on"),
+        None => format!(
+            "get_document with document_id \"{}\" reads the document",
+            source.document_id
+        ),
+    };
+    format!(" […passage continues at character {at} of {total}; {how}]")
+}
+
+/// A tool result and its citation lines, together within `allowance`, the
+/// lines decided against the result as it is finally rendered.
+///
+/// A source counts as already shown only when the text the model receives
+/// carries it. Decided against the result rendered with the whole allowance
+/// and then rendered smaller to make room for the lines, a source could be
+/// named as "in this result above" when the smaller render no longer held it.
+/// The room shrinks until the render fits what its lines leave; a smaller
+/// render shows less, so the lines only grow and this ends.
+pub(super) fn render_with_citations(
+    citable: &[(u32, &SourceDto)],
+    allowance: usize,
+    render: impl Fn(usize) -> String,
+) -> String {
+    let mut room = allowance;
+    loop {
+        let rendered = render(room);
+        let (citations, left) = citable_passages(citable, &rendered, allowance);
+        if room <= left || room == 0 {
+            return rendered + &citations;
+        }
+        room = left;
+    }
 }
 
 /// Whether `shown` already carries `content`: its opening, whitespace aside.
@@ -274,7 +318,10 @@ mod citable_tests {
         let unshown = source(&page);
         let (text, left) = citable_passages(&[(1, &unshown)], "something else", 600);
         assert!(text.contains("Citable passage [1] — Page A\n"));
-        assert!(text.contains("[…passage continues past this result's room]"));
+        assert!(
+            text.contains("fetch_url_content with url \"https://example.com/a\" and offset "),
+            "{text}"
+        );
         assert!(text.chars().count() <= 300, "{}", text.chars().count());
         assert_eq!(left, 600 - text.chars().count());
     }
@@ -318,5 +365,49 @@ mod citable_tests {
         let wiki = collect_tool_sources("wiki_summary", &summary, &[], &settings);
         assert_eq!(wiki[0].content, body.trim());
         assert!(wiki[0].excerpt.as_ref().unwrap().chars().count() < 2_000);
+    }
+
+    /// A cut passage says where it stops and how to read on from there, and
+    /// the offset it names is where its shown text ends.
+    #[test]
+    fn a_cut_passage_names_the_offset_to_read_on_from() {
+        let page = "word ".repeat(400);
+        let cut = source(&page);
+        let (text, _) = citable_passages(&[(1, &cut)], "something else", 600);
+        let shown = text
+            .split("Citable passage [1] — Page A\n")
+            .nth(1)
+            .and_then(|rest| rest.split(" […passage continues at character ").next())
+            .unwrap();
+        let offset = shown.chars().count();
+        let total = page.trim().chars().count();
+        assert!(
+            text.contains(&format!("continues at character {offset} of {total};")),
+            "{text}"
+        );
+        assert!(text.contains(&format!("and offset {offset} reads on]")));
+    }
+
+    /// Whether a source is already in the result is decided against the
+    /// result the model gets. Decided against the render with the whole
+    /// allowance, this page counted as shown, and the result was then
+    /// rendered smaller, without the page, under a line saying its text was
+    /// "in this result above".
+    #[test]
+    fn shown_is_decided_against_the_final_render() {
+        let page = format!("{} and then much more of the page.", "ab ".repeat(24));
+        let cited = source(&page);
+        let header = "A forty-character header for the result\n";
+        let render =
+            |room: usize| -> String { format!("{header}{page}").chars().take(room).collect() };
+        assert!(
+            is_shown(&render(150), &page),
+            "the whole allowance shows it"
+        );
+
+        let text = render_with_citations(&[(1, &cited)], 150, render);
+        assert!(text.chars().count() <= 150, "{}", text.chars().count());
+        assert!(!text.contains("its text is in this result above"), "{text}");
+        assert!(text.contains("Citable passage [1] — Page A\n"), "{text}");
     }
 }

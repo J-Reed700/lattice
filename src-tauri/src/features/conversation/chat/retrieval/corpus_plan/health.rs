@@ -51,13 +51,16 @@ impl Default for PlannerHealth {
 }
 
 impl PlannerHealth {
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
+            // The user waits on the plan: it reads for a small share of its
+            // timeout, not half of it, twice a turn.
             pace: PromptPace::starting_at(
                 PLANNER_TIMEOUT,
                 PLANNER_PROMPT_TOKENS,
                 PLANNER_PROMPT_FLOOR,
-            ),
+            )
+            .on_critical_path(),
             stood_down_until: Mutex::new(None),
         }
     }
@@ -68,9 +71,9 @@ impl PlannerHealth {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// The prompt size, in tokens, the next attempt should aim for.
-    pub(super) fn prompt_tokens(&self) -> usize {
-        self.pace.tokens().unwrap_or(PLANNER_PROMPT_TOKENS)
+    /// The prompt size, in tokens, the next attempt on `model` should aim for.
+    pub(super) fn prompt_tokens(&self, model: &str) -> usize {
+        self.pace.tokens(model)
     }
 
     /// How much longer the planner is standing down, if it is.
@@ -86,16 +89,16 @@ impl PlannerHealth {
     /// any queue, and read as prefill it shrank a 9B planner's prompt from
     /// 2,560 tokens to the floor after answers that were all in time. An answer
     /// in time never shrinks the next prompt.
-    pub(super) fn answered(&self, prefill: Option<PrefillTiming>, sent_tokens: usize) {
+    pub(super) fn answered(&self, model: &str, prefill: Option<PrefillTiming>, sent_tokens: usize) {
         *self.stood_down_until() = None;
-        self.pace.answered(prefill, sent_tokens);
+        self.pace.answered(model, prefill, sent_tokens);
     }
 
     /// A timeout halves the next attempt's prompt. Only a timeout at the floor
     /// stands the planner down, because there is nothing smaller left to try.
-    pub(super) fn timed_out(&self, sent_tokens: usize) {
-        let at_floor = self.prompt_tokens() <= PLANNER_PROMPT_FLOOR;
-        self.pace.timed_out(sent_tokens);
+    pub(super) fn timed_out(&self, model: &str, sent_tokens: usize) {
+        let at_floor = self.prompt_tokens(model) <= PLANNER_PROMPT_FLOOR;
+        self.pace.timed_out(model, sent_tokens);
         if at_floor {
             *self.stood_down_until() = Some(Instant::now() + PLANNER_STAND_DOWN);
         }
@@ -105,8 +108,8 @@ impl PlannerHealth {
     /// counted against the window the port reports, so this means the report
     /// was wrong. Halving finds the real window within a few turns; there is
     /// no stand-down, since a refusal costs no time.
-    pub(super) fn overflowed(&self, sent_tokens: usize) {
-        self.pace.overflowed(sent_tokens);
+    pub(super) fn overflowed(&self, model: &str, sent_tokens: usize) {
+        self.pace.overflowed(model, sent_tokens);
     }
 }
 
@@ -146,15 +149,15 @@ impl<'h> PlannerTurn<'h> {
         })
     }
 
-    pub(super) fn record_timeout(&self, sent_tokens: usize) {
+    pub(super) fn record_timeout(&self, model: &str, sent_tokens: usize) {
         self.timed_out.store(true, Ordering::Relaxed);
-        self.health.timed_out(sent_tokens);
+        self.health.timed_out(model, sent_tokens);
     }
 
-    /// Tokens of conversation the planner's next prompt carries: its share of
-    /// the prompt the planner reads in time.
-    pub(in super::super) fn history_tokens(&self) -> usize {
-        super::prompt::history_tokens(self.health.prompt_tokens())
+    /// Tokens of conversation the planner's next prompt on `model` carries:
+    /// its share of the prompt that model reads in time.
+    pub(in super::super) fn history_tokens(&self, model: &str) -> usize {
+        super::prompt::history_tokens(self.health.prompt_tokens(model))
     }
 
     pub(super) fn candidate_ids(&self) -> &[String] {

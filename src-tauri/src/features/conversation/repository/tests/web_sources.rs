@@ -135,7 +135,7 @@ async fn a_turns_citations_are_there_for_the_next_turn() {
     }
 
     let carried = SqliteConversationContext::new(pool.clone())
-        .linked_sources(&conversation_id)
+        .linked_sources(&conversation_id, 0, usize::MAX)
         .await
         .unwrap();
 
@@ -173,7 +173,7 @@ async fn citing_a_page_again_refreshes_it_rather_than_duplicating_it() {
     }
 
     let carried = SqliteConversationContext::new(pool.clone())
-        .linked_sources(&conversation_id)
+        .linked_sources(&conversation_id, 0, usize::MAX)
         .await
         .unwrap();
 
@@ -212,7 +212,7 @@ async fn another_conversation_does_not_inherit_them() {
     .unwrap();
 
     let carried = SqliteConversationContext::new(pool.clone())
-        .linked_sources("conv-2")
+        .linked_sources("conv-2", 0, usize::MAX)
         .await
         .unwrap();
 

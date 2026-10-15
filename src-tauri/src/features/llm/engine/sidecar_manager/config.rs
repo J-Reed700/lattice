@@ -103,19 +103,41 @@ pub(super) const VRAM_USABLE_FRACTION: f64 = 0.7;
 /// sidecar's own fallback reports a degraded start.
 pub(super) const AUTO_MIN_CONTEXT_SIZE: u32 = 4_096;
 
+/// Memory the machine keeps free beyond a model and its cache, so loading one
+/// never tips it into swap: a tenth of RAM, and never under 2 GiB.
+pub(super) fn swap_headroom_bytes(total_ram_bytes: u64) -> u64 {
+    (total_ram_bytes / 10).max(2 * 1024 * 1024 * 1024)
+}
+
+/// The largest window the pre-growth sizing would choose: what it chose for
+/// every machine before the window could grow past it. Auto never picks less
+/// than that sizing did for the same machine and model.
+pub(super) const AUTO_FLOOR_CEILING: u32 = 32_768;
+
+/// System memory a new server may grow into, for a GPU that shares it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SharedMemory {
+    /// Available when the server is about to load, as the OS counts it.
+    pub available_bytes: u64,
+    /// Installed RAM, which sets the headroom kept back.
+    pub total_bytes: u64,
+}
+
+impl SharedMemory {
+    /// What is left for weights and cache once the headroom is kept back.
+    fn spare_bytes(self) -> u64 {
+        self.available_bytes
+            .saturating_sub(swap_headroom_bytes(self.total_bytes))
+    }
+}
+
 /// Size the context window from the model's own dimensions and the memory the
-/// accelerator reports.
+/// machine has.
 ///
 /// Returns `None` when anything needed is unknown — an unreadable GGUF, a
-/// header without its trained length or KV dimensions, a GPU that does not
-/// report its memory — so the caller keeps the conservative flat default
-/// rather than acting on a guess.
-///
-/// The window is the largest the memory left for the KV cache holds, up to
-/// the trained length and never past it: every prompt budget in the app is a
-/// share of this window, so a fixed ceiling here would cap them all. The
-/// trained length is a ceiling, not a target: a plain model with 128 KiB of
-/// cache per token, trained at 262144, would need 34 GB of it at full length.
+/// header without its KV dimensions, a GPU that does not report its memory —
+/// so the caller keeps the conservative flat default rather than acting on a
+/// guess.
 pub(super) fn auto_context_size(
     model_path: &std::path::Path,
     capabilities: &SystemCapabilities,
@@ -124,10 +146,19 @@ pub(super) fn auto_context_size(
     use crate::features::llm::engine::gguf_metadata;
 
     let vram_gb = capabilities.gpu_vram_gb()?;
+    let shared = capabilities
+        .gpu
+        .as_ref()
+        .filter(|gpu| gpu.vendor.shares_system_memory())
+        .and(capabilities.available_memory_bytes)
+        .map(|available_bytes| SharedMemory {
+            available_bytes,
+            total_bytes: (capabilities.total_ram_gb * 1024.0 * 1024.0 * 1024.0) as u64,
+        });
     let info = gguf_metadata::read_model_info(model_path)?;
     let weights_bytes = std::fs::metadata(model_path).ok()?.len();
 
-    context_size_for(vram_gb, weights_bytes, resident_bytes, &info)
+    context_size_for(vram_gb, weights_bytes, resident_bytes, &info, shared)
 }
 
 /// GPU memory a running server already holds: its weights plus the KV cache
@@ -141,51 +172,76 @@ pub(super) fn resident_bytes_of(model_path: &std::path::Path, context_size: u32)
     weights.saturating_add(kv)
 }
 
-/// The arithmetic behind [`auto_context_size`], separated from reading the disk
-/// so the decision can be checked against known hardware and known models.
-///
-/// `resident_bytes` is what other running servers already hold (weights and
-/// KV). Each one used to be sized against the whole budget, so a chat model and
-/// a different utility GGUF on a 16 GB Mac together claimed more than Metal's
-/// working set and the machine swapped.
-pub(super) fn context_size_for(
-    vram_gb: f64,
-    weights_bytes: u64,
-    resident_bytes: u64,
+/// The largest whole thousand of tokens, up to `ceiling`, whose KV cache fits
+/// `spare_bytes`; 0 when none does. Each candidate is priced rather than
+/// divided out because the cache is not always proportional to the window:
+/// sliding layers stop growing at theirs.
+fn largest_window_within(
     info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
-) -> Option<u32> {
-    let ceiling = info.trained_context_length?;
-    // A header without KV dimensions declines here, before memory is looked at.
-    info.kv_cache_bytes(ceiling)?;
-
-    let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
-    // Weights past the usable share (a 9B on an 8 GB Mac) leave no room at
-    // all. That is the floor's case, not "unknown": `None` would hand the
-    // caller the larger flat default, which is guaranteed not to fit.
-    let Some(spare_bytes) = usable_bytes
-        .checked_sub(resident_bytes)
-        .and_then(|free| free.checked_sub(weights_bytes))
-    else {
-        return Some(AUTO_MIN_CONTEXT_SIZE.min(ceiling));
-    };
-    // The largest whole thousand that fits; they read better in a log line
-    // than 31_417 does. Each candidate is priced rather than divided out
-    // because the cache is not always proportional to the window: sliding
-    // layers stop growing at theirs. For a plain model this is the old
-    // `spare / bytes_per_token`, rounded down to a thousand.
-    let chosen = (1..=ceiling / 1024)
+    ceiling: u32,
+    spare_bytes: u64,
+) -> u32 {
+    (1..=ceiling / 1024)
         .rev()
         .map(|thousands| thousands * 1024)
         .find(|&tokens| {
             info.kv_cache_bytes(tokens)
                 .is_some_and(|bytes| bytes <= spare_bytes)
         })
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
 
-    // Never hand back less than the floor while the model could still be
-    // trained for more: returning `None` here would hand the caller the larger
-    // flat default, which is the one thing guaranteed not to fit.
-    Some(chosen.max(AUTO_MIN_CONTEXT_SIZE.min(ceiling)))
+/// The arithmetic behind [`auto_context_size`], separated from reading the disk
+/// so the decision can be checked against known hardware and known models.
+///
+/// The window is a resource, not a content limit: what does not fit in it is
+/// paged, never dropped. It has two parts:
+///
+/// - **The floor** is what the sizing before growth chose: the largest window
+///   up to [`AUTO_FLOOR_CEILING`] (and the trained length) whose cache fits the
+///   accelerator's usable share less the weights and what other running
+///   servers hold (`resident_bytes`). Auto never picks less.
+/// - **Above it** the window grows while its cache fits the memory available
+///   now (`shared`, for a GPU that draws on system RAM) less headroom and the
+///   weights, still within the usable share and never past the trained length.
+///   llama.cpp allocates the whole cache at load, so growth sized to installed
+///   memory rather than available memory would push a busy machine into swap.
+pub(super) fn context_size_for(
+    vram_gb: f64,
+    weights_bytes: u64,
+    resident_bytes: u64,
+    info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
+    shared: Option<SharedMemory>,
+) -> Option<u32> {
+    let floor_ceiling = info
+        .trained_context_length
+        .unwrap_or(AUTO_FLOOR_CEILING)
+        .min(AUTO_FLOOR_CEILING);
+    // A header without KV dimensions declines here, before memory is looked at.
+    info.kv_cache_bytes(floor_ceiling)?;
+    let minimum = AUTO_MIN_CONTEXT_SIZE.min(floor_ceiling);
+
+    let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+    // Weights past the usable share (a 9B on an 8 GB Mac) leave no room at
+    // all. That is the minimum's case, not "unknown": `None` would hand the
+    // caller the larger flat default, which is guaranteed not to fit.
+    let Some(share_spare) = usable_bytes
+        .checked_sub(resident_bytes)
+        .and_then(|free| free.checked_sub(weights_bytes))
+    else {
+        return Some(minimum);
+    };
+    let floor = largest_window_within(info, floor_ceiling, share_spare).max(minimum);
+
+    // Growth needs a trained length to stop at.
+    let Some(trained) = info.trained_context_length else {
+        return Some(floor);
+    };
+    // Other servers are already counted in what is available now.
+    let growth_spare = shared.map_or(share_spare, |shared| {
+        share_spare.min(shared.spare_bytes().saturating_sub(weights_bytes))
+    });
+    Some(largest_window_within(info, trained, growth_spare).max(floor))
 }
 
 impl SidecarConfig {

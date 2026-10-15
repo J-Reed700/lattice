@@ -144,6 +144,9 @@ fn vault() -> Vec<CorpusDocument> {
         .collect()
 }
 
+/// The model the utility stub reports; the planner's pace is kept per model.
+const MODEL: &str = "utility-stub";
+
 fn turn_with(health: &PlannerHealth, candidates: Vec<String>) -> PlannerTurn<'_> {
     let mut turn = PlannerTurn::with_health(health);
     turn.candidates = Some(candidates);
@@ -446,7 +449,7 @@ async fn a_prompt_that_cannot_fit_the_window_is_never_sent() {
     assert!(result.is_err());
     assert_eq!(stub.calls(), 0);
     // Not sending is not a timeout: nothing about the planner's speed is learned.
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS);
 }
 
 #[tokio::test(start_paused = true)]
@@ -470,7 +473,7 @@ async fn a_timeout_halves_the_next_prompt_instead_of_standing_the_planner_down()
     .await;
     assert!(timed_out.is_err());
     let sent = stub.last_request_tokens();
-    let next = health.prompt_tokens();
+    let next = health.prompt_tokens(MODEL);
     assert!((PLANNER_PROMPT_FLOOR..PLANNER_PROMPT_TOKENS).contains(&next));
     assert!(health.standing_down().is_none());
 
@@ -506,6 +509,7 @@ async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_o
         queries_already_tried: vec!["spare key".into()],
         top_result_titles: Vec::new(),
         why_insufficient: vec!["low_top_score"],
+        more_titles_not_shown: 0,
     };
 
     let turn = turn_with(&health, vec![uuid(5)]);
@@ -555,13 +559,13 @@ async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_o
 async fn only_a_timeout_at_the_smallest_prompt_stands_the_planner_down_and_only_briefly() {
     let health = PlannerHealth::new();
     let mut timeouts = 0;
-    while health.prompt_tokens() > PLANNER_PROMPT_FLOOR {
-        health.timed_out(health.prompt_tokens());
+    while health.prompt_tokens(MODEL) > PLANNER_PROMPT_FLOOR {
+        health.timed_out(MODEL, health.prompt_tokens(MODEL));
         assert!(health.standing_down().is_none());
         timeouts += 1;
     }
     assert_eq!(timeouts, 2, "2560 -> 1280 -> 1024");
-    health.timed_out(PLANNER_PROMPT_FLOOR);
+    health.timed_out(MODEL, PLANNER_PROMPT_FLOOR);
     let remaining = health.standing_down().expect("standing down");
     assert!(remaining <= PLANNER_STAND_DOWN);
     assert!(PlannerTurn::with_health(&health).unavailable().is_some());
@@ -579,23 +583,25 @@ fn read_in(tokens: usize, time: Duration) -> Option<PrefillTiming> {
 }
 
 /// The prompt follows the planner's measured prefill speed: what it reads in
-/// half the timeout. There is no ceiling: a fast planner keeps earning room,
-/// at most a doubling an answer.
+/// the critical path's share of the timeout. There is no ceiling: a fast
+/// planner keeps earning room, at most a doubling an answer.
 #[test]
 fn the_prompt_size_follows_the_measured_planner_speed() {
     let health = PlannerHealth::new();
-    // 2,560 tokens read in an eighth of the timeout: four times faster than
+    // 2,560 tokens read in a sixteenth of the timeout: more than twice what
     // the target needs, so the prompt doubles (the most one answer earns).
     health.answered(
-        read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT / 8),
+        MODEL,
+        read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT / 16),
         PLANNER_PROMPT_TOKENS,
     );
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS * 2);
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS * 2);
     health.answered(
-        read_in(PLANNER_PROMPT_TOKENS * 2, PLANNER_TIMEOUT / 8),
+        MODEL,
+        read_in(PLANNER_PROMPT_TOKENS * 2, PLANNER_TIMEOUT / 16),
         PLANNER_PROMPT_TOKENS * 2,
     );
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS * 4);
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS * 4);
 }
 
 /// An answer in time never shrinks the prompt. The reported case: a 9B
@@ -607,16 +613,17 @@ fn an_answer_in_time_keeps_its_room() {
     let health = PlannerHealth::new();
     for _ in 0..4 {
         health.answered(
+            MODEL,
             read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT * 9 / 10),
             PLANNER_PROMPT_TOKENS,
         );
     }
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
-    health.timed_out(PLANNER_PROMPT_TOKENS);
-    let shrunk = health.prompt_tokens();
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS);
+    health.timed_out(MODEL, PLANNER_PROMPT_TOKENS);
+    let shrunk = health.prompt_tokens(MODEL);
     assert!(shrunk < PLANNER_PROMPT_TOKENS);
-    health.answered(None, shrunk / 4);
-    assert_eq!(health.prompt_tokens(), shrunk);
+    health.answered(MODEL, None, shrunk / 4);
+    assert_eq!(health.prompt_tokens(MODEL), shrunk);
 }
 
 #[tokio::test]
@@ -639,7 +646,7 @@ async fn a_window_refusal_shrinks_the_prompt_without_standing_down() {
     )
     .await;
     assert!(result.is_err());
-    assert!(health.prompt_tokens() < PLANNER_PROMPT_TOKENS);
+    assert!(health.prompt_tokens(MODEL) < PLANNER_PROMPT_TOKENS);
     assert!(health.standing_down().is_none());
     assert!(PlannerTurn::with_health(&health).unavailable().is_none());
 }
@@ -663,7 +670,7 @@ async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     .unwrap_or_else(|_| fallback_with_catalog(question, &catalog));
     assert_eq!(planned.queries, [question]);
     // A bad answer is still an answer in time: it never shrinks the prompt.
-    assert!(health.prompt_tokens() >= PLANNER_PROMPT_TOKENS);
+    assert!(health.prompt_tokens(MODEL) >= PLANNER_PROMPT_TOKENS);
 }
 
 /// The planner's excerpt of the conversation was cut by characters from its
@@ -691,8 +698,8 @@ fn the_planners_history_is_whole_lines_with_the_rest_counted() {
 #[test]
 fn the_planners_history_follows_what_it_reads_in_time() {
     let health = PlannerHealth::new();
-    let before = PlannerTurn::with_health(&health).history_tokens();
+    let before = PlannerTurn::with_health(&health).history_tokens(MODEL);
     assert_eq!(before, PLANNER_PROMPT_TOKENS / 5);
-    health.timed_out(PLANNER_PROMPT_TOKENS);
-    assert!(PlannerTurn::with_health(&health).history_tokens() < before);
+    health.timed_out(MODEL, PLANNER_PROMPT_TOKENS);
+    assert!(PlannerTurn::with_health(&health).history_tokens(MODEL) < before);
 }

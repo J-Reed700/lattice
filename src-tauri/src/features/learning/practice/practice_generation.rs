@@ -33,7 +33,8 @@ const PRACTICE_TIMEOUT_MESSAGE: &str = "Practice model request timed out.";
 
 /// A pace for the tutor's deadline, one per app.
 pub fn tutor_pace() -> PromptPace {
-    PromptPace::new(PRACTICE_DEADLINE)
+    // The learner is waiting on the reply: read for a small share of it.
+    PromptPace::new(PRACTICE_DEADLINE).on_critical_path()
 }
 
 async fn complete_json(
@@ -169,7 +170,7 @@ fn turns_within<'t>(
         auxiliary_history_room, newest_that_fit,
     };
     let room = auxiliary_history_room(llm, fixed_text);
-    let room = history_room_within(pace, room, llm.count_tokens(fixed_text));
+    let room = history_room_within(pace, llm.model_name(), room, llm.count_tokens(fixed_text));
     newest_that_fit(turns, room, |turn| llm.count_tokens(&turn.to_string()))
 }
 
@@ -203,11 +204,11 @@ pub async fn tutor(
     let sent_tokens = llm.count_tokens(TUTOR_SYSTEM) + llm.count_tokens(&prompt);
     let raw = match complete_json_measured(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await {
         Ok((raw, prefill)) => {
-            pace.answered(prefill, sent_tokens);
+            pace.answered(llm.model_name(), prefill, sent_tokens);
             raw
         }
         Err(AppError::ServiceNotAvailable(message)) if message == PRACTICE_TIMEOUT_MESSAGE => {
-            pace.timed_out(sent_tokens);
+            pace.timed_out(llm.model_name(), sent_tokens);
             return Err(AppError::ServiceNotAvailable(message));
         }
         Err(error) => return Err(error),
@@ -390,31 +391,40 @@ mod pace_tests {
     }
 
     /// On a large window a quarter of it is ~32K tokens of tutor turns, more
-    /// than a local model reads before the tutor's two-minute deadline. Once
-    /// a pace is measured the turns are what the model reads in time, and the
-    /// older ones are counted, not cut.
+    /// than a local model reads before the tutor's two-minute deadline, and
+    /// all of it read before the learner sees a word. The window is a ceiling,
+    /// not the target: the turns are what the model reads in the tutor's
+    /// share of the deadline, the older ones counted, not cut.
     #[test]
     fn tutor_history_is_what_the_model_reads_before_the_deadline() {
+        use lattice_core::application::services::history_share::auxiliary_history_room;
         let turns: Vec<serde_json::Value> = (0..400)
             .map(|turn| serde_json::json!({"request": format!("turn {turn}"), "response": "word ".repeat(200)}))
             .collect();
         let pace = tutor_pace();
-        let (unmeasured, _) = turns_within(&Words, &pace, "fixed prompt", &turns);
-        // 100 tokens a second: 6,000 tokens in half the deadline.
-        pace.answered(
-            Some(PrefillTiming {
-                tokens: 100,
-                seconds: 1.0,
-            }),
-            100,
-        );
+        let window_share = auxiliary_history_room(&Words, "fixed prompt");
         let (paced, omitted) = turns_within(&Words, &pace, "fixed prompt", &turns);
-        assert!(paced.len() < unmeasured.len());
         assert_eq!(omitted, turns.len() - paced.len());
         let cost: usize = paced
             .iter()
             .map(|turn| Words.count_tokens(&turn.to_string()))
             .sum();
-        assert!(cost <= 6_000, "{cost} tokens of history");
+        assert!(
+            cost < window_share,
+            "{cost} of a {window_share}-token share"
+        );
+        assert!(cost <= pace.tokens("words"), "{cost} tokens of history");
+        // Measured slower than assumed, then timed out: less again.
+        pace.answered(
+            "words",
+            Some(PrefillTiming {
+                tokens: 7_000,
+                seconds: 140.0,
+            }),
+            7_000,
+        );
+        pace.timed_out("words", 7_200);
+        let (slower, _) = turns_within(&Words, &pace, "fixed prompt", &turns);
+        assert!(slower.len() < paced.len());
     }
 }

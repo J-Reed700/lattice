@@ -30,6 +30,9 @@ pub struct SummarySource {
     /// The document's `corpus_shape` cluster label from the most recent run.
     pub cluster_label: Option<String>,
     pub sections: Vec<SummarySection>,
+    /// The text of chunks under no section heading, in chunk order: what a
+    /// document summary built from the section summaries still has to read.
+    pub unsectioned: String,
 }
 
 /// Port for loading summarizer input. Swapped for a fixture in tests.
@@ -49,6 +52,7 @@ pub fn assemble(
     chunks: impl IntoIterator<Item = (Option<String>, String)>,
 ) -> SummarySource {
     let mut body = String::new();
+    let mut unsectioned = String::new();
     let mut sections: Vec<SummarySection> = Vec::new();
     for (section, content) in chunks {
         body.push_str(&content);
@@ -59,6 +63,8 @@ pub fn assemble(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         else {
+            unsectioned.push_str(&content);
+            unsectioned.push('\n');
             continue;
         };
         match sections.iter_mut().find(|s| s.heading == heading) {
@@ -78,6 +84,7 @@ pub fn assemble(
         body: body.trim().to_owned(),
         cluster_label,
         sections,
+        unsectioned: unsectioned.trim().to_owned(),
     }
 }
 

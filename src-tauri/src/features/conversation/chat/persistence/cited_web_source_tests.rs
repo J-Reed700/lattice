@@ -121,3 +121,19 @@ fn a_turn_that_cited_no_web_page_stores_nothing() {
     assert!(cited_web_sources(&[document("doc-1")]).is_empty());
     assert!(cited_web_sources(&[]).is_empty());
 }
+
+/// A page the turn read was kept twice: whole in the archive and whole again
+/// as this row's excerpt, which every later turn loaded to list one link. The
+/// row keeps the page's preview; the page itself is in the archive once.
+#[test]
+fn a_read_page_is_kept_as_its_preview_not_a_second_copy() {
+    let page = "Long article text. ".repeat(5_000);
+    let mut read = web("https://example.com/a", "Article", &page);
+    read.chunk_id = "web-content-1".to_string();
+    read.excerpt = Some("Long article text. Long article text. …".to_string());
+    let kept = cited_web_sources(&[read]);
+    assert_eq!(
+        kept[0].excerpt.as_deref(),
+        Some("Long article text. Long article text. …")
+    );
+}

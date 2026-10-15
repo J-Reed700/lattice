@@ -518,7 +518,7 @@ fn evidence_room_follows_the_judge_window() {
         marker: "",
         calls: std::sync::Mutex::new(0),
     }) as Arc<dyn LLMPort>);
-    let room = small.evidence_room_chars("A claim.");
+    let room = small.evidence_room_chars("A claim.", 1);
     // 8,192 tokens less the answer's 4,096 and the prompts, at the
     // estimate's three-quarter under-fill.
     assert!(room > 8_000 && room < 12_288, "got {room}");
@@ -651,4 +651,66 @@ async fn a_failed_part_stops_the_claims_later_parts() {
         .unwrap();
     assert!(!matches!(verdict, ClaimJudgment::Judged(_)), "{verdict:?}");
     assert_eq!(llm.order.lock().unwrap().len(), 1);
+}
+
+/// A judge on a large window, reporting a slow prefill: 100 tokens a second.
+struct SlowReader;
+
+#[async_trait::async_trait]
+impl LLMPort for SlowReader {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse {
+            text: "supported".into(),
+            prefill: Some(lattice_core::application::ports::llm_port::PrefillTiming {
+                tokens: 2_000,
+                seconds: 20.0,
+            }),
+            ..Default::default()
+        })
+    }
+
+    fn model_name(&self) -> &str {
+        "slow-reader"
+    }
+
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The judge's 90 s budget against a part sized to its window: on a large
+/// window a part of 120K tokens cannot be read in time, so the claim ran out
+/// of time with the slot held. A part is what the model's measured speed
+/// reads in its share of the budget, shared by the claims waiting; the
+/// window is only the ceiling.
+#[tokio::test]
+async fn a_part_is_what_the_judge_reads_in_time_shared_by_the_open_claims() {
+    let llm = Arc::new(SlowReader) as Arc<dyn LLMPort>;
+    let window_only = ClaimJudge::new(Arc::clone(&llm)).evidence_room_chars("claim", 1);
+    let pace = Arc::new(judge_pace());
+    let judge = ClaimJudge::new(llm).with_pace(Arc::clone(&pace));
+
+    let assumed = judge.evidence_room_chars("claim", 1);
+    assert!(assumed < window_only, "{assumed} of {window_only}");
+    assert!(judge.evidence_room_chars("claim", 4) < assumed);
+
+    // Every answered call teaches the pace through the judge's own port.
+    judge_first(&judge).await;
+    assert_eq!(
+        pace.readable_within("slow-reader", Duration::from_secs(1)),
+        Some(100)
+    );
+    // 100 tokens a second for half of 90 s, between two claims.
+    assert_eq!(
+        judge.evidence_room_chars("claim", 2),
+        chars_within_tokens(2_250, SlowReader.chars_per_token())
+    );
 }

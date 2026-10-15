@@ -34,6 +34,7 @@ mod lexical;
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};
 
+pub(crate) use self::judge::judge_pace;
 use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;
 
@@ -355,6 +356,16 @@ impl GroundingVerifier {
         Self { judge: None }
     }
 
+    /// Size the judge's parts to what its model reads in time, learning the
+    /// pace from each call, if there is a judge.
+    pub(super) fn with_pace(
+        mut self,
+        pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
+    ) -> Self {
+        self.judge = self.judge.map(|judge| judge.with_pace(pace));
+        self
+    }
+
     /// Apply the user's verification settings to the judge, if there is one.
     ///
     /// Without this the judge decodes greedily, which is the right default; the
@@ -382,13 +393,18 @@ impl GroundingVerifier {
         // no text is unverified whatever the lexical pass made of it: there
         // was nothing to find the claim in, so "not found" would be false.
         let mut requests = Vec::new();
+        let open_claims = claims
+            .iter()
+            .filter(|claim| lexical::needs_judge(claim))
+            .count();
         for (index, claim) in claims.iter().enumerate() {
             if !lexical::needs_judge(claim) {
                 continue;
             }
-            // Room comes from the judge call's own window, so a large judge
-            // reads whole pages and a small one reads them in parts.
-            let room = judge.evidence_room_chars(&claim.claim_text);
+            // Room is what the judge reads in time, shared by the claims
+            // waiting for it, and never past its window; a page longer than
+            // that is read in parts.
+            let room = judge.evidence_room_chars(&claim.claim_text, open_claims);
             match evidence_for(claim, sources, room) {
                 Evidence::Found(evidence) => {
                     requests.push((index, claim.claim_text.as_str(), evidence));
