@@ -328,16 +328,32 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 `planning/curriculum::LearningGenerationPhase`: `References`, `Writing`, `Review`, `Inventory`, `Coverage`, `Examples`, `Evidence`, `Research`, `Repair`, `Publishing`. Stage text is set with `lesson_progress::stage`; examples are quoted under each step above.
 
-## 5. Labelling: general knowledge (being built)
+## 5. Labelling: general knowledge
 
-**Status: being built on this branch; not in `62b3151f`; never run against a real model.** This section is written from design §16. The as-built details will be added when the builder lands it.
+**Status: built in `569a76f7`; unit-tested, not yet run against a real model.**
 
-- **The gate.** After the research rounds, a claim that is still `Unsupported` and not contradicted is kept and shown as general knowledge. It is no longer a lesson issue and never triggers repair. `Contradicted` claims and failed examples remain issues and are repaired. `Unverified` stays an error.
-- **Exceptions that stay issues:** an unsupported claim that states a specific detail the evidence does not give (a number, version, date or percentage), or an absolute ("always", "never", "must", "all", "every", "only", "guarantees", "purely", "entirely"). Repair removes or softens that detail. These are where invented specifics concentrate.
-- **Lesson-internal statements.** Claim extraction classifies statements about the lesson's own example code, scenario or exercise as nonfactual with the reason "lesson-internal", while still extracting any real-world fact they rely on. Examples still run; quiz answers still go through the answer-key check.
-- **What the learner sees.** Unsupported claims appear in the lesson evidence panel as "General knowledge · not checked against a source" in neutral styling. Section and lesson summaries count source-checked and general-knowledge statements separately.
+- **The gate** (`content_verification/general_knowledge.rs`, used by `check_evidence`, `report.rs` and `repair_loop.rs`). After the research rounds, a claim that is still `Unsupported` is kept as general knowledge: it is not a lesson issue, is never repaired, stays out of `repairHistory`, and publication accepts it. Its verdict is `general_knowledge`.
+- **Exceptions that stay issues** and go to repair, which removes or softens the detail:
+  - an absolute, matched as a whole word: always, never, must, all, every, only, guarantee / guarantees / guaranteed, purely, entirely;
+  - a token containing a digit (a number, version, date or percentage) that none of the claim's evidence passages contains, or the word "percent" when no passage says "percent" or "%".
+- **Unchanged:** `Contradicted` claims and failed examples are issues and are repaired. `Unverified` still stops the job.
+- **Lesson-internal statements.** The extraction (`inventory.rs`), fidelity audit (`coverage.rs`) and revision (`inventory/revisions.rs`) prompts classify statements about the lesson's own example code, scenario or exercise answers as nonfactual with the reason "lesson-internal". Any real-world fact such a statement relies on is still extracted as a claim. Examples still run; quiz keys still go through the answer-key check.
+- **What the learner sees** (`learner_view.rs`, `lesson_evidence.rs`, `LessonEvidencePanel.tsx`):
+  - Each such claim carries a neutral badge: "General knowledge · not checked against a source".
+  - Lesson summary: "N claims checked against saved evidence · M general knowledge, not checked against a source".
+  - Section summary: "Evidence · N checked claims · M general knowledge · P passages".
+  - The general-knowledge part appears only when M > 0. The DTO carries `generalKnowledgeCount`.
 - **Outlines are unchanged.**
-- **Policies.** The builder's working tree moves `content_verification::POLICY` from `lesson-evidence-v17` to `v18` and `INVENTORY_POLICY` from `lesson-evidence-v5` to `v6`, which invalidates claim receipts, inventories and `prepared-v1` reuse. It adds `Finding::general_knowledge()` (in `content_verification/general_knowledge.rs`) and uses it in `check_evidence` and the repair loop.
+- **Policies:** `lesson-evidence-v18`, inventory `lesson-evidence-v6`, `passage-coverage-v7`, `pending-repair-v2`. Earlier claim receipts, inventories, coverage audits, pending repairs and `prepared-v1` reuse are invalidated.
+
+### Repair progress stop
+
+`repair_loop.rs` keeps the best candidate seen: the one with the fewest issues after verification.
+
+- A round that does not beat the best sends the next repair with `repeatedDefects = true` (remove the disputed assertions whole), even when the issue fingerprint differs.
+- If that escalated round also fails to beat the best, the best candidate is saved as the draft and the job fails: "Repairs stopped reducing the lesson's problems: N remain (first 3 listed). The best draft is saved; retry to continue."
+- A round that beats the best clears the escalation.
+- The state lives in `PendingRepair.progress`, so it survives a resume.
 
 Why: a sample of 40 claims the failed final2-1 lesson left unsupported, judged against world knowledge, was mostly correct but unsourced, plus 13 statements about the lesson's own code that no outside source can confirm. On the 85 labelled .NET pairs the shipped judge wrongly blocked none of 34 supported claims, so these were gaps in evidence, not checker errors. See [course-generation-testing.md](course-generation-testing.md#qwen-factual-accuracy-sample).
 
@@ -425,15 +441,15 @@ Change the string whenever the prompt, schema or meaning of the stored answer ch
 | §15.3: one research round before writing | Rounds repeat while a round covers at least one more topic |
 | §15.4: the writer's evidence ceiling rises from 7,000 to 48,000 tokens | There is no ceiling: `evidence_room` uses `usize::MAX` and is bounded by the window alone |
 | §15.6: at most three passages per failed claim in repair | No per-claim count; claims are grouped by token budget, and only a claim whose own evidence exceeds the room loses passages |
-| `repair_loop.rs` doc comment: "Continue while defects decrease; preserve a draft when repairs stop helping" | No code enforces it. The loop ends only when the report has no issues, a claim is `Unverified`, or an error is raised |
+| `repair_loop.rs` doc comment: "Continue while defects decrease; preserve a draft when repairs stop helping" | Enforced since `569a76f7` (see [Repair progress stop](#repair-progress-stop)); before that no code enforced it |
 | `2026-10-04-learning-content-verification.md` "First implementation slice": one evidence-driven repair, research only after checks | Superseded: repair repeats, and research runs before writing (§15) as well as after |
 
 ## 10. Known gaps
 
 1. **The acceptance bar is not met yet.** No live run has prepared the .NET lesson to Ready since the §15 rebuild (`4f4a2ef6`). §15 and §16 have not been run against a real model. See [course-generation-history.md](course-generation-history.md).
-2. **§16 labelling is being built.** At `62b3151f` every unsupported claim is an issue and drives repair.
-3. **The lesson verify-and-repair loop has no pass budget.** It can repeat until an error stops it. `repeatedDefects` asks for removal but does not bound the loop.
-4. **Fixed caps remain** in retrieval and verification ([section 6](#6-budgets) and the caps audit). Research before and after writing saves at most two pages per query.
+2. **§16 labelling is built but unproven live.** Tuning risk: the absolute-word list ("all", "only") is broad, so ordinary phrasing can still send a claim to repair.
+3. **Claim-check evidence is being reworked.** `569a76f7` fills the checker window per claim (slow on large reference sets). The replacement pages through ranked evidence: a first page sized to the claim's share of a batched call, then deeper pages only for unsupported claims while keyword-matching passages remain.
+4. **Learning caps are removed** in `569a76f7` (retrieval, claim evidence, linking, review evidence, assessments, practice, study, recall, diagnostics, web research, course context). Left as output-shape limits: schema `maxItems` (5 citations, 8 evidence IDs) and the 80,000-character assessment response check. [Section 6](#6-budgets) describes `62b3151f` and is updated when the evidence rework lands.
 5. **Repair can drop evidence for one claim** when that claim's recorded passages alone exceed the window. It logs a warning and keeps the passages that fit.
 6. **Outline generation has no automatic resume.** A stopped outline waits for the learner to press Repair.
 7. **The second checker question is closed for now.** Measurement found no second judge that helps (see the testing doc). The weak point is generation grounding, not the checker.
