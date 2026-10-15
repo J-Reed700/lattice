@@ -619,7 +619,14 @@ pub(in crate::features::learning) async fn finish(
             progress.stage(OutlineStage::Repairing);
             let outcome = crate::features::learning::outline_repair::repair(repo, llm, &mut program, &mut draft, &mut sources, web, &mut budgets, progress).await?;
             if !outcome.changed && !outcome.evidence_added {
-                draft.review.note = "The model returned no usable correction. Your draft, findings and saved references are kept; Repair can retry checking.".into();
+                // Plan findings an unchanged last attempt exhausted no longer
+                // block; only a blocking finding left uncorrected stops here.
+                if draft.review.issues.iter().any(LearningOutlineIssueDto::blocks_acceptance) {
+                    draft.review.note = "The model returned no usable correction. Your draft, findings and saved references are kept; Repair can retry checking.".into();
+                } else {
+                    draft.review.status = LearningOutlineReviewStatus::Passed;
+                    draft.review.note = advisory_note(&draft, &sources);
+                }
                 repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
                 break;
             }

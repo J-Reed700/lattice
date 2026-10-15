@@ -96,6 +96,157 @@ pub(in crate::features::learning) fn factual_path(path: &str) -> bool {
     module_index(path).is_some() && !path.contains("/outcomes/") && !path.contains("/lessons/")
 }
 
+/// The text a finding at `path` is about, for locating a quoted phrase:
+/// summary and outcome text, a lesson's title and objective, or a module's
+/// title and project.
+fn path_text(candidate: &Value, path: &str) -> Option<String> {
+    let item = candidate.pointer(path)?;
+    if path.contains("/lessons/") {
+        return Some(format!(
+            "{} {}",
+            item.get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            item.get("objective")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        ));
+    }
+    if path.ends_with("/summary") || path.contains("/outcomes/") {
+        return item.get("text").and_then(Value::as_str).map(str::to_owned);
+    }
+    Some(format!(
+        "{} {}",
+        item.get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        item.get("project")
+            .map(Value::to_string)
+            .unwrap_or_default()
+    ))
+}
+
+/// The phrases a reason quotes: text between matching double, single or
+/// curly quotes or backticks that start and end at word boundaries, so an
+/// apostrophe inside a word is not a quote.
+fn quoted_phrases(reason: &str) -> Vec<String> {
+    let pairs = [
+        ('"', '"'),
+        ('\'', '\''),
+        ('`', '`'),
+        ('\u{201c}', '\u{201d}'),
+        ('\u{2018}', '\u{2019}'),
+    ];
+    let chars: Vec<char> = reason.chars().collect();
+    let boundary = |index: Option<&char>| index.is_none_or(|c| !c.is_alphanumeric());
+    let mut phrases = Vec::new();
+    for (open, close) in pairs {
+        let mut index = 0;
+        while index < chars.len() {
+            let starts = chars.get(index) == Some(&open)
+                && boundary(index.checked_sub(1).and_then(|i| chars.get(i)));
+            if !starts {
+                index += 1;
+                continue;
+            }
+            let end = (index + 1..chars.len())
+                .find(|end| chars.get(*end) == Some(&close) && boundary(chars.get(end + 1)));
+            let Some(end) = end else {
+                break;
+            };
+            let phrase: String = chars
+                .get(index + 1..end)
+                .unwrap_or_default()
+                .iter()
+                .collect();
+            let phrase = phrase.trim();
+            if phrase.chars().count() >= 3 && !phrase.contains('\n') {
+                phrases.push(phrase.to_owned());
+            }
+            index = end + 1;
+        }
+    }
+    phrases
+}
+
+/// Where a finding about a quoted phrase belongs.
+#[derive(Debug, PartialEq)]
+enum Placement {
+    /// At its own path, or nowhere better is known.
+    Keep,
+    /// The one other text of the module that contains the phrase.
+    Move(String),
+    /// Several other texts of the module contain the phrase.
+    Several(Vec<String>),
+}
+
+/// A finding whose reason quotes a phrase its path's text does not contain
+/// belongs where the phrase is: the one other text of the same module that
+/// contains it (case and spacing aside). Several such texts are listed for the
+/// repair; none leaves the finding where it is.
+fn placement(candidate: &Value, path: &str, reason: &str) -> Placement {
+    let Some(module) = module_index(path) else {
+        return Placement::Keep;
+    };
+    let phrases: Vec<String> = quoted_phrases(reason)
+        .iter()
+        .map(|p| normalized(p))
+        .collect();
+    let here = path_text(candidate, path)
+        .map(|text| normalized(&text))
+        .unwrap_or_default();
+    if phrases.is_empty() || phrases.iter().any(|phrase| here.contains(phrase)) {
+        return Placement::Keep;
+    }
+    for phrase in &phrases {
+        let elsewhere: Vec<String> =
+            crate::features::learning::outline_review_scope::module_paths(candidate, module)
+                .into_iter()
+                .filter(|other| other != path)
+                .filter(|other| {
+                    path_text(candidate, other)
+                        .is_some_and(|text| normalized(&text).contains(phrase))
+                })
+                .collect();
+        match elsewhere.len() {
+            0 => continue,
+            1 => {
+                return elsewhere
+                    .into_iter()
+                    .next()
+                    .map_or(Placement::Keep, Placement::Move)
+            }
+            _ => return Placement::Several(elsewhere),
+        }
+    }
+    Placement::Keep
+}
+
+/// Move `issue` to where the phrase its reason quotes is, or name every
+/// place it is in its reason, which the repair reads.
+fn place(candidate: &Value, issue: &mut LearningOutlineIssueDto) {
+    match placement(candidate, &issue.path, &issue.message) {
+        Placement::Keep => {}
+        Placement::Move(path) => {
+            tracing::info!(id = %issue.id, from = %issue.path, to = %path, "Moved an outline finding to the text its reason quotes");
+            if issue.kind == LearningOutlineIssueKind::Factual && !factual_path(&path) {
+                issue.kind = LearningOutlineIssueKind::Plan;
+            }
+            if let Some(text) = item_text(candidate, &path) {
+                issue.claim = text;
+            }
+            issue.path = path;
+        }
+        Placement::Several(paths) => {
+            issue.message = format!(
+                "{} The quoted phrase appears at {}; correct it wherever it appears.",
+                issue.message,
+                paths.join(", ")
+            );
+        }
+    }
+}
+
 fn normalized(text: &str) -> String {
     text.split_whitespace()
         .map(|word| {
@@ -215,6 +366,7 @@ fn apply(
                 if let Some(text) = item_text(&candidate, &issue.path) {
                     issue.claim = text;
                 }
+                place(&candidate, &mut issue);
                 kept.push(issue);
             }
         }
@@ -250,7 +402,7 @@ fn apply(
             continue;
         }
         let id = draft.next_finding_id();
-        draft.review.issues.push(LearningOutlineIssueDto {
+        let mut issue = LearningOutlineIssueDto {
             id,
             path: finding.path,
             kind,
@@ -261,7 +413,14 @@ fn apply(
             quote: String::new(),
             source_id: None,
             searched: vec![],
-        });
+        };
+        place(&draft.candidate, &mut issue);
+        if draft.review.issues.iter().any(|existing| {
+            existing.path == issue.path && normalized(&existing.claim) == normalized(&issue.claim)
+        }) {
+            continue;
+        }
+        draft.review.issues.push(issue);
     }
     Ok(())
 }
@@ -354,4 +513,81 @@ pub(in crate::features::learning) async fn review(
     apply(draft, review, &allowed, sources)?;
     draft.completed_review = Some(scope.receipt);
     Ok(())
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+
+    /// Module 2 of the accept4 run, where a finding about "index seeks" was
+    /// filed against the B-tree outcome.
+    fn candidate() -> Value {
+        json!({"modules":[{},{},{
+            "title":"PostgreSQL performance",
+            "summary":{"text":"Tune Postgres queries for transactional and analytical workloads."},
+            "outcomes":[
+                {"text":"Write complex queries using CTEs, window functions, and recursive patterns."},
+                {"text":"Analyze query execution plans to identify bottlenecks (full table scans vs. index seeks)."},
+                {"text":"Design B-tree and partial indexes with covering columns for efficient Postgres queries."}
+            ],
+            "lessons":[{"title":"Reading plans","objective":"Read EXPLAIN output for a slow query."}]
+        }]})
+    }
+
+    const REASON: &str = "The text at /modules/2/outcomes/2 still uses the term 'index seeks'. This is Microsoft SQL Server terminology. PostgreSQL execution plans use terms like 'Index Scan' or 'Bitmap Index Scan', not 'Index Seek'.";
+
+    fn issue(path: &str, message: &str) -> LearningOutlineIssueDto {
+        LearningOutlineIssueDto {
+            id: "finding-2".into(),
+            path: path.into(),
+            kind: LearningOutlineIssueKind::Plan,
+            claim: String::new(),
+            message: message.into(),
+            attempts: 1,
+            exhausted: false,
+            quote: String::new(),
+            source_id: None,
+            searched: vec![],
+        }
+    }
+
+    #[test]
+    fn a_finding_moves_to_the_one_text_that_holds_the_phrase_it_quotes() {
+        let mut finding = issue("/modules/2/outcomes/2", REASON);
+        place(&candidate(), &mut finding);
+        assert_eq!(finding.path, "/modules/2/outcomes/1");
+        assert!(finding.claim.contains("index seeks"));
+    }
+
+    #[test]
+    fn every_text_that_holds_the_phrase_is_named_and_none_leaves_it_in_place() {
+        let mut several = candidate();
+        several["modules"][2]["lessons"][0]["objective"] =
+            json!("Compare index seeks with sequential scans in EXPLAIN output.");
+        let mut finding = issue("/modules/2/outcomes/2", REASON);
+        place(&several, &mut finding);
+        assert_eq!(finding.path, "/modules/2/outcomes/2");
+        assert!(finding
+            .message
+            .ends_with("appears at /modules/2/outcomes/1, /modules/2/lessons/0; correct it wherever it appears."));
+
+        let mut nowhere = issue(
+            "/modules/2/outcomes/2",
+            "The term 'clustered index' is SQL Server terminology.",
+        );
+        place(&candidate(), &mut nowhere);
+        assert_eq!(nowhere.path, "/modules/2/outcomes/2");
+        assert_eq!(
+            nowhere.message,
+            "The term 'clustered index' is SQL Server terminology."
+        );
+    }
+
+    #[test]
+    fn apostrophes_are_not_quotes() {
+        assert_eq!(
+            quoted_phrases("The module's outcome uses `index seeks` and Postgres' plans."),
+            vec!["index seeks".to_owned()]
+        );
+    }
 }

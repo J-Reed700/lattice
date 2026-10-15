@@ -777,6 +777,17 @@ pub(in crate::features::learning) async fn repair(
         }
         if rewrite_module(repo, llm, program, draft, sources, index, &listed, progress).await? {
             outcome.changed = true;
+        } else {
+            // A valid answer that left the module unchanged on a plan
+            // finding's last attempt settles it: the finding is exhausted
+            // and stays as an advisory suggestion, like any exhausted one.
+            for id in &ids {
+                let issue = issue_mut(draft, id)?;
+                if issue.kind == LearningOutlineIssueKind::Plan && issue.attempts >= ATTEMPT_LIMIT {
+                    issue.exhausted = true;
+                    tracing::info!(finding = %id, "The last rewrite left a plan finding's module unchanged; it stays as a suggestion");
+                }
+            }
         }
     }
     Ok(outcome)

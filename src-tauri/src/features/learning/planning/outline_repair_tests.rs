@@ -561,3 +561,38 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         .all(|s| !s.excerpt.contains("SEARCH_SNIPPET")));
     Ok(())
 }
+
+#[tokio::test]
+async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_passes() -> Result<()> {
+    let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    let initial = candidate();
+    let first = module_with_objective(&initial, 0, "Measure the first comparison.");
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        json!({"module":first.clone()}),
+        json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The project brief still names no measurement."}],"newFindings":[]}),
+        // The last attempt returns the module unchanged.
+        json!({"module":first}),
+    ]);
+    let program = service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    assert!(!review.note.contains("no usable correction"));
+    assert_eq!(review.issues.len(), 1);
+    assert!(review.issues[0].exhausted, "kept as an advisory suggestion");
+    assert_eq!(llm.prompts.lock().unwrap().len(), 5);
+    Ok(())
+}
