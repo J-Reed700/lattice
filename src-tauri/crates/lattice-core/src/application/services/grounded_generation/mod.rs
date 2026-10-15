@@ -54,11 +54,7 @@ impl EvidencePassage {
 /// paragraphs cut at whitespace. With [`EvidenceSelection::Prefix`] the model
 /// then reads as much of the opening as the window holds, ending on a whole
 /// passage. Ids are `{id_prefix}:{n}`; earlier passages rank higher.
-pub fn passages_from_text(
-    id_prefix: &str,
-    text: &str,
-    max_chars: usize,
-) -> Vec<EvidencePassage> {
+pub fn passages_from_text(id_prefix: &str, text: &str, max_chars: usize) -> Vec<EvidencePassage> {
     let max_chars = max_chars.max(1);
     let mut pieces: Vec<String> = Vec::new();
     for paragraph in text.split("\n\n").map(str::trim).filter(|p| !p.is_empty()) {

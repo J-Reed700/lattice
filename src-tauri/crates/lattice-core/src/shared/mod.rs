@@ -13,7 +13,7 @@ pub mod ipc;
 pub mod persistence;
 pub mod resilience;
 pub mod runtime;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 pub mod text;
 pub mod types;

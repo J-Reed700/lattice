@@ -24,50 +24,37 @@
 //! }
 //! ```
 
-#![cfg(test)]
+#![cfg(any(test, feature = "test-support"))]
 
 use mockall::mock;
 
-#[cfg(test)]
 use async_trait::async_trait;
 
-#[cfg(test)]
 use crate::shared::error::Result;
 
-#[cfg(test)]
 use crate::application::ports::{
     unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
-#[cfg(test)]
 use crate::domain::repositories::{
     model_repository::ModelRepository, SearchRepository, SystemRepository,
 };
 
-#[cfg(test)]
 use crate::domain::entities::Embedding;
-#[cfg(test)]
 use crate::domain::entities::{Chunk, Document};
 
-#[cfg(test)]
 use crate::domain::entities::model::Model;
 
-#[cfg(test)]
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 
-#[cfg(test)]
 use crate::domain::repositories::search_repository::SearchResult;
 
-#[cfg(test)]
 use crate::application::ports::repository_port::Filter;
-#[cfg(test)]
 use crate::application::ports::repository_port::RepositoryPort;
 
-#[cfg(test)]
 pub struct MockChunkRepository;
 
-#[cfg(test)]
 impl Default for MockChunkRepository {
     fn default() -> Self {
         Self::new()
@@ -80,7 +67,6 @@ impl MockChunkRepository {
     }
 }
 
-#[cfg(test)]
 #[async_trait]
 impl ChunkRepositoryPort for MockChunkRepository {
     async fn create(
@@ -127,7 +113,6 @@ impl ChunkRepositoryPort for MockChunkRepository {
     }
 }
 
-#[cfg(test)]
 #[async_trait]
 impl RepositoryPort<Chunk> for MockChunkRepository {
     async fn find_by_id(&self, _id: &str) -> Result<Option<Chunk>> {
@@ -167,7 +152,6 @@ impl RepositoryPort<Chunk> for MockChunkRepository {
     }
 }
 
-#[cfg(test)]
 pub struct DddMockDocumentRepository;
 
 impl Default for DddMockDocumentRepository {
@@ -263,7 +247,6 @@ impl DocumentRepositoryPort for DddMockDocumentRepository {
 
 impl crate::application::ports::DocumentRepository for DddMockDocumentRepository {}
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of EmbeddingRepositoryPort
     pub EmbeddingRepository {}
@@ -283,7 +266,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of SearchRepository
     pub SearchRepo {}
@@ -301,7 +283,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of SystemRepository
     pub SystemRepo {}
@@ -315,7 +296,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of ModelRepositoryPort
     pub ModelRepo {}
@@ -333,7 +313,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of ModelFileRepositoryPort
     pub ModelFileRepo {}
@@ -354,7 +333,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of ModelRepository for testing ModelService
     ///
@@ -400,7 +378,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of UnitOfWork trait
     ///
@@ -443,7 +420,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 mock! {
     /// Mock implementation of UnitOfWorkFactory trait
     ///
@@ -479,7 +455,6 @@ mock! {
     }
 }
 
-#[cfg(test)]
 /// Create a default MockUnitOfWork with basic expectations set
 ///
 /// This helper sets up common default behaviors:
@@ -499,7 +474,6 @@ pub fn create_default_mock_uow() -> MockUnitOfWork {
     mock
 }
 
-#[cfg(test)]
 /// Create a MockUnitOfWork that simulates a commit failure
 pub fn create_failing_commit_mock_uow() -> MockUnitOfWork {
     let mut mock = MockUnitOfWork::new();
@@ -513,7 +487,6 @@ pub fn create_failing_commit_mock_uow() -> MockUnitOfWork {
     mock
 }
 
-#[cfg(test)]
 /// Create a MockUnitOfWork that simulates a rollback failure
 pub fn create_failing_rollback_mock_uow() -> MockUnitOfWork {
     let mut mock = MockUnitOfWork::new();

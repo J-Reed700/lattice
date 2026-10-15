@@ -16,7 +16,7 @@ async fn pool() -> sqlx::SqlitePool {
         .connect(":memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
     pool
 }
 
@@ -774,7 +774,7 @@ async fn startup_recovery_waits_for_a_concurrent_writer() -> Result<()> {
         .connect_with(options)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
     let store = JobStore::new(pool.clone());
     let id = store.submit(&new_job(KIND, "running", None)).await?.id;
     store.claim(&id).await?;

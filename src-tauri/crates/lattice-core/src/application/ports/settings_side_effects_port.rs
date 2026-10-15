@@ -44,12 +44,12 @@ impl SettingsSideEffectsPort for NoopSettingsSideEffects {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct RecordingSettingsSideEffects {
     calls: parking_lot::Mutex<Vec<Option<SettingsCategory>>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl RecordingSettingsSideEffects {
     pub fn new() -> Self {
         Self {
@@ -62,14 +62,14 @@ impl RecordingSettingsSideEffects {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Default for RecordingSettingsSideEffects {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl SettingsSideEffectsPort for RecordingSettingsSideEffects {
     async fn on_settings_updated(

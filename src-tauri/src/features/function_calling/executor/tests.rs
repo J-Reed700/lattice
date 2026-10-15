@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::application::ports::DocumentRepositoryPort;
+use crate::application::ports::RepositoryPort;
 use crate::application::ports::{
     ChunkRepositoryPort, FavoritesRepositoryPort, FileMetadata, FileStoragePort,
     RecentDocumentsRepositoryPort,
@@ -21,7 +22,6 @@ use crate::features::search::mocks::{empty_hybrid_search, MockBM25Search, MockSe
 use crate::features::tags::mocks::MockTagService;
 use crate::features::web::mocks::MockWebService;
 use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
-use crate::RepositoryPort;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};

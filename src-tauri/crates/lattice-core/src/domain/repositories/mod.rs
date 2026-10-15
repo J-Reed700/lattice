@@ -8,5 +8,5 @@ pub use model_repository::ModelRepository;
 pub use search_repository::SearchRepository;
 pub use system_repository::SystemRepository;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod mocks;

@@ -7,7 +7,7 @@ use crate::shared::error::Result;
 
 /// Storage boundary for conversation orchestration; adapters own persistence details.
 /// This interface does not imply a transaction spanning multiple calls.
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait::async_trait]
 pub trait ConversationRepositoryPort: Send + Sync {
     /// Mark only a still-pending user turn failed; never undo a committed turn.

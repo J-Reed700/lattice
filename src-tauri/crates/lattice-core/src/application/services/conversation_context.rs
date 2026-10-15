@@ -201,7 +201,9 @@ mod tests {
     #[async_trait::async_trait]
     impl LLMPort for Counter {
         async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
-            Err(AppError::InvalidState("the context builder never completes".into()))
+            Err(AppError::InvalidState(
+                "the context builder never completes".into(),
+            ))
         }
         fn model_name(&self) -> &str {
             "counter"

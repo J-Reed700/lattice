@@ -155,7 +155,7 @@ impl<'a> ClaimChecker<'a> {
     }
 
     /// Exercise the original quote protocol without a chat deadline in tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn check_without_deadline(
         &self,
         claim: &str,

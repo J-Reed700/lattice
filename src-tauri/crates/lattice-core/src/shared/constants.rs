@@ -36,12 +36,6 @@ pub use crate::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
 
-/// Application version (from Cargo.toml)
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Application name
-pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
-
 /// Minimum similarity score for search results (0.0 to 1.0)
 pub const MIN_SIMILARITY_SCORE: f32 = 0.3;
 

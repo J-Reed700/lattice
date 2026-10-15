@@ -510,7 +510,7 @@ impl<'de> Deserialize<'de> for ToolChoice {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl CompletionRequest {
     /// The last user message: the prompt a scripted test double answers.
     pub fn user_text(&self) -> &str {

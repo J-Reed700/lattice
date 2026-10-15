@@ -31,43 +31,12 @@
 
 #![deny(unsafe_code)]
 
-/// Foundation types, errors, and utilities shared across layers.
-pub mod shared;
+pub use lattice_core::{application, domain, shared};
 
 /// Product capabilities, each owning its feature-specific implementation.
 pub mod features;
 
-// Re-export commonly used shared types for convenience
-pub use shared::{
-    constants::*,
-    encoding as alignment,
-    error::{AppError, ErrorResponse, Result, ResultExt},
-    resilience::retry,
-    types::{ChunkId, DocumentId, MentionId, TagId, ValidatedFilePath},
-};
-
-/// Shared domain entities, value objects, and business rules.
-pub mod domain;
-
-pub use domain::{
-    entities::{Chunk, SearchResult},
-    services::ChunkingService,
-    value_objects::{
-        Checksum, ChunkingStrategy, FileMetadata, IndexingOutcome, SearchMode, SearchQuery,
-    },
-    Document, DocumentStatus,
-};
-
-/// Cross-feature contracts, ports, mappers, and orchestration.
-pub mod application;
-
 pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-pub use application::{
-    mappers,
-    ports::{
-        EmbeddingPort, FileStoragePort, LLMPort, RepositoryPort, TextSearchPort, VectorSearchPort,
-    },
-};
 
 /// Reusable technical implementations and application setup.
 pub mod infrastructure;
@@ -84,6 +53,7 @@ pub use interfaces::di::Container;
 /// Registration of feature-owned Tauri plugins.
 pub mod plugins;
 
+use crate::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -143,12 +113,5 @@ mod lib_tests {
     fn test_version_exists() {
         assert!(!VERSION.is_empty());
         assert_eq!(NAME, "lattice-desktop");
-    }
-
-    #[test]
-    fn test_public_api_re_exports() {
-        // Test that commonly used types are re-exported at crate root
-        let _: Result<()> = Ok(());
-        let _: AppError = AppError::Other("test".to_string());
     }
 }

@@ -67,7 +67,7 @@ pub struct JobContext {
 impl JobContext {
     /// A saved job's context outside any runtime, for driving a handler's
     /// steps directly: nothing observes it and nothing cancels it.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn detached(store: &JobStore, id: &str) -> Result<Self> {
         Ok(Self {
             job: store.get(id).await?,

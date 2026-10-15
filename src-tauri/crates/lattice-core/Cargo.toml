@@ -1,0 +1,60 @@
+[package]
+name = "lattice-core"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "lattice_core"
+# Documentation examples are usage pseudocode with omitted setup, not an
+# executable doctest corpus; unit tests provide the test gate.
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bytemuck = { workspace = true }
+chrono = { workspace = true }
+derive_more = { workspace = true }
+dirs = { workspace = true }
+futures = { workspace = true }
+hex = { workspace = true }
+mockall = { workspace = true, optional = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+rust-stemmers = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+specta = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Drains the Objective-C objects Candle's Metal dispatches autorelease
+# (see shared/runtime/autorelease.rs). Already in the tree through `metal`.
+objc = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+# Test doubles and helpers for the desktop crate's tests. Enabled only through
+# its dev-dependency, so release builds never compile them.
+test-support = ["dep:mockall"]
