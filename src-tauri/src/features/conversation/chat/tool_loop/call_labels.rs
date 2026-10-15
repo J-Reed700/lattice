@@ -58,7 +58,15 @@ pub(super) fn tool_step_kind(tool: &str) -> TurnStepKind {
 /// rest is noise a reader cannot act on, and `TurnRecorder` clips whatever gets
 /// through.
 pub(super) fn tool_argument_summary(arguments: &serde_json::Value) -> String {
-    const INTERESTING: [&str; 6] = ["query", "url", "document_id", "page", "path", "pattern"];
+    const INTERESTING: [&str; 7] = [
+        "query",
+        "url",
+        "document_id",
+        "offset",
+        "page",
+        "path",
+        "pattern",
+    ];
     let Some(object) = arguments.as_object() else {
         return arguments.to_string();
     };
@@ -91,15 +99,29 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
             text,
             shown_chars,
             next: None,
+            unread: None,
         } => format!(
-            "Continuation of {url} from character {shown_chars}. This is the rest of the page; with the earlier part you have the whole page:\n\n{text}",
+            "Continuation of {url} from character {shown_chars}. This part runs to the end of the page; with the earlier parts you have the whole page:\n\n{text}",
+        ),
+        Recall::Remainder {
+            text,
+            shown_chars,
+            next: None,
+            unread: Some(unread),
+        } => format!(
+            "Part of {url} from character {shown_chars} to the end of the page. The part starting at character {unread} has not been given to you yet: call fetch_url_content with this url and offset={unread} to read it.\n\n{text}",
         ),
         Recall::Remainder {
             text,
             shown_chars,
             next: Some(next),
+            ..
         } => format!(
             "Continuation of {url}: characters {shown_chars} to {next}, as much as this result has room for. The page goes on: call fetch_url_content with this url and offset={next} for the next part.\n\n{text}",
+        ),
+        // Never answered from memory: the call runs and reads the archive.
+        Recall::Reread { offset } => format!(
+            "Read {url} again from character {offset}: call fetch_url_content with this url and offset={offset}."
         ),
     }
 }
@@ -156,6 +178,7 @@ mod tests {
                 text: "chapter two".to_string(),
                 shown_chars: 12_000,
                 next: Some(24_000),
+                unread: Some(24_000),
             },
         );
         assert!(notice.contains("offset=24000"), "{notice}");
@@ -170,6 +193,7 @@ mod tests {
                 text: "and then the flames came down.".to_string(),
                 shown_chars: 12_000,
                 next: None,
+                unread: None,
             },
         );
         assert!(notice.contains("from character 12000"), "{notice}");
@@ -178,5 +202,22 @@ mod tests {
             notice.ends_with("and then the flames came down."),
             "{notice}"
         );
+    }
+
+    /// A part that reaches the end while an earlier stretch is still unread
+    /// says where that stretch starts, instead of calling the page whole.
+    #[test]
+    fn a_last_part_with_a_gap_before_it_names_the_gap() {
+        let notice = recalled_page_notice(
+            "https://example.test/recap",
+            &Recall::Remainder {
+                text: "the end.".to_string(),
+                shown_chars: 20_000,
+                next: None,
+                unread: Some(8_000),
+            },
+        );
+        assert!(notice.contains("offset=8000"), "{notice}");
+        assert!(!notice.contains("whole page"), "{notice}");
     }
 }

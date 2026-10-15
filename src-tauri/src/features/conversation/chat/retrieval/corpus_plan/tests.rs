@@ -272,9 +272,15 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
         CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
-        INSERT INTO documents(id,file_name,file_path) VALUES ('a','Guide','/guide'), ('b','Private','/private');
-        INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
-    let repository = ConversationRepository::new(pool);
+        INSERT INTO documents(id,file_name,file_path) VALUES ('a','Guide','/guide'), ('b','Private','/private');").execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../../../migrations/20261015120000_document_chunk_stats.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
+    let repository = ConversationRepository::new(pool.clone());
     let scope = HashSet::from(["a".to_string()]);
     let catalog = repository.retrieval_catalog(&scope).await.unwrap();
     assert_eq!(catalog.len(), 1);
@@ -299,6 +305,23 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
             .await
             .unwrap(),
         None
+    );
+    // A scope past SQLite's 32,766 bound variables used to fail outright;
+    // it is one bound value now.
+    let mut wide: HashSet<String> = (0..40_000).map(|n| format!("doc-{n}")).collect();
+    wide.insert("a".to_string());
+    assert_eq!(
+        repository.retrieval_mean_chunk_chars(&wide).await.unwrap(),
+        Some(8)
+    );
+    // The totals follow the chunks as they change, without a pass over them.
+    sqlx::raw_sql("DELETE FROM text_chunks WHERE id = 'a0'; UPDATE text_chunks SET content = 'Twenty characters!!!' WHERE id = 'a1';")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.retrieval_mean_chunk_chars(&scope).await.unwrap(),
+        Some(13)
     );
     assert!(repository
         .retrieval_catalog(&HashSet::new())

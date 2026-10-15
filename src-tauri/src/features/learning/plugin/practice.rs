@@ -171,6 +171,7 @@ pub async fn request_learning_tutor_response(
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     let generated = crate::features::learning::practice_generation::tutor(
         llm.as_ref(),
+        container.ai.tutor_pace(),
         &session,
         &request,
         &sources,

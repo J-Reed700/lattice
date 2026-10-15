@@ -37,6 +37,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         wikiContextLimit: 5,
         webSearchMaxResults: 5,
         webSnippetMaxChars: 500,
+        readWebPages: true,
         webPageFetchTimeoutSecs: 12,
         deepResearchDepth: 3,
         deepResearchBranchQueries: 3,

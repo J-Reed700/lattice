@@ -119,6 +119,8 @@ async fn plan_with(
         )));
     }
     let target = turn.health.prompt_tokens();
+    // Built to the planner's history share from whole turns by the caller;
+    // held to it here in whole lines, with the rest counted.
     let history = prompt::recent_history(llm, history, target.min(llm.max_context_tokens()));
     let ranked = shortlist::shortlist(catalog, turn.candidate_ids(), question);
     let parts = prompt::PromptParts {
@@ -139,7 +141,6 @@ async fn plan_with(
         correction = correction.is_some(),
         "Corpus planner prompt"
     );
-    let started = tokio::time::Instant::now();
     let response = tokio::time::timeout(
         PLANNER_TIMEOUT,
         llm.complete(&CompletionRequest {
@@ -195,9 +196,11 @@ async fn plan_with(
             }
             return Err(error);
         }
-        Ok(Ok(response)) => response.text,
+        Ok(Ok(response)) => {
+            turn.health.answered(response.prefill, prompt.tokens);
+            response.text
+        }
     };
-    turn.health.answered(started.elapsed(), prompt.tokens);
     let response = response
         .trim()
         .trim_start_matches("```json")

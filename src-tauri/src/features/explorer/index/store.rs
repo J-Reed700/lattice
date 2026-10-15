@@ -147,24 +147,22 @@ pub struct Counts {
     pub passages_embedded: u32,
 }
 
-/// What a too-large walk found, as [`META_TOO_LARGE`] records it.
+/// What a walk past the file bound found, as [`META_TOO_LARGE`] records it:
+/// every indexable file, counted in full, of which the first up to the bound
+/// are indexed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TooLarge {
     pub count: usize,
-    /// The walk stopped counting at `count`.
-    pub capped: bool,
 }
 
 impl TooLarge {
     pub fn encode(&self) -> String {
-        format!("{}{}", self.count, if self.capped { "+" } else { "" })
+        self.count.to_string()
     }
 
     pub fn decode(value: &str) -> Option<Self> {
-        let count = value.trim_end_matches('+').parse().ok()?;
         Some(Self {
-            count,
-            capped: value.ends_with('+'),
+            count: value.parse().ok()?,
         })
     }
 }

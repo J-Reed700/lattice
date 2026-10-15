@@ -15,7 +15,6 @@ use serde::Serialize;
 use tracing::warn;
 
 use lattice_core::application::contracts::search::CorpusDocument;
-use lattice_core::application::ports::llm_port::chars_within_tokens;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::value_objects::source_context::SourceContext;
 use lattice_core::shared::error::{AppError, Result};
@@ -140,14 +139,29 @@ pub(super) struct PlannerPrompt {
     pub limit: usize,
 }
 
-/// The newest part of the conversation excerpt that fits its share of the
-/// prompt target.
+/// Tokens of conversation a planner prompt of `target` tokens carries. The
+/// excerpt is built to this size from whole turns, newest first, with a line
+/// counting the earlier ones left out (see `query_planning_context`).
+pub(in super::super) fn history_tokens(target: usize) -> usize {
+    target / HISTORY_SHARE_DIVISOR
+}
+
+/// The newest whole lines of the conversation excerpt that fit its share of
+/// a `target`-token prompt, with a line counting the ones left out. The
+/// excerpt is normally built to that share already; this keeps the prompt
+/// inside the planner's deadline when it was not, without cutting a line.
 pub(super) fn recent_history(llm: &dyn LLMPort, history: Option<&str>, target: usize) -> String {
-    let tokens = target / HISTORY_SHARE_DIVISOR;
-    let chars = chars_within_tokens(tokens, llm.chars_per_token());
-    let history = history.unwrap_or("");
-    let skip = history.chars().count().saturating_sub(chars);
-    history.chars().skip(skip).collect()
+    use lattice_core::application::services::history_share::newest_that_fit;
+    let lines: Vec<&str> = history.unwrap_or("").lines().collect();
+    let (kept, omitted) = newest_that_fit(&lines, history_tokens(target), |line| {
+        llm.count_tokens(line).saturating_add(1)
+    });
+    (omitted > 0)
+        .then(|| format!("({omitted} earlier lines of the conversation not shown)"))
+        .into_iter()
+        .chain(kept.iter().map(|line| (*line).to_string()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Render the user turn with `shown` (in priority order) as its catalog. Rows

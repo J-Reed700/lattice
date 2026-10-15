@@ -61,6 +61,27 @@ describe('SearchTab', () => {
     });
   });
 
+  it('persists the read web pages switch inside the retrieval tuning', async () => {
+    const user = userEvent.setup();
+    renderSearchTab();
+
+    const toggle = (await screen.findByLabelText(/Read web pages/i)) as HTMLInputElement;
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(VaultAPI.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'search',
+          updates: expect.objectContaining({
+            retrievalTuning: expect.objectContaining({ readWebPages: false }),
+          }),
+        })
+      );
+    });
+  });
+
   it('shows advanced tuning and persists tuning fields', async () => {
     renderSearchTab();
 

@@ -362,3 +362,71 @@ async fn a_small_window_carries_the_best_passages_that_fit_and_reports_them() {
     assert!(!prompt.contains("filler sentence."));
     assert!(prompt.contains("Passages:\n[1] This paper reviews prior literature on sleep."));
 }
+
+/// The table kept six columns and cut each name at 80 characters. Every
+/// column named is kept, whole.
+#[test]
+fn every_named_column_is_kept_whole() {
+    let long = format!("the primary outcome measure {}", "and its unit ".repeat(10));
+    let mut named: Vec<String> = (0..9).map(|n| format!("field {n}")).collect();
+    named.push(long.clone());
+    named.push("FIELD 3".to_string());
+    let columns = super::use_case::sanitize_columns(named);
+    assert_eq!(columns.len(), 10, "{columns:?}");
+    assert!(columns.contains(&long.trim().to_string()));
+}
+
+/// Says which columns each call asked for, on a window whose answer room
+/// holds four cells.
+#[derive(Default)]
+struct FourCellsPerCall(std::sync::Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl LLMPort for FourCellsPerCall {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.lock().unwrap().push(request.user_text().to_string());
+        Ok(CompletionResponse::from_text("{}"))
+    }
+    fn model_name(&self) -> &str {
+        "four-cells"
+    }
+    fn max_context_tokens(&self) -> usize {
+        2_048
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A row with more columns than one answer holds is filled in several calls,
+/// every column in exactly one of them, and the row has a cell for each.
+#[tokio::test]
+async fn a_row_of_many_columns_is_filled_across_calls() {
+    let contents: Vec<String> = (0..6).map(|index| format!("passage {index}")).collect();
+    let container = container_with_chunks(&contents).await;
+    let llm = Arc::new(FourCellsPerCall::default());
+    let model: Arc<dyn LLMPort> = llm.clone();
+    let deps = retrieval_deps(&container);
+    let columns: Vec<String> = (0..9).map(|n| format!("column {n}")).collect();
+    let document = super::use_case::ResolvedDocument {
+        id: "doc".to_string(),
+        title: "doc.md".to_string(),
+        file_path: "/lib/doc.md".to_string(),
+        error: None,
+    };
+    let row = super::use_case::build_row(&deps, &model, &document, &columns)
+        .await
+        .unwrap();
+
+    assert_eq!(row.cells.len(), 9);
+    assert!(row.error.is_none(), "{:?}", row.error);
+    let prompts = llm.0.lock().unwrap();
+    assert_eq!(prompts.len(), 3, "nine columns at four a call");
+    for column in &columns {
+        let asked = prompts
+            .iter()
+            .filter(|prompt| prompt.contains(&format!("- {column}\n")))
+            .count();
+        assert_eq!(asked, 1, "{column} asked {asked} times");
+    }
+}

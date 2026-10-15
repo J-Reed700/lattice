@@ -46,6 +46,7 @@ pub(super) struct FakeRuntime {
     /// One planner health per test, so a planner timeout in one test never
     /// shrinks another's prompt.
     pub(super) planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
+    pub(super) intent_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
     /// The `answer_thinking` setting the turn reads.
     pub(super) answer_thinking: bool,
 }
@@ -64,6 +65,7 @@ impl Default for FakeRuntime {
             research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
             background: Arc::default(),
             planner_health: Arc::default(),
+            intent_pace: Arc::new(crate::features::conversation::chat::intent::intent_pace()),
             answer_thinking: false,
         }
     }
@@ -187,6 +189,9 @@ impl ChatRetrieval for FakeRuntime {
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(&self.planner_health)
+    }
+    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
+        Arc::clone(&self.intent_pace)
     }
 }
 

@@ -39,10 +39,10 @@ describe('ColumnEditor', () => {
     render(
       <ColumnEditor value="a, b" onChange={vi.fn()} onSubmit={vi.fn()} isRunning={false} />,
     );
-    expect(screen.getByText('2 of 6 columns')).toBeInTheDocument();
+    expect(screen.getByText('2 columns')).toBeInTheDocument();
   });
 
-  it('refuses more than six columns and says so', async () => {
+  it('sends every column named, with no six-column limit', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(
@@ -54,10 +54,10 @@ describe('ColumnEditor', () => {
       />,
     );
 
-    expect(screen.getByText('Six columns maximum.')).toBeInTheDocument();
+    expect(screen.getByText('7 columns')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Compare' }));
-    // The seventh is dropped rather than sent.
-    expect(onSubmit).toHaveBeenCalledWith(['a', 'b', 'c', 'd', 'e', 'f']);
+    // The seventh is sent too; the backend splits a long row across calls.
+    expect(onSubmit).toHaveBeenCalledWith(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
   });
 
   it('asks for a column instead of failing silently on an empty field', async () => {

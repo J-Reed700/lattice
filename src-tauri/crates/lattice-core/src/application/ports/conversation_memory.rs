@@ -301,13 +301,15 @@ pub trait ConversationMemoryPort: Send + Sync {
         message_ids: &[String],
     ) -> Result<Vec<SuppressedSpan>>;
 
-    /// Labels of the items the user asked memory to forget in this
-    /// conversation, distinct, most recently changed first, at most `limit`.
+    /// Labels of every item the user asked memory to forget in this
+    /// conversation, distinct, most recently changed first.
     ///
-    /// The summariser is told to leave these out. That covers what no stored
-    /// span marks: a later message that repeats or corrects a forgotten value.
+    /// The summariser is told to leave all of these out. That covers what no
+    /// stored span marks: a later message that repeats or corrects a
+    /// forgotten value. Every one, because a fact left off the list can come
+    /// back in the next summary.
     /// Without a default for the same reason as [`Self::suppressed_spans`].
-    async fn forgotten_labels(&self, conversation_id: &str, limit: usize) -> Result<Vec<String>>;
+    async fn forgotten_labels(&self, conversation_id: &str) -> Result<Vec<String>>;
 
     /// Apply a validated candidate under `preconditions`, or fail without
     /// writing anything.

@@ -151,6 +151,11 @@ pub struct RetrievalTuningSettingsDto {
     pub wiki_context_limit: u32,
     pub web_search_max_results: u32,
     pub web_snippet_max_chars: u32,
+    /// Whether a web search opens its results and reads the pages. Off, a
+    /// search answers from the results' snippets alone. How many pages are
+    /// read, and how much of each, follows the model's window.
+    #[serde(default = "default_read_web_pages")]
+    pub read_web_pages: bool,
     /// Seconds any one page fetch may take before it is abandoned and the
     /// result falls back to its snippet.
     #[serde(default = "default_web_page_fetch_timeout_secs")]
@@ -190,6 +195,10 @@ pub struct RetrievalTuningSettingsDto {
     pub doc_support_multi_hit_ratio_max: f32,
     pub doc_support_single_hit_ratio_min: f32,
     pub doc_support_single_hit_ratio_max: f32,
+}
+
+fn default_read_web_pages() -> bool {
+    true
 }
 
 fn default_web_page_fetch_timeout_secs() -> u32 {
@@ -306,6 +315,7 @@ impl Default for RetrievalTuningSettingsDto {
             wiki_context_limit: 3,
             web_search_max_results: 5,
             web_snippet_max_chars: 1200,
+            read_web_pages: default_read_web_pages(),
             web_page_fetch_timeout_secs: default_web_page_fetch_timeout_secs(),
             deep_research_depth: default_deep_research_depth(),
             deep_research_branch_queries: default_deep_research_branch_queries(),

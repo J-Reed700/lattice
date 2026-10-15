@@ -523,3 +523,132 @@ fn evidence_room_follows_the_judge_window() {
     // estimate's three-quarter under-fill.
     assert!(room > 8_000 && room < 12_288, "got {room}");
 }
+
+/// A paraphrase shares no words with its source. Its windows used to be
+/// dropped, so a long source that supported it in other words was reported
+/// as having no text at all. Every window is judged now, scored ones first.
+#[test]
+fn a_paraphrase_with_no_shared_words_still_reaches_the_judge() {
+    let page = format!(
+        "{}Crops are gathered once autumn arrives. {}",
+        "Lorem ipsum dolor sit amet. ".repeat(80),
+        "Consectetur adipiscing elit. ".repeat(80),
+    );
+    let sources = [source(&page)];
+    let claims = lexical_pass("Harvest happens in fall [1].", &sources);
+    let parts = found_parts(evidence_for(&claims[0], &sources, 2_500));
+    assert!(parts
+        .iter()
+        .any(|part| part.text.contains("gathered once autumn arrives")));
+}
+
+/// Neighbouring windows share a third of their text and are rendered once.
+/// Costing each whole split a long page into half as many parts again as it
+/// needed; costed as rendered, the parts fill their room.
+#[test]
+fn a_long_page_is_split_into_as_few_parts_as_its_rendered_text_needs() {
+    let page = "The harvest begins in late September. ".repeat(1_000);
+    let sources = [source(&page)];
+    let claims = lexical_pass("The harvest begins in late September [1].", &sources);
+    let parts = found_parts(evidence_for(&claims[0], &sources, 10_000));
+    let total: usize = parts.iter().map(|part| part.text.chars().count()).sum();
+    assert!(parts.iter().all(|part| part.text.chars().count() <= 10_000));
+    assert!(
+        parts.len() <= page.chars().count().div_ceil(10_000) + 1,
+        "{} parts for {} characters ({total} rendered)",
+        parts.len(),
+        page.chars().count()
+    );
+}
+
+/// Records which claim each call judges, and fails calls about `failing`.
+struct OrderingLlm {
+    order: std::sync::Mutex<Vec<String>>,
+    failing: &'static str,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for OrderingLlm {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let text = request.user_text().to_string();
+        let claim = if text.contains("Claim A") { "A" } else { "B" };
+        self.order.lock().unwrap().push(claim.to_string());
+        if text.contains(self.failing) {
+            return Err(lattice_core::shared::error::AppError::Network(
+                "connection reset".into(),
+            ));
+        }
+        Ok(CompletionResponse::from_text(
+            "unsupported\nReason: not stated.\nSource quote: none",
+        ))
+    }
+
+    fn model_name(&self) -> &str {
+        "ordering-judge"
+    }
+
+    fn max_context_tokens(&self) -> usize {
+        8192
+    }
+
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A claim citing a long page used to be judged part after part before the
+/// claims after it got a call, so the budget ran out on them untried. Every
+/// claim's best part goes first now.
+#[tokio::test]
+async fn every_claims_best_part_is_judged_before_any_claims_second() {
+    let llm = Arc::new(OrderingLlm {
+        order: std::sync::Mutex::new(Vec::new()),
+        failing: "never",
+    });
+    let judge = ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>);
+    let many: Vec<ClaimEvidence> = (0..4)
+        .map(|n| part(&format!("[1]\nPage part {n}.")))
+        .collect();
+    judge
+        .judge_claims(&[
+            (0, "Claim A", many),
+            (1, "Claim B", vec![part("[2]\nAnother page.")]),
+        ])
+        .await;
+    let order = llm.order.lock().unwrap().clone();
+    assert_eq!(order.len(), 5, "{order:?}");
+    let second_of_a = order
+        .iter()
+        .enumerate()
+        .filter(|(_, claim)| *claim == "A")
+        .nth(1)
+        .map(|(at, _)| at)
+        .unwrap();
+    let first_of_b = order.iter().position(|claim| claim == "B").unwrap();
+    assert!(first_of_b < second_of_a, "{order:?}");
+}
+
+/// A part the backend could not judge settles the claim as unchecked, and
+/// its later parts are not sent to a failing backend.
+#[tokio::test]
+async fn a_failed_part_stops_the_claims_later_parts() {
+    let llm = Arc::new(OrderingLlm {
+        order: std::sync::Mutex::new(Vec::new()),
+        failing: "Page part 0",
+    });
+    let judge = ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>);
+    let parts: Vec<ClaimEvidence> = (0..3)
+        .map(|n| part(&format!("[1]\nPage part {n}.")))
+        .collect();
+    let verdict = judge
+        .judge_claims(&[(0, "Claim A", parts)])
+        .await
+        .remove(&0)
+        .unwrap();
+    assert!(!matches!(verdict, ClaimJudgment::Judged(_)), "{verdict:?}");
+    assert_eq!(llm.order.lock().unwrap().len(), 1);
+}

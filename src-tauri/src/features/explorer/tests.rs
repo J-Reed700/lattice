@@ -195,6 +195,50 @@ fn search_reports_line_column_and_respects_the_prefix() {
     assert!(outside.is_err());
 }
 
+/// Search read each file only to its first megabyte, so a match further in
+/// was never found. Files are streamed to their last line.
+#[test]
+fn search_reads_a_large_file_to_its_last_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut big = "filler line\n".repeat(200_000).into_bytes();
+    big.extend_from_slice(b"the needle is here\n");
+    write(dir.path(), "big.txt", &big);
+    let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
+    let result = fs::search(
+        &scope,
+        &SearchRequest {
+            query: "needle",
+            regex: false,
+            path_prefix: None,
+            max_results: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(result.matches[0].line, 200_001);
+}
+
+/// Matches past the ones a result can show are counted, so the tool says
+/// how many more there are instead of "there may be more".
+#[test]
+fn search_counts_the_matches_past_those_kept() {
+    let (_dir, scope) = fixture();
+    let (result, more) = fs::search_counting(
+        &scope,
+        &SearchRequest {
+            query: "fn",
+            regex: false,
+            path_prefix: None,
+            max_results: 1,
+        },
+        WalkBounds::default(),
+    )
+    .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(more, 3, "README, main.rs and util.rs's two lines hold four");
+    assert!(!result.truncated);
+}
+
 #[test]
 fn search_bounds_set_truncated() {
     let (_dir, scope) = fixture();
@@ -221,7 +265,6 @@ fn search_bounds_set_truncated() {
         },
         WalkBounds {
             max_files: 1,
-            max_bytes_per_file: 1024,
             time_budget: Duration::from_secs(2),
         },
     )

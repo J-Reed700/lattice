@@ -359,6 +359,7 @@ async fn live_feedback_and_hint_matrix() -> Result<()> {
         "I set result to zero, but I do not know which condition to use.".into();
     let tutor = practice_generation::tutor(
         &model,
+        &practice_generation::tutor_pace(),
         &session,
         &RequestLearningTutorResponseRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),

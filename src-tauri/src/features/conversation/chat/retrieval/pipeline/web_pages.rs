@@ -32,12 +32,23 @@ fn host_of(url: &str) -> String {
         .unwrap_or_else(|| "a web page".to_string())
 }
 
+/// Pages a search opens: none when the user turned page reading off (the
+/// search then answers from snippets), otherwise as many as the page budget
+/// gives a share worth reading.
+pub(super) fn pages_wanted(read_web_pages: bool, page_budget_chars: usize) -> usize {
+    if read_web_pages {
+        pages_the_budget_carries(page_budget_chars)
+    } else {
+        0
+    }
+}
+
 impl ExternalLookup<'_> {
     /// How many readable pages this turn wants in its prompt: as many as the
     /// page budget can give a share worth reading, so a large window reads
     /// every result it was handed and a small one reads only what it can carry.
     fn pages_wanted(&self) -> usize {
-        pages_the_budget_carries(self.page_budget_chars)
+        pages_wanted(self.tuning.read_web_pages, self.page_budget_chars)
     }
 
     /// Read one page, or say why not.
@@ -222,15 +233,16 @@ impl ExternalLookup<'_> {
             // No room for it in this prompt. It is still remembered, so the
             // model can ask for it and be answered without a request.
             if budget < MIN_USEFUL_PAGE_CHARS.min(length) {
-                memory.record_page(&result.url, full, Delivery::Clipped { shown_chars: 0 });
+                memory.record_page(&result.url, full, Delivery::Part { start: 0, end: 0 });
                 continue;
             }
             let whole = budget >= length;
             let delivery = if whole {
                 Delivery::Whole
             } else {
-                Delivery::Clipped {
-                    shown_chars: budget,
+                Delivery::Part {
+                    start: 0,
+                    end: budget,
                 }
             };
             memory.record_page(&result.url, full, delivery);

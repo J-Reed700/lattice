@@ -146,12 +146,14 @@ pub(super) fn remove_dir(dir: &Path) {
     }
 }
 
-/// The words for a walk that found more files than the cap.
+/// The words for a walk that found more files than the bound.
 pub(super) fn too_large_message(found: TooLarge, cap: usize) -> String {
+    let indexed = cap.min(found.count);
     format!(
-        "{}{} files to index; the limit is {}. Search uses text matching.",
-        if found.capped { "More than " } else { "" },
+        "{} of {} files are indexed; the other {} are past the limit of {} and are found by text matching only.",
+        group_digits(indexed),
         group_digits(found.count),
+        group_digits(found.count - indexed),
         group_digits(cap)
     )
 }

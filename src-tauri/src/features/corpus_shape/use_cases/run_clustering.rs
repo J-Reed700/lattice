@@ -26,8 +26,12 @@ use crate::features::corpus_shape::fingerprint::{
     fingerprint, jaccard, JACCARD_INHERITANCE_THRESHOLD,
 };
 use crate::features::corpus_shape::labeling::{
-    label_cluster, preview_chars, ClusterLabel, RepresentativeDoc,
+    label_cluster, preview_chars, representatives_that_fit, ClusterLabel, RepresentativeDoc,
 };
+
+/// Members marked as representative in the cluster map: the few nearest the
+/// centroid, for display. Labeling reads as many as its call has room for.
+const MARKED_REPRESENTATIVES: usize = 5;
 use crate::features::corpus_shape::repository::ClusterRepositoryPort;
 use lattice_core::application::ports::{DocumentRepositoryPort, EmbeddingRepositoryPort, LLMPort};
 use lattice_core::shared::error::{AppError, Result};
@@ -225,7 +229,13 @@ impl RunClusteringUseCase {
                 created_at: now,
             };
 
-            let reps: HashSet<&String> = raw.representatives.iter().collect();
+            // The members marked as representative in the map: the few
+            // nearest the centroid. A display choice; labeling reads more.
+            let reps: HashSet<&String> = raw
+                .representatives
+                .iter()
+                .take(MARKED_REPRESENTATIVES)
+                .collect();
             let members: Vec<ClusterMember> = raw
                 .member_doc_ids
                 .iter()
@@ -323,11 +333,17 @@ impl RunClusteringUseCase {
         }
 
         // Fresh LLM call (or fallback if we don't have one).
+        // As many members, nearest the centroid first, as the label call's
+        // room gives a useful look at each.
         let mut reps: Vec<RepresentativeDoc> = Vec::new();
-        let max_chars = self.llm.as_ref().map_or(0, |llm| {
-            preview_chars(llm.as_ref(), raw.representatives.len())
+        let shown = self.llm.as_ref().map_or(1, |llm| {
+            representatives_that_fit(llm.as_ref(), raw.representatives.len())
         });
-        for rep_id in &raw.representatives {
+        let max_chars = self
+            .llm
+            .as_ref()
+            .map_or(0, |llm| preview_chars(llm.as_ref(), shown));
+        for rep_id in raw.representatives.iter().take(shown) {
             if let Some(doc) = self.content_preview.preview(rep_id, max_chars).await? {
                 reps.push(doc);
             }

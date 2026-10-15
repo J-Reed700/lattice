@@ -40,21 +40,22 @@ impl Indexer {
         // Only a run over the whole index speaks for it; a sub-folder's run
         // leaves the parent's markers alone.
         let whole = self.prefix.is_empty();
-        let candidates = match walked {
-            Walked::TooLarge { count, capped } => {
-                if whole {
-                    let found = TooLarge { count, capped };
-                    self.store
-                        .set_meta(store::META_TOO_LARGE, &found.encode())
-                        .await?;
-                }
-                return Ok(Outcome::TooLarge { count, capped });
-            }
+        let (candidates, skipped) = match walked {
             Walked::Cancelled => return Ok(Outcome::Cancelled),
-            Walked::Files(files) => files,
+            Walked::Files { files, skipped } => (files, skipped),
         };
+        // A folder past the bound is indexed up to it, and how many files were
+        // left to text search is recorded, not dropped without a word.
+        let found = candidates.len() + skipped;
         if whole {
-            self.store.delete_meta(store::META_TOO_LARGE).await?;
+            if skipped > 0 {
+                let found = TooLarge { count: found };
+                self.store
+                    .set_meta(store::META_TOO_LARGE, &found.encode())
+                    .await?;
+            } else {
+                self.store.delete_meta(store::META_TOO_LARGE).await?;
+            }
         }
         let existing = self.store.files_under(&self.prefix).await?;
         let total = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
@@ -108,7 +109,11 @@ impl Indexer {
             ),
             "Folder index ready"
         );
-        Ok(Outcome::Done)
+        Ok(if skipped > 0 {
+            Outcome::TooLarge { count: found }
+        } else {
+            Outcome::Done
+        })
     }
 
     /// Brings the rows for `paths` (relative to the index root, as the
@@ -186,11 +191,11 @@ impl Indexer {
                     AppError::InternalError(format!("Folder walk failed: {error}"))
                 })??;
         let candidates = match walked {
-            Walked::Files(files) => files,
+            Walked::Files { files, skipped: 0 } => files,
             Walked::Cancelled => return Ok(Outcome::Cancelled),
-            // A single new directory over the whole cap is left to the next
-            // full run to judge.
-            Walked::TooLarge { .. } => return Ok(Outcome::Done),
+            // A single new directory over the whole bound is left to the next
+            // full run, which indexes up to the bound and counts the rest.
+            Walked::Files { .. } => return Ok(Outcome::Done),
         };
         let existing = self.store.files_under(relative).await?;
         let seen: HashSet<String> = candidates

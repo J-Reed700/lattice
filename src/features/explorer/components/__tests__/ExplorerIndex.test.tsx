@@ -123,7 +123,7 @@ describe('folder index progress in words', () => {
     expect(describeIndexStatus({ ...INDEXING, etaSeconds: null })).toBe('Indexing 27%');
     expect(describeIndexStatus({ ...INDEXING, passagesEmbedded: 10957 })).toBe('Indexing 99% · ~14 min left');
     expect(describeIndexStatus(status())).toBe('Indexed · 1,379 files');
-    expect(describeIndexStatus(status({ state: 'tooLarge' }))).toBe('Too large to index · search uses text matching');
+    expect(describeIndexStatus(status({ state: 'tooLarge', filesIndexed: 20000, filesTotal: 26431 }))).toBe('Partly indexed · 20,000 of 26,431 files');
     expect(describeIndexStatus(status({ state: 'refused' }))).toBe('Not indexed (home folder)');
     expect(describeIndexStatus(status({ state: 'unavailable' }))).toBe('No embedding model');
     expect(describeIndexStatus(status({ state: 'error' }))).toBe('Index failed');

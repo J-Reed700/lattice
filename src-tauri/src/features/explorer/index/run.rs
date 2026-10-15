@@ -194,11 +194,10 @@ impl Pace {
 pub enum Outcome {
     Done,
     Cancelled,
-    /// The walk found this many indexable files (or at least this many, when
-    /// `capped`).
+    /// The walk found `count` indexable files, more than the bound: the first
+    /// up to it are indexed, and the rest are found by text search only.
     TooLarge {
         count: usize,
-        capped: bool,
     },
 }
 

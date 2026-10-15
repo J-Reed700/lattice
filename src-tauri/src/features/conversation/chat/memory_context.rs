@@ -236,6 +236,7 @@ pub async fn build_memory_plan_for_query(
         conversation_id,
         HistoryToolBudget {
             max_response_bytes: recall_bytes,
+            turn_response_bytes: recall_bytes,
             deadline: None,
         },
     );

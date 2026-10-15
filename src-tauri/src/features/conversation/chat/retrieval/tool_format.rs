@@ -11,6 +11,11 @@ use lattice_core::shared::text::safe_truncate;
 /// out of it, so that line always fits.
 const OMISSION_NOTE_CHARS: usize = 240;
 
+/// The least a result is given, however full the window: room for the note
+/// saying what was left out and where it is. Without it a full window turned a
+/// result into an empty string that told the model nothing.
+const MIN_RESULT_CHARS: usize = 2 * OMISSION_NOTE_CHARS;
+
 /// A tool's result as the model reads it, in at most `allowance` characters.
 ///
 /// `allowance` is the result's share of what is left of the model's window
@@ -26,6 +31,7 @@ pub(super) fn format_tool_result(
     allowance: usize,
     page_offset: usize,
 ) -> String {
+    let allowance = allowance.max(MIN_RESULT_CHARS);
     if !result.success {
         return format!(
             "Error: {}",
@@ -57,26 +63,25 @@ pub(super) fn format_tool_result(
                     .map(|m| m.filename.as_str())
                     .unwrap_or("Unknown");
                 let chunk_count = doc.metadata.as_ref().map(|m| m.chunk_count).unwrap_or(0);
-                // The page as the tool returned it. The tool loop sizes a page
-                // to this call's allowance before it runs, so the page is
-                // whole here and the next one carries on where it ends.
+                // The part as the tool returned it. The tool loop sizes a part
+                // to this call's allowance before it runs, so the part is whole
+                // here and the next one carries on from `next_offset`.
                 let truncated_note = if doc.content_truncated {
-                    "\n(Note: content truncated)"
+                    "\n(Note: the document continues past this part)"
                 } else {
                     ""
                 };
+                let shown_end = doc.offset + doc.content.chars().count();
                 let mut pagination_line = String::new();
-                if doc.total_pages > 1 {
+                if doc.offset > 0 || doc.next_offset.is_some() {
                     pagination_line = format!(
-                        "\nPage {}/{} ({} chars total)",
-                        doc.page, doc.total_pages, doc.total_chars
+                        "\nCharacters {} to {shown_end} of {}",
+                        doc.offset, doc.total_chars
                     );
-                    if let Some(next_page) = doc.next_page {
+                    if let Some(next_offset) = doc.next_offset {
                         pagination_line.push_str(&format!(
-                            "\nTo continue, call get_document with document_id=\"{}\", page={} and max_content_length={}.",
-                            doc.document_id,
-                            next_page,
-                            doc.content.chars().count().max(1)
+                            "\nTo continue, call get_document with document_id=\"{}\" and offset={next_offset}.",
+                            doc.document_id
                         ));
                     }
                 }
@@ -95,20 +100,19 @@ pub(super) fn format_tool_result(
                 if rendered.chars().count() <= allowance {
                     return rendered;
                 }
-                // A page larger than this call's room: a model asked for a
-                // bigger page than the window holds. Show what fits and say
-                // how to read the rest of it in pieces that do fit.
+                // A part larger than this call's room: the model asked for more
+                // than the window holds. Show what fits and say where the rest
+                // starts, so it is the next read rather than lost.
                 let framing = render("").chars().count() + OMISSION_NOTE_CHARS;
                 let room = allowance.saturating_sub(framing);
                 let shown = safe_truncate(&doc.content, room);
+                let next = doc.offset + shown.chars().count();
                 let mut rendered = render(&shown);
                 rendered.push_str(&format!(
-                    "\n[Only the first {room} of this page's {} characters fit this result. Call get_document with document_id=\"{}\" and max_content_length={} to read the document in pieces that fit.]",
-                    doc.content.chars().count(),
-                    doc.document_id,
-                    room.max(1)
+                    "\n[Only characters {} to {next} of this part fit this result. Call get_document with document_id=\"{}\" and offset={next} to read on.]",
+                    doc.offset, doc.document_id
                 ));
-                return safe_truncate(&rendered, allowance);
+                return keep_note(&rendered, allowance);
             }
         }
         "semantic_search" => {
@@ -176,7 +180,7 @@ pub(super) fn format_tool_result(
                     allowance.saturating_sub(framing),
                     "Call get_document with a doc_id above to read a document, or search again more narrowly.",
                 );
-                return safe_truncate(&template(&results_text, shown), allowance);
+                return keep_note(&template(&results_text, shown), allowance);
             }
         }
         "wiki_search" => {
@@ -203,7 +207,7 @@ pub(super) fn format_tool_result(
                     allowance,
                     "Search again more narrowly to see them.",
                 );
-                return safe_truncate(&text, allowance);
+                return keep_note(&text, allowance);
             }
         }
         "wiki_summary" => {
@@ -246,7 +250,7 @@ pub(super) fn format_tool_result(
                     allowance.saturating_sub(heading.chars().count() + 2),
                     "Search again more narrowly to see them.",
                 );
-                return safe_truncate(&format!("{heading}\n\n{text}"), allowance);
+                return keep_note(&format!("{heading}\n\n{text}"), allowance);
             }
         }
         _ => {}
@@ -319,7 +323,22 @@ fn fit_text(text: &str, allowance: usize) -> String {
     shown.push_str(&format!(
         "\n[Cut to fit the model's context: the first {room} of {total} characters are shown.]"
     ));
-    safe_truncate(&shown, allowance)
+    keep_note(&shown, allowance)
+}
+
+/// `text` within `allowance`, cutting its body rather than the closing note
+/// that says what was left out, so a result never loses the line telling the
+/// model where the rest is.
+fn keep_note(text: &str, allowance: usize) -> String {
+    if text.chars().count() <= allowance {
+        return text.to_string();
+    }
+    let Some(at) = text.rfind("\n[") else {
+        return safe_truncate(text, allowance);
+    };
+    let note = &text[at..];
+    let body = safe_truncate(&text[..at], allowance.saturating_sub(note.chars().count()));
+    format!("{body}{note}")
 }
 
 /// Room kept for a fetched page's title, URL and the line saying how much of
@@ -361,7 +380,12 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
     let start = offset.min(total);
     let shown: String = content.chars().skip(start).take(room).collect();
     let end = start + shown.chars().count();
-    let extent = if start == 0 && end >= total {
+    let extent = if end == start && start < total {
+        format!(
+            "{} words, {total} characters; the model's context has no room left for this page's text — characters {start} to {total} are unread; call fetch_url_content with this url and offset={start} once there is room",
+            page.word_count
+        )
+    } else if start == 0 && end >= total {
         format!(
             "{} words — complete; this is the whole page",
             page.word_count
@@ -549,5 +573,54 @@ mod fetched_page_tests {
             "{rendered}"
         );
         assert!(rendered.contains("[1] file-0.pdf"), "{rendered}");
+    }
+
+    /// A full window used to turn a result into an empty string: the model
+    /// was told nothing, not even that there was more. Every kind of result
+    /// now keeps the line saying what was left out and how to reach it.
+    #[test]
+    fn a_result_in_a_full_window_still_says_what_was_left_out() {
+        let page_note = render(&page(&"word ".repeat(5_000)), "fetch_url_content", 0, 120);
+        assert!(page_note.contains("characters 120 to"), "{page_note}");
+        assert!(page_note.contains("offset="), "{page_note}");
+
+        let document = FunctionResult::success(serde_json::json!({
+            "document_id": "doc-7", "content": "x".repeat(5_000),
+            "content_truncated": true, "offset": 0, "next_offset": 5_000,
+            "total_chars": 9_000
+        }));
+        let document_note = render(&document, "get_document", 0, 0);
+        assert!(document_note.contains("doc-7"), "{document_note}");
+        assert!(document_note.contains("offset="), "{document_note}");
+        assert!(document_note.chars().count() <= MIN_RESULT_CHARS);
+
+        let search = render(
+            &search_output(10, 2, &"text ".repeat(200)),
+            "semantic_search",
+            0,
+            0,
+        );
+        assert!(search.contains("did not fit"), "{search}");
+
+        let fallback = FunctionResult::success(serde_json::json!({"rows": "y".repeat(5_000)}));
+        let fallback_note = render(&fallback, "list_documents", 0, 0);
+        assert!(fallback_note.contains("[Cut to fit"), "{fallback_note}");
+    }
+
+    /// A part larger than the result's room names the offset the rest starts
+    /// at; it used to name only a page size and no page.
+    #[test]
+    fn an_oversized_document_part_names_the_offset_to_read_on_from() {
+        let document = FunctionResult::success(serde_json::json!({
+            "document_id": "doc-7", "content": "§".repeat(5_000),
+            "content_truncated": false, "offset": 1_000, "total_chars": 6_000
+        }));
+        let rendered = render(&document, "get_document", 2_000, 0);
+        assert!(rendered.chars().count() <= 2_000);
+        let shown = rendered.matches('§').count();
+        assert!(
+            rendered.contains(&format!("offset={}", 1_000 + shown)),
+            "{rendered}"
+        );
     }
 }

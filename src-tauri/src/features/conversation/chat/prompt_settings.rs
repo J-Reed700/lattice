@@ -13,7 +13,7 @@ pub(super) fn normalize_prompt_settings(
         "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.";
     const LEGACY_RAG_TEMPLATE_SIGNATURE: u64 = 0xa971_9544_23a3_fba2;
     const UPDATED_RAG_TEMPLATE: &str =
-        "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+        "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
     // Soft migration with stable signatures keeps custom templates intact while
     // updating only known legacy defaults.
@@ -40,8 +40,8 @@ pub(super) fn normalize_prompt_settings(
          section numbers, dates, and page references. If evidence is missing, retrieve it or say it is not \
          verified; do not fill gaps from memory. Search results are a ranked subset, not a complete inventory. \
          Relevance scores rank query matches; they do not diagnose embedding quality, document corruption, \
-         or indexing completeness. Low scores alone do not establish any such problem. get_document page \
-         and total_pages describe internal text pagination, not original PDF page numbers. Cite printed PDF \
+         or indexing completeness. Low scores alone do not establish any such problem. get_document offsets \
+         count characters of extracted text, not original PDF page numbers. Cite printed PDF \
          pages only when supported by the returned source text or explicit PDF page metadata. If a tool \
          fails, report that specific failure without assuming the user's documents are absent.",
     );

@@ -546,14 +546,13 @@ impl ConversationMemoryPort for FakePort {
             .collect())
     }
 
-    async fn forgotten_labels(&self, _conversation_id: &str, limit: usize) -> Result<Vec<String>> {
+    async fn forgotten_labels(&self, _conversation_id: &str) -> Result<Vec<String>> {
         let mut labels: Vec<String> = Vec::new();
         for label in self.inner.lock().forgotten.iter().rev() {
             if !labels.contains(label) {
                 labels.push(label.clone());
             }
         }
-        labels.truncate(limit);
         Ok(labels)
     }
 
@@ -2183,6 +2182,35 @@ fn fact_quoting(id: &str, source: &SourceMessage, needle: &str) -> MemoryItem {
         ..whole_span(source, EvidencePurpose::Assertion)
     }];
     item
+}
+
+/// The summariser was told only the 32 most recently forgotten facts, so an
+/// older one could come back in a summary. It is told every one.
+#[tokio::test]
+async fn every_forgotten_fact_is_named_to_the_summariser() {
+    let messages = private_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![fact_quoting("item-badge", &messages[2], "9930")],
+        0,
+    );
+    {
+        let mut inner = port.inner.lock();
+        inner
+            .forgotten
+            .extend((0..40).map(|n| format!("Older forgotten fact {n}")));
+    }
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PRIVATE_SEGMENTS))],
+        vec![],
+        summaries(2),
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+    port.forget("item-badge");
+    job.run(CONVERSATION, maintenance()).await.unwrap();
+    let named = llm.forgotten_labels().pop().unwrap();
+    assert_eq!(named.len(), 41, "{named:?}");
+    assert!(named.contains(&"Older forgotten fact 0".to_string()));
 }
 
 /// Forgetting must survive every fold: the one that first summarises the

@@ -5808,7 +5808,8 @@ export type FolderIndexState =
  */
 "indexing" | "ready" |
 /**
- * More indexable files than the cap; nothing was embedded.
+ * More indexable files than the bound: the first up to it are indexed,
+ * and the message says how many more are found by text matching only.
  */
 "tooLarge" |
 /**
@@ -7383,6 +7384,12 @@ shortlistGateMinCandidates: number; shortlistGateMinDocs: number;
  * External source retrieval limits and snippet shaping
  */
 wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number;
+/**
+ * Whether a web search opens its results and reads the pages. Off, a
+ * search answers from the results' snippets alone. How many pages are
+ * read, and how much of each, follows the model's window.
+ */
+readWebPages: boolean;
 /**
  * Seconds any one page fetch may take before it is abandoned and the
  * result falls back to its snippet.

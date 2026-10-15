@@ -100,6 +100,48 @@ struct Report {
     /// wants a person to click, which the reader does not do.
     #[serde(default)]
     blocked: bool,
+    /// Which part of the text this is, of `parts`. A report travels in a URL,
+    /// and a whole page's text can be longer than one URL may be, so it is
+    /// sent in parts and put back together here.
+    #[serde(default)]
+    part: usize,
+    #[serde(default = "one_part")]
+    parts: usize,
+}
+
+fn one_part() -> usize {
+    1
+}
+
+/// The parts of one report received so far. Parts may arrive more than once
+/// (the page sends them round until the window closes) and in any order.
+#[derive(Default)]
+struct Assembly {
+    parts: Vec<Option<String>>,
+}
+
+impl Assembly {
+    /// Add `report`'s part; the whole report once every part is in.
+    fn add(&mut self, report: Report) -> Option<Report> {
+        let count = report.parts.max(1);
+        if self.parts.len() != count {
+            self.parts = vec![None; count];
+        }
+        let slot = self.parts.get_mut(report.part)?;
+        if slot.is_none() {
+            *slot = Some(report.text.clone());
+        }
+        if !self.parts.iter().all(Option::is_some) {
+            return None;
+        }
+        let text: String = self.parts.drain(..).flatten().collect();
+        Some(Report {
+            text,
+            part: 0,
+            parts: 1,
+            ..report
+        })
+    }
 }
 
 /// Why a read fails when the web service has no [`BrowserReader`].
@@ -142,6 +184,7 @@ impl BrowserReader {
         let sender = Arc::new(Mutex::new(Some(sender)));
 
         let reporter = Arc::clone(&sender);
+        let assembly = Mutex::new(Assembly::default());
         let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(target))
             .title("Lattice page reader")
             .visible(false)
@@ -152,7 +195,10 @@ impl BrowserReader {
             .on_navigation(move |next| {
                 if next.host_str() == Some(REPORT_HOST) {
                     debug!(chars = next.as_str().len(), "Page reader report arrived");
-                    if let Some(report) = decode_report(next) {
+                    let whole = decode_report(next).and_then(|part| {
+                        assembly.lock().ok().and_then(|mut parts| parts.add(part))
+                    });
+                    if let Some(report) = whole {
                         if let Some(sender) = reporter.lock().ok().and_then(|mut slot| slot.take())
                         {
                             let _ = sender.send(report);
@@ -315,13 +361,33 @@ fn check_script(give_up_on_check: bool, settle_now: bool) -> String {
 const CHECK_SCRIPT: &str = r#"
 (() => {
   if (!/^https?:$/.test(location.protocol) || document.readyState === 'loading') return;
-  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, sent: false };
-  if (state.sent) return;
+  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, parts: null, next: 0 };
 
-  const report = (blocked, text) => {
-    state.sent = true;
-    const payload = JSON.stringify({ title: document.title || '', text, blocked });
+  // A report travels in a URL, so a long page goes in parts, one per look,
+  // round and round until the window closes: a part the app missed comes by
+  // again. Each part is whole characters; a cut between the halves of a
+  // surrogate pair could not be encoded.
+  const PART = 100000;
+  const send = () => {
+    const index = state.next;
+    state.next = (index + 1) % state.parts.length;
+    const payload = JSON.stringify({
+      title: state.title, blocked: state.blocked, part: index, parts: state.parts.length, text: state.parts[index]
+    });
     location.href = 'https://lattice-page-reader.invalid/#' + encodeURIComponent(payload);
+  };
+  if (state.parts) { send(); return; }
+  const report = (blocked, text) => {
+    const parts = [];
+    let start = 0;
+    do {
+      let end = Math.min(start + PART, text.length);
+      if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
+      parts.push(text.slice(start, end));
+      start = end;
+    } while (start < text.length);
+    state.parts = parts; state.title = document.title || ''; state.blocked = blocked; state.next = 0;
+    send();
   };
 
   const challenged =
@@ -349,7 +415,7 @@ const CHECK_SCRIPT: &str = r#"
   const article = blocks(Array.from(document.querySelectorAll('article')));
   const page = blocks([document]);
   const parts = article.length > 0 && size(article) * 3 >= size(page) ? article : page;
-  report(false, parts.join('\n\n').slice(0, 60000));
+  report(false, parts.join('\n\n'));
 })();
 "#;
 
@@ -399,6 +465,8 @@ mod tests {
             title: "Title".to_string(),
             text: text.to_string(),
             blocked: false,
+            part: 0,
+            parts: 1,
         }
     }
 
@@ -454,6 +522,33 @@ mod tests {
         let report = decode_report(&url).expect("decodes");
         assert_eq!(report.title, "A — page");
         assert!(report.text.contains("ünïcode"));
+    }
+
+    /// A page's text used to be cut at 60,000 UTF-16 units before it was
+    /// sent. It now goes in parts, which arrive in any order and more than
+    /// once, and come back together whole.
+    #[test]
+    fn a_report_sent_in_parts_comes_back_whole() {
+        assert!(!CHECK_SCRIPT.contains(".slice(0, 60000)"));
+        let piece = |part: usize, text: &str| Report {
+            part,
+            parts: 3,
+            ..report(text)
+        };
+        let mut assembly = Assembly::default();
+        assert!(assembly.add(piece(2, "three")).is_none());
+        assert!(assembly.add(piece(0, "one ")).is_none());
+        assert!(assembly.add(piece(2, "ignored repeat")).is_none());
+        let whole = assembly.add(piece(1, "two ")).expect("every part is in");
+        assert_eq!(whole.text, "one two three");
+        assert_eq!(whole.title, "Title");
+
+        let mut single = Assembly::default();
+        assert_eq!(
+            single.add(report("short")).map(|r| r.text).as_deref(),
+            Some("short")
+        );
+        assert!(Assembly::default().add(piece(7, "out of range")).is_none());
     }
 
     #[test]

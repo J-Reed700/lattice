@@ -746,6 +746,7 @@ async fn a_truncated_read_resumes_instead_of_resending_its_prefix() {
         HistoryToolBudget {
             max_response_bytes: 1024,
             deadline: None,
+            ..Default::default()
         },
     );
     let mut memo = HistoryToolMemo::default();
@@ -792,6 +793,7 @@ async fn a_read_cut_inside_multibyte_text_stays_on_a_character_boundary() {
         HistoryToolBudget {
             max_response_bytes: 1001,
             deadline: None,
+            ..Default::default()
         },
     );
     let mut memo = HistoryToolMemo::default();
@@ -825,7 +827,7 @@ async fn history_reads_stop_when_the_turn_has_spent_its_share() {
     )
     .await;
     let mut memo = HistoryToolMemo {
-        bytes_delivered: MAX_TURN_RESPONSE_BYTES,
+        bytes_delivered: HistoryToolBudget::default().turn_response_bytes,
         ..Default::default()
     };
 
@@ -876,6 +878,7 @@ async fn an_expired_turn_deadline_stops_a_history_tool_before_it_reads() {
         HistoryToolBudget {
             max_response_bytes: 4096,
             deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+            ..Default::default()
         },
     );
     let mut memo = HistoryToolMemo::default();
@@ -1179,6 +1182,7 @@ fn a_requested_response_ceiling_cannot_exceed_what_the_turn_can_afford() {
     let budget = HistoryToolBudget {
         max_response_bytes: 2048,
         deadline: None,
+        ..Default::default()
     };
     assert_eq!(budget.resolve_bytes(Some(1_000_000)), 2048);
     assert_eq!(budget.resolve_bytes(Some(1024)), 1024);
@@ -1466,4 +1470,90 @@ async fn a_message_longer_than_the_recall_budget_is_cut_and_marked() {
     assert!(passages[0]
         .text
         .contains("more bytes of this message are not shown"));
+}
+
+/// A search used to stop at its page and say only that more may exist. Each
+/// page now names where the next starts, and the last says there is none.
+#[tokio::test]
+async fn a_search_pages_through_every_match_by_offset() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    for n in 0..12 {
+        seed_message(
+            &pool,
+            "conv-mine",
+            &format!("m{n}"),
+            "user",
+            &format!("deploy checklist item {n}"),
+            "completed",
+        )
+        .await;
+    }
+    let port = port(&pool);
+    let scope = scope("conv-mine");
+    let mut memo = HistoryToolMemo::default();
+    let mut seen = std::collections::HashSet::new();
+    let mut offset = 0u64;
+    let mut pages = 0;
+    loop {
+        let result = execute(
+            &port,
+            &scope,
+            &mut memo,
+            search_call(
+                serde_json::json!({"query": "deploy checklist", "limit": 5, "offset": offset}),
+            ),
+        )
+        .await
+        .unwrap();
+        pages += 1;
+        for found in data(&result)["matches"].as_array().unwrap() {
+            assert!(seen.insert(found["message_id"].as_str().unwrap().to_string()));
+        }
+        match data(&result)["next_offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+        assert!(pages < 10, "paging must end");
+    }
+    assert_eq!(seen.len(), 12);
+    assert_eq!(pages, 3);
+}
+
+/// The turn's history budget is the model's window, not a fixed 128 KiB: a
+/// large window keeps reading past that.
+#[tokio::test]
+async fn the_turns_history_budget_follows_the_window() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "m1",
+        "user",
+        "importer notes",
+        "completed",
+    )
+    .await;
+    let mut memo = HistoryToolMemo {
+        bytes_delivered: 200 * 1024,
+        ..Default::default()
+    };
+    let scope = HistoryToolScope::new(
+        "conv-mine",
+        HistoryToolBudget {
+            max_response_bytes: 4096,
+            turn_response_bytes: 1024 * 1024,
+            deadline: None,
+        },
+    );
+    let result = execute(
+        &port(&pool),
+        &scope,
+        &mut memo,
+        read_call(serde_json::json!({"message_ids": ["m1"]})),
+    )
+    .await
+    .unwrap();
+    assert!(result.success, "{:?}", result.error_message);
 }

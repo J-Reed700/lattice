@@ -72,7 +72,7 @@ pub(super) async fn execute_read(
         .or(resume.map(|cursor| cursor.start_byte))
         .unwrap_or(0) as usize;
 
-    let turn_remaining = memo.turn_remaining();
+    let turn_remaining = memo.turn_remaining(&scope.budget);
     if turn_remaining < MIN_RESPONSE_BYTES {
         return Ok(FunctionResult::error(
             "TURN_BUDGET_EXHAUSTED",

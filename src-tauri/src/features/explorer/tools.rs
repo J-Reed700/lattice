@@ -22,8 +22,15 @@ pub const TOOL_SEARCH_FILES: &str = "search_files";
 pub const TOOL_FIND_FILES: &str = "find_files";
 
 /// Lines one `read_file` call returns at most.
-const SEARCH_RESULTS: usize = 50;
-const FIND_RESULTS: usize = 100;
+/// The shortest a listed match or path can be ("a:1: x" and its newline):
+/// no more entries than this can fit a result, so collecting more than its
+/// allowance over this only to drop them is wasted. The rest are counted.
+const MIN_LISTED_LINE_CHARS: usize = 8;
+
+/// Entries a result of `max_chars` could show at most.
+fn listable(max_chars: usize) -> usize {
+    (max_chars / MIN_LISTED_LINE_CHARS).max(1)
+}
 /// A minified bundle can put a whole file on one line; past this a line is
 /// clipped so one line cannot spend the whole allowance.
 /// Room kept for the header and the "how to read on" footer.
@@ -89,11 +96,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_SEARCH_FILES.to_string(),
-            description: format!(
-                "Search the text of the files in the user's folder. Returns up to \
-                 {SEARCH_RESULTS} matching lines as path:line with a preview. A lowercase query \
-                 ignores case. Files ignored by .gitignore and binary files are not searched."
-            ),
+            description:
+                "Search the text of the files in the user's folder. Returns matching lines as \
+                 path:line with a preview, as many as fit, and how many more there are. A \
+                 lowercase query ignores case. Files ignored by .gitignore and binary files are \
+                 not searched."
+                    .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -117,11 +125,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_FIND_FILES.to_string(),
-            description: format!(
-                "Find files in the user's folder by name or path: a substring such as \
-                 \"router\", or a glob such as \"*.rs\" or \"src/**/test_*.py\". Returns up to \
-                 {FIND_RESULTS} paths relative to the folder root."
-            ),
+            description: "Find files in the user's folder by name or path: a substring such as \
+                 \"router\", or a glob such as \"*.rs\" or \"src/**/test_*.py\". Returns the \
+                 paths relative to the folder root, as many as fit, and how many more there are."
+                .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -468,14 +475,15 @@ fn search_files(
     path: &str,
     max_chars: usize,
 ) -> Result<String> {
-    let result = fs::search(
+    let (result, more) = fs::search_counting(
         scope,
         &SearchRequest {
             query,
             regex,
             path_prefix: (!path.is_empty()).then_some(path),
-            max_results: SEARCH_RESULTS,
+            max_results: listable(max_chars),
         },
+        fs::WalkBounds::default(),
     )?;
     let place = if path.is_empty() {
         String::new()
@@ -489,12 +497,12 @@ fn search_files(
         );
         if result.truncated {
             out.push_str(
-                " The search stopped at a limit before covering every file; narrow it with path.",
+                " The search stopped at its time or file limit before covering every file; narrow it with path.",
             );
         }
         return Ok(out);
     }
-    let count = result.matches.len();
+    let count = result.matches.len() + more;
     let mut out = format!(
         "{count} match{} for \"{query}\"{place}:\n",
         if count == 1 { "" } else { "es" }
@@ -510,19 +518,22 @@ fn search_files(
         max_chars.saturating_sub(FRAMING_CHARS),
     );
     if result.truncated {
-        out.push_str("[The search stopped at a limit, so there may be more. Narrow it with path or a more specific query.]\n");
+        out.push_str(&format!(
+            "[The search stopped at its time or file limit after {} files, so files past them were not searched. Narrow it with path or a more specific query.]\n",
+            result.files_scanned
+        ));
     }
     Ok(out)
 }
 
 fn find_files(scope: &Scope, pattern: &str, max_chars: usize) -> Result<String> {
-    let found = fs::find_files(scope, pattern, FIND_RESULTS)?;
+    let found = fs::find_files(scope, pattern, listable(max_chars))?;
     if found.paths.is_empty() {
         return Ok(format!(
             "No files match \"{pattern}\" (files ignored by .gitignore are skipped)."
         ));
     }
-    let count = found.paths.len();
+    let count = found.paths.len() + found.more;
     let mut out = format!(
         "{count} file{} matching \"{pattern}\":\n",
         if count == 1 { "" } else { "s" }
@@ -534,7 +545,7 @@ fn find_files(scope: &Scope, pattern: &str, max_chars: usize) -> Result<String> 
         max_chars.saturating_sub(FRAMING_CHARS),
     );
     if found.truncated {
-        out.push_str("[Stopped at a limit, so there may be more. Use a more specific pattern.]\n");
+        out.push_str("[The walk stopped at its time or file limit before covering every file, so there may be more. Use a more specific pattern.]\n");
     }
     Ok(out)
 }

@@ -450,7 +450,7 @@ mod rules {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_folder_over_the_cap_embeds_nothing() {
+    async fn a_folder_over_the_bound_is_indexed_up_to_it_and_says_how_many_more() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let mut config = rig.config();
@@ -468,12 +468,16 @@ mod rules {
         assert_eq!(status.state, FolderIndexState::TooLarge);
         assert_eq!(status.files_total, 8);
         let message = status.message.unwrap();
+        // Indexed up to the bound, the rest counted; a folder one file past
+        // the bound used to have nothing indexed at all.
         assert!(
-            message.contains("8 files") && message.contains("limit is 5"),
+            message.contains("5 of 8 files are indexed")
+                && message.contains("other 3")
+                && message.contains("limit of 5"),
             "{message}"
         );
-        assert!(embedder.embedded().is_empty());
-        assert!(manager.search_for(&root).await.is_none());
+        assert!(!embedder.embedded().is_empty());
+        assert!(manager.search_for(&root).await.is_some());
         manager.close().await;
     }
 
@@ -972,9 +976,10 @@ mod registry {
             .remove(0);
         assert_eq!(summary.state, FolderIndexSummaryState::TooLarge);
         assert_eq!(summary.files_total, 5);
+        assert_eq!(summary.files_indexed, 3);
         let message = summary.message.unwrap();
         assert!(
-            message.contains("5 files") && message.contains("limit is 3"),
+            message.contains("3 of 5 files are indexed") && message.contains("limit of 3"),
             "{message}"
         );
 

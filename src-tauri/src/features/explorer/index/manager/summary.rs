@@ -172,21 +172,23 @@ impl FolderIndexManager {
         }
         match store::inspect(&dir, &prefix).await {
             Ok(None) => {}
-            Ok(Some(snapshot)) => match snapshot.too_large.filter(|_| prefix.is_empty()) {
-                Some(found) => {
-                    summary.state = FolderIndexSummaryState::TooLarge;
-                    summary.files_total = u32::try_from(found.count).unwrap_or(u32::MAX);
-                    summary.message = Some(too_large_message(found, self.config.limits.max_files));
+            Ok(Some(snapshot)) => {
+                let counts = snapshot.counts;
+                summary.files_total = counts.files_total;
+                summary.files_indexed = counts.files_indexed;
+                summary.passages_total = counts.passages_total;
+                summary.passages_embedded = counts.passages_embedded;
+                match snapshot.too_large.filter(|_| prefix.is_empty()) {
+                    // Indexed up to the bound; the count is everything found.
+                    Some(found) => {
+                        summary.state = FolderIndexSummaryState::TooLarge;
+                        summary.files_total = u32::try_from(found.count).unwrap_or(u32::MAX);
+                        summary.message =
+                            Some(too_large_message(found, self.config.limits.max_files));
+                    }
+                    None => summary.state = settled_state(&counts, snapshot.complete),
                 }
-                None => {
-                    let counts = snapshot.counts;
-                    summary.state = settled_state(&counts, snapshot.complete);
-                    summary.files_total = counts.files_total;
-                    summary.files_indexed = counts.files_indexed;
-                    summary.passages_total = counts.passages_total;
-                    summary.passages_embedded = counts.passages_embedded;
-                }
-            },
+            }
             Err(error) => {
                 summary.state = FolderIndexSummaryState::Error;
                 summary.message = Some(error.to_string());

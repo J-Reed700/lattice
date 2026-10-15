@@ -660,9 +660,14 @@ fn chars_in_flight(input: &[lattice_core::application::ports::llm_port::Completi
 /// The window alone decides: there is no configured ceiling on top of it, so a
 /// large window carries a long result whole. A result longer than its share is
 /// shown in part and says how to read on (see `format_tool_result`).
+///
+/// One share of what is left is always kept back for the round after this
+/// one. A lone page read that took the whole window left the next round
+/// nothing to read with: it had to condense or stop, so one long page ended
+/// the research. The rest of a long page is a further call by offset.
 fn tool_result_allowance(window_chars: usize, chars_in_flight: usize, calls_left: usize) -> usize {
     let room = window_chars.saturating_sub(chars_in_flight);
-    let share = room / calls_left.max(1);
+    let share = room / calls_left.saturating_add(1).max(2);
     // The floor is only kept while the window can still take it. Past that, a
     // result is given its share of what is left and no more: overrunning the
     // window fails the next round outright, which is worse than a short result.

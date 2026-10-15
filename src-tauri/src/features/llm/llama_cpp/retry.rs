@@ -217,7 +217,7 @@ impl LlamaCppLlm {
                 Failure::Permanent(error)
             }
         })?;
-        let (response, timings) = read_stream(
+        let (mut response, timings) = read_stream(
             response.bytes_stream(),
             Patience {
                 first_frame,
@@ -230,6 +230,13 @@ impl LlamaCppLlm {
         )
         .await?;
         log_served(body, timings);
+        response.prefill =
+            timings.map(
+                |timings| lattice_core::application::ports::llm_port::PrefillTiming {
+                    tokens: timings.evaluated_prompt_tokens,
+                    seconds: timings.prompt_ms / 1000.0,
+                },
+            );
         // The same request would hit the same limit again; retrying only
         // spends the budget several times over.
         if response.finish_reason == "length" && response.text.trim().is_empty() {

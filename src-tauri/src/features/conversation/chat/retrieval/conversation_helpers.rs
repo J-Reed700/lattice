@@ -43,6 +43,7 @@ pub(super) async fn build_hyde_context_window_for_conversation(
     conversation_id: &str,
     question: &str,
     planner: &dyn lattice_core::application::ports::LLMPort,
+    within_tokens: Option<usize>,
 ) -> Option<String> {
     let aggregate = match conv_service.get_conversation(conversation_id).await {
         Ok(Some(aggregate)) => aggregate,
@@ -57,9 +58,11 @@ pub(super) async fn build_hyde_context_window_for_conversation(
         }
     };
 
+    // The window share, bounded by what a call with a deadline reads in time.
     let room = lattice_core::application::services::history_share::auxiliary_history_room(
         planner, question,
     );
+    let room = within_tokens.map_or(room, |within| room.min(within));
     query_planning_context(aggregate.messages(), question, room, &|text| {
         planner.count_tokens(text)
     })

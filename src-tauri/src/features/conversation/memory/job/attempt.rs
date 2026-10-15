@@ -15,7 +15,7 @@ use super::super::selection::{
 };
 use super::super::{
     extract, segment, summarize, verify, CompactionError, CompactionOutcome, CompactionRequest,
-    CompactionStatus, CompactionTrigger, Deadline, MAX_FORGOTTEN_LABELS,
+    CompactionStatus, CompactionTrigger, Deadline,
 };
 use super::{
     hold_before, redact_forgotten, summary_resume_point, CandidateLedger, CompactionJob,
@@ -334,10 +334,7 @@ impl CompactionJob {
             Vec::new()
         } else {
             let labels_phase = PhaseTiming::start(conversation_id, "read_forgotten_labels");
-            let labels = self
-                .memory
-                .forgotten_labels(conversation_id, MAX_FORGOTTEN_LABELS)
-                .await;
+            let labels = self.memory.forgotten_labels(conversation_id).await;
             labels_phase.finish(if labels.is_ok() { "completed" } else { "error" });
             labels?
         };

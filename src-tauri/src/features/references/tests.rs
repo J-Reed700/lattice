@@ -196,3 +196,14 @@ fn create_impl_stores_long_text_whole() {
     let built = build_create_record(create_request(&long)).unwrap();
     assert_eq!(built.text, long);
 }
+
+/// A note was cut at 4,000 characters on save. It is the user's own writing
+/// and is stored as they wrote it.
+#[test]
+fn create_impl_stores_a_long_note_whole() {
+    let note = format!("{}the end", "a considered thought. ".repeat(500));
+    let mut request = create_request("A passage.");
+    request.note = Some(note.clone());
+    let built = build_create_record(request).unwrap();
+    assert_eq!(built.note.as_deref(), Some(note.as_str()));
+}

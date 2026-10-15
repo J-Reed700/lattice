@@ -36,7 +36,9 @@ use lattice_core::application::services::claim_verification::{
 pub(super) use lattice_core::application::services::claim_verification::{
     ClaimEvidence, ClaimJudgment, MIN_VERDICT_CONFIDENCE,
 };
-use lattice_core::application::services::evidence_retrieval::{join_windows, scored_windows};
+use lattice_core::application::services::evidence_retrieval::{
+    join_windows, scored_windows, WINDOW_OVERLAP_CHARS,
+};
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
@@ -141,12 +143,14 @@ impl ClaimJudge {
 
     /// Judge each `(claim index, claim text, evidence)`, keyed back by index.
     ///
-    /// Every request gets an entry. Every claim is submitted at once against
-    /// one deadline, and the backend's scheduler decides how many run side by
-    /// side: at verification priority, behind the user's next turn and never
-    /// in the slot kept for it. A claim still queued when the deadline passes
-    /// is never started; one running is cut off, so judging never outlives
-    /// its budget.
+    /// Every request gets an entry. Parts are judged round by round: every
+    /// claim's best part first, then the second part of each claim still
+    /// open, and so on, so a claim citing a long page cannot spend the budget
+    /// before the claims after it get their first call. Within a round every
+    /// call is submitted at once and the backend's scheduler decides how many
+    /// run side by side, at verification priority, behind the user's next
+    /// turn. A claim still open when the deadline passes is out of time; one
+    /// running is cut off, so judging never outlives its budget.
     pub(super) async fn judge_claims(
         &self,
         requests: &[(usize, &str, Vec<ClaimEvidence>)],
@@ -157,17 +161,37 @@ impl ClaimJudge {
         }
 
         let deadline = Instant::now() + self.time_budget;
-        // Boxed: the borrowed `async fn` futures otherwise trip the compiler's
-        // higher-ranked `Send` check once the whole turn is spawned.
-        let calls: Vec<BoxFuture<'_, (usize, ClaimJudgment)>> = requests
+        let mut tallies: Vec<Tally> = requests.iter().map(|_| Tally::default()).collect();
+        let rounds = requests
             .iter()
-            .map(|(index, claim, evidence)| {
-                async move { (*index, self.judge_one(claim, evidence, deadline).await) }.boxed()
-            })
-            .collect();
-        let mut calls: futures::stream::FuturesUnordered<_> = calls.into_iter().collect();
-        while let Some((index, judgment)) = calls.next().await {
-            judgments.insert(index, judgment);
+            .map(|(_, _, parts)| parts.len())
+            .max()
+            .unwrap_or(0);
+        for round in 0..rounds {
+            // Boxed: the borrowed `async fn` futures otherwise trip the
+            // compiler's higher-ranked `Send` check once the whole turn is
+            // spawned.
+            let calls: Vec<BoxFuture<'_, (usize, ClaimJudgment)>> = requests
+                .iter()
+                .enumerate()
+                .filter(|(slot, _)| tallies.get(*slot).is_some_and(Tally::is_open))
+                .filter_map(|(slot, (_, claim, parts))| {
+                    let part = parts.get(round)?;
+                    Some(
+                        async move { (slot, self.checker().check(claim, part, deadline).await) }
+                            .boxed(),
+                    )
+                })
+                .collect();
+            let mut calls: futures::stream::FuturesUnordered<_> = calls.into_iter().collect();
+            while let Some((slot, judgment)) = calls.next().await {
+                if let Some(tally) = tallies.get_mut(slot) {
+                    tally.record(judgment);
+                }
+            }
+        }
+        for ((index, _, parts), tally) in requests.iter().zip(tallies) {
+            judgments.insert(*index, tally.finish(parts.len()));
         }
 
         let judged = judgments
@@ -194,43 +218,55 @@ impl ClaimJudge {
         );
         judgments
     }
+}
 
-    /// Judge `claim` against each part of its evidence in turn, stopping at
-    /// the first that supports it: one cited source supporting a claim is
-    /// enough. A claim no part supports takes the strongest finding among them,
-    /// and one whose parts were not all reached is unchecked, not a finding,
-    /// since the part left over might have held the support.
-    async fn judge_one(
-        &self,
-        claim: &str,
-        parts: &[ClaimEvidence],
-        deadline: Instant,
-    ) -> ClaimJudgment {
-        let checker = self.checker();
-        let mut strongest: Option<JudgeOutcome> = None;
-        let mut unreached: Option<ClaimJudgment> = None;
-        for part in parts {
-            match checker.check(claim, part, deadline).await {
-                ClaimJudgment::Judged(outcome) => {
-                    if outcome.verdict == ClaimVerdict::Supported && confident(&outcome) {
-                        return ClaimJudgment::Judged(outcome);
-                    }
-                    strongest = Some(match strongest {
-                        Some(held) if finding_rank(&held) >= finding_rank(&outcome) => held,
-                        _ => outcome,
-                    });
+/// What the parts of one claim judged so far add up to.
+///
+/// The first part that supports the claim confidently settles it: one cited
+/// source supporting a claim is enough. A claim no part supports takes the
+/// strongest finding among them. A part that could not be judged (a
+/// transport failure, a refused prompt, a reply with no verdict, or the
+/// deadline) settles the claim as unchecked and its later parts are not
+/// asked: the part left over might have held the support, so it is never
+/// called unsupported, and a failing backend is not asked again and again.
+#[derive(Default)]
+struct Tally {
+    strongest: Option<JudgeOutcome>,
+    settled: Option<ClaimJudgment>,
+    reached: usize,
+}
+
+impl Tally {
+    fn is_open(&self) -> bool {
+        self.settled.is_none()
+    }
+
+    fn record(&mut self, judgment: ClaimJudgment) {
+        self.reached += 1;
+        match judgment {
+            ClaimJudgment::Judged(outcome) => {
+                if outcome.verdict == ClaimVerdict::Supported && confident(&outcome) {
+                    self.settled = Some(ClaimJudgment::Judged(outcome));
+                    return;
                 }
-                ClaimJudgment::OutOfTime => return ClaimJudgment::OutOfTime,
-                failed => {
-                    unreached.get_or_insert(failed);
-                }
+                self.strongest = Some(match self.strongest.take() {
+                    Some(held) if finding_rank(&held) >= finding_rank(&outcome) => held,
+                    _ => outcome,
+                });
             }
+            unjudged => self.settled = Some(unjudged),
         }
-        match (unreached, strongest) {
-            (Some(failed), _) => failed,
-            (None, Some(outcome)) => ClaimJudgment::Judged(outcome),
-            (None, None) => ClaimJudgment::Unusable,
+    }
+
+    fn finish(self, parts: usize) -> ClaimJudgment {
+        if let Some(settled) = self.settled {
+            return settled;
         }
+        if self.reached < parts {
+            return ClaimJudgment::OutOfTime;
+        }
+        self.strongest
+            .map_or(ClaimJudgment::Unusable, ClaimJudgment::Judged)
     }
 }
 
@@ -335,10 +371,10 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
     let per_source: Vec<(u32, Vec<ScoredWindow>)> = cited
         .iter()
         .map(|(citation_id, body)| {
+            // Every window, best first; stable, so equal scores keep page
+            // order. A window sharing no words with the claim is kept, in
+            // the last parts: a paraphrase shares none and is still support.
             let mut windows = scored_windows(&claim.claim_text, body);
-            let only_one = windows.len() == 1;
-            windows.retain(|window| only_one || window.score > 0);
-            // Stable: equal scores keep page order.
             windows.sort_by_key(|window| std::cmp::Reverse(window.score));
             (*citation_id, windows)
         })
@@ -370,13 +406,11 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
         let Some(citation_id) = per_source.get(slot).map(|(id, _)| *id) else {
             continue;
         };
-        let opens_block = current.get(slot).is_none_or(Vec::is_empty);
-        let framing = if opens_block {
-            source_label(citation_id).chars().count() + BLOCK_SEPARATOR.len()
-        } else {
-            WINDOW_SEPARATOR.chars().count()
-        };
-        let mut cost = window.text.chars().count() + framing;
+        let mut cost = rendered_cost(
+            current.get(slot).map_or(&[][..], Vec::as_slice),
+            window,
+            citation_id,
+        );
         // A part always takes at least one window: a claim is never judged
         // against nothing because one window was long.
         if used > 0 && used + cost > room {
@@ -401,6 +435,29 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
             .map(|part| render_part(&claim.claim_text, &per_source, part))
             .collect(),
     )
+}
+
+/// What adding `window` to the windows `taken` from its source in one part
+/// adds to the rendered part. Windows overlap their neighbours, and joined
+/// neighbours show the shared text once, so a window next to one already
+/// taken costs only what it adds; costing every window whole split a page
+/// into about half as many parts again as it needed.
+fn rendered_cost(taken: &[&ScoredWindow], window: &ScoredWindow, citation_id: u32) -> usize {
+    let length = window.text.chars().count();
+    if taken.is_empty() {
+        return length + source_label(citation_id).chars().count() + BLOCK_SEPARATOR.len();
+    }
+    let beside =
+        |index: Option<usize>| index.is_some_and(|index| taken.iter().any(|t| t.index == index));
+    let left = beside(window.index.checked_sub(1));
+    let right = beside(window.index.checked_add(1));
+    match (left, right) {
+        (true, true) => length
+            .saturating_sub(2 * WINDOW_OVERLAP_CHARS)
+            .saturating_sub(WINDOW_SEPARATOR.chars().count()),
+        (true, false) | (false, true) => length.saturating_sub(WINDOW_OVERLAP_CHARS),
+        (false, false) => length + WINDOW_SEPARATOR.chars().count(),
+    }
 }
 
 /// One judge call's evidence: each source's windows in reading order under

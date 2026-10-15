@@ -11,7 +11,9 @@ use super::health::{
 use super::prompt::PLANNER_OUTPUT_TOKENS;
 use super::shortlist::shortlist;
 use super::*;
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, PrefillTiming,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::value_objects::source_context::{
     SourceContext, SourceGroup, StructureMode,
@@ -569,37 +571,52 @@ async fn only_a_timeout_at_the_smallest_prompt_stands_the_planner_down_and_only_
     assert!(PlannerTurn::with_health(&health).unavailable().is_none());
 }
 
-/// The prompt follows the planner's measured speed: what it read in the time
-/// it took, scaled to half the timeout. There is no ceiling: a fast planner
-/// keeps earning room, at most a doubling an answer.
+fn read_in(tokens: usize, time: Duration) -> Option<PrefillTiming> {
+    Some(PrefillTiming {
+        tokens: tokens as u64,
+        seconds: time.as_secs_f64(),
+    })
+}
+
+/// The prompt follows the planner's measured prefill speed: what it reads in
+/// half the timeout. There is no ceiling: a fast planner keeps earning room,
+/// at most a doubling an answer.
 #[test]
 fn the_prompt_size_follows_the_measured_planner_speed() {
     let health = PlannerHealth::new();
-    // 2,560 tokens in 2.5s on a 20s timeout: four times faster than the
-    // target needs, so the prompt doubles (the most one answer earns).
-    health.answered(PLANNER_TIMEOUT / 8, PLANNER_PROMPT_TOKENS);
+    // 2,560 tokens read in an eighth of the timeout: four times faster than
+    // the target needs, so the prompt doubles (the most one answer earns).
+    health.answered(
+        read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT / 8),
+        PLANNER_PROMPT_TOKENS,
+    );
     assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS * 2);
-    health.answered(PLANNER_TIMEOUT / 8, PLANNER_PROMPT_TOKENS * 2);
+    health.answered(
+        read_in(PLANNER_PROMPT_TOKENS * 2, PLANNER_TIMEOUT / 8),
+        PLANNER_PROMPT_TOKENS * 2,
+    );
     assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS * 4);
-    // Past the old 2,560-token ceiling, and still settling on the measure:
-    // twice the target time halves it back toward what the planner managed.
-    let now = health.prompt_tokens();
-    health.answered(PLANNER_TIMEOUT, now);
-    assert_eq!(health.prompt_tokens(), now / 2);
 }
 
-/// An answer inside the target time never shrinks the prompt, however slow it
-/// was per token: the time may have gone to writing the plan.
+/// An answer in time never shrinks the prompt. The reported case: a 9B
+/// planner answered in time, but most of that time went to writing the plan
+/// and waiting in the queue; measured end to end it read as slow prefill and
+/// shrank the prompt from 2,560 tokens to the floor over a few turns.
 #[test]
 fn an_answer_in_time_keeps_its_room() {
     let health = PlannerHealth::new();
+    for _ in 0..4 {
+        health.answered(
+            read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT * 9 / 10),
+            PLANNER_PROMPT_TOKENS,
+        );
+    }
+    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
     health.timed_out(PLANNER_PROMPT_TOKENS);
     let shrunk = health.prompt_tokens();
-    health.answered(PLANNER_TIMEOUT / 2, shrunk / 4);
+    assert!(shrunk < PLANNER_PROMPT_TOKENS);
+    health.answered(None, shrunk / 4);
     assert_eq!(health.prompt_tokens(), shrunk);
-    health.answered(PLANNER_TIMEOUT * 3 / 4, shrunk);
-    assert!(health.prompt_tokens() >= PLANNER_PROMPT_FLOOR);
-    assert!(health.prompt_tokens() < shrunk);
 }
 
 #[tokio::test]
@@ -647,4 +664,35 @@ async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     assert_eq!(planned.queries, [question]);
     // A bad answer is still an answer in time: it never shrinks the prompt.
     assert!(health.prompt_tokens() >= PLANNER_PROMPT_TOKENS);
+}
+
+/// The planner's excerpt of the conversation was cut by characters from its
+/// start, mid-message and without a word. It keeps whole lines, newest
+/// first, and counts the ones left out.
+#[test]
+fn the_planners_history_is_whole_lines_with_the_rest_counted() {
+    let stub = UtilityStub::new(16_384, true);
+    let history = (0..400)
+        .map(|n| format!("user: question number {n} about the spare key"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let kept = super::prompt::recent_history(&stub, Some(&history), PLANNER_PROMPT_TOKENS);
+    let mut lines = kept.lines();
+    assert!(lines
+        .next()
+        .unwrap()
+        .contains("earlier lines of the conversation not shown"));
+    assert!(lines.all(|line| line.starts_with("user: question number ")));
+    assert!(kept.ends_with("question number 399 about the spare key"));
+}
+
+/// The planner's share of the conversation follows the prompt it reads in
+/// time, not a quarter of its window: a timeout shrinks both.
+#[test]
+fn the_planners_history_follows_what_it_reads_in_time() {
+    let health = PlannerHealth::new();
+    let before = PlannerTurn::with_health(&health).history_tokens();
+    assert_eq!(before, PLANNER_PROMPT_TOKENS / 5);
+    health.timed_out(PLANNER_PROMPT_TOKENS);
+    assert!(PlannerTurn::with_health(&health).history_tokens() < before);
 }

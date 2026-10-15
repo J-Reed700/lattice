@@ -2,7 +2,8 @@
 use crate::features::learning::dto::*;
 use crate::features::learning::model_call;
 use lattice_core::{
-    application::ports::LLMPort,
+    application::ports::{llm_port::PrefillTiming, LLMPort},
+    application::services::prompt_pace::{history_room_within, PromptPace},
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
@@ -26,6 +27,15 @@ fn complete_reason(reason: &str) -> Result<()> {
     }
     Ok(())
 }
+/// How long one practice model call may take, queueing included.
+const PRACTICE_DEADLINE: Duration = Duration::from_secs(120);
+const PRACTICE_TIMEOUT_MESSAGE: &str = "Practice model request timed out.";
+
+/// A pace for the tutor's deadline, one per app.
+pub fn tutor_pace() -> PromptPace {
+    PromptPace::new(PRACTICE_DEADLINE)
+}
+
 async fn complete_json(
     llm: &dyn LLMPort,
     system: &str,
@@ -33,13 +43,26 @@ async fn complete_json(
     schema: serde_json::Value,
     max_tokens: usize,
 ) -> Result<String> {
+    complete_json_measured(llm, system, prompt, schema, max_tokens)
+        .await
+        .map(|(output, _)| output)
+}
+
+/// [`complete_json`], with the provider's measure of reading the prompt.
+async fn complete_json_measured(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: String,
+    schema: serde_json::Value,
+    max_tokens: usize,
+) -> Result<(String, Option<PrefillTiming>)> {
     let response = model_call::send(
         llm,
         model_call::structured(system, prompt, schema, max_tokens, "low"),
         None,
         Some(model_call::Deadline {
-            after: Duration::from_secs(120),
-            message: "Practice model request timed out.",
+            after: PRACTICE_DEADLINE,
+            message: PRACTICE_TIMEOUT_MESSAGE,
         }),
         "Practice request exceeds this model's context window.",
     )
@@ -51,7 +74,7 @@ async fn complete_json(
             "The model response exceeded the structured-output limit.",
         ));
     }
-    Ok(output)
+    Ok((output, response.prefill))
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,24 +156,36 @@ fn solution_schema() -> serde_json::Value {
 
 const TUTOR_SYSTEM: &str = "You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.";
 
+/// The newest of `turns` (oldest first) that the tutor's window gives history
+/// and its model reads before the deadline once `fixed_text` is paid for, and
+/// how many older ones were left out.
+fn turns_within<'t>(
+    llm: &dyn LLMPort,
+    pace: &PromptPace,
+    fixed_text: &str,
+    turns: &'t [serde_json::Value],
+) -> (&'t [serde_json::Value], usize) {
+    use lattice_core::application::services::history_share::{
+        auxiliary_history_room, newest_that_fit,
+    };
+    let room = auxiliary_history_room(llm, fixed_text);
+    let room = history_room_within(pace, room, llm.count_tokens(fixed_text));
+    newest_that_fit(turns, room, |turn| llm.count_tokens(&turn.to_string()))
+}
+
 pub async fn tutor(
     llm: &dyn LLMPort,
+    pace: &PromptPace,
     session: &LearningPracticeSessionDto,
     request: &RequestLearningTutorResponseRequestDto,
     sources: &[LearningSourceVersionDto],
 ) -> Result<TutorJson> {
     // Earlier tutor turns, newest first, as many as the tutor's window gives
-    // history, with a count of any left out.
+    // history and its model reads before the deadline, with a count of any
+    // left out.
     let fixed = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":source_context(sources)});
     let turns: Vec<serde_json::Value> = session.tutor_turns.iter().map(|t|serde_json::json!({"request":t.prompt,"response":t.response,"hintLevel":t.hint_level})).collect();
-    let room = lattice_core::application::services::history_share::auxiliary_history_room(
-        llm,
-        &format!("{TUTOR_SYSTEM}{fixed}"),
-    );
-    let (kept, omitted) =
-        lattice_core::application::services::history_share::newest_that_fit(&turns, room, |turn| {
-            llm.count_tokens(&turn.to_string())
-        });
+    let (kept, omitted) = turns_within(llm, pace, &format!("{TUTOR_SYSTEM}{fixed}"), &turns);
     let mut prompt = fixed;
     if let Some(fields) = prompt.as_object_mut() {
         fields.insert(
@@ -165,7 +200,18 @@ pub async fn tutor(
         }
     }
     let prompt = prompt.to_string();
-    let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
+    let sent_tokens = llm.count_tokens(TUTOR_SYSTEM) + llm.count_tokens(&prompt);
+    let raw = match complete_json_measured(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await {
+        Ok((raw, prefill)) => {
+            pace.answered(prefill, sent_tokens);
+            raw
+        }
+        Err(AppError::ServiceNotAvailable(message)) if message == PRACTICE_TIMEOUT_MESSAGE => {
+            pace.timed_out(sent_tokens);
+            return Err(AppError::ServiceNotAvailable(message));
+        }
+        Err(error) => return Err(error),
+    };
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
     if parsed.response.trim().is_empty()
@@ -315,4 +361,60 @@ fn validate_grade(
         return Err(invalid("The grader returned duplicate criteria."));
     }
     Ok((parsed.status, out))
+}
+
+#[cfg(test)]
+mod pace_tests {
+    use super::*;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+
+    struct Words;
+
+    #[async_trait::async_trait]
+    impl LLMPort for Words {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text("{}"))
+        }
+        fn model_name(&self) -> &str {
+            "words"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// On a large window a quarter of it is ~32K tokens of tutor turns, more
+    /// than a local model reads before the tutor's two-minute deadline. Once
+    /// a pace is measured the turns are what the model reads in time, and the
+    /// older ones are counted, not cut.
+    #[test]
+    fn tutor_history_is_what_the_model_reads_before_the_deadline() {
+        let turns: Vec<serde_json::Value> = (0..400)
+            .map(|turn| serde_json::json!({"request": format!("turn {turn}"), "response": "word ".repeat(200)}))
+            .collect();
+        let pace = tutor_pace();
+        let (unmeasured, _) = turns_within(&Words, &pace, "fixed prompt", &turns);
+        // 100 tokens a second: 6,000 tokens in half the deadline.
+        pace.answered(
+            Some(PrefillTiming {
+                tokens: 100,
+                seconds: 1.0,
+            }),
+            100,
+        );
+        let (paced, omitted) = turns_within(&Words, &pace, "fixed prompt", &turns);
+        assert!(paced.len() < unmeasured.len());
+        assert_eq!(omitted, turns.len() - paced.len());
+        let cost: usize = paced
+            .iter()
+            .map(|turn| Words.count_tokens(&turn.to_string()))
+            .sum();
+        assert!(cost <= 6_000, "{cost} tokens of history");
+    }
 }

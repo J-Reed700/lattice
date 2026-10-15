@@ -429,12 +429,14 @@ async fn build_hyde_context_window_for_conversation(
     conversation_id: &str,
     question: &str,
     planner: &dyn lattice_core::application::ports::LLMPort,
+    within_tokens: Option<usize>,
 ) -> Option<String> {
     build_hyde_context_window_for_conversation_impl(
         conv_service,
         conversation_id,
         question,
         planner,
+        within_tokens,
     )
     .await
 }

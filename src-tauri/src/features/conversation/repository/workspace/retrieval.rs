@@ -80,6 +80,11 @@ impl ConversationRepository {
     /// The mean length, in characters, of the indexed passages of
     /// `allowed_ids`: what one retrieved passage costs a prompt, measured on
     /// this library rather than assumed. `None` when the scope has none.
+    ///
+    /// Read from the per-document totals the chunk triggers keep, so a turn
+    /// costs one row per document in scope rather than a pass over every
+    /// passage, and the scope is one bound value however many documents it
+    /// holds.
     pub async fn retrieval_mean_chunk_chars(
         &self,
         allowed_ids: &HashSet<String>,
@@ -87,18 +92,22 @@ impl ConversationRepository {
         if allowed_ids.is_empty() {
             return Ok(None);
         }
-        let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT AVG(LENGTH(content)) FROM text_chunks WHERE document_id IN (",
-        );
-        let mut separated = query.separated(", ");
-        for id in allowed_ids {
-            separated.push_bind(id);
+        let scope = serde_json::to_string(allowed_ids)
+            .map_err(|error| AppError::InternalError(format!("scope is not JSON: {error}")))?;
+        let (chars, chunks): (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT SUM(content_chars), SUM(chunks) FROM document_chunk_stats \
+             WHERE document_id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(scope)
+        .fetch_one(&self.pool)
+        .await?;
+        let (Some(chars), Some(chunks)) = (chars, chunks) else {
+            return Ok(None);
+        };
+        if chunks <= 0 || chars <= 0 {
+            return Ok(None);
         }
-        query.push(")");
-        let mean: Option<f64> = query.build_query_scalar().fetch_one(&self.pool).await?;
-        Ok(mean
-            .filter(|mean| mean.is_finite() && *mean >= 1.0)
-            .map(|mean| mean.ceil() as usize))
+        Ok(usize::try_from((chars + chunks - 1) / chunks).ok())
     }
 
     /// Ordered document openings for overview/learning requests, up to

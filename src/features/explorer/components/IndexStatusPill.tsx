@@ -21,7 +21,7 @@ export function describeIndexStatus(status: FolderIndexStatus): string {
     case 'ready':
       return `Indexed · ${count(status.filesTotal)} files`;
     case 'tooLarge':
-      return 'Too large to index · search uses text matching';
+      return `Partly indexed · ${count(status.filesIndexed)} of ${count(status.filesTotal)} files`;
     case 'refused':
       return 'Not indexed (home folder)';
     case 'unavailable':
@@ -34,7 +34,7 @@ export function describeIndexStatus(status: FolderIndexStatus): string {
 /** "3,067 of 10,958 passages · 489 of 1,379 files", once there is anything to count. */
 export function describeIndexCounts(status: FolderIndexStatus): string | null {
   if (status.passagesTotal === 0 && status.filesTotal === 0) return null;
-  if (status.state === 'tooLarge' || status.state === 'refused') return null;
+  if (status.state === 'refused') return null;
   return `${count(status.passagesEmbedded)} of ${count(status.passagesTotal)} passages · ${count(status.filesIndexed)} of ${count(status.filesTotal)} files`;
 }
 

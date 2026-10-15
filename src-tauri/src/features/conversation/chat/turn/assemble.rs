@@ -98,6 +98,7 @@ pub(super) fn render_prompt(
     } = carried;
     let Retrieved {
         prior_sources,
+        prior_left_out,
         mut retrieval,
     } = retrieved;
     let llm = &turn.llm;
@@ -231,7 +232,7 @@ pub(super) fn render_prompt(
     let followup_citations = citations_of(&followup_chunks);
     let web_pages = retrieval::web_context_entries(&retrieval.web_context, &retrieval.sources);
     let prior = retrieval.sources.get(prior_start..).unwrap_or_default();
-    let prior_evidence_context = prior_evidence::render(prior);
+    let prior_evidence_context = prior_evidence::render(prior, prior_left_out);
     let prior_citations: Vec<u32> = prior
         .iter()
         .filter_map(|source| source.citation_id)

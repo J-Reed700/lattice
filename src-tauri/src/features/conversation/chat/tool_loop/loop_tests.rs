@@ -139,6 +139,7 @@ fn tool(name: &str) -> ToolDefinition {
 const PAGE_A: &str = "https://pages.example/a";
 const PAGE_B: &str = "https://pages.example/b";
 const PAGE_C: &str = "https://pages.example/c";
+const PAGE_D: &str = "https://pages.example/d";
 
 /// Pages, searches and a tool that may write, each taking as long as the
 /// test says, with a log of when each started and ended.
@@ -673,8 +674,9 @@ async fn stop_ends_a_round_of_reads_without_waiting_for_them() {
 /// A 4,000-token budget: 12,000 characters, about one page.
 const ONE_PAGE_WINDOW: usize = 4_000;
 
-/// Without condensing, the second round finds the window full and has to
-/// answer from page A alone.
+/// A page read takes at most half of what is left, so two long pages fill
+/// the window past its condensing share. Without condensing, the next round
+/// would have little room left to read with.
 #[tokio::test]
 async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     let web = Web::with_pages_of(30_000);
@@ -708,18 +710,18 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     );
     let requests = model.requests();
     let kinds: Vec<_> = requests.iter().map(is_condense_request).collect();
-    assert_eq!(kinds, [false, true, false, true, false]);
+    assert_eq!(kinds, [false, false, true, false]);
     // The round after condensing is an ordinary one: tools callable, no
     // instruction to stop, and the notes in place of page A's text.
-    let after = &requests[2];
+    let after = &requests[3];
     assert_eq!(after.tool_choice, None);
     assert!(!last_text(after).contains(FINAL_ROUND_INSTRUCTION));
     assert!(last_text(after).starts_with(NOTES_HEADER));
     assert!(results_mentioning(after, &format!("Text of {PAGE_A}")).is_empty());
     // The condensing request is the round before it and an instruction: the
     // cached prompt is a prefix of it, tools and all.
-    let condense = &requests[1];
-    assert_eq!(json_of(&condense.tools), json_of(&requests[0].tools));
+    let condense = &requests[2];
+    assert_eq!(json_of(&condense.tools), json_of(&requests[1].tools));
     assert_eq!(condense.tool_choice, Some(ToolChoice::None));
     assert!(run.steps.iter().any(
         |step| step.label == "Condensing what it has read" && step.state == TurnStepState::Done
@@ -755,7 +757,11 @@ async fn citations_from_before_condensing_still_resolve() {
         .expect("[1] still has a source");
     assert_eq!(cited.path.as_deref(), Some(PAGE_A));
     // The model was shown the number it has to keep.
-    let condense = &model.requests()[1];
+    let requests = model.requests();
+    let condense = requests
+        .iter()
+        .find(|request| is_condense_request(request))
+        .expect("the window filled and was condensed");
     assert!(!results_mentioning(condense, "Citable passage [1]").is_empty());
     // The research deck's card for page A still links to it.
     assert!(run
@@ -773,6 +779,7 @@ async fn a_page_condensed_away_is_read_again_when_asked_for() {
     let web = Web::with_pages_of(30_000);
     let model = Model::new([
         reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
         reads(&[PAGE_A]),
         CompletionResponse::from_text("It opened in 1932 [1]."),
     ]);
@@ -802,7 +809,12 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let web = Web::with_pages_of(30_000);
     let model = Model::with_notes(
         [
+            // Each read takes half of what is left, at least the floor, so
+            // the window fills on the fourth.
             reads(&[PAGE_A]),
+            reads(&[PAGE_B]),
+            reads(&[PAGE_C]),
+            reads(&[PAGE_D]),
             CompletionResponse::from_text("It opened in 1932 [1]."),
         ],
         &"n".repeat(40_000),
@@ -819,8 +831,8 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
 
     assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
     let requests = model.requests();
-    assert_eq!(requests.len(), 3);
-    assert!(is_condense_request(&requests[1]));
-    assert!(last_text(&requests[2]).ends_with(FINAL_ROUND_INSTRUCTION));
-    assert!(!results_mentioning(&requests[2], &format!("Text of {PAGE_A}")).is_empty());
+    assert!(requests.iter().any(is_condense_request));
+    let last = requests.last().unwrap();
+    assert!(last_text(last).ends_with(FINAL_ROUND_INSTRUCTION));
+    assert!(!results_mentioning(last, &format!("Text of {PAGE_A}")).is_empty());
 }

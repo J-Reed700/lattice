@@ -101,9 +101,12 @@ pub(super) async fn infer_turn_intent_flags(
         }
     };
 
-    // As much recent history as the classifier's window gives it, newest
-    // first, rather than a fixed number of turns.
-    let classifier = IntentClassifier::new(classifier_llm).with_cancellation(cancel);
+    // As much recent history as the classifier's window gives it and its
+    // model reads before the timeout, newest first, rather than a fixed
+    // number of turns.
+    let classifier = IntentClassifier::new(classifier_llm)
+        .with_cancellation(cancel)
+        .with_pace(container.intent_pace());
     let input = classifier.input_for(validated_message, context);
     let intent = classifier.classify(&input).await;
 

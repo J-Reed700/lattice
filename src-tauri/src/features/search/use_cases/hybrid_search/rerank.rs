@@ -126,8 +126,10 @@ impl HybridSearchUseCase {
 }
 
 /// Blend the cross-encoder's scores into the leading `candidate_count`
-/// results and sort the whole list. Nothing is written unless the blend is
-/// valid for every candidate.
+/// results and order them by it; the results past them follow in their fused
+/// order. Blended and fused scores are on different scales, so sorting the
+/// whole list on them let unjudged results jump judged ones. Nothing is
+/// written unless the blend is valid for every candidate.
 fn apply_blend(
     response: &mut SearchResponseDto,
     reranked: &[RerankResult],
@@ -154,11 +156,14 @@ fn apply_blend(
         result.score = score;
     }
 
-    response.results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let judged = candidate_count.min(response.results.len());
+    if let Some(head) = response.results.get_mut(..judged) {
+        head.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
     response.total = response.results.len();
     Ok(())
 }

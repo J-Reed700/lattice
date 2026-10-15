@@ -131,3 +131,27 @@ fn a_settings_file_with_the_removed_cap_settings_still_loads() {
         SettingsDto::default().llm.tool_output.excerpt_chars
     );
 }
+
+/// The page count's 0 meant "search snippets only"; that choice is a switch
+/// now. A settings file without it reads pages, and one that turned it off
+/// keeps it off.
+#[test]
+fn reading_web_pages_is_a_switch_that_defaults_on() {
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let tuning = value
+        .pointer_mut("/search/retrievalTuning")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("retrieval tuning is serialized under search");
+    assert_eq!(tuning.remove("readWebPages"), Some(serde_json::json!(true)));
+    let loaded: SettingsDto = serde_json::from_value(value.clone()).unwrap();
+    assert!(loaded.search.retrieval_tuning.read_web_pages);
+
+    if let Some(tuning) = value
+        .pointer_mut("/search/retrievalTuning")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        tuning.insert("readWebPages".into(), serde_json::json!(false));
+    }
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert!(!loaded.search.retrieval_tuning.read_web_pages);
+}

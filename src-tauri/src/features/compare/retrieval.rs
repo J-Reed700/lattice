@@ -37,19 +37,6 @@ pub struct DocumentChunks {
 pub(super) const DEGRADED_NOTE: &str =
     "Search failed for this document, so these values come from its opening passages.";
 
-/// Char-safe truncation with a trailing ellipsis.
-pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut output = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    output.push('…');
-    output
-}
-
 /// Chunks worth showing the model for one document across all columns,
 /// best first: ordered by first appearance, deduped by chunk id.
 /// `per_column` is how deep each column's search reads, sized by the caller

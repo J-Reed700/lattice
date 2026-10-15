@@ -44,19 +44,22 @@ fn higher_ranked_document_evidence_is_kept_over_lower() {
     let recent = vec![message(1, SourceRole::User, "Question.")];
     let mut base = request(None, &recent, 2_400);
     base.document_evidence = vec![
+        // Each takes most of what the history leaves this window, so only one
+        // fits whichever pool the evidence is given.
         RankedEvidence {
             label: "low".into(),
-            content: "low ".repeat(200),
+            content: "low ".repeat(550),
             rank: 0.1,
         },
         RankedEvidence {
             label: "high".into(),
-            content: "high ".repeat(200),
+            content: "high ".repeat(450),
             rank: 0.99,
         },
     ];
     let plan = assembler().assemble(&base).expect("plan");
     let (_, last) = last_message(&plan);
+    assert!(last.contains("high "), "the best evidence fits on its own");
     if let Some(at) = last.find(render::EVIDENCE_LABEL) {
         assert!(
             last[at..].contains("high "),
@@ -116,5 +119,33 @@ fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_
     assert!(
         matches!(messages.last(), Some(CompletionInput::Message { content, .. })
         if content.ends_with(QUESTION))
+    );
+}
+
+/// Room flows down the pools in order: recalled passages get what the pools
+/// above them left before any document does. When a recalled passage is
+/// denied room, no document is given room either.
+#[test]
+fn a_document_never_takes_room_a_recalled_passage_was_denied() {
+    let recent = vec![message(1, SourceRole::User, "Question.")];
+    let memory = snapshot(Vec::new(), None, 1);
+    let mut base = request(Some(&memory), &recent, 4_096);
+    base.recalled = vec![SelectedPassage {
+        message_id: "m9".into(),
+        sequence: 9,
+        role: SourceRole::User,
+        text: "recalled ".repeat(4_000),
+    }];
+    base.document_evidence = vec![RankedEvidence {
+        label: "doc".into(),
+        content: "A short document passage.".into(),
+        rank: 0.9,
+    }];
+    let plan = assembler().assemble(&base).expect("plan");
+    let (_, last) = last_message(&plan);
+    assert!(!last.contains("[conversation history retrieval context"));
+    assert!(
+        !last.contains(render::EVIDENCE_LABEL),
+        "a document took room a recalled passage was denied"
     );
 }

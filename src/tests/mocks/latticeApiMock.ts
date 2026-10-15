@@ -38,6 +38,7 @@ export function createVaultAPIMock() {
         wikiContextLimit: 3,
         webSearchMaxResults: 5,
         webSnippetMaxChars: 1200,
+        readWebPages: true,
         deepResearchDepth: 3,
         deepResearchBranchQueries: 3,
         externalSearchMaxWikiTerms: 8,

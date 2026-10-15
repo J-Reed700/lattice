@@ -1,6 +1,9 @@
-use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, InferencePriority, PrefillTiming,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::completion_input::from_context;
+use lattice_core::application::services::prompt_pace::PromptPace;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -86,6 +89,14 @@ pub struct IntentClassifier {
     confidence_threshold: f32,
     timeout_ms: u64,
     cancel: Option<CancellationToken>,
+    /// What this classifier's model reads inside the timeout, learned across
+    /// turns. Without one the history is the window share alone.
+    pace: Option<Arc<PromptPace>>,
+}
+
+/// A pace for the classifier's own deadline, one per chat runtime.
+pub fn intent_pace() -> PromptPace {
+    PromptPace::new(Duration::from_millis(DEFAULT_INTENT_TIMEOUT_MS))
 }
 
 impl IntentClassifier {
@@ -110,7 +121,15 @@ impl IntentClassifier {
             confidence_threshold,
             timeout_ms,
             cancel: None,
+            pace: None,
         }
+    }
+
+    /// Size history to what the model reads within the timeout, and teach
+    /// `pace` from each answer and timeout.
+    pub fn with_pace(mut self, pace: Arc<PromptPace>) -> Self {
+        self.pace = Some(pace);
+        self
     }
 
     /// Stop the classification when the turn is stopped.
@@ -120,12 +139,14 @@ impl IntentClassifier {
     }
 
     /// The input for `message` with as much of `context` (oldest first) as
-    /// this classifier's window gives history: the newest turns, whole, and
-    /// a line counting any earlier ones left out.
+    /// this classifier's window gives history, and no more than its model
+    /// reads within the timeout: the newest turns, whole, and a line counting
+    /// any earlier ones left out.
     pub fn input_for(&self, message: &str, context: &[String]) -> IntentInput {
         use lattice_core::application::services::history_share::{
             auxiliary_history_room, newest_that_fit, omitted_note,
         };
+        use lattice_core::application::services::prompt_pace::history_room_within;
         let bare = render_intent_prompt(
             &self.prompt_template,
             &IntentInput {
@@ -134,6 +155,9 @@ impl IntentClassifier {
             },
         );
         let room = auxiliary_history_room(self.llm.as_ref(), &bare);
+        let room = self.pace.as_deref().map_or(room, |pace| {
+            history_room_within(pace, room, self.llm.count_tokens(&bare))
+        });
         let (recent, omitted) = newest_that_fit(context, room, |turn| {
             self.llm.count_tokens(turn).saturating_add(1)
         });
@@ -149,12 +173,16 @@ impl IntentClassifier {
     pub async fn classify(&self, input: &IntentInput) -> TurnIntent {
         let prompt = render_intent_prompt(&self.prompt_template, input);
         let timeout_ms = self.timeout_ms.max(1);
+        let sent_tokens = self.llm.count_tokens(&prompt);
 
         // Part of the turn the user is waiting on.
         let result = timeout(Duration::from_millis(timeout_ms), self.complete(prompt)).await;
 
         match result {
-            Ok(Ok(text)) => {
+            Ok(Ok((text, prefill))) => {
+                if let Some(pace) = &self.pace {
+                    pace.answered(prefill, sent_tokens);
+                }
                 let mut intent = parse_turn_intent(&text).unwrap_or_else(|| {
                     warn!("Intent classifier returned unparsable output, falling back");
                     TurnIntent::fallback()
@@ -185,7 +213,14 @@ impl IntentClassifier {
                 TurnIntent::fallback()
             }
             Err(_) => {
-                warn!("Intent classifier timed out, falling back");
+                if let Some(pace) = &self.pace {
+                    pace.timed_out(sent_tokens);
+                }
+                warn!(
+                    sent_tokens,
+                    next_prompt_tokens = ?self.pace.as_deref().and_then(PromptPace::tokens),
+                    "Intent classifier timed out, falling back; the next prompt is smaller"
+                );
                 TurnIntent::fallback()
             }
         }
@@ -196,7 +231,7 @@ impl IntentClassifier {
     /// One schema-constrained request. A provider that cannot hold the answer
     /// to the schema still gets the prompt, and the lenient parser reads what
     /// comes back.
-    async fn complete(&self, prompt: String) -> Result<String> {
+    async fn complete(&self, prompt: String) -> Result<(String, Option<PrefillTiming>)> {
         let response = self
             .llm
             .complete(&CompletionRequest {
@@ -212,7 +247,7 @@ impl IntentClassifier {
                 "Unexpected tool call in intent classification".into(),
             ));
         }
-        Ok(response.text)
+        Ok((response.text, response.prefill))
     }
 }
 
@@ -479,5 +514,48 @@ mod tests {
 
         assert_eq!(intent.confidence, 1.0);
         assert!(intent.needs_knowledge_base);
+    }
+
+    /// A long chat on a slow local model timed the classifier out every turn:
+    /// its history was a quarter of the window, more than the model reads
+    /// before the timeout. With a measured pace the prompt is what the model
+    /// reads in time, and the turns left out are counted.
+    #[test]
+    fn history_is_sized_to_what_the_model_reads_before_the_timeout() {
+        let context: Vec<String> = (0..60)
+            .map(|turn| format!("turn {turn} {}", "word ".repeat(20)))
+            .collect();
+        let shared = IntentClassifier::new(MockLLM::new("{}")).input_for("and then?", &context);
+
+        let pace = Arc::new(intent_pace());
+        // 50 tokens a second: 375 tokens in half the 15-second timeout.
+        pace.answered(
+            Some(PrefillTiming {
+                tokens: 50,
+                seconds: 1.0,
+            }),
+            50,
+        );
+        let paced = IntentClassifier::new(MockLLM::new("{}")).with_pace(Arc::clone(&pace));
+        let input = paced.input_for("and then?", &context);
+        assert!(input.recent_context.len() < shared.recent_context.len());
+        assert!(
+            input.recent_context[0].contains("earlier messages not shown"),
+            "{:?}",
+            input.recent_context
+        );
+        let bare = render_intent_prompt(
+            DEFAULT_INTENT_PROMPT_TEMPLATE,
+            &IntentInput {
+                message: "and then?".into(),
+                recent_context: Vec::new(),
+            },
+        );
+        let fixed = paced.llm.count_tokens(&bare);
+        let sent = paced.llm.count_tokens(&render_intent_prompt(
+            DEFAULT_INTENT_PROMPT_TEMPLATE,
+            &input,
+        ));
+        assert!(sent <= fixed.max(375) + 8, "{sent} tokens, {fixed} fixed");
     }
 }

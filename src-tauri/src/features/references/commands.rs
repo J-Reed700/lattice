@@ -18,7 +18,6 @@ const MAX_LIST_LIMIT: i64 = 1000;
 const MAX_TITLE_CHARS: usize = 200;
 /// Chunk ids are uuid-shaped; this only guards against a hostile caller.
 const MAX_ID_CHARS: usize = 200;
-const MAX_NOTE_CHARS: usize = 4_000;
 const MAX_LOCATOR_CHARS: usize = 120;
 
 /// Char-safe truncation with a trailing ellipsis. Never slices bytes.
@@ -40,6 +39,14 @@ fn optional_field(value: Option<String>, max_chars: usize) -> Option<String> {
         .map(|raw| raw.trim().to_string())
         .filter(|trimmed| !trimmed.is_empty())
         .map(|trimmed| truncate_chars(&trimmed, max_chars))
+}
+
+/// Trims and collapses empty to `None`; never shortens. A note is the user's
+/// own writing and is kept as they wrote it.
+fn optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|raw| raw.trim().to_string())
+        .filter(|trimmed| !trimmed.is_empty())
 }
 
 fn required_field(value: &str, field: &str) -> Result<String> {
@@ -92,7 +99,7 @@ pub(super) fn build_create_record(
         // and week synthesis reads it in full.
         text,
         title: optional_field(request.title, MAX_TITLE_CHARS),
-        note: optional_field(request.note, MAX_NOTE_CHARS),
+        note: optional_text(request.note),
         created_at: now_db_timestamp(),
     })
 }
@@ -121,7 +128,7 @@ pub async fn update_passage_reference_impl(
 ) -> Result<PassageReferenceDto> {
     let id = required_field(&request.id, "id")?;
     let title = optional_field(request.title, MAX_TITLE_CHARS);
-    let note = optional_field(request.note, MAX_NOTE_CHARS);
+    let note = optional_text(request.note);
 
     let repo = repository(container);
     repo.update_annotations(&id, title.as_deref(), note.as_deref())

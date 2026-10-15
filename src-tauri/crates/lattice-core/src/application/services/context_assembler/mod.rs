@@ -352,8 +352,10 @@ impl ContextAssembler {
         };
 
         // --- 7. recalled passages -----------------------------------------
+        // Recall was sized to its share when it was searched; here it may use
+        // whatever the pools above left, ahead of any document.
         let mut recalled = Vec::new();
-        let recall_pool = allocation.recall.min(remaining);
+        let recall_pool = remaining;
         let status_cost = request
             .recall_status
             .and_then(|status| render::render_recalled(&[], Some(status)))
@@ -361,9 +363,13 @@ impl ContextAssembler {
             .unwrap_or(0);
         let passage_pool = recall_pool.saturating_sub(status_cost);
         let mut recall_tokens = 0usize;
+        // Set when a recalled passage had no room: the room it was denied is
+        // then not handed to documents below.
+        let mut recall_denied = false;
         for passage in &request.recalled {
             let cost = self.count(&passage.text) + MESSAGE_FRAMING_TOKENS;
             if recall_tokens + cost > passage_pool {
+                recall_denied = true;
                 break;
             }
             recall_tokens += cost;
@@ -378,10 +384,11 @@ impl ContextAssembler {
         let mut recalled_section = render::render_recalled(&recalled, request.recall_status);
         if let Some(section) = &recalled_section {
             let cost = self.section_cost(section);
-            if cost <= remaining && cost <= recall_pool {
+            if cost <= remaining {
                 accounting.recall = cost;
                 remaining -= cost;
             } else {
+                recall_denied = true;
                 accounting.evicted.push("recall".into());
                 recalled_section = None;
                 retrieval.passages_selected = 0;
@@ -424,9 +431,20 @@ impl ContextAssembler {
         });
         let mut evidence_blocks = Vec::new();
         let mut evidence_tokens = 0usize;
-        let evidence_pool = allocation
-            .evidence
-            .min(remaining.saturating_sub(inline_tokens));
+        // Everything the history left, not only the evidence share: room a
+        // memory pool reserved and did not use (no summary yet, few active
+        // facts, a short recall) goes to saved memories and ranked evidence.
+        // Capped at the evidence share, a 32K model gave optional saved
+        // memories about 3K tokens once the memory pools lost their fixed
+        // ceilings, however little of those pools a turn used. The pools are
+        // still charged first, and when a recalled passage was denied room
+        // no document is given any: documents never outrank recalled
+        // conversation passages.
+        let evidence_pool = if recall_denied {
+            0
+        } else {
+            remaining.saturating_sub(inline_tokens)
+        };
         for item in evidence {
             let block = format!("- {}\n{}", item.label, item.content);
             let cost = self.count(&block) + MESSAGE_FRAMING_TOKENS;

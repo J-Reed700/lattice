@@ -11,9 +11,6 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tokio_util::sync::CancellationToken;
 
-/// How far past the cap a too-large walk keeps counting, so the message can
-/// say how large rather than only "too large".
-const COUNT_CEILING_FACTOR: usize = 10;
 /// The walk reports how many files it has found once per this many.
 const SCAN_REPORT_EVERY: usize = 200;
 
@@ -27,8 +24,12 @@ pub(super) struct Candidate {
 }
 
 pub(super) enum Walked {
-    Files(Vec<Candidate>),
-    TooLarge { count: usize, capped: bool },
+    /// The files to index, the first the walk found up to the bound, and how
+    /// many more it found past it.
+    Files {
+        files: Vec<Candidate>,
+        skipped: usize,
+    },
     Cancelled,
 }
 
@@ -88,10 +89,8 @@ pub(super) fn walk(
     progress: Option<&StatusCell>,
 ) -> Result<Walked> {
     let start = fs::walk_start(scope, Some(prefix))?;
-    let ceiling = max_files.saturating_mul(COUNT_CEILING_FACTOR);
     let mut files = Vec::new();
     let mut count = 0usize;
-    let mut capped = false;
     let mut cancelled = false;
     fs::walk_files(scope, start.as_ref(), |path| {
         if cancel.is_cancelled() {
@@ -106,10 +105,6 @@ pub(super) fn walk(
             let found = u32::try_from(count).unwrap_or(u32::MAX);
             status.update(|status| status.files_total = status.files_total.max(found));
         }
-        if count > ceiling {
-            capped = true;
-            return false;
-        }
         if count <= max_files {
             files.push(found);
         }
@@ -117,13 +112,11 @@ pub(super) fn walk(
     });
     Ok(if cancelled {
         Walked::Cancelled
-    } else if count > max_files {
-        Walked::TooLarge {
-            count: count.min(ceiling),
-            capped,
-        }
     } else {
-        Walked::Files(files)
+        Walked::Files {
+            skipped: count - files.len(),
+            files,
+        }
     })
 }
 

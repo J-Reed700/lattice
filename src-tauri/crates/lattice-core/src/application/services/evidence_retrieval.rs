@@ -7,6 +7,8 @@ pub(crate) const WINDOW_CHARS: usize = 1200;
 /// Windows overlap by a third so a sentence that straddles a boundary still
 /// lands whole in one of them.
 const WINDOW_STEP_CHARS: usize = 800;
+/// Text a window shares with each neighbour; joined neighbours show it once.
+pub const WINDOW_OVERLAP_CHARS: usize = WINDOW_CHARS - WINDOW_STEP_CHARS;
 
 /// The passage cut into overlapping windows; a short passage is one window.
 pub fn passage_windows(text: &str) -> Vec<String> {
@@ -82,7 +84,7 @@ pub fn join_windows(windows: &[&ScoredWindow], gap: &str) -> String {
     let mut ordered = windows.to_vec();
     ordered.sort_by_key(|window| window.index);
     ordered.dedup_by_key(|window| window.index);
-    let overlap = WINDOW_CHARS - WINDOW_STEP_CHARS;
+    let overlap = WINDOW_OVERLAP_CHARS;
     let mut joined = String::new();
     let mut previous: Option<usize> = None;
     for window in ordered {

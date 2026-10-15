@@ -85,13 +85,14 @@ fn a_round_of_results_is_made_to_fit_a_small_window() {
 }
 
 /// The model in the log has a 131k window. Each of four results gets a
-/// quarter of what is left, which is far past the 50,000 characters a
-/// configured ceiling used to cut every result to.
+/// fifth of what is left, a share being kept for the next round, which is
+/// far past the 50,000 characters a configured ceiling used to cut every
+/// result to.
 #[test]
 fn a_large_window_gives_each_result_its_share_with_no_ceiling() {
     let window = window_chars(input_budget(131_072), DEFAULT_CHARS_PER_TOKEN);
     let allowance = tool_result_allowance(window, 20_000, 4);
-    assert_eq!(allowance, (window - 20_000) / 4);
+    assert_eq!(allowance, (window - 20_000) / 5);
     assert!(allowance > 50_000, "got {allowance}");
 }
 
@@ -114,7 +115,7 @@ fn a_full_window_gives_a_result_only_what_is_left() {
             nearly_full,
             1
         ),
-        900
+        450
     );
 }
 
@@ -159,7 +160,7 @@ fn tool_schemas_are_charged_against_a_small_window() {
         in_flight,
         1,
     );
-    assert_eq!(allowance, 500);
+    assert_eq!(allowance, 250);
     assert!(in_flight + allowance <= window);
 }
 
@@ -214,12 +215,26 @@ fn a_malformed_call_is_answered_with_the_error() {
     assert!(reply.contains("{query: rust"), "{reply}");
 }
 
-/// The configured maximum this replaced cut a lone result short of an empty
-/// window. With nothing else in flight, one result may use all of it.
+/// A lone page read used to be given the whole window, so the round after
+/// it had nothing left to read with and one long page ended the research.
+/// Half is kept back; the rest of the page is a further call by offset.
 #[test]
-fn a_lone_result_may_use_the_whole_window() {
+fn a_lone_result_leaves_the_next_round_room_to_read() {
     let window = window_chars(input_budget(131_072), DEFAULT_CHARS_PER_TOKEN);
-    assert_eq!(tool_result_allowance(window, 0, 1), window);
+    let allowance = tool_result_allowance(window, 0, 1);
+    assert_eq!(allowance, window / 2);
+    assert!(window - allowance >= window / 2);
+}
+
+/// However many results a round has, each round leaves one share behind.
+#[test]
+fn a_round_of_results_leaves_a_share_for_the_next_round() {
+    let window = window_chars(input_budget(32_768), DEFAULT_CHARS_PER_TOKEN);
+    let mut spent = 0;
+    for calls_left in (1..=4).rev() {
+        spent += tool_result_allowance(window, spent, calls_left);
+    }
+    assert!(window - spent >= window / 5 - 4, "{spent} of {window}");
 }
 
 #[test]

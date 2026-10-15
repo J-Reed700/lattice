@@ -93,9 +93,6 @@ pub const MAX_SOURCE_BYTES_PER_ATTEMPT: usize = 1024 * 1024;
 /// the next run resumes where this one stopped.
 pub const MAX_REFOLD_BYTES_PER_ATTEMPT: usize = 32 * 1024;
 
-/// Forgotten facts named to the summariser in one fold, most recent first.
-pub const MAX_FORGOTTEN_LABELS: usize = 32;
-
 /// Complete turns kept out of the compacted prefix (§7.2). The current pending
 /// user message is retained on top of these.
 pub const MIN_RETAINED_TURNS: usize = 2;

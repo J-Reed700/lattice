@@ -1805,18 +1805,13 @@ async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
     );
 
     assert_eq!(
-        repo.memory_forgotten_labels(&conversation_id, 32)
+        repo.memory_forgotten_labels(&conversation_id)
             .await
             .unwrap(),
         vec!["Approval required before deploy".to_string()]
     );
-    assert!(repo
-        .memory_forgotten_labels(&conversation_id, 0)
-        .await
-        .unwrap()
-        .is_empty());
     assert!(
-        repo.memory_forgotten_labels(&other.id.to_string(), 32)
+        repo.memory_forgotten_labels(&other.id.to_string())
             .await
             .unwrap()
             .is_empty(),

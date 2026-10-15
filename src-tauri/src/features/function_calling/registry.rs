@@ -198,7 +198,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     registry.register(ToolDefinition::new(
         "get_document",
-        "Retrieve content from a specific document by ID. Use this after semantic_search to inspect document text, and request additional pages for large documents. page and total_pages describe internal text pagination, not the original PDF's page count or printed page numbers.",
+        "Retrieve content from a specific document by ID. Use this after semantic_search to inspect document text. A long document is read in parts: each result says which characters it holds and the offset the next part starts at. Offsets count characters of extracted text, not the original PDF's pages or printed page numbers.",
         json!({
             "type": "object",
             "properties": {
@@ -213,16 +213,14 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                 },
                 "max_content_length": {
                     "type": "integer",
-                    "description": "Maximum characters to return per page",
-                    "default": 50000,
-                    "minimum": 1000,
-                    "maximum": 100000
-                },
-                "page": {
-                    "type": "integer",
-                    "description": "1-based page number for internal pagination",
-                    "default": 1,
+                    "description": "Characters to return from offset; the app fits this to the room the result has",
                     "minimum": 1
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Character to start reading at: 0, or the next_offset a previous result named",
+                    "default": 0,
+                    "minimum": 0
                 }
             },
             "required": ["document_id"]

@@ -27,14 +27,14 @@ const MAX_REMEMBERED_FAILURES: usize = 64;
 /// archive, and a request for it reads it from there.
 const MAX_REMEMBERED_PAGES: usize = 32;
 
-/// How much of a page the model has been given so far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What part of a page one result gave the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::features::conversation::chat) enum Delivery {
-    /// Everything that was extracted is already in front of the model.
+    /// Everything that was extracted.
     Whole,
-    /// The prompt only had room for the first `shown_chars`; the rest is held
-    /// here so asking for it costs no request.
-    Clipped { shown_chars: usize },
+    /// Characters `start..end` of the page's text: as much as the result had
+    /// room for, from where the model asked to start.
+    Part { start: usize, end: usize },
 }
 
 /// What a repeat request for a page this turn already read is answered with.
@@ -42,20 +42,76 @@ pub(in crate::features::conversation::chat) enum Delivery {
 pub(in crate::features::conversation::chat) enum Recall {
     /// The model already has all of it. There is nothing to send.
     AlreadyWhole { word_count: usize },
-    /// The next part of a page: `text` starts `shown_chars` characters in, as
-    /// much as the result's allowance holds. `next` is where the part after
-    /// it starts, when there is one.
+    /// A part of the page: `text` starts `shown_chars` characters in, as much
+    /// as the result's allowance holds. `next` is where the part after it
+    /// starts, when the page goes on; `unread` is the first character the
+    /// model has still not been given anywhere in the page, if there is one.
     Remainder {
         text: String,
         shown_chars: usize,
         next: Option<usize>,
+        unread: Option<usize>,
     },
+    /// The page's text is not held here (a resumed research turn keeps only
+    /// what was delivered, not the text): read it again, from the
+    /// conversation's archive, starting at `offset`.
+    Reread { offset: usize },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct RememberedPage {
+    /// The page's extracted text. Not saved with a research checkpoint: every
+    /// page read is in the conversation's archive, and a checkpoint written
+    /// every round should not carry up to a turn's worth of pages each time.
+    #[serde(skip)]
     text: String,
-    delivery: Delivery,
+    chars: usize,
+    words: usize,
+    /// The stretches of the text the model has been given, as `start..end`
+    /// character ranges, sorted and merged.
+    delivered: Vec<(usize, usize)>,
+}
+
+impl RememberedPage {
+    fn hold(&mut self, text: &str) {
+        if self.text.is_empty() && !text.is_empty() {
+            self.text = text.to_string();
+            self.chars = text.chars().count();
+            self.words = text.split_whitespace().count();
+        }
+    }
+
+    fn deliver(&mut self, delivery: Delivery) {
+        let (start, end) = match delivery {
+            Delivery::Whole => (0, self.chars),
+            Delivery::Part { start, end } => (start.min(self.chars), end.min(self.chars)),
+        };
+        if start >= end {
+            return;
+        }
+        self.delivered.push((start, end));
+        self.delivered.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(self.delivered.len());
+        for (start, end) in self.delivered.drain(..) {
+            match merged.last_mut() {
+                Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                _ => merged.push((start, end)),
+            }
+        }
+        self.delivered = merged;
+    }
+
+    /// The first character at or after `from` the model has not been given.
+    fn unread_from(&self, from: usize) -> Option<usize> {
+        let mut at = from;
+        for &(start, end) in &self.delivered {
+            if start > at {
+                break;
+            }
+            at = at.max(end);
+        }
+        (at < self.chars).then_some(at)
+    }
 }
 
 /// Every page this turn tried to read: the ones it could not, and why, and the
@@ -92,8 +148,9 @@ impl FetchMemory {
         self.failures.get(&normalize(url)).map(String::as_str)
     }
 
-    /// Note that `url` was read, and how much of `text` the model was given.
-    /// The first read of a URL wins: that is the text the model is looking at.
+    /// Note that `url` was read, and which part of `text` the model was given.
+    /// The first text held for a URL wins: it is the text the offsets the
+    /// model was shown refer to.
     pub(in crate::features::conversation::chat) fn record_page(
         &mut self,
         url: &str,
@@ -101,24 +158,26 @@ impl FetchMemory {
         delivery: Delivery,
     ) {
         let key = normalize(url);
-        if key.is_empty() || self.pages.len() >= MAX_REMEMBERED_PAGES {
+        if key.is_empty() {
             return;
         }
-        self.pages.entry(key).or_insert_with(|| RememberedPage {
-            text: text.to_string(),
-            delivery,
-        });
+        if !self.pages.contains_key(&key) && self.pages.len() >= MAX_REMEMBERED_PAGES {
+            return;
+        }
+        let page = self.pages.entry(key).or_default();
+        page.hold(text);
+        page.deliver(delivery);
     }
 
     /// Answer a repeat request for `url` from memory, if this turn read it.
     ///
-    /// A page the model has whole is never sent again. Otherwise the request
-    /// gets the next part, starting at `offset` when the model named one and
-    /// where the model's copy stops when it did not, and at most `room`
-    /// characters of it: a page longer than one result can hold is handed over
-    /// in parts, each saying where the next begins, so its tail is reachable
-    /// and no result outgrows the window. Once the last part is out the page is
-    /// marked whole.
+    /// A request that names an `offset` is always given the part starting
+    /// there, as much as `room` holds: the model may have lost an earlier part
+    /// to condensing, and only it knows what it needs. Without an offset the
+    /// request gets the first part the model has not been given, wherever that
+    /// is, and a page given whole in any order of parts is never sent again.
+    /// Every part says where the next begins and what is still unread, so
+    /// nothing in the middle of a page becomes unreachable.
     pub(in crate::features::conversation::chat) fn recall(
         &mut self,
         url: &str,
@@ -126,34 +185,34 @@ impl FetchMemory {
         room: usize,
     ) -> Option<Recall> {
         let page = self.pages.get_mut(&normalize(url))?;
-        let already_whole = |text: &str| Recall::AlreadyWhole {
-            word_count: text.split_whitespace().count(),
+        let start = match offset {
+            Some(offset) => offset,
+            None => match page.unread_from(0) {
+                Some(gap) => gap,
+                None => {
+                    return Some(Recall::AlreadyWhole {
+                        word_count: page.words,
+                    })
+                }
+            },
         };
-        let start = match page.delivery {
-            Delivery::Whole => return Some(already_whole(&page.text)),
-            Delivery::Clipped { shown_chars } => offset.unwrap_or(shown_chars),
-        };
-        let total = page.text.chars().count();
-        let end = start.saturating_add(room.max(1)).min(total);
+        if page.text.is_empty() {
+            return Some(Recall::Reread { offset: start });
+        }
+        let start = start.min(page.chars);
+        let end = start.saturating_add(room.max(1)).min(page.chars);
         let text: String = page
             .text
             .chars()
             .skip(start)
             .take(end.saturating_sub(start))
             .collect();
-        if text.trim().is_empty() {
-            page.delivery = Delivery::Whole;
-            return Some(already_whole(&page.text));
-        }
-        let next = (end < total).then_some(end);
-        page.delivery = match next {
-            Some(next) => Delivery::Clipped { shown_chars: next },
-            None => Delivery::Whole,
-        };
+        page.deliver(Delivery::Part { start, end });
         Some(Recall::Remainder {
             text,
             shown_chars: start,
-            next,
+            next: (end < page.chars).then_some(end),
+            unread: page.unread_from(0),
         })
     }
 
@@ -166,10 +225,18 @@ impl FetchMemory {
             self.failures.entry(url).or_insert(reason);
         }
         for (url, page) in other.pages {
-            if self.pages.len() >= MAX_REMEMBERED_PAGES {
-                break;
+            if !self.pages.contains_key(&url) && self.pages.len() >= MAX_REMEMBERED_PAGES {
+                continue;
             }
-            self.pages.entry(url).or_insert(page);
+            let held = self.pages.entry(url).or_default();
+            held.hold(&page.text);
+            if held.chars == 0 {
+                held.chars = page.chars;
+                held.words = page.words;
+            }
+            for (start, end) in page.delivered {
+                held.deliver(Delivery::Part { start, end });
+            }
         }
     }
 }
@@ -313,22 +380,23 @@ mod tests {
         );
     }
 
+    fn first(n: usize) -> Delivery {
+        Delivery::Part { start: 0, end: n }
+    }
+
     /// A clipped page hands over exactly the part the prompt had no room for,
     /// without going back to the network for it.
     #[test]
     fn a_clipped_page_hands_over_only_the_part_that_was_cut() {
         let mut memory = FetchMemory::default();
-        memory.record_page(
-            "https://example.com/recap",
-            "0123456789",
-            Delivery::Clipped { shown_chars: 4 },
-        );
+        memory.record_page("https://example.com/recap", "0123456789", first(4));
         assert_eq!(
             memory.recall("https://example.com/recap", None, 100),
             Some(Recall::Remainder {
                 text: "456789".to_string(),
                 shown_chars: 4,
                 next: None,
+                unread: None,
             })
         );
     }
@@ -338,11 +406,7 @@ mod tests {
     #[test]
     fn the_remainder_is_handed_over_once() {
         let mut memory = FetchMemory::default();
-        memory.record_page(
-            "https://example.com/recap",
-            "0123456789",
-            Delivery::Clipped { shown_chars: 4 },
-        );
+        memory.record_page("https://example.com/recap", "0123456789", first(4));
         assert!(matches!(
             memory.recall("https://example.com/recap", None, 100),
             Some(Recall::Remainder { .. })
@@ -357,33 +421,101 @@ mod tests {
     #[test]
     fn a_clip_point_inside_multibyte_text_does_not_split_a_character() {
         let mut memory = FetchMemory::default();
-        memory.record_page(
-            "https://example.com/recap",
-            "héllo wörld",
-            Delivery::Clipped { shown_chars: 2 },
-        );
+        memory.record_page("https://example.com/recap", "héllo wörld", first(2));
         assert_eq!(
             memory.recall("https://example.com/recap", None, 100),
             Some(Recall::Remainder {
                 text: "llo wörld".to_string(),
                 shown_chars: 2,
                 next: None,
+                unread: None,
             })
         );
     }
 
-    /// A clip that happened to land at the very end left nothing behind.
+    /// Reading a late part first used to mark the whole page read, so the
+    /// middle could never be asked for. Only every character delivered, in
+    /// whatever order, makes a page whole; until then a request without an
+    /// offset gets the first stretch still unread.
     #[test]
-    fn a_clip_that_cut_nothing_is_reported_as_whole() {
+    fn a_late_part_read_first_leaves_the_middle_reachable() {
+        let text: String = ('a'..='z').collect();
         let mut memory = FetchMemory::default();
         memory.record_page(
-            "https://example.com/recap",
-            "abcd   ",
-            Delivery::Clipped { shown_chars: 4 },
+            "https://example.com/long",
+            &text,
+            Delivery::Part { start: 20, end: 26 },
+        );
+        assert_eq!(
+            memory.recall("https://example.com/long", None, 10),
+            Some(Recall::Remainder {
+                text: "abcdefghij".to_string(),
+                shown_chars: 0,
+                next: Some(10),
+                unread: Some(10),
+            })
+        );
+        assert_eq!(
+            memory.recall("https://example.com/long", None, 100),
+            Some(Recall::Remainder {
+                text: "klmnopqrstuvwxyz".to_string(),
+                shown_chars: 10,
+                next: None,
+                unread: None,
+            })
         );
         assert!(matches!(
-            memory.recall("https://example.com/recap", None, 100),
+            memory.recall("https://example.com/long", None, 100),
             Some(Recall::AlreadyWhole { .. })
+        ));
+    }
+
+    /// A named offset is always served, even on a page given whole: a part
+    /// condensed out of the context is only reachable that way.
+    #[test]
+    fn a_named_offset_is_served_even_on_a_whole_page() {
+        let mut memory = FetchMemory::default();
+        memory.record_page("https://example.com/p", "0123456789", Delivery::Whole);
+        assert_eq!(
+            memory.recall("https://example.com/p", Some(3), 2),
+            Some(Recall::Remainder {
+                text: "34".to_string(),
+                shown_chars: 3,
+                next: Some(5),
+                unread: None,
+            })
+        );
+    }
+
+    /// A research checkpoint is written every round; it keeps what was
+    /// delivered, not each page's text. A resumed turn reads the text again
+    /// from the archive, from the first part the model was not given.
+    #[test]
+    fn a_saved_memory_keeps_what_was_delivered_but_not_the_text() {
+        let text = "word ".repeat(2_000);
+        let mut memory = FetchMemory::default();
+        memory.record_page("https://example.com/big", text.trim(), first(300));
+        let saved = serde_json::to_string(&memory).unwrap();
+        assert!(saved.len() < 400, "{} bytes saved", saved.len());
+        let mut resumed: FetchMemory = serde_json::from_str(&saved).unwrap();
+        assert_eq!(
+            resumed.recall("https://example.com/big", None, 100),
+            Some(Recall::Reread { offset: 300 })
+        );
+        resumed.record_page(
+            "https://example.com/big",
+            text.trim(),
+            Delivery::Part {
+                start: 300,
+                end: 600,
+            },
+        );
+        assert!(matches!(
+            resumed.recall("https://example.com/big", None, 100),
+            Some(Recall::Remainder {
+                shown_chars: 600,
+                ..
+            })
         ));
     }
 
@@ -394,17 +526,14 @@ mod tests {
     fn a_long_remainder_is_handed_over_in_parts_that_fit_the_room() {
         let text: String = ('a'..='z').cycle().take(100).collect();
         let mut memory = FetchMemory::default();
-        memory.record_page(
-            "https://example.com/long",
-            &text,
-            Delivery::Clipped { shown_chars: 10 },
-        );
+        memory.record_page("https://example.com/long", &text, first(10));
         let mut received = text.chars().take(10).collect::<String>();
         let mut parts = 0;
         while let Some(Recall::Remainder {
             text: part,
             shown_chars,
             next,
+            ..
         }) = memory.recall("https://example.com/long", None, 30)
         {
             assert_eq!(shown_chars, received.chars().count());
@@ -429,17 +558,14 @@ mod tests {
     #[test]
     fn a_named_offset_is_where_the_part_starts() {
         let mut memory = FetchMemory::default();
-        memory.record_page(
-            "https://example.com/long",
-            "0123456789",
-            Delivery::Clipped { shown_chars: 2 },
-        );
+        memory.record_page("https://example.com/long", "0123456789", first(2));
         assert_eq!(
             memory.recall("https://example.com/long", Some(6), 2),
             Some(Recall::Remainder {
                 text: "67".to_string(),
                 shown_chars: 6,
                 next: Some(8),
+                unread: Some(2),
             })
         );
     }

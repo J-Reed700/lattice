@@ -10,7 +10,7 @@ use crate::features::function_calling::dto::{WikiSearchOutput, WikiSummaryOutput
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
-use lattice_core::shared::text::{build_excerpt, safe_truncate};
+use lattice_core::shared::text::build_excerpt;
 
 /// Preview length for a page the model fetched itself, matching the preview a
 /// vault passage gets.
@@ -108,8 +108,10 @@ pub(super) fn collect_tool_sources(
         }
         "fetch_url_content" => {
             if let Ok(output) = serde_json::from_value::<FetchUrlContentOutput>(data) {
-                let content =
-                    safe_truncate(&output.content, tool_output_settings.excerpt_chars as usize);
+                // Stored whole, as a cited web page is archived whole: the
+                // grounding check and synthesis read this text, and both
+                // read in parts what does not fit them.
+                let content = output.content.trim().to_string();
                 let title = output
                     .title
                     .unwrap_or_else(|| output.url.clone())
@@ -185,10 +187,8 @@ pub(super) fn collect_tool_sources(
         }
         "wiki_summary" => {
             if let Ok(output) = serde_json::from_value::<WikiSummaryOutput>(data) {
-                let content = safe_truncate(
-                    output.extract.trim(),
-                    tool_output_settings.excerpt_chars as usize,
-                );
+                // The whole extract; the card's preview is its own excerpt.
+                let content = output.extract.trim().to_string();
                 let highlights = if highlight_terms.is_empty() {
                     None
                 } else {
@@ -209,7 +209,11 @@ pub(super) fn collect_tool_sources(
                     category: "Wikipedia".to_string(),
                     file_size_bytes: output.extract.chars().count() as i64,
                     modified_at: chrono::Utc::now().to_rfc3339(),
-                    excerpt: Some(content),
+                    excerpt: Some(build_excerpt(
+                        &content,
+                        highlight_terms,
+                        FETCHED_PAGE_EXCERPT_CHARS,
+                    )),
                     highlights,
                     section: None,
                     chunk_index: Some(1),
@@ -273,5 +277,46 @@ mod citable_tests {
         assert!(text.contains("[…passage continues past this result's room]"));
         assert!(text.chars().count() <= 300, "{}", text.chars().count());
         assert_eq!(left, 600 - text.chars().count());
+    }
+
+    /// A fetched page and a Wikipedia summary were stored cut at the excerpt
+    /// setting, and synthesis read the cut text. They are stored whole, as a
+    /// cited web page is archived; the card keeps its short preview.
+    #[test]
+    fn fetched_and_wiki_sources_are_stored_whole() {
+        let body = format!(
+            "{}the closing line",
+            "A long article sentence. ".repeat(2_000)
+        );
+        let settings = ToolOutputSettingsDto::default();
+        let page = FunctionResult::success(
+            serde_json::to_value(FetchUrlContentOutput {
+                url: "https://example.com/a".into(),
+                title: Some("Page A".into()),
+                content: body.clone(),
+                content_truncated: false,
+                word_count: body.split_whitespace().count(),
+                fetch_time_ms: 1.0,
+                content_type: None,
+                from_cache: false,
+            })
+            .unwrap(),
+        );
+        let fetched = collect_tool_sources("fetch_url_content", &page, &[], &settings);
+        assert_eq!(fetched[0].content, body.trim());
+        assert!(fetched[0].excerpt.as_ref().unwrap().chars().count() < 2_000);
+
+        let summary = FunctionResult::success(
+            serde_json::to_value(WikiSummaryOutput {
+                title: "Topic".into(),
+                url: "https://en.wikipedia.org/wiki/Topic".into(),
+                language: "en".into(),
+                extract: body.clone(),
+            })
+            .unwrap(),
+        );
+        let wiki = collect_tool_sources("wiki_summary", &summary, &[], &settings);
+        assert_eq!(wiki[0].content, body.trim());
+        assert!(wiki[0].excerpt.as_ref().unwrap().chars().count() < 2_000);
     }
 }

@@ -49,7 +49,8 @@ pub struct RawCluster {
     /// soft memberships, so we treat HDBSCAN's hard assignment as 1.0 and
     /// leave room for a more nuanced value later).
     pub membership_probabilities: Vec<f32>,
-    /// Up to 5 representative doc ids nearest the centroid (for LLM labeling).
+    /// Every member's doc id, nearest the centroid first. The label call reads
+    /// as many from the front as its room gives a useful look at.
     pub representatives: Vec<String>,
 }
 
@@ -189,15 +190,14 @@ pub fn cluster(inputs: Vec<ClusteringInput>, params: ClusteringParams) -> Result
             }
         }
 
-        // Top-5 representatives by Euclidean distance to centroid.
+        // Members by Euclidean distance to the centroid, nearest first.
         let mut distances: Vec<(String, f32)> = vectors
             .iter()
             .zip(member_doc_ids.iter())
             .map(|(v, id)| (id.clone(), euclidean_distance(v, &centroid)))
             .collect();
         distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let representatives: Vec<String> =
-            distances.into_iter().take(5).map(|(id, _)| id).collect();
+        let representatives: Vec<String> = distances.into_iter().map(|(id, _)| id).collect();
 
         let membership_probabilities = vec![1.0_f32; member_doc_ids.len()];
 
@@ -408,8 +408,8 @@ mod tests {
             );
             // Centroid has correct dimension.
             assert_eq!(cluster.centroid.len(), 4);
-            // Representatives: at most 5, drawn from member set.
-            assert!(cluster.representatives.len() <= 5);
+            // Representatives: every member, nearest the centroid first.
+            assert_eq!(cluster.representatives.len(), cluster.member_doc_ids.len());
             for rep in &cluster.representatives {
                 assert!(cluster.member_doc_ids.contains(rep));
             }

@@ -544,6 +544,7 @@ async fn planned(
         conversation_id,
         validated_message,
         utility,
+        Some(planner_turn.history_tokens()),
     )
     .await;
     shortlist_candidates(
@@ -620,6 +621,7 @@ async fn corrective_pass(
         turn.conversation_id,
         validated_message,
         utility.as_ref(),
+        Some(planner_turn.history_tokens()),
     )
     .await;
     shortlist_candidates(

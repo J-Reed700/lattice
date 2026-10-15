@@ -36,6 +36,27 @@ pub fn preview_chars(llm: &dyn LLMPort, representatives: usize) -> usize {
         / representatives.max(1)
 }
 
+/// Below this a representative's opening says too little to label by: about
+/// one passage.
+const MIN_PREVIEW_CHARS: usize = 1_200;
+
+/// How many of a cluster's `members` (nearest the centroid first) the label
+/// call shows: as many as its room gives at least [`MIN_PREVIEW_CHARS`] each,
+/// and always one. The room, not a fixed sample of five, decides how much of
+/// a cluster the label is drawn from.
+pub fn representatives_that_fit(llm: &dyn LLMPort, members: usize) -> usize {
+    let (mut fits, mut over) = (1usize, members.max(1) + 1);
+    while over - fits > 1 {
+        let mid = fits + (over - fits) / 2;
+        if preview_chars(llm, mid) >= MIN_PREVIEW_CHARS {
+            fits = mid;
+        } else {
+            over = mid;
+        }
+    }
+    fits.min(members.max(1))
+}
+
 /// Upper bound on generated label length — LLMs love to run long.
 pub const MAX_LABEL_CHARS: usize = 80;
 
@@ -345,5 +366,40 @@ mod tests {
             content_preview: long.clone(),
         }];
         assert!(build_prompt(&reps).contains(&long));
+    }
+
+    struct Window(usize);
+
+    #[async_trait::async_trait]
+    impl LLMPort for Window {
+        async fn complete(
+            &self,
+            _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            Ok(lattice_core::application::ports::llm_port::CompletionResponse::from_text("{}"))
+        }
+        fn model_name(&self) -> &str {
+            "window"
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.0
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// A label was drawn from five members whatever the window. The room
+    /// decides now: as many members as get a passage-sized look each, the
+    /// largest number that still does.
+    #[test]
+    fn the_label_call_reads_as_many_members_as_its_room_holds() {
+        let large = Window(32_768);
+        let shown = representatives_that_fit(&large, 500);
+        assert!(shown > 5, "{shown}");
+        assert!(preview_chars(&large, shown) >= MIN_PREVIEW_CHARS);
+        assert!(preview_chars(&large, shown + 1) < MIN_PREVIEW_CHARS);
+        assert_eq!(representatives_that_fit(&large, 3), 3);
+        assert_eq!(representatives_that_fit(&Window(1_024), 500), 1);
     }
 }

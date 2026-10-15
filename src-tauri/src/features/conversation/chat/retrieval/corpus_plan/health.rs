@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use lattice_core::application::ports::llm_port::PrefillTiming;
+use lattice_core::application::services::prompt_pace::PromptPace;
 use tokio::time::Instant;
 
 use super::PLANNER_TIMEOUT;
@@ -18,14 +20,9 @@ use super::PLANNER_TIMEOUT;
 /// The prompt, system prompt included, the planner is sent before this machine
 /// has answered once: what the reference machine (Qwen3.5-9B Q4_K_M on Metal,
 /// about 300 prompt tokens a second) prefills in about nine seconds. From the
-/// first answer on, the size comes from the speed actually measured (see
-/// [`PlannerHealth::answered`]).
+/// first answer on, the size comes from the prefill speed the server reports
+/// (see [`PlannerHealth::answered`]).
 pub(super) const PLANNER_PROMPT_TOKENS: usize = 2_560;
-
-/// The share of [`PLANNER_TIMEOUT`] a prompt is sized to take, measured end to
-/// end. The rest is room for a slower prefill, the plan's own writing, or a
-/// queue wait before the timeout.
-const PROMPT_SHARE_OF_TIMEOUT: f64 = 0.5;
 
 /// The smallest prompt a timeout shrinks the planner to: the system prompt,
 /// the request, a little conversation and a handful of catalog rows. A planner
@@ -43,12 +40,8 @@ pub(super) const PLANNER_STAND_DOWN: Duration = Duration::from_secs(2 * 60);
 /// every turn it runs, because "how much can this model prefill in time" is a
 /// property of the machine and the model, not of any one conversation.
 pub struct PlannerHealth {
-    state: Mutex<HealthState>,
-}
-
-struct HealthState {
-    prompt_tokens: usize,
-    stood_down_until: Option<Instant>,
+    pace: PromptPace,
+    stood_down_until: Mutex<Option<Instant>>,
 }
 
 impl Default for PlannerHealth {
@@ -60,64 +53,51 @@ impl Default for PlannerHealth {
 impl PlannerHealth {
     pub(crate) const fn new() -> Self {
         Self {
-            state: Mutex::new(HealthState {
-                prompt_tokens: PLANNER_PROMPT_TOKENS,
-                stood_down_until: None,
-            }),
+            pace: PromptPace::starting_at(
+                PLANNER_TIMEOUT,
+                PLANNER_PROMPT_TOKENS,
+                PLANNER_PROMPT_FLOOR,
+            ),
+            stood_down_until: Mutex::new(None),
         }
     }
 
-    fn state(&self) -> std::sync::MutexGuard<'_, HealthState> {
-        self.state
+    fn stood_down_until(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
+        self.stood_down_until
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// The prompt size, in tokens, the next attempt should aim for.
     pub(super) fn prompt_tokens(&self) -> usize {
-        self.state().prompt_tokens
+        self.pace.tokens().unwrap_or(PLANNER_PROMPT_TOKENS)
     }
 
     /// How much longer the planner is standing down, if it is.
     pub(super) fn standing_down(&self) -> Option<Duration> {
-        let state = self.state();
-        let until = state.stood_down_until?;
+        let until = (*self.stood_down_until())?;
         until.checked_duration_since(Instant::now())
     }
 
-    /// An answer in time ends any stand-down and measures the planner: a
-    /// prompt of `sent_tokens` answered in `elapsed`. The next prompt is what
-    /// that rate gets through in half of [`PLANNER_TIMEOUT`], so a fast
-    /// planner is shown more of the catalog and a slow one less, with no fixed
-    /// ceiling. Growth is at most a doubling per answer, so one quick reply to
-    /// a short prompt cannot jump the next past what the planner has shown it
-    /// can do; an answer inside the target share never shrinks the prompt,
-    /// since the time it took may be the plan's writing rather than the
-    /// prompt's reading.
-    pub(super) fn answered(&self, elapsed: Duration, sent_tokens: usize) {
-        let mut state = self.state();
-        state.stood_down_until = None;
-        let target_time = PLANNER_TIMEOUT.as_secs_f64() * PROMPT_SHARE_OF_TIMEOUT;
-        let measured = if elapsed.is_zero() {
-            usize::MAX
-        } else {
-            (sent_tokens as f64 * target_time / elapsed.as_secs_f64()) as usize
-        };
-        let mut next = measured.min(state.prompt_tokens.saturating_mul(2));
-        if elapsed.as_secs_f64() <= target_time {
-            next = next.max(state.prompt_tokens);
-        }
-        state.prompt_tokens = next.max(PLANNER_PROMPT_FLOOR);
+    /// An answer in time ends any stand-down and measures the planner from the
+    /// server's own prefill timing: the next prompt is what that pace reads in
+    /// half of [`PLANNER_TIMEOUT`], growing at most a doubling per answer. The
+    /// time to the answer is not used: it also holds the plan's writing and
+    /// any queue, and read as prefill it shrank a 9B planner's prompt from
+    /// 2,560 tokens to the floor after answers that were all in time. An answer
+    /// in time never shrinks the next prompt.
+    pub(super) fn answered(&self, prefill: Option<PrefillTiming>, sent_tokens: usize) {
+        *self.stood_down_until() = None;
+        self.pace.answered(prefill, sent_tokens);
     }
 
     /// A timeout halves the next attempt's prompt. Only a timeout at the floor
     /// stands the planner down, because there is nothing smaller left to try.
     pub(super) fn timed_out(&self, sent_tokens: usize) {
-        let mut state = self.state();
-        let at_floor = state.prompt_tokens <= PLANNER_PROMPT_FLOOR;
-        state.prompt_tokens = (sent_tokens.min(state.prompt_tokens) / 2).max(PLANNER_PROMPT_FLOOR);
+        let at_floor = self.prompt_tokens() <= PLANNER_PROMPT_FLOOR;
+        self.pace.timed_out(sent_tokens);
         if at_floor {
-            state.stood_down_until = Some(Instant::now() + PLANNER_STAND_DOWN);
+            *self.stood_down_until() = Some(Instant::now() + PLANNER_STAND_DOWN);
         }
     }
 
@@ -126,8 +106,7 @@ impl PlannerHealth {
     /// was wrong. Halving finds the real window within a few turns; there is
     /// no stand-down, since a refusal costs no time.
     pub(super) fn overflowed(&self, sent_tokens: usize) {
-        let mut state = self.state();
-        state.prompt_tokens = (sent_tokens.min(state.prompt_tokens) / 2).max(PLANNER_PROMPT_FLOOR);
+        self.pace.overflowed(sent_tokens);
     }
 }
 
@@ -170,6 +149,12 @@ impl<'h> PlannerTurn<'h> {
     pub(super) fn record_timeout(&self, sent_tokens: usize) {
         self.timed_out.store(true, Ordering::Relaxed);
         self.health.timed_out(sent_tokens);
+    }
+
+    /// Tokens of conversation the planner's next prompt carries: its share of
+    /// the prompt the planner reads in time.
+    pub(in super::super) fn history_tokens(&self) -> usize {
+        super::prompt::history_tokens(self.health.prompt_tokens())
     }
 
     pub(super) fn candidate_ids(&self) -> &[String] {

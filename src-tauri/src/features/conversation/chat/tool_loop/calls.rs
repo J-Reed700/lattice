@@ -43,7 +43,7 @@ use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::http::url_identity::identity;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -124,10 +124,6 @@ pub(super) struct ToolCalls<'a> {
     pages_in_results: Vec<(String, String)>,
     /// Pages whose results were condensed into notes.
     condensed_pages: HashSet<String>,
-    /// The page size each document has been read at this turn, by document.
-    /// Kept so a page number names the same stretch of text on every call and
-    /// nothing falls between two pages when the allowance changes.
-    document_page_chars: HashMap<String, usize>,
 }
 
 /// A call, decided before anything runs.
@@ -229,7 +225,6 @@ impl<'a> ToolCalls<'a> {
             document_progress: DocumentProgress::new(sources),
             pages_in_results: Vec::new(),
             condensed_pages: HashSet::new(),
-            document_page_chars: HashMap::new(),
         }
     }
 
@@ -351,6 +346,7 @@ impl<'a> ToolCalls<'a> {
             );
             return answered("Requested tool is unavailable".into());
         }
+        let mut reread_from = None;
         if let Some(url) = fetch_memory::fetch_target(&call.arguments) {
             // A URL this turn already failed on costs a request to learn
             // nothing. Answer it from memory so the round can still spend its
@@ -374,8 +370,9 @@ impl<'a> ToolCalls<'a> {
             let condensed = self.condensed_pages.remove(&identity(url));
             // A page this turn already read is answered from memory: no
             // request, no politeness delay, and nothing re-sent that the
-            // model has.
-            if let Some(recall) = (!condensed)
+            // model has. A page whose text memory no longer holds is read
+            // again from the archive, from where the model's copy stops.
+            let recall = (!condensed)
                 .then(|| {
                     self.fetch_memory.recall(
                         url,
@@ -383,17 +380,21 @@ impl<'a> ToolCalls<'a> {
                         fetched_page_text_room(allowance),
                     )
                 })
-                .flatten()
-            {
-                info!(
-                    requested_function = call.name.as_str(),
-                    resolved_function = tool,
-                    url,
-                    already_whole = matches!(recall, Recall::AlreadyWhole { .. }),
-                    "Answered a repeat page request from this turn's memory"
-                );
-                timings.tool_success_count = timings.tool_success_count.saturating_add(1);
-                return answered(recalled_page_notice(url, &recall));
+                .flatten();
+            match recall {
+                Some(Recall::Reread { offset }) => reread_from = Some(offset),
+                Some(recall) => {
+                    info!(
+                        requested_function = call.name.as_str(),
+                        resolved_function = tool,
+                        url,
+                        already_whole = matches!(recall, Recall::AlreadyWhole { .. }),
+                        "Answered a repeat page request from this turn's memory"
+                    );
+                    timings.tool_success_count = timings.tool_success_count.saturating_add(1);
+                    return answered(recalled_page_notice(url, &recall));
+                }
+                None => {}
             }
         }
         if let Some(query) = call
@@ -417,11 +418,14 @@ impl<'a> ToolCalls<'a> {
             resolved_function = tool,
             "Executing tool call from LLM"
         );
-        let arguments = if tool == "get_document" {
-            self.document_page_sized_to(&call.arguments, allowance)
+        let mut arguments = if tool == "get_document" {
+            document_part_sized_to(&call.arguments, allowance)
         } else {
             call.arguments.clone()
         };
+        if let (Some(offset), Some(object)) = (reread_from, arguments.as_object_mut()) {
+            object.insert("offset".into(), serde_json::json!(offset));
+        }
         Planned::Run(Pending {
             id: call.id.clone(),
             name: call.name.clone(),
@@ -430,44 +434,6 @@ impl<'a> ToolCalls<'a> {
             allowance,
             step,
         })
-    }
-
-    /// A `get_document` call whose page is sized to fit this call's
-    /// allowance, so the page the tool returns is shown whole and the next page
-    /// carries on where it ends: a long document is read in pages that fit the
-    /// window instead of each page being cut to an excerpt.
-    ///
-    /// A document keeps the smallest page size it has been read at this turn.
-    /// Shrinking only ever makes two pages overlap; growing would skip the text
-    /// between them.
-    fn document_page_sized_to(
-        &mut self,
-        arguments: &serde_json::Value,
-        allowance: usize,
-    ) -> serde_json::Value {
-        let mut arguments = arguments.clone();
-        let room = document_page_room(allowance).max(1);
-        let document_id = arguments
-            .get("document_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let asked = arguments
-            .get("max_content_length")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|asked| usize::try_from(asked).ok())
-            .unwrap_or(usize::MAX);
-        let earlier = self
-            .document_page_chars
-            .get(&document_id)
-            .copied()
-            .unwrap_or(usize::MAX);
-        let size = asked.min(earlier).min(room).max(1);
-        self.document_page_chars.insert(document_id, size);
-        if let Some(object) = arguments.as_object_mut() {
-            object.insert("max_content_length".into(), serde_json::json!(size));
-        }
-        arguments
     }
 
     /// Run a batch's calls, at most [`MAX_CONCURRENT_CALLS`] at once, with
@@ -535,6 +501,13 @@ impl<'a> ToolCalls<'a> {
                 // A char allowance used as a byte ceiling is conservative in
                 // the safe direction.
                 max_response_bytes: pending.allowance,
+                // The turn's history reads together come to at most one
+                // window, however many rounds ask.
+                turn_response_bytes: if scope.window_chars == 0 {
+                    history_tools::HistoryToolBudget::default().turn_response_bytes
+                } else {
+                    scope.window_chars
+                },
                 deadline: Some(scope.clock.deadline()),
             };
             // The conversation id comes from the turn, and the scope has no
@@ -712,15 +685,14 @@ impl<'a> ToolCalls<'a> {
                 .and_then(|data| serde_json::from_value::<FetchUrlContentOutput>(data).ok());
             if let (Some(url), Some(page)) = (url, page) {
                 let text = page.content.trim();
-                // Where the part this result showed ends; a later request for
-                // the page carries on from there.
-                let shown_to = page_offset.saturating_add(fetched_page_text_room(allowance));
-                let delivery = if shown_to >= text.chars().count() {
-                    Delivery::Whole
-                } else {
-                    Delivery::Clipped {
-                        shown_chars: shown_to,
-                    }
+                // The part this result showed; a later request without an
+                // offset carries on from the first part not yet shown.
+                let total = text.chars().count();
+                let delivery = Delivery::Part {
+                    start: page_offset.min(total),
+                    end: page_offset
+                        .saturating_add(fetched_page_text_room(allowance))
+                        .min(total),
                 };
                 self.fetch_memory.record_page(url, text, delivery);
                 self.fetched.push(url.to_string());
@@ -755,6 +727,28 @@ impl<'a> ToolCalls<'a> {
         );
         Ok(())
     }
+}
+
+/// A `get_document` call whose part is sized to this call's allowance, so the
+/// part the tool returns is shown whole. Parts are addressed by character
+/// offset and each result names where the next starts, so parts of different
+/// sizes neither overlap nor skip text. A model asking for less gets less.
+fn document_part_sized_to(arguments: &serde_json::Value, allowance: usize) -> serde_json::Value {
+    let mut arguments = arguments.clone();
+    let room = document_page_room(allowance).max(1);
+    let asked = arguments
+        .get("max_content_length")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|asked| usize::try_from(asked).ok())
+        .filter(|asked| *asked > 0)
+        .unwrap_or(usize::MAX);
+    if let Some(object) = arguments.as_object_mut() {
+        object.insert(
+            "max_content_length".into(),
+            serde_json::json!(asked.min(room)),
+        );
+    }
+    arguments
 }
 
 #[cfg(test)]

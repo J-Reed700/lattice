@@ -177,27 +177,20 @@ pub struct GetDocumentInput {
     #[serde(default = "default_true")]
     pub include_metadata: bool,
 
-    /// Maximum content length in characters (prevents huge returns)
-    #[serde(default = "default_max_content_length")]
-    pub max_content_length: usize,
+    /// Characters to return from `offset` on. The chat's tool loop sets this
+    /// to the room the result has in the model's window; without it the text
+    /// runs to the end of the document.
+    #[serde(default)]
+    pub max_content_length: Option<usize>,
 
-    /// 1-based page number for internal pagination.
-    ///
-    /// Page size is controlled by `max_content_length`.
-    #[serde(default = "default_page")]
-    pub page: usize,
+    /// Character the returned text starts at: 0 for the beginning, or a
+    /// previous result's `next_offset` to read on from where it stopped.
+    #[serde(default)]
+    pub offset: usize,
 }
 
 fn default_true() -> bool {
     true
-}
-
-fn default_max_content_length() -> usize {
-    50000
-}
-
-fn default_page() -> usize {
-    1
 }
 
 /// Document metadata.
@@ -227,39 +220,23 @@ pub struct GetDocumentOutput {
     /// Document identifier
     pub document_id: String,
 
-    /// Document text content for the requested page
+    /// Document text from `offset`, as much as was asked for.
     pub content: String,
 
-    /// True if additional pages are available beyond the returned page
+    /// True when text after this part remains; `next_offset` is where it starts.
     pub content_truncated: bool,
 
-    /// 1-based page returned.
-    #[serde(default = "default_page")]
-    pub page: usize,
+    /// Character this part starts at.
+    #[serde(default)]
+    pub offset: usize,
 
-    /// Total available pages for this document at the requested page size.
-    #[serde(default = "default_page")]
-    pub total_pages: usize,
+    /// Character the next part starts at, when the document goes on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<usize>,
 
     /// Total character count for the assembled document content.
     #[serde(default)]
     pub total_chars: usize,
-
-    /// True when a previous page exists.
-    #[serde(default)]
-    pub has_previous_page: bool,
-
-    /// True when a next page exists.
-    #[serde(default)]
-    pub has_next_page: bool,
-
-    /// Previous page number if available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_page: Option<usize>,
-
-    /// Next page number if available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page: Option<usize>,
 
     /// Document metadata (if include_metadata=true)
     #[serde(skip_serializing_if = "Option::is_none")]
