@@ -124,9 +124,7 @@ const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
 
 // Source files over the line limit when the rule arrived. Do not add to this
 // list: split the file, then delete its entry.
-const MAX_LINES_ALLOWLIST = ratchet('MAX_LINES_ALLOWLIST', [
-  'src/features/reading/components/SourceReaderBody.tsx',
-], (text) => text.replace(/\n$/, '').split('\n').length > 800);
+const MAX_LINES_ALLOWLIST = ratchet('MAX_LINES_ALLOWLIST', [], (text) => text.replace(/\n$/, '').split('\n').length > 800);
 
 export default [
   // Ignore patterns (migrated from .eslintignore)
