@@ -1,4 +1,4 @@
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use sqlx::SqliteConnection;
 use tracing::{debug, error, info};
 

@@ -61,7 +61,7 @@ Provide a modern, low-latency, citation-grounded architecture for Lattice that:
   the user did not point at the library. A turn's record keeps the router's
   decision only when the router actually ran (`chat/turn_record.rs`).
 - Settings: `llm.router` (`RouterSettingsDto` in
-  `src-tauri/src/application/contracts/settings.rs`; default `enabled: false`,
+  `src-tauri/crates/lattice-core/src/application/contracts/settings.rs`; default `enabled: false`,
   model `phi-3.5-mini-instruct-q4_k_m`, 350 ms timeout). Validation in
   `features/settings/repository.rs` warns rather than fails when it is off.
 - Retrieval: `src-tauri/src/features/conversation/chat/retrieval/`; grounding

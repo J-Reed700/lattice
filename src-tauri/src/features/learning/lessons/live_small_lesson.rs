@@ -11,8 +11,8 @@ use crate::features::learning::{
 #[tokio::test]
 #[ignore = "real-model controls for requirements versus empirical claims; does not publish content"]
 async fn live_contract_fidelity_controls() -> Result<()> {
-    use crate::application::ports::llm_port::SamplingOverride;
-    use crate::application::services::claim_verification::{
+    use lattice_core::application::ports::llm_port::SamplingOverride;
+    use lattice_core::application::services::claim_verification::{
         CheckPolicy, ClaimChecker, ClaimJudgment,
     };
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
@@ -31,7 +31,7 @@ async fn live_contract_fidelity_controls() -> Result<()> {
         Err(_) => serde_json::from_str(include_str!("live_fixtures/verification_controls.json"))?,
     };
     let mut batched = if std::env::var_os("LATTICE_CHECK_BATCH").is_some() {
-        use crate::application::services::claim_verification::LocatedClaim;
+        use lattice_core::application::services::claim_verification::LocatedClaim;
         let targets = cases
             .iter()
             .map(|case| {
@@ -357,6 +357,7 @@ async fn run_and_confirm(
     let live = model.clone();
     let web_dir = tempfile::tempdir()?;
     let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = live.clone();
@@ -370,7 +371,7 @@ async fn run_and_confirm(
     };
     // Run through the native job runtime: transient network/model failures
     // stay queued, and the runtime redelivers them when their retry is due.
-    let runtime = crate::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
     runtime
         .register(
             crate::features::learning::curriculum_repository::LESSON_PREPARATION,
@@ -520,10 +521,10 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         call: std::sync::atomic::AtomicUsize::new(next_call),
     });
     // Exercise the same recovery the job runtime runs at native startup.
-    crate::shared::runtime::jobs::JobStore::new(pool.clone())
+    lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
         .recover(
             crate::features::learning::curriculum_repository::LESSON_PREPARATION,
-            crate::shared::runtime::jobs::RecoveryPolicy::Requeue,
+            lattice_core::shared::runtime::jobs::RecoveryPolicy::Requeue,
         )
         .await?;
     assert_eq!(

@@ -28,7 +28,8 @@ vi.mock('@/features/journal/hooks/useJournalEntries', () => ({
     togglePinned: vi.fn(),
   }),
 }));
-vi.mock('@/features/journal/hooks/useJournalNote', () => ({
+vi.mock('@/features/journal/hooks/useJournalNote', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/journal/hooks/useJournalNote')>()),
   UNTITLED_PAGE: 'Untitled page',
   useJournalNote: () => ({
     activeNote: null, pages: [], isLoadingNote: false, loadError: null, saveError: null,

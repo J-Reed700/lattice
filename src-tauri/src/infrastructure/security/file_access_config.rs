@@ -1,5 +1,5 @@
 use super::validated_file::{ValidatedFile, ValidatedFileError};
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -78,7 +78,7 @@ impl FileAccessConfig {
     /// let config = FileAccessConfig::new(vec![PathBuf::from("/home/user/lattice")]);
     /// let file = config.open_file("/home/user/lattice/doc.txt")?;
     /// let content = file.read_to_string()?;
-    /// # Ok::<(), crate::shared::error::AppError>(())
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
     /// ```
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<ValidatedFile, AppError> {
         let display_path = path.as_ref().display().to_string();
@@ -252,7 +252,7 @@ impl FileAccessConfig {
     ///
     /// // Now files in that directory can be accessed
     /// let file = config.open_file("/home/user/new_vault/doc.txt")?;
-    /// # Ok::<(), crate::shared::error::AppError>(())
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
     /// ```
     pub fn add_allowed_root(&self, root: PathBuf) -> Result<(), AppError> {
         let mut roots = self

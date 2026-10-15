@@ -3,6 +3,7 @@
 use super::archive_budget::{run_archive_work, ArchiveBudget, MAX_ARCHIVE_MEMBERS};
 use super::markup::{attr, decode_entities, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
+use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::borrow::Cow;
 use std::fs::File;
@@ -67,7 +68,11 @@ impl XlsxBudget {
 }
 
 /// Extract content from XLSX files.
-pub async fn extract_xlsx(path: &Path, max_file_size: u64) -> Result<ExtractedContent> {
+pub async fn extract_xlsx(
+    path: &Path,
+    max_file_size: u64,
+    workers: &ExtractionWorkers,
+) -> Result<ExtractedContent> {
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| IndexingError::Io {
@@ -85,7 +90,10 @@ pub async fn extract_xlsx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
     }
 
     let path_clone = path.to_path_buf();
-    let text = run_archive_work(path.to_path_buf(), move || extract_xlsx_sync(&path_clone)).await?;
+    let text = run_archive_work(workers, path.to_path_buf(), move || {
+        extract_xlsx_sync(&path_clone)
+    })
+    .await?;
 
     let metadata = ContentMetadata {
         page_count: None,
@@ -100,6 +108,7 @@ pub async fn extract_xlsx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
+        ocr_pages: Vec::new(),
     })
 }
 
@@ -563,7 +572,10 @@ mod tests {
         }
         zip.finish().unwrap();
 
-        let text = extract_xlsx(&path, 1 << 20).await.unwrap().text;
+        let text = extract_xlsx(&path, 1 << 20, &ExtractionWorkers::new())
+            .await
+            .unwrap()
+            .text;
         assert_eq!(
             text,
             "# Budget\nItem: Rent & utilities, Cost: 1250.5, D: TRUE\nItem: Food, Cost: 300\n\n# Notes\nReminder"

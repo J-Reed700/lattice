@@ -154,7 +154,7 @@ async fn a_rebuilt_complete_plan_can_continue_with_the_original_restriction() {
     assert!(result.plan.accounting.fits());
     assert_eq!(result.plan.memory_revision, 1);
     assert!(result.plan.messages.iter().any(|message| matches!(message,
-        crate::application::ports::llm_port::CompletionInput::Message { content, .. }
+        lattice_core::application::ports::llm_port::CompletionInput::Message { content, .. }
             if content.contains("Do not deploy until I approve.")
     )));
 }
@@ -196,7 +196,7 @@ async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_le
     repository
         .add_message(
             &id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             &"A long requirement. ".repeat(400),
             2000,
             None,
@@ -206,7 +206,7 @@ async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_le
     repository
         .add_message(
             &id,
-            crate::domain::conversation::MessageRole::Assistant,
+            lattice_core::domain::conversation::MessageRole::Assistant,
             "Acknowledged.",
             5,
             None,
@@ -280,7 +280,7 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
         repository
             .add_message(
                 &id,
-                crate::domain::conversation::MessageRole::User,
+                lattice_core::domain::conversation::MessageRole::User,
                 &"x".repeat(300_000),
                 75_000,
                 None,
@@ -290,7 +290,15 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
     }
     let snapshot = repository.load_memory_snapshot(&id).await.unwrap();
     // No ledger: nothing stands in for the message the cap left unread.
-    let (recent, unread) = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
+    let RecentCandidates {
+        messages: recent,
+        unread_source: unread,
+        reaches_start,
+    } = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
+    assert!(
+        !reaches_start,
+        "the first message was not read, so the window cannot claim the whole transcript"
+    );
     assert_eq!(recent.len(), 1);
     assert_eq!(
         recent[0].sequence, snapshot.latest_sequence,

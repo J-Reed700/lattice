@@ -29,6 +29,7 @@ pub mod di;
 pub mod dto;
 pub mod library_gc;
 pub mod mapper;
+pub mod note_index_sink;
 pub mod outcome;
 pub mod trait_def;
 pub mod use_cases;

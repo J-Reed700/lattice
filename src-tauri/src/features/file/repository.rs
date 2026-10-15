@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CitingConversation {

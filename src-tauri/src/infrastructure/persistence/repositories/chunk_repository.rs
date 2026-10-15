@@ -13,11 +13,11 @@
 //!
 //! - DB models are now internal and NOT exported
 
-use crate::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
-use crate::domain::entities::chunk::Chunk as ChunkEntity;
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
+use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -108,7 +108,7 @@ impl ChunkRepository {
                 token_count,
                 word_count,
                 has_code,
-                section, page_number
+                section, page_number, from_ocr
             FROM text_chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
@@ -138,6 +138,7 @@ impl ChunkRepository {
                 has_code: row.get("has_code"),
                 section: row.get("section"),
                 page_number: row.get("page_number"),
+                from_ocr: row.get("from_ocr"),
             })
             .collect();
 
@@ -204,7 +205,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 token_count,
                 word_count,
                 has_code,
-                section, page_number
+                section, page_number, from_ocr
             FROM text_chunks
             WHERE id = ?
             "#,
@@ -231,6 +232,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                     has_code: r.get("has_code"),
                     section: r.get("section"),
                     page_number: r.get("page_number"),
+                    from_ocr: r.get("from_ocr"),
                 };
                 Ok(Some(ChunkMapper::to_entity(&model)?))
             }
@@ -269,7 +271,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 token_count,
                 word_count,
                 has_code,
-                section, page_number
+                section, page_number, from_ocr
             FROM text_chunks
             ORDER BY document_id, chunk_index ASC
             "#,
@@ -295,6 +297,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 has_code: row.get("has_code"),
                 section: row.get("section"),
                 page_number: row.get("page_number"),
+                from_ocr: row.get("from_ocr"),
             })
             .collect();
 
@@ -309,9 +312,9 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
             INSERT INTO text_chunks (
                 id, document_id, content, chunk_index,
                 contextualized_content, context_prefix, start_char, end_char,
-                language, token_count, word_count, has_code, section, page_number
+                language, token_count, word_count, has_code, section, page_number, from_ocr
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 content = excluded.content,
                 chunk_index = excluded.chunk_index,
@@ -323,7 +326,8 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 token_count = excluded.token_count,
                 word_count = excluded.word_count,
                 has_code = excluded.has_code,
-                section = excluded.section, page_number = excluded.page_number
+                section = excluded.section, page_number = excluded.page_number,
+                from_ocr = excluded.from_ocr
             "#,
         )
         .bind(&model.id)
@@ -340,6 +344,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         .bind(model.has_code)
         .bind(&model.section)
         .bind(model.page_number)
+        .bind(model.from_ocr)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to save chunk: {}", e)))?;
@@ -366,9 +371,9 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                 INSERT INTO text_chunks (
                     id, document_id, content, chunk_index,
                     contextualized_content, context_prefix, start_char, end_char,
-                    language, token_count, word_count, has_code, section, page_number
+                    language, token_count, word_count, has_code, section, page_number, from_ocr
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     chunk_index = excluded.chunk_index,
@@ -380,7 +385,8 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
                     token_count = excluded.token_count,
                     word_count = excluded.word_count,
                     has_code = excluded.has_code,
-                    section = excluded.section, page_number = excluded.page_number
+                    section = excluded.section, page_number = excluded.page_number,
+                from_ocr = excluded.from_ocr
                 "#,
             )
             .bind(&model.id)
@@ -397,6 +403,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
             .bind(model.has_code)
             .bind(&model.section)
             .bind(model.page_number)
+            .bind(model.from_ocr)
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to save chunk in batch: {}", e)))?;
@@ -478,7 +485,7 @@ impl ChunkRepositoryPort for ChunkRepository {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<ChunkEntity> {
-        use crate::shared::types::DocumentId;
+        use lattice_core::shared::types::DocumentId;
         let doc_id = DocumentId::from(document_id.to_string());
         let chunk = ChunkEntity::new(doc_id, content.to_string(), index);
         self.save(&chunk).await?;
@@ -524,7 +531,7 @@ impl ChunkRepositoryPort for ChunkRepository {
                     token_count,
                     word_count,
                     has_code,
-                    section, page_number
+                    section, page_number, from_ocr
                 FROM text_chunks
                 WHERE id IN ({})
                 "#,
@@ -558,6 +565,7 @@ impl ChunkRepositoryPort for ChunkRepository {
                     has_code: row.get("has_code"),
                     section: row.get("section"),
                     page_number: row.get("page_number"),
+                    from_ocr: row.get("from_ocr"),
                 })
                 .collect();
 
@@ -644,163 +652,4 @@ impl ChunkRepositoryPort for ChunkRepository {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::types::DocumentId;
-
-    /// In-memory pool with the real migrations applied, so the tests exercise the
-    /// production `text_chunks` schema (`language`, `token_count`, `word_count`,
-    /// `has_code`, `section`, `page_number`) that this repository reads and writes.
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
-    }
-
-    /// `text_chunks.document_id` is a foreign key onto `documents(id)` and sqlx
-    /// enables `PRAGMA foreign_keys` by default, so every chunk needs a parent row.
-    async fn insert_document(pool: &SqlitePool, document_id: &DocumentId) {
-        sqlx::query(
-            r#"
-            INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum)
-            VALUES (?, ?, 'chunk-fixture.md', 1, '2026-01-01T00:00:00Z', 'checksum')
-            "#,
-        )
-        .bind(document_id.as_str())
-        .bind(format!("/vault/{}.md", document_id.as_str()))
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    /// Migrated pool + a parent document row, ready for chunk persistence.
-    async fn create_test_repo() -> (ChunkRepository, DocumentId) {
-        let pool = create_test_pool().await;
-        let doc_id = DocumentId::new();
-        insert_document(&pool, &doc_id).await;
-        (ChunkRepository::new(pool), doc_id)
-    }
-
-    #[tokio::test]
-    async fn test_save_and_find_by_id() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let entity = ChunkEntity::new(doc_id, "Test chunk content".to_string(), 0);
-
-        repo.save(&entity).await.unwrap();
-
-        let found = repo.find_by_id(entity.id().as_str()).await.unwrap();
-        assert!(found.is_some());
-
-        let found_entity = found.unwrap();
-        assert_eq!(found_entity.id().as_str(), entity.id().as_str());
-        assert_eq!(found_entity.content(), "Test chunk content");
-        assert_eq!(found_entity.index(), 0);
-    }
-
-    #[tokio::test]
-    async fn find_first_by_document_reads_only_the_opening_chunks() {
-        let (repo, doc_id) = create_test_repo().await;
-        for index in (0..5).rev() {
-            let chunk = ChunkEntity::new(doc_id.clone(), format!("Chunk {index}"), index);
-            repo.save(&chunk).await.unwrap();
-        }
-
-        let chunks = ChunkRepositoryPort::find_first_by_document(&repo, doc_id.as_str(), 2)
-            .await
-            .unwrap();
-
-        let contents: Vec<_> = chunks.iter().map(|c| c.content().to_owned()).collect();
-        assert_eq!(contents, vec!["Chunk 0", "Chunk 1"]);
-    }
-
-    #[tokio::test]
-    async fn test_find_by_document() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let chunk1 = ChunkEntity::new(doc_id.clone(), "Chunk 1".to_string(), 0);
-        let chunk2 = ChunkEntity::new(doc_id.clone(), "Chunk 2".to_string(), 1);
-
-        repo.save(&chunk1).await.unwrap();
-        repo.save(&chunk2).await.unwrap();
-
-        let chunks = repo.find_by_document(doc_id.as_str()).await.unwrap();
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].content(), "Chunk 1");
-        assert_eq!(chunks[1].content(), "Chunk 2");
-    }
-
-    #[tokio::test]
-    async fn test_save_batch() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let entities = vec![
-            ChunkEntity::new(doc_id.clone(), "Chunk 1".to_string(), 0),
-            ChunkEntity::new(doc_id.clone(), "Chunk 2".to_string(), 1),
-            ChunkEntity::new(doc_id.clone(), "Chunk 3".to_string(), 2),
-        ];
-
-        repo.save_batch(&entities).await.unwrap();
-
-        let count = repo.count().await.unwrap();
-        assert_eq!(count, 3);
-    }
-
-    #[tokio::test]
-    async fn test_delete() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let entity = ChunkEntity::new(doc_id, "Test chunk".to_string(), 0);
-
-        repo.save(&entity).await.unwrap();
-        assert_eq!(repo.count().await.unwrap(), 1);
-
-        repo.delete(entity.id().as_str()).await.unwrap();
-        assert_eq!(repo.count().await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_delete_by_document() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let chunks = vec![
-            ChunkEntity::new(doc_id.clone(), "Chunk 1".to_string(), 0),
-            ChunkEntity::new(doc_id.clone(), "Chunk 2".to_string(), 1),
-        ];
-
-        repo.save_batch(&chunks).await.unwrap();
-        assert_eq!(repo.count().await.unwrap(), 2);
-
-        repo.delete_by_document(doc_id.as_str()).await.unwrap();
-        assert_eq!(repo.count().await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_count_by_document() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let chunks = vec![
-            ChunkEntity::new(doc_id.clone(), "Chunk 1".to_string(), 0),
-            ChunkEntity::new(doc_id.clone(), "Chunk 2".to_string(), 1),
-            ChunkEntity::new(doc_id.clone(), "Chunk 3".to_string(), 2),
-        ];
-
-        repo.save_batch(&chunks).await.unwrap();
-
-        let count = repo.count_by_document(doc_id.as_str()).await.unwrap();
-        assert_eq!(count, 3);
-    }
-
-    #[tokio::test]
-    async fn test_exists() {
-        let (repo, doc_id) = create_test_repo().await;
-
-        let entity = ChunkEntity::new(doc_id, "Test chunk".to_string(), 0);
-
-        assert!(!repo.exists(entity.id().as_str()).await.unwrap());
-
-        repo.save(&entity).await.unwrap();
-
-        assert!(repo.exists(entity.id().as_str()).await.unwrap());
-    }
-}
+mod tests;

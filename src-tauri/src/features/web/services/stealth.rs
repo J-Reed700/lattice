@@ -123,7 +123,10 @@ const BROWSER_PROFILES: &[BrowserProfile] = &[
 
 // ─── Profile Selection ──────────────────────────────────────────────────────
 
+// global-state: parsed once from the process environment, which no caller
+// can change, and never written again.
 static PROXY_POOL: Lazy<Option<Vec<String>>> = Lazy::new(load_proxy_pool);
+// global-state: configured once from the process environment, like the pool.
 static FLARESOLVERR: Lazy<Option<FlareSolverrClient>> = Lazy::new(FlareSolverrClient::from_env);
 
 #[allow(clippy::indexing_slicing)] // gen_range stays below BROWSER_PROFILES.len()
@@ -405,7 +408,7 @@ impl FlareSolverrClient {
 ///
 /// Does **not** set `User-Agent` — use [`browser_headers`] per-request for rotation.
 pub fn stealth_client_builder() -> reqwest::ClientBuilder {
-    let mut builder = crate::shared::http::reqwest_client_builder().cookie_store(false);
+    let mut builder = lattice_core::shared::http::reqwest_client_builder().cookie_store(false);
 
     if let Some(proxy_url) = random_proxy_url() {
         let shown = redact_url_credentials(proxy_url);

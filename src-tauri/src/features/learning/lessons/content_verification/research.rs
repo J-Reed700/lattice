@@ -1,9 +1,7 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps.
 use super::*;
-use crate::features::{
-    function_calling::dto::{WebSearchInput, WebSearchResult},
-    web::WebServiceTrait,
-};
+use crate::features::web::WebServiceTrait;
+use lattice_core::application::contracts::web::{WebSearchInput, WebSearchResult};
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
@@ -306,15 +304,17 @@ pub(super) async fn expand<'a>(
             let hash = digest(&captured.text);
             library
                 .add(
-                    &uuid::Uuid::new_v4().to_string(),
-                    &uuid::Uuid::new_v4().to_string(),
-                    &version_id,
-                    &context.program_id,
-                    crate::features::learning::dto::LearningSourceKind::Web,
-                    "add_web",
-                    &result.url,
-                    Some(&result.url),
-                    crate::features::learning::dto::LearningSourcePolicy::Fixed,
+                    crate::features::learning::source_library::NewLearningSource {
+                        operation_id: &uuid::Uuid::new_v4().to_string(),
+                        source_id: &uuid::Uuid::new_v4().to_string(),
+                        version_id: &version_id,
+                        program_id: &context.program_id,
+                        kind: crate::features::learning::dto::LearningSourceKind::Web,
+                        operation_kind: "add_web",
+                        origin: &result.url,
+                        requested_url: Some(&result.url),
+                        freshness: crate::features::learning::dto::LearningSourcePolicy::Fixed,
+                    },
                     captured,
                     hash,
                 )

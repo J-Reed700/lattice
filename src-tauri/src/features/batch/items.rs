@@ -1,7 +1,7 @@
 //! Every read and write of `batch_import_items`: one row per file or URL of a
 //! batch import, keyed by its job. The job runtime owns the job's status; an
 //! item's status says how far that one file or URL got.
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 

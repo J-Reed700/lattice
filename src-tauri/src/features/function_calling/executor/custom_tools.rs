@@ -4,7 +4,7 @@ use super::FunctionExecutor;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::*;
 use crate::features::settings::dto::CustomToolSettingsDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 use url::Url;
 

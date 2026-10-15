@@ -21,10 +21,10 @@
 //! Citation provenance and retrieval context survive both mapping directions.
 //! Original content stays separate from embedding/lexical context.
 
-use crate::domain::entities::chunk::Chunk as DomainChunk;
-use crate::domain::entities::document::Language;
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::{ChunkId, DocumentId};
+use lattice_core::domain::entities::chunk::Chunk as DomainChunk;
+use lattice_core::domain::entities::document::Language;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::{ChunkId, DocumentId};
 use serde::{Deserialize, Serialize};
 
 /// Database model for chunks.
@@ -54,6 +54,8 @@ pub struct ChunkModel {
     pub section: Option<String>,
     #[sqlx(default)]
     pub page_number: Option<i64>,
+    #[sqlx(default)]
+    pub from_ocr: bool,
 }
 
 /// Mapper for Chunk entity and database model.
@@ -80,7 +82,7 @@ impl ChunkMapper {
     ///
     /// ```rust,no_run
     /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
-    /// use lattice::domain::entities::chunk::Chunk;
+    /// use lattice_core::domain::entities::chunk::Chunk;
     ///
     /// let entity = Chunk::new(/* ... */);
     /// let db_model = ChunkMapper::to_model(&entity);
@@ -103,6 +105,7 @@ impl ChunkMapper {
             has_code: if entity.has_code() { 1 } else { 0 },
             section: entity.section().map(|s| s.to_string()),
             page_number: entity.page_number().map(i64::from),
+            from_ocr: entity.from_ocr(),
         }
     }
 
@@ -155,7 +158,7 @@ impl ChunkMapper {
 
         // Create domain entity (convert SQLite types back to domain types)
         // Note: Infrastructure-only fields are not passed to domain entity
-        use crate::domain::entities::chunk::ChunkParams;
+        use lattice_core::domain::entities::chunk::ChunkParams;
         let mut chunk = DomainChunk::with_id(ChunkParams {
             id,
             document_id,
@@ -173,6 +176,7 @@ impl ChunkMapper {
             model.end_char.and_then(|n| n.try_into().ok()),
             model.page_number.and_then(|n| n.try_into().ok()),
         );
+        chunk.set_from_ocr(model.from_ocr);
         Ok(chunk)
     }
 

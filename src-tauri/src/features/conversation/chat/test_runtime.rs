@@ -2,25 +2,52 @@
 //! no model and no container unless the test hands one in. A dependency the
 //! test did not provide fails the test if it is reached.
 use super::ports::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::conversation::mocks::MockConversationService;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::JobRuntime;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 const UNUSED: &str = "not provided to the test";
+
+/// A library a turn can search: the records retrieval reads, and the search
+/// over them. Document and chunk lookups for citations answer from empty
+/// in-memory stores, so a passage is cited under its search title.
+#[derive(Clone)]
+pub(super) struct TestVault {
+    pub(super) records: Arc<dyn ChatRecords>,
+    pub(super) search: Arc<dyn crate::features::search::trait_def::LibrarySearchTrait>,
+}
 
 #[derive(Clone)]
 pub(super) struct FakeRuntime {
     pub(super) llm: Option<Arc<dyn LLMPort>>,
     pub(super) tools: Option<Arc<dyn ChatTools>>,
     pub(super) jobs: Option<Arc<JobRuntime>>,
+    /// The library retrieval searches. Without one, a turn that reaches the
+    /// vault finds no scope and searches nothing.
+    pub(super) vault: Option<TestVault>,
     /// One service for the whole test, so what a turn saves can be read back.
     pub(super) conversations: Arc<MockConversationService>,
+    /// One registry per test, so a stop press lands on the map the turn
+    /// registered with — and never on another test's.
+    pub(super) turn_cancellation:
+        Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry>,
+    /// One map per test, so a research job answers the command of its own
+    /// test — and never another test's.
+    pub(super) research_waiters: Arc<crate::features::conversation::chat::ResearchWaiters>,
+    /// One background scope per test, so work a turn leaves running stays in
+    /// its own test.
+    pub(super) background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
+    /// One planner health per test, so a planner timeout in one test never
+    /// shrinks another's prompt.
+    pub(super) planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
+    /// The `answer_thinking` setting the turn reads.
+    pub(super) answer_thinking: bool,
 }
 
 impl Default for FakeRuntime {
@@ -29,7 +56,15 @@ impl Default for FakeRuntime {
             llm: None,
             tools: None,
             jobs: None,
+            vault: None,
             conversations: Arc::new(MockConversationService::new()),
+            turn_cancellation: Arc::new(
+                crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
+            ),
+            research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
+            background: Arc::default(),
+            planner_health: Arc::default(),
+            answer_thinking: false,
         }
     }
 }
@@ -42,7 +77,10 @@ impl ChatModels for FakeRuntime {
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         unreachable!("{UNUSED}")
     }
-    fn utility_llm_loader(&self) -> crate::application::ports::llm_port::OptionalLlmLoader {
+    async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
+        Ok(None)
+    }
+    fn utility_llm_loader(&self) -> lattice_core::application::ports::llm_port::OptionalLlmLoader {
         Arc::new(|| Box::pin(async { Ok(None) }))
     }
     async fn get_or_load_embedding(&self) -> Result<Arc<dyn EmbeddingPort>> {
@@ -57,32 +95,58 @@ impl ChatStorage for FakeRuntime {
     ) -> Arc<dyn crate::features::conversation::ConversationServiceTrait> {
         self.conversations.clone()
     }
-    fn conversation_history(&self) -> Arc<dyn crate::application::ports::ConversationHistoryPort> {
+    fn conversation_history(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::ConversationHistoryPort> {
         unreachable!("{UNUSED}")
     }
     fn conversation_context(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
+    ) -> Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>
+    {
         unreachable!("{UNUSED}")
     }
     fn document_scope(
         &self,
-    ) -> Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
+    ) -> Arc<dyn lattice_core::application::ports::document_scope::DocumentScopePort> {
         unreachable!("{UNUSED}")
     }
-    fn document_repository(&self) -> Arc<dyn crate::application::ports::DocumentRepository> {
-        unreachable!("{UNUSED}")
+    fn document_repository(&self) -> Arc<dyn lattice_core::application::ports::DocumentRepository> {
+        assert!(self.vault.is_some(), "{UNUSED}");
+        Arc::new(lattice_core::domain::repositories::mocks::DddMockDocumentRepository::new())
     }
-    fn chunk_repository(&self) -> Arc<dyn crate::application::ports::ChunkRepositoryPort> {
-        unreachable!("{UNUSED}")
+    fn chunk_repository(&self) -> Arc<dyn lattice_core::application::ports::ChunkRepositoryPort> {
+        assert!(self.vault.is_some(), "{UNUSED}");
+        Arc::new(lattice_core::domain::repositories::mocks::MockChunkRepository::new())
     }
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
+        if let Some(vault) = &self.vault {
+            return Arc::clone(&vault.records);
+        }
         // Never queried unless the model calls a history tool.
         Arc::new(ConversationRepository::new(
             sqlx::sqlite::SqlitePoolOptions::new()
                 .connect_lazy("sqlite::memory:")
                 .unwrap(),
         ))
+    }
+    fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {
+        unreachable!("{UNUSED}")
+    }
+    fn conversation_memory(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>
+    {
+        unreachable!("{UNUSED}")
+    }
+    fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots> {
+        unreachable!("{UNUSED}")
+    }
+    fn handoffs_in_flight(&self) -> Arc<crate::features::conversation::handoff::HandoffsInFlight> {
+        unreachable!("{UNUSED}")
+    }
+    fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
+        unreachable!("{UNUSED}")
     }
     async fn explorer_turn(
         &self,
@@ -111,7 +175,7 @@ impl ChatRetrieval for FakeRuntime {
         self.tools.clone().unwrap_or_else(|| Arc::new(NoTools))
     }
     fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait> {
-        unreachable!("{UNUSED}")
+        Arc::clone(&self.vault.as_ref().expect(UNUSED).search)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {
         unreachable!("{UNUSED}")
@@ -120,6 +184,9 @@ impl ChatRetrieval for FakeRuntime {
         &self,
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
         None
+    }
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        Arc::clone(&self.planner_health)
     }
 }
 
@@ -130,6 +197,7 @@ impl ChatPolicy for FakeRuntime {
     async fn settings(&self) -> Result<crate::features::settings::dto::SettingsDto> {
         let mut settings = crate::features::settings::dto::SettingsDto::default();
         settings.llm.verification.enabled = false;
+        settings.llm.answer_thinking = self.answer_thinking;
         Ok(settings)
     }
     async fn validate_message(&self, message: &str) -> Result<String> {
@@ -149,11 +217,58 @@ impl ChatPolicy for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn consolidate_after_turn(&self, _id: String) {}
+    async fn check_read_rate_limit(&self, _name: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn check_delete_rate_limit(&self, _name: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn delete_conversation_unmetered(&self, _conversation_id: &str) -> Result<()> {
+        unreachable!("{UNUSED}")
+    }
 }
 
 impl ChatJobs for FakeRuntime {
     fn jobs(&self) -> Arc<JobRuntime> {
         Arc::clone(self.jobs.as_ref().expect(UNUSED))
+    }
+    fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
+        Arc::clone(&self.research_waiters)
+    }
+    fn background(&self) -> Arc<lattice_core::shared::runtime::background::BackgroundTasks> {
+        Arc::clone(&self.background)
+    }
+}
+
+impl ChatCancellation for FakeRuntime {
+    fn turn_cancellation(
+        &self,
+    ) -> Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry> {
+        Arc::clone(&self.turn_cancellation)
+    }
+}
+
+#[async_trait::async_trait]
+impl SynthesisEntries for FakeRuntime {
+    async fn references_created_since(
+        &self,
+        _cutoff: &str,
+        _limit: i64,
+    ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
+        unreachable!("{UNUSED}")
+    }
+    async fn notes_in_range(
+        &self,
+        _start_date: &str,
+        _end_date: &str,
+    ) -> Result<Vec<StoredJournalPage>> {
+        unreachable!("{UNUSED}")
+    }
+    async fn hydrate_note(
+        &self,
+        _page: StoredJournalPage,
+    ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+        unreachable!("{UNUSED}")
     }
 }
 

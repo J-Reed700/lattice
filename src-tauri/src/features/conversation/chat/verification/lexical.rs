@@ -4,27 +4,36 @@
 //! Cheap and deterministic, so it runs first on every turn and decides which
 //! sentences are worth an LLM call. It cannot read meaning: a sentence that
 //! reuses the source's vocabulary while inverting its meaning still scores
-//! high, which is why numbers, dates and negations are escalated to the judge
-//! regardless of overlap.
+//! high. So overlap alone never settles a cited claim. Only a near-verbatim
+//! copy of the passage skips the judge, and only when the claim carries no
+//! number, date or negation and cut none, and no name, from the sentence it
+//! copies.
 
-pub(super) use crate::application::services::evidence_retrieval::{best_windows, ScoredWindow};
-use crate::application::services::evidence_retrieval::{
+use crate::features::qa::dto::SourceDto;
+pub(super) use lattice_core::application::services::evidence_retrieval::{
+    best_windows, ScoredWindow,
+};
+use lattice_core::application::services::evidence_retrieval::{
     extract_normalized_tokens, passage_windows,
 };
-use crate::features::qa::dto::SourceDto;
-use crate::shared::text::normalize_whitespace;
-use std::collections::HashSet;
+use lattice_core::shared::text::normalize_whitespace;
+use std::collections::{HashMap, HashSet};
 
 const MIN_CLAIM_CHARS: usize = 24;
 pub(super) const MIN_CLAIM_TOKENS: usize = 5;
 pub(super) const MIN_OVERLAP_RATIO: f32 = 0.32;
 pub(super) const MIN_MATCHING_TOKENS: usize = 2;
 
-/// Overlap at or above this ratio, with enough matching tokens, is treated as
-/// settled by the lexical pass alone. Well clear of `MIN_OVERLAP_RATIO` so the
-/// judge still sees everything in the ambiguous band just above threshold.
-pub(super) const STRONG_OVERLAP_RATIO: f32 = 0.55;
-pub(super) const STRONG_MATCHING_TOKENS: usize = 4;
+/// A claim settled without the judge must share at least this many content
+/// tokens with its passage. A shorter one copies too little for its wording to
+/// say anything about its meaning.
+pub(super) const MIN_COPIED_TOKENS: usize = 4;
+
+/// Words per run in the near-verbatim test. Long enough that a run rarely
+/// recurs by chance inside one window; short enough that a claim which drops,
+/// swaps or adds one word in the middle of a passage sentence breaks every run
+/// that crosses the change.
+const COPIED_RUN_WORDS: usize = 4;
 
 /// One sentence the lexical pass considered a claim.
 #[derive(Debug, Clone)]
@@ -37,11 +46,20 @@ pub(super) struct LexicalClaim {
     pub(super) citation_ids: Vec<u32>,
     /// Zero-based source indices those citation numbers resolve to.
     pub(super) cited_source_indices: Vec<usize>,
+    /// Kept for tests and debugging. No decision reads it any more: a ratio
+    /// says how many words a claim shares, not what it says with them.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) overlap_ratio: f32,
     pub(super) matching_tokens: usize,
     /// The lexical verdict: enough overlap to call this grounded.
     pub(super) supported: bool,
-    /// Carries a number, date or negation, so vocabulary overlap cannot settle it.
+    /// Every run of four consecutive words in the claim occurs in one window
+    /// of a cited passage: the claim is the passage's own wording, perhaps cut
+    /// short, but not reordered, reworded or added to.
+    pub(super) near_verbatim: bool,
+    /// Overlap cannot settle it. The claim carries a number, date or negation,
+    /// or the passage sentence it copies carries a negation, number, date or
+    /// name that the claim left out.
     pub(super) contradiction_prone: bool,
 }
 
@@ -58,6 +76,8 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
     if source_token_sets.is_empty() {
         return Vec::new();
     }
+    // Built only for sources some claim cites, once each.
+    let mut wording: HashMap<usize, PassageWording> = HashMap::new();
 
     let mut claims = Vec::new();
     for (sentence, citation_ids) in sentences_with_citations(response) {
@@ -99,16 +119,22 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
         };
         let supported =
             matching_tokens >= MIN_MATCHING_TOKENS && overlap_ratio >= MIN_OVERLAP_RATIO;
+        let copying = if citations_valid && !citation_ids.is_empty() {
+            compare_wording(&claim_text, &cited_source_indices, sources, &mut wording)
+        } else {
+            Copying::default()
+        };
 
         claims.push(LexicalClaim {
             sentence: claim_for_note(&sentence),
-            contradiction_prone: is_contradiction_prone(&claim_text),
+            contradiction_prone: is_contradiction_prone(&claim_text) || copying.drops_marker,
             claim_text: claim_for_note(&claim_text),
             citation_ids,
             cited_source_indices,
             overlap_ratio,
             matching_tokens,
             supported,
+            near_verbatim: copying.near_verbatim,
         });
     }
 
@@ -117,9 +143,17 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
 
 /// Whether this claim is worth an LLM call.
 ///
-/// Strong overlap settles a plain sentence. It never settles one carrying a
-/// number, date or negation: those are exactly the claims that echo a source's
-/// wording while stating the opposite of it.
+/// Every cited claim is, except a near-verbatim copy of its passage that
+/// leaves nothing out. Overlap used to settle any plain sentence with more
+/// than half its words in the window. On the 2026-10-12 claim-checker
+/// bake-off that certified 17 false claims no model ever read: a dropped
+/// "not", a swapped owner, a reversal, an extra clause, a widened scope, each
+/// built from the passage's own words. A token count cannot tell those from
+/// a paraphrase, so it no longer decides. A claim skips the judge only when
+/// every run of four of its words is in one window of a cited passage, it has
+/// at least [`MIN_COPIED_TOKENS`] content words, it carries no number, date
+/// or negation, and nothing it cut from the sentence it copies is a negation,
+/// number, date or name.
 ///
 /// A sentence with no citation is never escalated. The judge rules a claim
 /// against the passages it cites, and a sentence that cites nothing has none —
@@ -132,10 +166,11 @@ pub(super) fn needs_judge(claim: &LexicalClaim) -> bool {
     if claim.citation_ids.is_empty() {
         return false;
     }
-    let strongly_supported = claim.supported
-        && claim.overlap_ratio >= STRONG_OVERLAP_RATIO
-        && claim.matching_tokens >= STRONG_MATCHING_TOKENS;
-    !strongly_supported || claim.contradiction_prone
+    let settled = claim.supported
+        && claim.near_verbatim
+        && claim.matching_tokens >= MIN_COPIED_TOKENS
+        && !claim.contradiction_prone;
+    !settled
 }
 
 /// Tokens that flip a sentence's meaning without changing its vocabulary.
@@ -173,15 +208,64 @@ const MONTH_MARKERS: &[&str] = &[
     " december ",
 ];
 
+/// Checked only in the passage sentence a claim copies, never in the claim
+/// itself, so a claim naming the same weekday as its source still counts as a
+/// copy of it.
+const WEEKDAY_MARKERS: &[&str] = &[
+    " monday ",
+    " tuesday ",
+    " wednesday ",
+    " thursday ",
+    " friday ",
+    " saturday ",
+    " sunday ",
+];
+
+/// Checked the same way. "One" is left out on purpose: it is far more often a
+/// pronoun ("a manager cannot grant one") than a count.
+const NUMBER_WORDS: &[&str] = &[
+    " two ",
+    " three ",
+    " four ",
+    " five ",
+    " six ",
+    " seven ",
+    " eight ",
+    " nine ",
+    " ten ",
+    " eleven ",
+    " twelve ",
+    " twenty ",
+    " thirty ",
+    " forty ",
+    " fifty ",
+    " hundred ",
+    " thousand ",
+    " million ",
+    " billion ",
+    " twice ",
+    " half ",
+    " dozen ",
+];
+
 fn is_contradiction_prone(claim: &str) -> bool {
     if claim.chars().any(|ch| ch.is_ascii_digit()) {
         return true;
     }
 
-    // Pad and flatten punctuation so " not " matches "did not." as well.
-    let mut padded = String::with_capacity(claim.len() + 2);
+    let padded = padded_lowercase(claim);
+    NEGATION_MARKERS
+        .iter()
+        .chain(MONTH_MARKERS.iter())
+        .any(|marker| padded.contains(marker))
+}
+
+/// `text` lowercased between single spaces, with punctuation flattened to
+/// spaces so " not " matches "did not." as well.
+fn padded_lowercase(text: &str) -> String {
+    let mut padded = String::with_capacity(text.len() + 2);
     padded.push(' ');
-    for ch in claim.chars() {
+    for ch in text.chars() {
         if ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}' {
             padded.extend(ch.to_lowercase());
         } else {
@@ -189,11 +273,155 @@ fn is_contradiction_prone(claim: &str) -> bool {
         }
     }
     padded.push(' ');
+    padded
+}
 
-    NEGATION_MARKERS
+/// A cited passage's wording, for the near-verbatim test.
+struct PassageWording {
+    /// Every run of [`COPIED_RUN_WORDS`] words, per window. These are the
+    /// windows overlap is scored on, so a claim must be found in one stretch
+    /// of a long page, not assembled from runs scattered across it.
+    window_runs: Vec<HashSet<String>>,
+    /// Each sentence with its runs. Split line by line first, so a heading
+    /// never joins the sentence under it and reads as a name inside it.
+    sentences: Vec<(String, HashSet<String>)>,
+}
+
+impl PassageWording {
+    /// The text the judge would read: the page, or its excerpt when the page
+    /// came back empty.
+    fn of(source: &SourceDto) -> Self {
+        let text = if source.content.trim().is_empty() {
+            source.excerpt.as_deref().unwrap_or_default()
+        } else {
+            source.content.as_str()
+        };
+        Self {
+            window_runs: passage_windows(text)
+                .iter()
+                .map(|window| word_runs(&lowercase_words(window)))
+                .collect(),
+            sentences: text
+                .split('\n')
+                .flat_map(|line| split_sentences(&strip_emphasis_markers(line)))
+                .map(|sentence| {
+                    let runs = word_runs(&lowercase_words(&sentence));
+                    (sentence, runs)
+                })
+                .collect(),
+        }
+    }
+}
+
+/// How a claim's wording stands against the passages it cites.
+#[derive(Debug, Default)]
+struct Copying {
+    near_verbatim: bool,
+    /// A sentence the claim copies carries a negation, number, date or name
+    /// that the claim does not.
+    drops_marker: bool,
+}
+
+fn compare_wording(
+    claim: &str,
+    cited_source_indices: &[usize],
+    sources: &[SourceDto],
+    cache: &mut HashMap<usize, PassageWording>,
+) -> Copying {
+    let mut copying = Copying::default();
+    let claim_runs = word_runs(&lowercase_words(claim));
+    if claim_runs.is_empty() {
+        return copying;
+    }
+    for &idx in cited_source_indices {
+        let Some(source) = sources.get(idx) else {
+            continue;
+        };
+        let wording = cache
+            .entry(idx)
+            .or_insert_with(|| PassageWording::of(source));
+        if !wording
+            .window_runs
+            .iter()
+            .any(|runs| claim_runs.is_subset(runs))
+        {
+            continue;
+        }
+        copying.near_verbatim = true;
+        copying.drops_marker |= wording
+            .sentences
+            .iter()
+            .filter(|(_, runs)| !runs.is_disjoint(&claim_runs))
+            .any(|(sentence, _)| drops_a_marker(claim, sentence));
+    }
+    copying
+}
+
+/// Whether `sentence`, which the claim copies, carries something the claim
+/// left out: a negation, a number, a weekday or month, or a capitalised name.
+///
+/// The whole sentence is read, not only the words the claim kept. "Do not
+/// widen the pool on Garnetline" copied as "Widen the pool on Garnetline"
+/// keeps every run of four words and loses the instruction: the "not" is in
+/// the part that was cut.
+fn drops_a_marker(claim: &str, sentence: &str) -> bool {
+    let claim_padded = padded_lowercase(claim);
+    let sentence_padded = padded_lowercase(sentence);
+    if NEGATION_MARKERS
         .iter()
-        .chain(MONTH_MARKERS.iter())
-        .any(|marker| padded.contains(marker))
+        .chain(MONTH_MARKERS)
+        .chain(WEEKDAY_MARKERS)
+        .chain(NUMBER_WORDS)
+        .any(|marker| sentence_padded.contains(marker) && !claim_padded.contains(marker))
+    {
+        return true;
+    }
+
+    let claim_words: HashSet<String> = lowercase_words(claim).into_iter().collect();
+    let dropped_number = lowercase_words(sentence)
+        .into_iter()
+        .any(|word| word.chars().any(|ch| ch.is_ascii_digit()) && !claim_words.contains(&word));
+    dropped_number || capitalised_words(sentence).any(|word| !claim_words.contains(&word))
+}
+
+/// Words after the first that start with a capital letter: names of people,
+/// teams, places and days. The first is skipped because every sentence
+/// starts with one.
+fn capitalised_words(sentence: &str) -> impl Iterator<Item = String> + '_ {
+    sentence
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .skip(1)
+        .filter(|word| {
+            word.chars().count() > 1 && word.chars().next().is_some_and(char::is_uppercase)
+        })
+        .map(str::to_lowercase)
+}
+
+/// The words of `text`, lowercased, in order. Unlike the overlap tokens,
+/// nothing is stemmed or dropped: "not", "only" and "the" all count, because
+/// a copy is a copy of every word.
+fn lowercase_words(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Every run of [`COPIED_RUN_WORDS`] consecutive words, or the whole text as
+/// one run when it is shorter than that.
+fn word_runs(words: &[String]) -> HashSet<String> {
+    if words.len() < COPIED_RUN_WORDS {
+        return if words.is_empty() {
+            HashSet::new()
+        } else {
+            HashSet::from([words.join(" ")])
+        };
+    }
+    words
+        .windows(COPIED_RUN_WORDS)
+        .map(|run| run.join(" "))
+        .collect()
 }
 
 /// A full stop ends a sentence only when the text pauses after it. One inside
@@ -512,378 +740,4 @@ fn compute_best_overlap_ratio<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::test_support::source;
-    use super::*;
-
-    #[test]
-    fn a_claim_deep_in_a_whole_cited_page_is_found_but_a_scattered_one_is_not() {
-        // The page the model read, not the search snippet: the supporting
-        // sentence sits thousands of characters in.
-        let page = format!(
-            "{} Bush beans mature within sixty days and grow well in shallow window boxes. {} {}",
-            "Notes on compost, mulch and seed trays. ".repeat(60),
-            "Trellis spacing and irrigation schedules. ".repeat(60),
-            "Pollination needs wind or hand shaking for corn. ".repeat(10),
-        );
-        let claims = lexical_pass(
-            "Bush beans mature within sixty days in shallow window boxes [1].",
-            &[source(&page)],
-        );
-        assert!(claims[0].supported);
-
-        // Every word appears somewhere on the page, but no one stretch of it
-        // says this; a single token set over the whole article would pass it.
-        let claims = lexical_pass(
-            "Compost pollination needs trellis irrigation seed windows [1].",
-            &[source(&page)],
-        );
-        assert!(claims[0].overlap_ratio < 1.0);
-    }
-
-    #[test]
-    fn a_follow_on_sentence_answers_to_the_marker_of_its_own_point() {
-        let sources = [
-            source(
-                "High-calorie fruiting crops need 6–8 hours of strong light; use LED grow lights.",
-            ),
-            source("Thyme is tough indoors while rosemary wants direct sunlight."),
-        ];
-        let claims = lexical_pass(
-            "- Fruiting crops need 6–8 hours of strong light, and LED grow lights are the workaround [1]. \
-             So needing a lot of sun really means needing strong light for hours.\n\
-             - Thyme copes indoors but rosemary wants direct sunlight [2].\n\
-             ## A heading that says something about peanut pods underground\n\
-             Peanuts develop pods underground, which is my inference and cites nothing at all.",
-            &sources,
-        );
-        let follow_on = claims
-            .iter()
-            .find(|claim| claim.sentence.starts_with("So needing"))
-            .expect("follow-on sentence is a claim");
-        // The next marker is on another line, so it cannot claim this one.
-        assert_eq!(follow_on.citation_ids, vec![1]);
-        let aside = claims
-            .iter()
-            .find(|claim| claim.sentence.starts_with("Peanuts"))
-            .expect("uncited paragraph is a claim");
-        assert!(aside.citation_ids.is_empty());
-    }
-
-    #[test]
-    fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
-        // Verbatim from a turn this got wrong: the bold closes after the full
-        // stop, so the splitter cut there and the second claim reached the
-        // judge — and the user — reading "** The ideal initial planting depth".
-        let claims = lexical_pass(
-            "**Bury it all the way — you don't leave the top sticking out.** The ideal initial \
-             planting depth is 4–6 inches of soil above the seed potato [1].",
-            &[source(
-                "The ideal initial planting depth for potatoes is 4 to 6 inches. This initial 4- \
-                 to 6-inch soil covering provides the seed potato with insulation and moisture.",
-            )],
-        );
-
-        assert_eq!(claims.len(), 2);
-        assert!(
-            claims.iter().all(|claim| !claim.sentence.contains('*')),
-            "emphasis markers reached the claim text: {:?}",
-            claims.iter().map(|c| &c.sentence).collect::<Vec<_>>()
-        );
-        assert!(claims[0].sentence.starts_with("Bury it all the way"));
-        assert!(claims[1]
-            .sentence
-            .starts_with("The ideal initial planting depth"));
-    }
-
-    #[test]
-    fn an_underscore_inside_a_word_is_not_emphasis() {
-        assert_eq!(
-            strip_emphasis_markers("Set _max_tokens_ in the *config* file"),
-            "Set max_tokens in the config file"
-        );
-        assert_eq!(
-            strip_emphasis_markers("A rule: ---- and ____"),
-            "A rule: ---- and ____"
-        );
-    }
-
-    #[test]
-    fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
-        // Its only possible evidence would be whichever sources ranked first,
-        // which it never claimed anything about. A closing summary line was
-        // marked "contradicted" that way, against a different document.
-        let claims = lexical_pass(
-            "Potatoes want 4–6 inches of cover [1].\n\
-             So: fully buried at first, then buried deeper as the plant grows.",
-            &[source(
-                "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
-            )],
-        );
-
-        let summary = claims
-            .iter()
-            .find(|claim| claim.sentence.starts_with("So:"))
-            .expect("the uncited closing line is still a claim");
-        assert!(summary.citation_ids.is_empty());
-        assert!(!needs_judge(summary));
-        // The cited one still goes, numbers being exactly what overlap cannot settle.
-        let cited = claims
-            .iter()
-            .find(|claim| claim.citation_ids == vec![1])
-            .expect("the cited claim");
-        assert!(needs_judge(cited));
-    }
-
-    #[test]
-    fn grounded_claim_scores_above_threshold() {
-        let claims = lexical_pass(
-            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [1].",
-            &[source(
-                "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
-            )],
-        );
-
-        assert_eq!(claims.len(), 1);
-        assert!(claims[0].supported);
-        assert_eq!(claims[0].citation_ids, vec![1]);
-    }
-
-    #[test]
-    fn unsupported_claim_scores_below_threshold() {
-        let claims = lexical_pass(
-            "Blueberry plants tripled yield after lunar-cycle irrigation [1].",
-            &[source(
-                "The study measured antioxidant enzyme response under low-temperature stress.",
-            )],
-        );
-
-        assert_eq!(claims.len(), 1);
-        assert!(!claims[0].supported);
-    }
-
-    #[test]
-    fn short_or_question_sentences_are_skipped() {
-        let claims = lexical_pass("Any update?\nThanks.", &[source("Random source text.")]);
-        assert!(claims.is_empty());
-    }
-
-    #[test]
-    fn the_cut_short_note_is_not_a_claim() {
-        let answer = format!(
-            "Bush beans mature within sixty days in shallow window boxes [1].{}",
-            super::super::super::tool_loop::CUT_SHORT_NOTE
-        );
-        let claims = lexical_pass(
-            &answer,
-            &[source(
-                "Bush beans mature within sixty days and grow well in shallow window boxes.",
-            )],
-        );
-        assert_eq!(claims.len(), 1);
-        assert!(claims[0].supported);
-    }
-
-    #[test]
-    fn the_out_of_rounds_note_is_not_a_claim() {
-        let answer = format!(
-            "Bush beans mature within sixty days in shallow window boxes [1].{}",
-            super::super::super::tool_loop::OUT_OF_ROUNDS_NOTE
-        );
-        let claims = lexical_pass(
-            &answer,
-            &[source(
-                "Bush beans mature within sixty days and grow well in shallow window boxes.",
-            )],
-        );
-        assert_eq!(claims.len(), 1);
-        assert!(claims[0].supported);
-    }
-
-    #[test]
-    fn citation_index_selects_the_referenced_source() {
-        let claims = lexical_pass(
-            "Blueberry anthocyanins support vascular function and endothelial health [2].",
-            &[
-                source("Irrigation protocol and frost timing notes for greenhouse control."),
-                source("Anthocyanins from blueberries were associated with improved vascular endothelial function in adults."),
-            ],
-        );
-
-        assert_eq!(claims.len(), 1);
-        assert_eq!(claims[0].citation_ids, vec![2]);
-        assert_eq!(claims[0].cited_source_indices, vec![1]);
-        assert!(claims[0].supported);
-    }
-
-    #[test]
-    fn mismatched_citation_index_is_flagged_even_if_another_source_matches() {
-        let claims = lexical_pass(
-            "Blueberry anthocyanins support vascular function and endothelial health [1].",
-            &[
-                source("Irrigation protocol and frost timing notes for greenhouse control."),
-                source("Anthocyanins from blueberries were associated with improved vascular endothelial function in adults."),
-            ],
-        );
-
-        assert_eq!(claims.len(), 1);
-        assert!(!claims[0].supported);
-    }
-
-    #[test]
-    fn short_cited_numeric_answers_are_not_skipped() {
-        let claims = lexical_pass(
-            "Retention is 14 days [1].",
-            &[source("Retention is 30 days.")],
-        );
-        assert_eq!(claims.len(), 1);
-        assert!(needs_judge(&claims[0]));
-    }
-
-    #[test]
-    fn invalid_citation_cannot_borrow_support_from_another_source() {
-        for citation in ["[99]", "[0]", "[1][99]"] {
-            let claims = lexical_pass(
-                &format!("Blueberry plants showed improved cold tolerance after salicylic acid treatment {citation}."),
-                &[source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.")],
-            );
-            assert_eq!(claims.len(), 1);
-            assert!(
-                !claims[0].supported,
-                "invalid citation {citation} must fail closed"
-            );
-        }
-    }
-
-    #[test]
-    fn empty_source_does_not_shift_citation_evidence() {
-        let mut empty = source("");
-        empty.file_name.clear();
-        empty.file_path.clear();
-        let claims = lexical_pass(
-            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [2].",
-            &[empty, source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.")],
-        );
-        assert_eq!(claims[0].cited_source_indices, vec![1]);
-        assert!(claims[0].supported);
-    }
-
-    #[test]
-    fn assigned_citation_ids_survive_source_reordering() {
-        let mut matching = source(
-            "Blueberry plants showed improved cold tolerance after salicylic acid treatment.",
-        );
-        matching.citation_id = Some(7);
-        let mut unrelated =
-            source("Irrigation protocol and frost timing notes for greenhouse control.");
-        unrelated.citation_id = Some(2);
-        let claims = lexical_pass(
-            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [7].",
-            &[unrelated, matching],
-        );
-        assert_eq!(claims[0].citation_ids, vec![7]);
-        assert_eq!(claims[0].cited_source_indices, vec![1]);
-        assert!(claims[0].supported);
-    }
-
-    #[test]
-    fn claim_text_keeps_the_full_sentence() {
-        let claims = lexical_pass(
-            "The same epigenetic shifts are linked to altered expression of genes that control meristem activity, suggesting a mechanistic link between methylation dynamics and developmental transitions [1][2].",
-            &[source("The study discusses WOX family structure and stress response without this meristem claim.")],
-        );
-
-        assert_eq!(claims.len(), 1);
-        assert!(claims[0].claim_text.contains(
-            "The same epigenetic shifts are linked to altered expression of genes that control meristem activity"
-        ));
-        assert!(claims[0].claim_text.contains(
-            "mechanistic link between methylation dynamics and developmental transitions"
-        ));
-        assert!(!claims[0].claim_text.contains("developmental tr..."));
-    }
-
-    #[test]
-    fn a_decimal_point_does_not_end_a_sentence() {
-        let sentences = split_sentences(
-            "The pooled effect was 1.2 °C per 10 points [1]. Surface readings ran 8.5 °C apart!\nSee example.com for v2.1.",
-        );
-
-        assert_eq!(
-            sentences,
-            vec![
-                "The pooled effect was 1.2 °C per 10 points [1].",
-                "Surface readings ran 8.5 °C apart!",
-                "See example.com for v2.1.",
-            ]
-        );
-    }
-
-    #[test]
-    fn numbers_dates_and_negations_are_contradiction_prone() {
-        assert!(is_contradiction_prone("Yields rose by 42 percent."));
-        assert!(is_contradiction_prone("The trial began in March 2021."));
-        assert!(is_contradiction_prone(
-            "The treatment did not improve tolerance."
-        ));
-        assert!(is_contradiction_prone(
-            "The sample didn't survive the freeze."
-        ));
-        assert!(is_contradiction_prone("Only the treated group recovered."));
-        assert!(!is_contradiction_prone(
-            "Salicylic acid treatment improved cold tolerance in blueberry plants."
-        ));
-    }
-
-    #[test]
-    fn strong_overlap_skips_the_judge_but_a_number_does_not() {
-        let plain = LexicalClaim {
-            sentence: "s".into(),
-            claim_text: "s".into(),
-            citation_ids: vec![1],
-            cited_source_indices: vec![0],
-            overlap_ratio: 0.8,
-            matching_tokens: 6,
-            supported: true,
-            contradiction_prone: false,
-        };
-        assert!(!needs_judge(&plain));
-
-        let with_number = LexicalClaim {
-            contradiction_prone: true,
-            ..plain.clone()
-        };
-        assert!(needs_judge(&with_number));
-
-        let ambiguous = LexicalClaim {
-            overlap_ratio: 0.40,
-            matching_tokens: 3,
-            ..plain.clone()
-        };
-        assert!(needs_judge(&ambiguous));
-
-        let weak = LexicalClaim {
-            overlap_ratio: 0.10,
-            matching_tokens: 1,
-            supported: false,
-            ..plain
-        };
-        assert!(needs_judge(&weak));
-    }
-
-    /// Explorer answers point at lines in the folder. Those sentences are
-    /// about the file on screen, so the sources this turn retrieved cannot
-    /// judge them, even when one happens to share their words.
-    #[test]
-    fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
-        let passage =
-            source("The main function prints a greeting and exits with status zero after setup.");
-        let claims = lexical_pass(
-            "The main function prints a greeting and exits with status zero, see `src/main.rs:1-3` [1]. \
-             The main function prints a greeting and exits with status zero after setup [1].",
-            std::slice::from_ref(&passage),
-        );
-        assert_eq!(claims.len(), 1, "{claims:?}");
-        assert!(!claims[0].sentence.contains("src/main.rs"));
-    }
-}
+mod tests;

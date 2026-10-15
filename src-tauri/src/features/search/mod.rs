@@ -13,6 +13,8 @@
 //! - `crate::features::search::mapper::SearchMapper`
 //! - `crate::features::search::use_cases` — hybrid/semantic/file/recency
 //! - `crate::features::search::commands` — Tauri command handlers
+//! - `crate::features::search::query_cache::QueryCache` — query result cache,
+//!   one per app, held by the container
 //! - `crate::features::search::plugin::init()` — Tauri plugin (directory-shaped)
 //!
 //! - `crate::features::search::engine` — retrieval engine (USearch +
@@ -23,9 +25,9 @@
 //! - `crate::features::search::enrichment_service`
 //!
 //! Domain types used by the application layer live in the domain layer:
-//! `crate::domain::entities::SearchResult`,
-//! `crate::domain::value_objects::{SearchMode, SearchQuery}`,
-//! and `crate::domain::repositories::SearchRepository`.
+//! `lattice_core::domain::entities::SearchResult`,
+//! `lattice_core::domain::value_objects::{SearchMode, SearchQuery}`,
+//! and `lattice_core::domain::repositories::SearchRepository`.
 //!
 //! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, SparseSearchTrait}`.
 //! The library search orchestrator is `use_cases::HybridSearchUseCase`.
@@ -35,6 +37,7 @@ pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod plugin;
+pub mod query_cache;
 pub mod reranker_setup;
 pub mod trait_def;
 pub mod use_cases;

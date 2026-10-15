@@ -6,9 +6,6 @@
 //! **NOTE**: Tag generation uses local LLM via TagServiceImpl.
 //! See infrastructure/extraction/tag_generator.rs for prompt helpers.
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::ports::{LoadedChatModelPort, RepositoryPort};
-use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::tags::dto::TagWithCountDto as TagWithCount;
 use crate::features::tags::entity::Tag;
 use crate::features::tags::generator::{
@@ -18,8 +15,11 @@ use crate::features::tags::repository::TagRepository;
 use crate::features::tags::service::{DocumentLockGuard, DocumentLockTable};
 use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::{LoadedChatModelPort, RepositoryPort};
+use lattice_core::application::services::completion_input::{complete_text, TextCall};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -195,7 +195,7 @@ impl TagServiceTrait for TagServiceImpl {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> crate::shared::error::Result<()> {
+    ) -> lattice_core::shared::error::Result<()> {
         crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
             .replace_document_tags(document_id, tag_names)
             .await
@@ -372,7 +372,7 @@ impl TagServiceTrait for TagServiceImpl {
 /// The model's tag suggestions for one document. Labels are upkeep: they
 /// wait behind anyone chatting.
 async fn suggest_tags(
-    llm: &dyn crate::application::ports::LLMPort,
+    llm: &dyn lattice_core::application::ports::LLMPort,
     user_message: &str,
 ) -> Result<String> {
     complete_text(
@@ -387,7 +387,7 @@ async fn suggest_tags(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{
+    use lattice_core::application::ports::llm_port::{
         CompletionInput, CompletionRequest, CompletionResponse,
     };
 
@@ -395,7 +395,7 @@ mod tests {
     struct Recorder(Mutex<Vec<CompletionRequest>>);
 
     #[async_trait]
-    impl crate::application::ports::LLMPort for Recorder {
+    impl lattice_core::application::ports::LLMPort for Recorder {
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             self.0.lock().await.push(request.clone());
             Ok(CompletionResponse::from_text("rust, ownership"))

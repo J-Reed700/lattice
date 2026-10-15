@@ -3,13 +3,18 @@
 use super::archive_budget::{run_archive_work, ArchiveBudget};
 use super::markup::{attr, decode_entities, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
+use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
 
 /// Extract content from PPTX files.
-pub async fn extract_pptx(path: &Path, max_file_size: u64) -> Result<ExtractedContent> {
+pub async fn extract_pptx(
+    path: &Path,
+    max_file_size: u64,
+    workers: &ExtractionWorkers,
+) -> Result<ExtractedContent> {
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| IndexingError::Io {
@@ -27,7 +32,10 @@ pub async fn extract_pptx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
     }
 
     let path_clone = path.to_path_buf();
-    let text = run_archive_work(path.to_path_buf(), move || extract_pptx_sync(&path_clone)).await?;
+    let text = run_archive_work(workers, path.to_path_buf(), move || {
+        extract_pptx_sync(&path_clone)
+    })
+    .await?;
 
     let metadata = ContentMetadata {
         page_count: None,
@@ -43,6 +51,7 @@ pub async fn extract_pptx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
+        ocr_pages: Vec::new(),
     })
 }
 
@@ -212,7 +221,10 @@ mod tests {
             ("ppt/slides/slide1.xml", TABLE_SLIDE),
         ]);
 
-        let text = extract_pptx(&path, 1 << 20).await.unwrap().text;
+        let text = extract_pptx(&path, 1 << 20, &ExtractionWorkers::new())
+            .await
+            .unwrap()
+            .text;
         assert_eq!(
             text,
             "# Slide 1\nQuarterly results\nRevenue\n12 & up\n\n# Slide 2\nSecond\n\n# Slide 10\nTenth\nSpeaker notes:\nSay the numbers slowly."

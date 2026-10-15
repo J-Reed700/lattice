@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::features::function_calling::dto::CleanArticle;
 use crate::features::web::WebArchiveServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Mock implementation of WebArchiveServiceTrait for testing
 ///
@@ -20,7 +21,7 @@ use crate::shared::error::{AppError, Result};
 /// # Example
 /// ```rust
 /// use lattice::infrastructure::services::mocks::MockWebArchiveService;
-/// use lattice::application::dtos::function_calling_dto::CleanArticle;
+/// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
 ///
 /// let mock = MockWebArchiveService::new();
 ///
@@ -107,6 +108,25 @@ impl Default for MockWebArchiveService {
 }
 
 #[async_trait]
+impl ArticleArchive for MockWebArchiveService {
+    async fn delete_article(&self, path: &Path) -> Result<()> {
+        // Idempotent - ok if doesn't exist
+        self.articles.lock().remove(path);
+        Ok(())
+    }
+
+    fn owns(&self, path: &Path) -> bool {
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        path.starts_with(&self.base_dir)
+    }
+}
+
+#[async_trait]
 impl WebArchiveServiceTrait for MockWebArchiveService {
     async fn archive_article(&self, article: CleanArticle, url: &str) -> Result<PathBuf> {
         let domain = url::Url::parse(url)
@@ -140,24 +160,8 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
             .ok_or_else(|| AppError::NotFound(format!("Article not found: {}", path.display())))
     }
 
-    async fn delete_article(&self, path: &Path) -> Result<()> {
-        // Idempotent - ok if doesn't exist
-        self.articles.lock().remove(path);
-        Ok(())
-    }
-
     async fn list_articles(&self) -> Result<Vec<PathBuf>> {
         Ok(self.articles.lock().keys().cloned().collect())
-    }
-
-    fn owns(&self, path: &Path) -> bool {
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return false;
-        }
-        path.starts_with(&self.base_dir)
     }
 }
 

@@ -5,9 +5,9 @@
 //! and that a real snapshot plus real recall reach the assembler intact.
 
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::llm::engine::factory::MockLLMPort;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use sqlx::SqlitePool;
 
 async fn database() -> SqlitePool {
@@ -32,17 +32,17 @@ async fn seed(pool: &SqlitePool, count: usize) -> String {
     for index in 0..count {
         let (role, content) = if index == 0 {
             (
-                crate::domain::conversation::MessageRole::User,
+                lattice_core::domain::conversation::MessageRole::User,
                 "Do not deploy until I approve.".to_string(),
             )
         } else if index % 2 == 1 {
             (
-                crate::domain::conversation::MessageRole::Assistant,
+                lattice_core::domain::conversation::MessageRole::Assistant,
                 format!("Answer {index}."),
             )
         } else {
             (
-                crate::domain::conversation::MessageRole::User,
+                lattice_core::domain::conversation::MessageRole::User,
                 format!("Question {index}."),
             )
         };
@@ -60,10 +60,10 @@ async fn record_constraint(pool: &SqlitePool, conversation_id: &str) {
 }
 
 async fn record_constraint_through(pool: &SqlitePool, conversation_id: &str, through: Option<i64>) {
-    use crate::application::ports::conversation_memory::{
+    use lattice_core::application::ports::conversation_memory::{
         MemoryCommitCandidate, MemoryCommitPreconditions, SummaryUpdate,
     };
-    use crate::domain::conversation::memory::{
+    use lattice_core::domain::conversation::memory::{
         compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem,
         MemoryKind, MemoryReview, MemoryState, SourceRole,
     };
@@ -202,7 +202,7 @@ async fn a_conversation_without_memory_is_checked_and_keeps_its_raw_history() {
         .plan;
     assert!(!plan.compaction_required);
     assert!(plan.messages.iter().any(|message| matches!(message,
-        crate::application::ports::llm_port::CompletionInput::Message { content, .. }
+        lattice_core::application::ports::llm_port::CompletionInput::Message { content, .. }
             if content == "Do not deploy until I approve."
     )));
 }
@@ -266,33 +266,35 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
         .messages
         .iter()
         .map(|message| match message {
-            crate::application::ports::llm_port::CompletionInput::Message { role, content } => {
-                (role.clone(), content.clone())
-            }
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
+                role,
+                content,
+            } => (role.clone(), content.clone()),
             other => panic!("unexpected native input {other:?}"),
         })
         .collect();
 
-    // The constraint is present, quoted, and attributed to the user.
-    let block = rendered
-        .iter()
-        .find(|(role, content)| role == "user" && content.starts_with("[recorded requirements"))
+    // The constraint is present, quoted, and attributed to the user, in the
+    // final message ahead of the request.
+    let (role, last) = rendered.last().unwrap();
+    assert_eq!(role, "user");
+    let requirement = last
+        .find("[recorded requirements")
         .expect("the constraint must reach the prompt");
-    assert!(block.1.contains("Do not deploy until I approve."));
+    assert!(last[requirement..].contains("Do not deploy until I approve."));
 
-    // The summary is present as assistant context, not as policy.
-    let summary = rendered
+    // Every message the summary covers is carried verbatim, so it stays out
+    // rather than changing the head of the request after each consolidation.
+    assert!(!rendered
         .iter()
-        .find(|(_, content)| content.starts_with("[generated summary"))
-        .expect("the summary must be carried");
-    assert_eq!(summary.0, "assistant");
+        .any(|(_, content)| content.contains("[generated summary")));
 
-    // The current input is last and appears once.
-    assert_eq!(rendered.last().unwrap().1, "Can you ship it now?");
+    // The current input closes the final message and appears once.
+    assert!(last.ends_with("[current message]\nCan you ship it now?"));
     assert_eq!(
         rendered
             .iter()
-            .filter(|(_, content)| content == "Can you ship it now?")
+            .filter(|(_, content)| content.contains("Can you ship it now?"))
             .count(),
         1
     );
@@ -301,6 +303,43 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
     assert!(built.plan.accounting.fits());
     assert!(built.plan.max_output_tokens > 0);
     assert_eq!(built.plan.memory_revision, 1);
+}
+
+#[tokio::test]
+async fn the_summary_is_carried_as_assistant_context_once_older_turns_are_out_of_reach() {
+    let pool = database().await;
+    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    record_constraint(&pool, &id).await;
+    let repository = ConversationRepository::new(pool.clone());
+
+    let built = build_memory_plan(
+        &repository,
+        &repository,
+        &llm(),
+        &id,
+        "You are helpful.",
+        "Can you ship it now?",
+        0,
+        Vec::new(),
+        true,
+    )
+    .await
+    .unwrap()
+    .expect("a plan");
+
+    let summary = built
+        .plan
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
+                role,
+                content,
+            } if content.starts_with("[generated summary") => Some(role.clone()),
+            _ => None,
+        })
+        .expect("older turns have nothing else standing in for them");
+    assert_eq!(summary, "assistant", "a summary is never policy");
 }
 
 #[tokio::test]
@@ -341,7 +380,7 @@ async fn a_failed_assistant_message_is_not_replayed_as_an_answer() {
     let state = repository.load_memory_state(&id).await.unwrap();
     assert_eq!(
         state.validity,
-        crate::domain::conversation::memory::MemoryValidity::Ready,
+        lattice_core::domain::conversation::memory::MemoryValidity::Ready,
         "a status change must not invalidate memory whose evidence is unmoved"
     );
 
@@ -350,9 +389,10 @@ async fn a_failed_assistant_message_is_not_replayed_as_an_answer() {
         .messages
         .iter()
         .filter_map(|message| match message {
-            crate::application::ports::llm_port::CompletionInput::Message { content, .. } => {
-                Some(content.clone())
-            }
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
+                content,
+                ..
+            } => Some(content.clone()),
             _ => None,
         })
         .collect();
@@ -404,7 +444,7 @@ async fn recall_availability_is_reported_even_when_nothing_was_found() {
     assert!(
         built.plan.messages.iter().any(|message| matches!(
             message,
-            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+            lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
                 if role == "user"
                     && content.contains("Automatic recall status")
                     && content.contains("found nothing")
@@ -438,7 +478,10 @@ async fn an_oversized_current_message_is_an_error_rather_than_a_clipped_instruct
     .await
     .unwrap_err();
     assert!(
-        matches!(error, crate::shared::error::AppError::InvalidInput(_)),
+        matches!(
+            error,
+            lattice_core::shared::error::AppError::InvalidInput(_)
+        ),
         "{error:?}"
     );
 }
@@ -456,9 +499,9 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
     // 64 messages of 20 KB: 1.28 MB, well past the 512 KB candidate cap.
     for index in 0..RECENT_CANDIDATE_MESSAGES {
         let role = if index % 2 == 0 {
-            crate::domain::conversation::MessageRole::User
+            lattice_core::domain::conversation::MessageRole::User
         } else {
-            crate::domain::conversation::MessageRole::Assistant
+            lattice_core::domain::conversation::MessageRole::Assistant
         };
         let content = format!("{index:04} {}", "x".repeat(20 * 1024));
         repository
@@ -470,10 +513,18 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
     let latest = snapshot.latest_sequence;
 
     // The ledger covers all but the last three messages.
-    let (recent, unread) = load_recent(&repository, &id, &snapshot, latest - 3)
+    let RecentCandidates {
+        messages: recent,
+        unread_source: unread,
+        reaches_start,
+    } = load_recent(&repository, &id, &snapshot, latest - 3)
         .await
         .unwrap();
     assert!(!unread, "source the ledger covers is not missing");
+    assert!(
+        !reaches_start,
+        "a capped read does not hold the first message, so the summary must stay available"
+    );
     assert_eq!(
         recent.last().unwrap().sequence,
         latest,
@@ -486,7 +537,10 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
     assert!(recent.first().unwrap().sequence <= latest - 3);
 
     // Without a ledger, the same cut really does leave source unaccounted for.
-    let (_, unread) = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
+    let unread = load_recent(&repository, &id, &snapshot, 0)
+        .await
+        .unwrap()
+        .unread_source;
     assert!(unread);
 }
 
@@ -526,10 +580,12 @@ impl DenseTokenizer {
 }
 
 fn plan_with(content: &str, input_budget: usize) -> ContextPlan {
-    use crate::application::services::context_assembler::{ContextAccounting, RecallDiagnostics};
+    use lattice_core::application::services::context_assembler::{
+        ContextAccounting, RecallDiagnostics,
+    };
     ContextPlan {
         messages: vec![
-            crate::application::ports::llm_port::CompletionInput::Message {
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
                 role: "user".into(),
                 content: content.into(),
             },
@@ -568,7 +624,9 @@ async fn the_final_fit_is_decided_on_the_backends_own_token_count() {
     let text_tokens = settled.tokenizable_text().chars().count().div_ceil(2);
     assert_eq!(
         settled.accounting.total_input,
-        text_tokens + crate::application::services::context_assembler::MESSAGE_FRAMING_TOKENS + 50
+        text_tokens
+            + lattice_core::application::services::context_assembler::MESSAGE_FRAMING_TOKENS
+            + 50
     );
 }
 
@@ -594,4 +652,82 @@ async fn a_plan_the_estimate_undercounted_is_planned_again_at_the_measured_ratio
         settled.accounting.accounting_method,
         Some(TokenAccounting::Exact)
     );
+}
+
+/// The chat turn renders its passages into the message. Charged as part of
+/// the message they could only refuse a turn whose window was too small for
+/// all of them; handed over as evidence, they are cut to fit.
+#[tokio::test]
+async fn evidence_rendered_into_the_message_is_cut_to_fit_instead_of_refusing_the_turn() {
+    let pool = database().await;
+    let id = seed(&pool, 4).await;
+    let repository = ConversationRepository::new(pool.clone());
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
+    let bare = "Question: what does the runbook say about rollbacks?";
+    let render = |keep: usize| {
+        let passages: Vec<String> = (1..=keep)
+            .map(|rank| format!("[{rank}] {}", "fact ".repeat(150)))
+            .collect();
+        format!("{}\n\n{bare}", passages.join("\n\n"))
+    };
+
+    let whole = render(20);
+    let refused = build_memory_plan_for_query(
+        &repository,
+        &repository,
+        &llm(),
+        &id,
+        TurnPrompt {
+            system_policy: "You are helpful.",
+            current_input: &whole,
+            inline_evidence: None,
+            tool_schema_tokens: 600,
+            document_evidence: Vec::new(),
+        },
+        true,
+        bare,
+        today,
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(AppError::InvalidInput(_))),
+        "{refused:?}"
+    );
+
+    let built = build_memory_plan_for_query(
+        &repository,
+        &repository,
+        &llm(),
+        &id,
+        TurnPrompt {
+            system_policy: "You are helpful.",
+            current_input: bare,
+            inline_evidence: Some(InlineEvidence {
+                items: 20,
+                render: &render,
+            }),
+            tool_schema_tokens: 600,
+            document_evidence: Vec::new(),
+        },
+        true,
+        bare,
+        today,
+    )
+    .await
+    .unwrap()
+    .expect("the switch is on");
+    let accounting = &built.plan.accounting;
+    assert!(accounting.fits(), "{accounting:?}");
+    assert!(
+        (1..20).contains(&accounting.inline_evidence_kept),
+        "{accounting:?}"
+    );
+    let Some(lattice_core::application::ports::llm_port::CompletionInput::Message {
+        content, ..
+    }) = built.plan.messages.last()
+    else {
+        panic!("a final message");
+    };
+    assert!(content.contains("[1] fact"));
+    assert!(content.ends_with(bare));
 }

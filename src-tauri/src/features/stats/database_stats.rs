@@ -1,6 +1,6 @@
-use crate::application::ports::DatabaseStatsPort;
-use crate::shared::error::{Result, ResultExt};
 use async_trait::async_trait;
+use lattice_core::application::ports::DatabaseStatsPort;
+use lattice_core::shared::error::{Result, ResultExt};
 use sqlx::SqlitePool;
 
 pub struct DatabaseStatsAdapter {

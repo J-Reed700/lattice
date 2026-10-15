@@ -1,62 +1,76 @@
 //! Indexing Command Handlers (DDD Architecture)
 //!
 //! Thin controllers for document indexing operations following Domain-Driven Design.
-//! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
+//! These commands apply cross-cutting concerns (rate limiting, validation)
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
 use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
 };
+use crate::features::indexing::engine::IndexingState;
+use crate::features::indexing::note_index_sink::{
+    EmbeddingReadiness, NoteIndexPipeline, NoteRemovalPipeline,
+};
+use crate::infrastructure::security::FileAccessConfig;
 use crate::interfaces::di::Container;
-use crate::shared::ipc::{ApiResult, ErrorCode};
-use tauri::State;
+use lattice_core::application::ports::document_scope::DocumentScopePort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::{AppError, Result as AppResult};
+use lattice_core::shared::ipc::{ApiResult, ErrorCode};
+use std::sync::Arc;
 
-async fn ensure_embedding_ready(container: &Container) -> Result<(), String> {
-    let embedding_service = container
-        .get_or_load_embedding()
-        .await
-        .map_err(|e| format!("Could not load the active embedding model: {}", e))?;
+/// The readiness gate every indexing path applies before it embeds anything:
+/// the active embedding model must load and report ready. Takes the load
+/// result so the command path (the container) and the vault note sink (a
+/// composition-root adapter) apply one check with one set of messages.
+///
+/// Every refusal is `ServiceNotAvailable`, so the command and the sink
+/// report the same text for the same cause.
+pub(crate) async fn require_embedding_ready(
+    loaded: AppResult<Arc<dyn EmbeddingPort>>,
+) -> AppResult<()> {
+    let embedding_service = loaded.map_err(|e| {
+        AppError::ServiceNotAvailable(format!("Could not load the active embedding model: {}", e))
+    })?;
 
-    let is_ready = embedding_service
-        .is_ready()
-        .await
-        .map_err(|e| format!("Failed to verify embedding model readiness: {}", e))?;
+    let is_ready = embedding_service.is_ready().await.map_err(|e| {
+        AppError::ServiceNotAvailable(format!("Failed to verify embedding model readiness: {}", e))
+    })?;
 
     if !is_ready {
-        return Err(
+        return Err(AppError::ServiceNotAvailable(
             "AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
                 .to_string(),
-        );
+        ));
     }
 
     Ok(())
 }
 
-async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<String>>) {
-    const DEFAULT_CHUNK_TOKENS: usize = 800;
-    const MIN_CHUNK_TOKENS: usize = 64;
-    const MAX_CHUNK_TOKENS: usize = 4096;
+async fn ensure_embedding_ready(container: &Container) -> AppResult<()> {
+    require_embedding_ready(container.get_or_load_embedding().await).await
+}
 
-    match container.get_settings_use_case().execute().await {
-        Ok(settings) => {
-            let chunk_tokens =
-                (settings.indexing.chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS);
-            let include_extensions = if settings.indexing.file_types.is_empty() {
-                None
-            } else {
-                Some(settings.indexing.file_types)
-            };
-            (chunk_tokens, include_extensions)
-        }
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "Failed to load indexing settings; falling back to default chunk settings"
-            );
-            (DEFAULT_CHUNK_TOKENS, None)
-        }
+/// The command path's readiness gate, over the container's embedding runtime.
+struct ContainerEmbedding<'a>(&'a Container);
+
+#[async_trait::async_trait]
+impl EmbeddingReadiness for ContainerEmbedding<'_> {
+    async fn ensure_ready(&self) -> AppResult<()> {
+        ensure_embedding_ready(self.0).await
     }
+}
+
+/// Chunk size used when the user's indexing settings cannot be read.
+pub(crate) const DEFAULT_CHUNK_TOKENS: usize = 800;
+const MIN_CHUNK_TOKENS: usize = 64;
+const MAX_CHUNK_TOKENS: usize = 4096;
+
+/// The chunk-size policy every index path applies to the user's setting:
+/// clamped into the range the chunker supports.
+pub(crate) fn chunk_tokens_for(chunk_size: u32) -> usize {
+    (chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS)
 }
 
 fn normalize_space_id(space_id: Option<&str>) -> Option<String> {
@@ -66,28 +80,31 @@ fn normalize_space_id(space_id: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
-async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<(), String> {
-    let exists = container
-        .document_scope()
+async fn ensure_space_exists(scope: &dyn DocumentScopePort, space_id: &str) -> AppResult<()> {
+    let exists = scope
         .space_exists(space_id)
         .await
-        .map_err(|e| format!("Failed to verify target space '{}': {}", space_id, e))?;
+        .map_err(|e| e.with_context(&format!("Failed to verify target space '{}'", space_id)))?;
     if !exists {
-        return Err(format!("Space not found: {}", space_id));
+        return Err(AppError::NotFound(format!("Space not found: {}", space_id)));
     }
     Ok(())
 }
 
 async fn assign_document_memberships(
-    container: &Container,
+    scope: &dyn DocumentScopePort,
     document_ids: &[String],
     space_id: &str,
-) -> Result<(), String> {
-    container
-        .document_scope()
+) -> AppResult<()> {
+    scope
         .assign_documents(document_ids, space_id)
         .await
-        .map_err(|e| format!("Failed to assign documents to space '{}': {}", space_id, e))
+        .map_err(|e| {
+            e.with_context(&format!(
+                "Failed to assign documents to space '{}'",
+                space_id
+            ))
+        })
 }
 
 /// Core implementation - Indexes a single file (DDD use case)
@@ -105,82 +122,132 @@ pub async fn index_file_impl(
     container: &Container,
     request: IndexFileRequestDto,
 ) -> ApiResult<IndexFileResponseDto> {
-    tracing::info!(file_path = %request.path, "Command: index_file - ENTRY");
     let requested_space_id = normalize_space_id(request.space_id.as_deref());
+    let document_scope = container.document_scope();
+    let space = requested_space_id.as_deref().map(|id| SpaceTarget {
+        id,
+        scope: document_scope.as_ref(),
+    });
+    let file_access = container.file_access_config();
+    let use_case = container.index_file_use_case();
+    let indexing = SingleFileIndexing {
+        file_access: &file_access,
+        embedding: &ContainerEmbedding(container),
+        state: container.indexing.indexing_state(),
+        pipeline: use_case.as_ref(),
+    };
+
+    match index_single_file(&indexing, space, request).await {
+        Ok(response) => ApiResult::success(response),
+        Err(failure) => ApiResult::error(failure.code, failure.error.to_string()),
+    }
+}
+
+/// What the single-file index path touches, named narrowly so the
+/// `index_file` command and the vault note sink run one implementation
+/// without the sink holding the container.
+pub(crate) struct SingleFileIndexing<'a> {
+    pub file_access: &'a FileAccessConfig,
+    pub embedding: &'a dyn EmbeddingReadiness,
+    /// The shared progress state the indexing UI reads.
+    pub state: &'a IndexingState,
+    pub pipeline: &'a dyn NoteIndexPipeline,
+}
+
+/// The space a command-initiated index files its new document into.
+pub(crate) struct SpaceTarget<'a> {
+    pub id: &'a str,
+    pub scope: &'a dyn DocumentScopePort,
+}
+
+/// Why the single-file index path stopped: the IPC code the command reports,
+/// and the typed cause the vault note sink returns. The cause displays as
+/// exactly the message the command has always sent.
+pub(crate) struct IndexFileFailure {
+    pub code: ErrorCode,
+    pub error: AppError,
+}
+
+impl IndexFileFailure {
+    fn new(code: ErrorCode, error: impl Into<AppError>) -> Self {
+        Self {
+            code,
+            error: error.into(),
+        }
+    }
+}
+
+/// The single-file index path shared by the `index_file` command and the
+/// vault note sink: ENTRY/EXIT logs, path and model gates, the shared
+/// progress state, the use case, and space membership.
+pub(crate) async fn index_single_file(
+    indexing: &SingleFileIndexing<'_>,
+    space: Option<SpaceTarget<'_>>,
+    request: IndexFileRequestDto,
+) -> Result<IndexFileResponseDto, IndexFileFailure> {
+    tracing::info!(file_path = %request.path, "Command: index_file - ENTRY");
 
     // 1. Input validation (path safety)
-    if let Err(e) = container.file_access_config().validate_path(&request.path) {
-        return ApiResult::error(
+    if let Err(e) = indexing.file_access.validate_path(&request.path) {
+        return Err(IndexFileFailure::new(
             ErrorCode::InvalidInput,
             format!("Path validation failed: {}", e),
-        );
+        ));
     }
 
     // 2. Ensure embedding service is loaded before indexing starts.
     // Indexing use cases read from the shared embedding cache.
-    if let Err(e) = ensure_embedding_ready(container).await {
-        return ApiResult::error(ErrorCode::ServiceNotAvailable, e);
+    if let Err(e) = indexing.embedding.ensure_ready().await {
+        return Err(IndexFileFailure::new(ErrorCode::ServiceNotAvailable, e));
     }
 
-    if let Some(space_id) = requested_space_id.as_deref() {
-        if let Err(e) = ensure_space_exists(container, space_id).await {
-            return ApiResult::error(ErrorCode::InvalidInput, e);
+    if let Some(space) = &space {
+        if let Err(e) = ensure_space_exists(space.scope, space.id).await {
+            return Err(IndexFileFailure::new(ErrorCode::InvalidInput, e));
         }
     }
 
     // 3. Update indexing state for progress tracking
-    let state = container.indexing.indexing_state();
+    let state = indexing.state;
     state.start_scanning();
     state.set_total_files(1);
     state.set_current_file(request.path.clone());
 
     // 4. Execute use case
-    let use_case = container.index_file_use_case();
-    let result = use_case.execute(request).await;
+    let result = indexing.pipeline.submit(request).await;
 
     // 5. Handle result and update state
     match result {
         Ok(response) => {
-            if let Some(space_id) = requested_space_id.as_deref() {
+            if let Some(space) = &space {
                 if let Err(e) = assign_document_memberships(
-                    container,
+                    space.scope,
                     std::slice::from_ref(&response.document_id),
-                    space_id,
+                    space.id,
                 )
                 .await
                 {
                     state.file_failed();
-                    state.error(e.clone());
-                    tracing::error!(error = %e, space_id = %space_id, document_id = %response.document_id, "Command: index_file - SPACE_ASSIGNMENT_ERROR");
-                    return ApiResult::error(ErrorCode::ProcessingError, e);
+                    state.error(e.to_string());
+                    tracing::error!(error = %e, space_id = %space.id, document_id = %response.document_id, "Command: index_file - SPACE_ASSIGNMENT_ERROR");
+                    return Err(IndexFileFailure::new(ErrorCode::ProcessingError, e));
                 }
             }
 
             state.file_processed();
             state.complete();
 
-            // 6. Audit logging
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::FileIndexed,
-                response.document_id.as_str(),
-                "path" => response.file_path.as_str()
-            )
-            .await
-            .ok();
-
             tracing::info!(
                 document_id = %response.document_id,
                 "Command: index_file - EXIT"
             );
-            ApiResult::success(response)
+            Ok(response)
         }
         Err(e) => {
             state.file_failed();
             state.error(e.to_string());
             tracing::error!(error = %e, "Command: index_file - ERROR");
-            ApiResult::error(ErrorCode::ProcessingError, e.to_string())
+            Err(IndexFileFailure::new(ErrorCode::ProcessingError, e))
         }
     }
 }
@@ -215,12 +282,13 @@ pub async fn index_directory_impl(
 
     // 2. Ensure embedding service is loaded before indexing starts.
     if let Err(e) = ensure_embedding_ready(container).await {
-        return ApiResult::error(ErrorCode::ServiceNotAvailable, e);
+        return ApiResult::error(ErrorCode::ServiceNotAvailable, e.to_string());
     }
 
+    let document_scope = container.document_scope();
     if let Some(space_id) = requested_space_id.as_deref() {
-        if let Err(e) = ensure_space_exists(container, space_id).await {
-            return ApiResult::error(ErrorCode::InvalidInput, e);
+        if let Err(e) = ensure_space_exists(document_scope.as_ref(), space_id).await {
+            return ApiResult::error(ErrorCode::InvalidInput, e.to_string());
         }
     }
 
@@ -229,24 +297,17 @@ pub async fn index_directory_impl(
     match use_case.execute(request).await {
         Ok(response) => {
             if let Some(space_id) = requested_space_id.as_deref() {
-                if let Err(e) =
-                    assign_document_memberships(container, &response.document_ids, space_id).await
+                if let Err(e) = assign_document_memberships(
+                    document_scope.as_ref(),
+                    &response.document_ids,
+                    space_id,
+                )
+                .await
                 {
                     tracing::error!(error = %e, space_id = %space_id, "Command: index_directory - SPACE_ASSIGNMENT_ERROR");
-                    return ApiResult::error(ErrorCode::ProcessingError, e);
+                    return ApiResult::error(ErrorCode::ProcessingError, e.to_string());
                 }
             }
-
-            // 4. Audit
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::FileIndexed,
-                "directory",
-                "files_indexed" => response.files_indexed.to_string().as_str()
-            )
-            .await
-            .ok();
 
             ApiResult::success(response)
         }
@@ -266,23 +327,13 @@ pub async fn reindex_document_impl(
 
     // 1. Ensure embedding service is loaded before reindexing starts.
     if let Err(e) = ensure_embedding_ready(container).await {
-        return ApiResult::error(ErrorCode::ServiceNotAvailable, e);
+        return ApiResult::error(ErrorCode::ServiceNotAvailable, e.to_string());
     }
 
     // 2. Execute use case
     let use_case = container.reindex_document_use_case();
     match use_case.execute(document_id.clone()).await {
         Ok(response) => {
-            // 3. Audit
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DocumentReindexed,
-                response.document_id.as_str()
-            )
-            .await
-            .ok();
-
             tracing::info!(
                 document_id = %response.document_id,
                 "Command: reindex_document - EXIT"
@@ -308,50 +359,32 @@ pub async fn reindex_document_impl(
 /// * `ApiResult::success(())` - Document successfully deleted
 /// * `ApiResult::error(...)` - If deletion fails
 pub async fn delete_document_impl(container: &Container, document_id: String) -> ApiResult<()> {
-    tracing::info!(document_id = %document_id, "Command: delete_document - ENTRY");
-
-    // 1. Execute use case
     let use_case = container.delete_document_use_case();
-    match use_case.execute(document_id.clone()).await {
-        Ok(_) => {
-            // 2. Audit
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::FileDeleted,
-                document_id.as_str()
-            )
-            .await
-            .ok();
-
-            tracing::info!(document_id = %document_id, "Command: delete_document - EXIT");
-            ApiResult::success(())
-        }
-        Err(e) => {
-            tracing::error!(document_id = %document_id, error = %e, "Command: delete_document - ERROR");
-            ApiResult::error(ErrorCode::ProcessingError, e.to_string())
-        }
+    match delete_indexed_document(use_case.as_ref(), document_id).await {
+        Ok(()) => ApiResult::success(()),
+        Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
     }
 }
 
-/// Get indexing statistics.
-///
-/// Returns the count of indexed documents and total chunks in the database.
-///
-/// # Arguments
-///
-/// * `container` - Service container with document repository
-///
-/// # Returns
-///
-/// * `Result<Value, String>` - Statistics in JSON format for Tauri
-pub async fn get_indexing_stats(
-    container: State<'_, Container>,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
+/// The delete path shared by the `delete_document` command and the vault
+/// note sink: ENTRY/EXIT logs and the ownership-aware use case.
+pub(crate) async fn delete_indexed_document(
+    pipeline: &dyn NoteRemovalPipeline,
+    document_id: String,
+) -> AppResult<()> {
+    tracing::info!(document_id = %document_id, "Command: delete_document - ENTRY");
 
-    let result = get_indexing_stats_impl(&container).await;
-    result.to_tauri_result()
+    // 1. Execute use case
+    match pipeline.remove(document_id.clone()).await {
+        Ok(()) => {
+            tracing::info!(document_id = %document_id, "Command: delete_document - EXIT");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(document_id = %document_id, error = %e, "Command: delete_document - ERROR");
+            Err(e)
+        }
+    }
 }
 
 /// Core implementation - Get indexing statistics
@@ -384,20 +417,6 @@ pub async fn get_indexing_stats_impl(container: &Container) -> ApiResult<Indexin
     })
 }
 
-/// Renames a document's display name (DDD use case)
-///
-/// Updates only the document name metadata in the database.
-pub async fn rename_document(
-    container: State<'_, Container>,
-    document_id: String,
-    new_name: String,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let result = rename_document_impl(&container, document_id, new_name).await;
-    result.to_tauri_result()
-}
-
 /// Core implementation - Renames a document's display name
 ///
 /// # Arguments
@@ -421,79 +440,9 @@ pub async fn rename_document_impl(
         .execute(document_id.clone(), new_name.clone())
         .await
     {
-        Ok(response) => {
-            // 2. Audit logging
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DocumentUpdated,
-                document_id.as_str(),
-                "new_name" => response.new_name.as_str()
-            )
-            .await
-            .ok();
-
-            ApiResult::success(response)
-        }
+        Ok(response) => ApiResult::success(response),
         Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
     }
-}
-
-/// Simplified DDD wrapper for index_file (used by plugin)
-///
-/// This is a simplified wrapper command for the frontend to call with minimal parameters.
-/// Delegates to the full `index_file` command with default options.
-pub async fn index_file_ddd(
-    container: State<'_, Container>,
-    path: String,
-    space_id: Option<String>,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let (chunk_tokens, _) = resolve_indexing_defaults(&container).await;
-
-    let request = IndexFileRequestDto {
-        path,
-        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
-            max_tokens: chunk_tokens,
-        },
-        tags: None,
-        metadata: None,
-        space_id,
-    };
-
-    // Delegate to full implementation
-    let result = index_file_impl(&container, request).await;
-    result.to_tauri_result()
-}
-
-/// Simplified DDD wrapper for index_directory (used by plugin)
-///
-/// This is a simplified wrapper command for the frontend to call with minimal parameters.
-/// Delegates to the full `index_directory` command with default options.
-pub async fn index_directory_ddd(
-    container: State<'_, Container>,
-    path: String,
-    recursive: bool,
-    space_id: Option<String>,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let (chunk_tokens, include_extensions) = resolve_indexing_defaults(&container).await;
-
-    let request = IndexDirectoryRequestDto {
-        path,
-        recursive,
-        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
-            max_tokens: chunk_tokens,
-        },
-        include_extensions,
-        space_id,
-    };
-
-    // Delegate to full implementation
-    let result = index_directory_impl(&container, request).await;
-    result.to_tauri_result()
 }
 
 /// IndexProgress structure for progress reporting

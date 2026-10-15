@@ -5,17 +5,17 @@
 //! constructed in five places) keeps the audio path in one file and leaves every
 //! existing call site's behaviour unchanged.
 
-use crate::application::ports::content_extraction_port::{
-    ContentExtractionPort, ExtractedContentData,
-};
-use crate::application::ports::TranscriptionPort;
 use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::features::transcription::engine::{
     group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
 };
 use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::content_extraction_port::{
+    ContentExtractionPort, ExtractedContentData,
+};
+use lattice_core::application::ports::{OcrPort, TranscriptionPort};
+use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -57,6 +57,21 @@ impl ContentExtractionAdapter {
             extractor: ContentExtractor::new(),
             transcription: Some(transcription),
         }
+    }
+
+    /// Extracts with `extractor`, which carries the size limit and the parser
+    /// workers it shares with the rest of the app. Call before [`Self::with_ocr`],
+    /// which configures whichever extractor is in place.
+    pub fn with_extractor(mut self, extractor: ContentExtractor) -> Self {
+        self.extractor = extractor;
+        self
+    }
+
+    /// Reads scanned PDF pages through `ocr`. Without it they stay unindexed
+    /// and are reported in `ExtractedContent::needs_ocr`.
+    pub fn with_ocr(mut self, ocr: Arc<dyn OcrPort>) -> Self {
+        self.extractor = std::mem::take(&mut self.extractor).with_ocr(ocr);
+        self
     }
 
     async fn extract_audio(&self, path: &Path) -> Result<ExtractedContentData> {
@@ -115,6 +130,7 @@ impl ContentExtractionAdapter {
             mime_type,
             page_count: None,
             page_ranges: Vec::new(),
+            ocr_pages: Vec::new(),
         })
     }
 }
@@ -166,6 +182,7 @@ impl ContentExtractionPort for ContentExtractionAdapter {
             mime_type: extracted.mime_type,
             page_count: extracted.metadata.page_count,
             page_ranges: extracted.page_ranges,
+            ocr_pages: extracted.ocr_pages,
             word_count: extracted.metadata.word_count,
             char_count: extracted.metadata.char_count,
         })

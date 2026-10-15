@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use tracing::warn;
 
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
-use crate::domain::entities::document::Document;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
-use crate::shared::text::{build_excerpt, safe_truncate};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
+use lattice_core::domain::entities::document::Document;
+use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 use super::super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::{infer_category, select_informative_terms, tokenize_keyword_terms};
@@ -252,6 +252,7 @@ fn build_followup_sources(
 
     vec![SourceDto {
         page_number: None,
+        from_ocr: false,
         document_id: document.id().as_str().to_string(),
         chunk_id,
         content: chunk_content,
@@ -286,6 +287,7 @@ mod followup_label_tests {
     fn source(document_id: &str) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: document_id.to_string(),
             chunk_id: format!("{document_id}-chunk"),
             content: String::new(),

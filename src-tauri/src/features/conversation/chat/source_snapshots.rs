@@ -91,7 +91,7 @@ pub(super) async fn archive_page_for_url(
     let Some((content, clipped)) = capped_snapshot_text(&page.content) else {
         return;
     };
-    if let Err(error) = container
+    match container
         .chat_records()
         .store_web_source_snapshot(
             conversation_id,
@@ -102,11 +102,18 @@ pub(super) async fn archive_page_for_url(
         )
         .await
     {
-        warn!(
+        // The first text snapshot also asks for the page's frozen copy: a row
+        // insert and a job submit, the capture itself runs as a job.
+        Ok(()) => {
+            container
+                .ensure_page_snapshot(conversation_id, citation_url)
+                .await
+        }
+        Err(error) => warn!(
             error = %error,
             url = page.url.as_str(),
             "Failed to archive a read page beside its citation"
-        );
+        ),
     }
 }
 
@@ -260,7 +267,7 @@ fn capped_snapshot_text(content: &str) -> Option<(String, bool)> {
     }
     if content.chars().count() > SNAPSHOT_MAX_CHARS {
         Some((
-            crate::shared::text::safe_truncate(content, SNAPSHOT_MAX_CHARS),
+            lattice_core::shared::text::safe_truncate(content, SNAPSHOT_MAX_CHARS),
             true,
         ))
     } else {

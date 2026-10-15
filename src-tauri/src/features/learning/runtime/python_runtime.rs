@@ -5,20 +5,16 @@
 //! app; learner programs run on it only inside the lab runner's child process.
 
 use crate::features::learning::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 pub(super) const WASM_NAME: &str = "python.wasm";
 const STDLIB_NAME: &str = "python314.zip";
 const STDLIB_RELATIVE_PATH: &str = "lib/python314.zip";
 const MANIFEST_NAME: &str = "runtime-manifest.json";
-
-static RUNTIME_ROOT: OnceLock<PathBuf> = OnceLock::new();
-static BUNDLE_VALID: OnceLock<bool> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,45 +33,39 @@ pub struct PythonBundle {
     pub module_cache: Option<PathBuf>,
 }
 
-/// Configure the bundled runtime directory. The directory contains
-/// `python.wasm`, `lib/python314.zip`, and the build-generated digest manifest.
-pub fn configure_python_runtime(resource_root: PathBuf) -> Result<()> {
-    if let Some(existing) = RUNTIME_ROOT.get() {
-        if existing == &resource_root {
-            return Ok(());
+/// A bundled runtime directory whose interpreter and standard library matched
+/// the digests in its manifest. Only [`PythonRuntime::verify`] makes one.
+#[derive(Debug, Clone)]
+pub struct PythonRuntime {
+    root: PathBuf,
+}
+
+impl PythonRuntime {
+    /// Verify the bundled runtime directory. The directory contains
+    /// `python.wasm`, `lib/python314.zip`, and the build-generated digest
+    /// manifest.
+    pub fn verify(resource_root: PathBuf) -> Result<Self> {
+        verify_runtime_bundle(&resource_root).map_err(|error| {
+            AppError::InvalidConfig(format!("The bundled Python runtime is invalid: {error}"))
+        })?;
+        Ok(Self {
+            root: resource_root,
+        })
+    }
+
+    /// The bundle in the source tree, which the lib tests run on.
+    #[cfg(test)]
+    pub(super) fn source_tree() -> Option<Self> {
+        Self::verify(source_tree_root()).ok()
+    }
+
+    /// What a lab run needs to start the interpreter from this bundle.
+    pub(super) fn bundle(&self) -> PythonBundle {
+        PythonBundle {
+            root: self.root.clone(),
+            module_cache: module_cache_dir(),
         }
-        return Err(AppError::InvalidConfig(
-            "The Python runtime was already configured from a different resource path.".into(),
-        ));
     }
-    verify_runtime_bundle(&resource_root).map_err(|error| {
-        AppError::InvalidConfig(format!("The bundled Python runtime is invalid: {error}"))
-    })?;
-    let _ = BUNDLE_VALID.set(true);
-    RUNTIME_ROOT
-        .set(resource_root)
-        .map_err(|_| AppError::InvalidConfig("The Python runtime could not be configured.".into()))
-}
-
-/// Whether a complete, digest-verified CPython WASI bundle is available.
-pub fn python_runtime_available() -> bool {
-    if let Some(available) = BUNDLE_VALID.get() {
-        return *available;
-    }
-    runtime_root().is_some_and(|root| {
-        let available = verify_runtime_bundle(&root).is_ok();
-        let _ = BUNDLE_VALID.set(available);
-        available
-    })
-}
-
-/// The verified bundle, when one is configured and intact.
-pub(super) fn bundle() -> Option<PythonBundle> {
-    let root = runtime_root()?;
-    python_runtime_available().then(|| PythonBundle {
-        root,
-        module_cache: module_cache_dir(),
-    })
 }
 
 #[cfg(not(test))]
@@ -88,10 +78,15 @@ fn module_cache_dir() -> Option<PathBuf> {
     Some(std::env::temp_dir().join("lattice-learning-python-test-modules"))
 }
 
+#[cfg(test)]
+fn source_tree_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/learning-python")
+}
+
 #[cfg(all(test, feature = "learning-labs"))]
 pub(super) fn test_bundle() -> PythonBundle {
     PythonBundle {
-        root: runtime_root().unwrap_or_default(),
+        root: source_tree_root(),
         module_cache: module_cache_dir(),
     }
 }
@@ -118,19 +113,6 @@ pub(super) fn unavailable_result() -> LearningLabExecutionResult {
         output_truncated: false,
         duration_ms: 0,
     }
-}
-
-fn runtime_root() -> Option<PathBuf> {
-    RUNTIME_ROOT.get().cloned().or({
-        #[cfg(test)]
-        {
-            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/learning-python"))
-        }
-        #[cfg(not(test))]
-        {
-            None
-        }
-    })
 }
 
 fn verify_runtime_bundle(root: &Path) -> std::result::Result<(), String> {

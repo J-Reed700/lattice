@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 #[tokio::test]
 async fn test_truncate_after_exclusive() {

@@ -1,5 +1,5 @@
-use crate::shared::error::Result;
 use chrono::{DateTime, Utc};
+use lattice_core::shared::error::Result;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -112,22 +112,28 @@ impl RecencyScorer {
         }
 
         let rows = query_builder.fetch_all(pool).await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Failed to fetch timestamps: {}", e))
+            lattice_core::shared::error::AppError::Database(format!(
+                "Failed to fetch timestamps: {}",
+                e
+            ))
         })?;
 
         let mut timestamps = HashMap::new();
         for row in rows {
             let id: String = row.try_get("id").map_err(|e| {
-                crate::shared::error::AppError::Database(format!(
+                lattice_core::shared::error::AppError::Database(format!(
                     "Failed to get document id: {}",
                     e
                 ))
             })?;
             let updated_at: String = row.try_get("updated_at").map_err(|e| {
-                crate::shared::error::AppError::Database(format!("Failed to get updated_at: {}", e))
+                lattice_core::shared::error::AppError::Database(format!(
+                    "Failed to get updated_at: {}",
+                    e
+                ))
             })?;
 
-            match crate::shared::persistence::timestamps::parse_db_timestamp(&updated_at) {
+            match lattice_core::shared::persistence::timestamps::parse_db_timestamp(&updated_at) {
                 Ok(datetime) => {
                     timestamps.insert(id, datetime);
                 }
@@ -245,16 +251,18 @@ mod tests {
     #[test]
     fn test_parse_sqlite_datetime() {
         let datetime_str = "2024-01-15 10:30:45";
-        let result = crate::shared::persistence::timestamps::parse_db_timestamp(datetime_str);
+        let result =
+            lattice_core::shared::persistence::timestamps::parse_db_timestamp(datetime_str);
         assert!(result.is_ok());
 
         let datetime_str_iso = "2024-01-15T10:30:45";
         let result_iso =
-            crate::shared::persistence::timestamps::parse_db_timestamp(datetime_str_iso);
+            lattice_core::shared::persistence::timestamps::parse_db_timestamp(datetime_str_iso);
         assert!(result_iso.is_ok());
 
-        let result_offset =
-            crate::shared::persistence::timestamps::parse_db_timestamp("2024-01-15T05:30:45-05:00");
+        let result_offset = lattice_core::shared::persistence::timestamps::parse_db_timestamp(
+            "2024-01-15T05:30:45-05:00",
+        );
         assert!(result_offset.is_ok());
     }
 

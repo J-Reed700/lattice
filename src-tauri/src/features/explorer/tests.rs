@@ -1,7 +1,7 @@
 use super::dto::ExplorerEntryKind;
 use super::fs::{self, SearchRequest, WalkBounds};
 use super::scope::Scope;
-use crate::shared::AppError;
+use lattice_core::shared::AppError;
 use std::path::Path;
 use std::time::Duration;
 

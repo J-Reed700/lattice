@@ -7,10 +7,8 @@ use crate::features::learning::{
     source_library::CapturedLearningSource,
     sources::{preview, InitialReference},
 };
-use crate::{
-    features::{function_calling::dto::WebSearchInput, web::traits::WebServiceTrait},
-    shared::error::Result,
-};
+use crate::features::web::traits::WebServiceTrait;
+use lattice_core::{application::contracts::web::WebSearchInput, shared::error::Result};
 use std::collections::HashSet;
 
 /// One search per stable module position (plus the course goal) in an operation.

@@ -1,0 +1,198 @@
+import json
+import unittest
+from pathlib import Path
+
+import shipped_path_eval as spe
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def turn(answer, citation_map=None, evidence=None, **extra):
+    return {
+        "index": 0, "question": "q", "answer": answer, "error": None, "answered_ms": 10,
+        "evidence": evidence if evidence is not None else [{"document_id": "a"}],
+        "citation_map": citation_map if citation_map is not None else {"1": "a"},
+        "ranked_ids": ["a"], "model_calls": [], "prompt_tokens": {"cached": 0, "evaluated": 5, "completion": 3},
+        **extra,
+    }
+
+
+def row(query_id, turns):
+    return {
+        "schema": spe.ROW_SCHEMA, "query_id": query_id, "tags": ["t"],
+        "answer": turns[-1]["answer"], "ranked_ids": ["a"], "citation_map": {"1": "a"},
+        "latency_ms": 10, "model": "m", "error": None, "turns": turns,
+    }
+
+
+def rubric(**fields):
+    base = {"must_mention": [["14 days", "fourteen days"]], "must_not_claim": [],
+            "expected_citations": ["a"], "abstain": False, "notes": "Fourteen days."}
+    base.update(fields)
+    return base
+
+
+QUESTIONS = {
+    "tags": {"t": "a tag", "u": "another"},
+    "items": [
+        {"id": "one", "tags": ["t"], "turns": [{"ask": "How long?", "rubric": rubric()}]},
+        {"id": "two", "tags": ["t", "u"], "turns": [
+            {"ask": "How long?", "rubric": rubric()},
+            {"ask": "And the phone?", "rubric": rubric(must_mention=[], expected_citations=[], abstain=True)},
+        ]},
+    ],
+}
+
+
+class MechanicalChecks(unittest.TestCase):
+    def test_any_alternative_satisfies_a_group_regardless_of_case_and_emphasis(self):
+        checks = spe.mechanical(rubric(), turn("It is **Fourteen Days** [1]."))
+        self.assertEqual(checks["missing_facts"], [])
+        self.assertTrue(checks["passed"])
+
+    def test_unicode_hyphen_and_spacing_still_match_an_identifier(self):
+        self.assertTrue(spe.contains("Quote SIG‑84122  please", "SIG-84122"))
+
+    def test_missing_fact_fails(self):
+        checks = spe.mechanical(rubric(), turn("It is a fortnight [1]."))
+        self.assertEqual(checks["missing_facts"], [["14 days", "fourteen days"]])
+        self.assertFalse(checks["passed"])
+
+    def test_forbidden_claim_fails(self):
+        checks = spe.mechanical(rubric(must_not_claim=["42 hours"]), turn("14 days, not 42 hours [1]."))
+        self.assertEqual(checks["forbidden_claims"], ["42 hours"])
+        self.assertFalse(checks["passed"])
+
+    def test_invented_citation_number_fails(self):
+        checks = spe.mechanical(rubric(), turn("14 days [1][3]."))
+        self.assertEqual(checks["invalid_citations"], [3])
+        self.assertFalse(checks["passed"])
+
+    def test_expected_document_must_be_cited_and_is_traced_to_evidence(self):
+        checks = spe.mechanical(rubric(expected_citations=["a", "b"]),
+                                turn("14 days [1].", evidence=[{"document_id": "a"}]))
+        self.assertEqual(checks["expected_cited"], ["a"])
+        self.assertEqual(checks["expected_in_evidence"], ["a"])
+        self.assertFalse(checks["passed"])
+
+    def test_abstention_passes_only_where_the_corpus_is_silent(self):
+        silent = rubric(must_mention=[], expected_citations=[], abstain=True)
+        declined = turn("That is not recorded in your documents.", citation_map={})
+        self.assertTrue(spe.mechanical(silent, declined)["passed"])
+        self.assertFalse(spe.mechanical(rubric(), declined)["passed"])
+        self.assertFalse(spe.mechanical(silent, turn("It is 555-0100."))["passed"])
+
+    def test_a_failed_turn_never_passes(self):
+        failed = turn("14 days [1].")
+        failed["error"] = "timed out"
+        self.assertFalse(spe.mechanical(rubric(), failed)["passed"])
+
+
+class RowShape(unittest.TestCase):
+    def test_runner_row_shape_is_accepted(self):
+        self.assertEqual(spe.validate_row(row("one", [turn("x")]))["query_id"], "one")
+
+    def test_missing_or_mistyped_fields_are_rejected(self):
+        broken = row("one", [turn("x")])
+        del broken["turns"][0]["evidence"]
+        with self.assertRaises(ValueError):
+            spe.validate_row(broken)
+        wrong = row("one", [turn("x")])
+        wrong["latency_ms"] = "10"
+        with self.assertRaises(ValueError):
+            spe.validate_row(wrong)
+        other = row("one", [turn("x")])
+        other["schema"] = "something-else"
+        with self.assertRaises(ValueError):
+            spe.validate_row(other)
+
+
+class JudgeAndPassK(unittest.TestCase):
+    def test_pass_k_needs_every_grade(self):
+        self.assertTrue(spe.pass_k([(True, ""), (True, ""), (True, "")]))
+        self.assertFalse(spe.pass_k([(True, ""), (False, "no"), (True, "")]))
+        self.assertFalse(spe.pass_k([]))
+
+    def test_request_is_greedy_with_thinking_off_and_no_reasoning_effort(self):
+        body = spe.judge_request("m", [])
+        self.assertEqual((body["temperature"], body["top_k"]), (0, 1))
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_verdict_parsing(self):
+        payload = {"choices": [{"message": {"content": '{"verdict": "pass", "reason": "ok"}'}}]}
+        self.assertEqual(spe.parse_verdict(payload), (True, "ok"))
+        bad = {"choices": [{"message": {"content": '{"verdict": "maybe"}'}}]}
+        with self.assertRaises(ValueError):
+            spe.parse_verdict(bad)
+
+    def test_follow_up_prompt_carries_earlier_turns_as_context(self):
+        messages = spe.judge_messages(QUESTIONS["items"][1], 1, ["Fourteen days.", "I don't know."])
+        user = messages[1]["content"]
+        self.assertIn("Q1: How long?", user)
+        self.assertIn("A1: Fourteen days.", user)
+        self.assertIn("do not contain this answer", user)
+
+    def test_scoring_runs_the_judge_three_times_per_answered_turn(self):
+        calls = []
+
+        def judge(messages):
+            calls.append(messages)
+            return (len(calls) % 3 != 0, "graded")
+
+        rows = [row("one", [turn("14 days [1].")]),
+                row("two", [turn("14 days [1]."), turn("Not recorded in the documents.", citation_map={})])]
+        scored = spe.score(QUESTIONS, rows, judge)
+        self.assertEqual(len(calls), 9)
+        self.assertTrue(all(r["mechanical_checks_passed"] for r in scored))
+        self.assertFalse(scored[0]["judge_pass_k"])
+        summary = spe.summarize(scored, QUESTIONS)
+        self.assertEqual(summary["overall"]["judge_pass3"]["passed"], 0)
+        self.assertEqual(summary["by_tag"]["u"]["items"], 1)
+        self.assertEqual(len(summary["disagreements"]), 2)
+
+    def test_rows_for_unknown_items_are_rejected(self):
+        with self.assertRaises(ValueError):
+            spe.score(QUESTIONS, [row("three", [turn("x")])])
+
+
+class LabelledDataset(unittest.TestCase):
+    def test_dataset_rows_are_graded_by_the_answer_harness(self):
+        dataset = {"documents": [{"id": "a", "text": "Kept for 14 days."}, {"id": "b", "text": "Other."}],
+                   "queries": [{"id": "one", "text": "How long?", "relevance": {"a": 3}}]}
+        expectations = {"queries": [{"id": "one", "required_patterns": [["14 days"]],
+                                     "required_citation_docs": ["a"]}]}
+        good = row("one", [turn("Kept for 14 days [1].")])
+        scored = spe.score_dataset(dataset, expectations, [good])
+        self.assertTrue(scored[0]["citations_aligned"])
+        self.assertTrue(scored[0]["mechanical_checks_passed"])
+        shuffled = row("one", [turn("Kept for 14 days [2].")])
+        shuffled["citation_map"] = {"1": "b", "2": "a"}
+        shuffled["ranked_ids"] = ["a", "b"]
+        scored = spe.score_dataset(dataset, expectations, [shuffled])
+        self.assertFalse(scored[0]["citations_aligned"])
+        self.assertEqual(scored[0]["cited_document_ids"], ["a"])
+
+
+class QuestionSet(unittest.TestCase):
+    def test_rubric_facts_must_occur_in_the_expected_documents(self):
+        corpus = {"documents": [{"id": "a", "text": "Kept for 14 days."}]}
+        self.assertEqual(spe.validate_questions(QUESTIONS, corpus), [])
+        wrong = json.loads(json.dumps(QUESTIONS))
+        wrong["items"][0]["turns"][0]["rubric"]["must_mention"] = [["21 days"]]
+        self.assertTrue(spe.validate_questions(wrong, corpus))
+
+    def test_shipped_question_set_is_valid_against_v3(self):
+        questions = json.loads((ROOT / "evals/retrieval/desktop-path-v1.json").read_text())
+        corpus = json.loads((ROOT / "evals/retrieval/synthetic-library-v3.json").read_text())
+        self.assertEqual(spe.validate_questions(questions, corpus), [])
+        items = questions["items"]
+        self.assertTrue(20 <= len(items) <= 50)
+        self.assertGreaterEqual(sum(len(item["turns"]) > 1 for item in items), 5)
+        for tag in ("multi-hop", "planner-rewrite", "corrective-retry", "opening-or-section",
+                    "abstain", "conflict", "numeric-precision", "follow-up-memory"):
+            self.assertTrue(any(tag in item["tags"] for item in items), tag)
+
+
+if __name__ == "__main__":
+    unittest.main()

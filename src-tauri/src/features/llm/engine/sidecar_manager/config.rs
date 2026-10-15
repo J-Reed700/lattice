@@ -52,6 +52,24 @@ pub struct SidecarConfig {
     /// constrained by the model's training context; we cap at 8192
     /// to avoid OOM on entry-level hardware.
     pub context_size: u32,
+
+    /// Whether the GGUF carries a multi-token-prediction head llama-server
+    /// can draft with. Only an MTP build of a model has one.
+    pub mtp_capable: bool,
+
+    /// The speculative decoding the user opted into. It reaches the server
+    /// only when the model is [`Self::mtp_capable`].
+    pub speculative_decoding: SpeculativeDecoding,
+}
+
+/// Speculative decoding a bundled server can be launched with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SpeculativeDecoding {
+    #[default]
+    Off,
+    /// Draft up to `n_max` tokens a step with the model's own
+    /// multi-token-prediction head.
+    MtpDraft { n_max: u32 },
 }
 
 /// RAM threshold (GB) below which we reduce the context window to keep
@@ -97,8 +115,9 @@ pub(super) const AUTO_MIN_CONTEXT_SIZE: u32 = 4_096;
 /// header without KV dimensions, a GPU that does not report its memory — so the
 /// caller keeps the conservative flat default rather than acting on a guess.
 ///
-/// The trained length is a ceiling, never a target: a model trained at 262144
-/// would need 34 GB of KV cache at full length, which no consumer card holds.
+/// The trained length is a ceiling, never a target: a plain model with 128 KiB
+/// of cache per token, trained at 262144, would need 34 GB of it at full
+/// length, which no consumer card holds.
 pub(super) fn auto_context_size(
     model_path: &std::path::Path,
     capabilities: &SystemCapabilities,
@@ -119,10 +138,8 @@ pub(super) fn auto_context_size(
 pub(super) fn resident_bytes_of(model_path: &std::path::Path, context_size: u32) -> u64 {
     let weights = std::fs::metadata(model_path).map_or(0, |m| m.len());
     let kv = crate::features::llm::engine::gguf_metadata::read_model_info(model_path)
-        .and_then(|info| info.kv_cache_bytes_per_token())
-        .map_or(0, |per_token| {
-            per_token.saturating_mul(u64::from(context_size))
-        });
+        .and_then(|info| info.kv_cache_bytes(context_size))
+        .unwrap_or(0);
     weights.saturating_add(kv)
 }
 
@@ -139,12 +156,12 @@ pub(super) fn context_size_for(
     resident_bytes: u64,
     info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
 ) -> Option<u32> {
-    let bytes_per_token = info.kv_cache_bytes_per_token()?;
-
     let ceiling = info
         .trained_context_length
         .unwrap_or(AUTO_MAX_CONTEXT_SIZE)
         .min(AUTO_MAX_CONTEXT_SIZE);
+    // A header without KV dimensions declines here, before memory is looked at.
+    info.kv_cache_bytes(ceiling)?;
 
     let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
     // Weights past the usable share (a 9B on an 8 GB Mac) leave no room at
@@ -156,9 +173,19 @@ pub(super) fn context_size_for(
     else {
         return Some(AUTO_MIN_CONTEXT_SIZE.min(ceiling));
     };
-    let affordable = u32::try_from(spare_bytes / bytes_per_token).unwrap_or(u32::MAX);
-    // Whole thousands read better in a log line than 31_417 does.
-    let chosen = affordable.min(ceiling) / 1024 * 1024;
+    // The largest whole thousand that fits; they read better in a log line
+    // than 31_417 does. Each candidate is priced rather than divided out
+    // because the cache is not always proportional to the window: sliding
+    // layers stop growing at theirs. For a plain model this is the old
+    // `spare / bytes_per_token`, rounded down to a thousand.
+    let chosen = (1..=ceiling / 1024)
+        .rev()
+        .map(|thousands| thousands * 1024)
+        .find(|&tokens| {
+            info.kv_cache_bytes(tokens)
+                .is_some_and(|bytes| bytes <= spare_bytes)
+        })
+        .unwrap_or(0);
 
     // Never hand back less than the floor while the model could still be
     // trained for more: returning `None` here would hand the caller the larger
@@ -175,6 +202,17 @@ impl SidecarConfig {
             model_path,
             n_gpu_layers: 99,
             context_size: DEFAULT_GPU_CONTEXT_SIZE,
+            mtp_capable: false,
+            speculative_decoding: SpeculativeDecoding::Off,
+        }
+    }
+
+    /// Tokens to draft a step, when this server drafts with an MTP head:
+    /// the user asked for it and the model has one.
+    pub fn mtp_draft(&self) -> Option<u32> {
+        match self.speculative_decoding {
+            SpeculativeDecoding::MtpDraft { n_max } if self.mtp_capable => Some(n_max),
+            _ => None,
         }
     }
 
@@ -186,6 +224,8 @@ impl SidecarConfig {
             model_path: self.model_path.clone(),
             n_gpu_layers: 0,
             context_size: self.context_size.min(DEFAULT_CPU_CONTEXT_SIZE),
+            mtp_capable: self.mtp_capable,
+            speculative_decoding: self.speculative_decoding,
         }
     }
 
@@ -236,6 +276,8 @@ impl SidecarConfig {
             model_path,
             n_gpu_layers,
             context_size,
+            mtp_capable: false,
+            speculative_decoding: SpeculativeDecoding::Off,
         }
     }
 

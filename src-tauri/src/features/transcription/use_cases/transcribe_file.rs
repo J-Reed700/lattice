@@ -3,12 +3,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::ports::TranscriptionPort;
 use crate::features::transcription::dto::TranscriptDto;
 use crate::features::transcription::engine::{
     group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::TranscriptionPort;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Explicit re-transcription of a single file.
 ///

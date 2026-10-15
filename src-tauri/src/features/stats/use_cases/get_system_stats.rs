@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::stats::GetSystemStatsUseCase;
+//! use lattice_core::application::use_cases::stats::GetSystemStatsUseCase;
 //!
 //! # async fn example(use_case: GetSystemStatsUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let stats = use_case.execute().await?;
@@ -25,11 +25,11 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::{DatabaseStatsPort, RepositoryPort};
-use crate::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
 use crate::features::health::dto::SystemStatsDto;
 use crate::features::tags::entity::Tag as TagEntity;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{DatabaseStatsPort, RepositoryPort};
+use lattice_core::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
+use lattice_core::shared::error::Result;
 
 /// Get system stats use case.
 ///
@@ -64,10 +64,10 @@ impl GetSystemStatsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::application::use_cases::stats::GetSystemStatsUseCase;
+    /// use lattice_core::application::use_cases::stats::GetSystemStatsUseCase;
     /// # use std::sync::Arc;
-    /// # use lattice::application::ports::RepositoryPort;
-    /// # use lattice::domain::entities::{Document, Chunk, Tag};
+    /// # use lattice_core::application::ports::RepositoryPort;
+    /// # use lattice_core::domain::entities::{Document, Chunk, Tag};
     ///
     /// # async fn example(
     /// #     doc_repo: Arc<dyn RepositoryPort<Document>>,
@@ -106,7 +106,7 @@ impl GetSystemStatsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::stats::GetSystemStatsUseCase;
+    /// # use lattice_core::application::use_cases::stats::GetSystemStatsUseCase;
     /// # async fn example(use_case: GetSystemStatsUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let stats = use_case.execute().await?;
     ///
@@ -143,9 +143,9 @@ impl GetSystemStatsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{Filter, RepositoryPort};
-    use crate::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
     use async_trait::async_trait;
+    use lattice_core::application::ports::{Filter, RepositoryPort};
+    use lattice_core::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
 
     struct MockDocumentRepo {
         count: usize,

@@ -1,8 +1,8 @@
 use super::implementation::SqliteDocumentRepository as DocumentRepository;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
-use crate::application::ports::DocumentRepositoryPort;
-use crate::application::ports::RepositoryPort;
+use lattice_core::application::ports::DocumentRepositoryPort;
+use lattice_core::application::ports::RepositoryPort;
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn repository() -> DocumentRepository {
@@ -139,8 +139,11 @@ async fn deleting_a_document_drops_it_from_the_referenced_set() {
     assert!(repo.list_checksums().await.unwrap().is_empty());
 }
 
-async fn aggregate(pool: &sqlx::SqlitePool, name: &str) -> crate::domain::entities::Document {
-    use crate::domain::{
+async fn aggregate(
+    pool: &sqlx::SqlitePool,
+    name: &str,
+) -> lattice_core::domain::entities::Document {
+    use lattice_core::domain::{
         entities::{chunk::Chunk, Document},
         value_objects::{
             source_context::{SourceContext, SourceGroup, StructureMode},
@@ -148,7 +151,7 @@ async fn aggregate(pool: &sqlx::SqlitePool, name: &str) -> crate::domain::entiti
         },
     };
     let metadata = Document::new(
-        crate::shared::types::ValidatedFilePath::new(std::path::PathBuf::from(format!(
+        lattice_core::shared::types::ValidatedFilePath::new(std::path::PathBuf::from(format!(
             "/{name}.txt"
         )))
         .unwrap(),
@@ -181,7 +184,7 @@ async fn aggregate(pool: &sqlx::SqlitePool, name: &str) -> crate::domain::entiti
 
 async fn assert_contract(
     repository: &dyn DocumentRepositoryPort,
-    document: &crate::domain::entities::Document,
+    document: &lattice_core::domain::entities::Document,
 ) {
     repository
         .save_batch(std::slice::from_ref(document))
@@ -197,7 +200,7 @@ async fn assert_contract(
     assert_eq!(loaded.tags(), document.tags());
     assert_eq!(loaded.source_context(), document.source_context());
     repository.save(&loaded).await.unwrap();
-    let filter = crate::application::ports::DocumentFilter {
+    let filter = lattice_core::application::ports::DocumentFilter {
         path_pattern: None,
         status: None,
         limit: Some(10),

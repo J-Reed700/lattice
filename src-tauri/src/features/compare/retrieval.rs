@@ -12,9 +12,8 @@ use std::collections::HashSet;
 
 use tracing::{debug, warn};
 
-use crate::features::search::dto::SearchRequestDto;
-use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use crate::features::compare::di::CompareDeps;
+use lattice_core::shared::error::Result;
 
 use super::use_case::{CHUNKS_PER_COLUMN, MAX_CHUNKS_PER_DOCUMENT};
 
@@ -56,7 +55,7 @@ pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
 /// Chunks worth showing the model for one document across all columns,
 /// best first: ordered by first appearance, deduped by chunk id, capped.
 pub async fn retrieve_for_document(
-    container: &Container,
+    deps: &CompareDeps,
     document_id: &str,
     columns: &[String],
 ) -> Result<DocumentChunks> {
@@ -67,20 +66,22 @@ pub async fn retrieve_for_document(
     let mut chunks: Vec<RetrievedChunk> = Vec::new();
 
     let mut search_failed = false;
-    let search = container.hybrid_search_use_case();
+    let search = &deps.search;
     for column in columns {
-        let request = SearchRequestDto::hybrid(column, CHUNKS_PER_COLUMN);
-        match search.execute_scoped(request, None, Some(&scope)).await {
-            Ok(response) => {
-                for result in response.results {
-                    if !seen.insert(result.id.clone()) {
+        match search
+            .search_column(column, &scope, CHUNKS_PER_COLUMN)
+            .await
+        {
+            Ok(hits) => {
+                for hit in hits {
+                    if !seen.insert(hit.id.clone()) {
                         continue;
                     }
                     chunks.push(RetrievedChunk {
-                        chunk_id: result.id,
-                        content: result.content,
+                        chunk_id: hit.id,
+                        content: hit.content,
                         section: None,
-                        index: result.position.unwrap_or(chunks.len()),
+                        index: hit.position.unwrap_or(chunks.len()),
                     });
                 }
             }
@@ -113,8 +114,8 @@ pub async fn retrieve_for_document(
                 "compare: the search found nothing; using the opening chunks"
             );
         }
-        let stored = container
-            .chunk_repository()
+        let stored = deps
+            .chunks
             .find_first_by_document(document_id, MAX_CHUNKS_PER_DOCUMENT)
             .await?;
         for chunk in stored {

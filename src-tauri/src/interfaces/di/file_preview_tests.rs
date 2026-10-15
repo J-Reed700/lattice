@@ -17,6 +17,7 @@ async fn library_preview_survives_policy_refresh_without_allowing_siblings() -> 
         "http://127.0.0.1:1",
         "test-model",
         data.path().to_path_buf(),
+        Arc::default(),
     )
     .await?;
     let root = ContentAddressedStorage::default_library_root()?;

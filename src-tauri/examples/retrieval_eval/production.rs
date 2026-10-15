@@ -39,17 +39,13 @@
 //! - Documents are synthesised from fixture rows rather than extracted from files, so there are
 //!   no page ranges and `page_number` is always NULL.
 
-use lattice::application::ports::vector_search_port::VectorIndexEntry;
-use lattice::application::ports::{
-    ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,
-};
 use lattice::features::conversation::chat::retrieval::{
     assess_retrieval_sufficiency, RetrievalSufficiency,
 };
 use lattice::features::embedding::candle_service::CandleEmbeddingService;
 use lattice::features::embedding::input_policy::load_tokenizer;
 use lattice::features::indexing::engine::chunker::{
-    context_prefix, ChunkerConfig, ContextualizedChunk, SemanticChunker,
+    context_prefix, ChunkerConfig, SemanticChunker,
 };
 use lattice::features::indexing::engine::metadata_extractor::extract_metadata;
 use lattice::features::search::dto::{SearchModeDto, SearchRequestDto};
@@ -65,6 +61,11 @@ use lattice::features::search::use_cases::{BranchKind, HybridSearchUseCase, Rera
 use lattice::features::search::SparseSearchTrait;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
 use lattice::infrastructure::persistence::repositories::ChunkRepository;
+use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
+use lattice_core::application::ports::{
+    ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,
+};
+use lattice_core::domain::value_objects::ContextualizedChunk;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -77,11 +78,11 @@ use crate::Document;
 /// Anchors whose section neighbours are pulled in, matching `corpus_plan::expand_evidence`.
 const EVIDENCE_ANCHORS: usize = 8;
 
-/// The columns the search services actually read, plus the FTS5 table and the insert trigger,
-/// copied from `migrations/20260916000000_init_schema.sql`. `owner_conversation_id` is what a
-/// vault-wide search reads to leave chat attachments out; every fixture document is a library
-/// document. The sparse posting table is created unconditionally and simply stays empty when the
-/// branch is off.
+/// The columns the search services actually read, plus the FTS5 tables, copied from
+/// `migrations/20260916000000_init_schema.sql` and `20261012090000_fts_header_column.sql`.
+/// `owner_conversation_id` is what a vault-wide search reads to leave chat attachments out; every
+/// fixture document is a library document. The sparse posting table is created unconditionally
+/// and simply stays empty when the branch is off. The insert trigger is chosen by [`FtsHeader`].
 const SCHEMA: &str = "
 CREATE TABLE documents (
     id TEXT PRIMARY KEY,
@@ -111,19 +112,15 @@ CREATE INDEX idx_chunk_section_order ON text_chunks(document_id, section, chunk_
 CREATE VIRTUAL TABLE chunks_fts USING fts5(
     chunk_id UNINDEXED,
     content,
+    header,
     tokenize='porter unicode61 remove_diacritics 2'
 );
 CREATE VIRTUAL TABLE chunks_trigram USING fts5(
     chunk_id UNINDEXED,
     content,
+    header,
     tokenize='trigram'
 );
-CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
-  INSERT INTO chunks_fts(chunk_id, content)
-  VALUES(new.id, COALESCE(new.contextualized_content, new.content));
-  INSERT INTO chunks_trigram(chunk_id, content)
-  VALUES(new.id, COALESCE(new.contextualized_content, new.content));
-END;
 CREATE TABLE IF NOT EXISTS chunk_sparse_terms (
     chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE,
     model_identity TEXT NOT NULL,
@@ -134,6 +131,62 @@ CREATE TABLE IF NOT EXISTS chunk_sparse_terms (
 CREATE INDEX IF NOT EXISTS idx_chunk_sparse_terms_lookup
     ON chunk_sparse_terms(model_identity, term_id);
 ";
+
+/// The production insert trigger: the context prefix in its own `header` column.
+const COLUMN_TRIGGER: &str = "
+CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
+  INSERT INTO chunks_fts(chunk_id, content, header)
+  VALUES(new.id, new.content, new.context_prefix);
+  INSERT INTO chunks_trigram(chunk_id, content, header)
+  VALUES(new.id, new.content, new.context_prefix);
+END;
+";
+
+/// The trigger before `20261012090000_fts_header_column.sql`: prefix and body concatenated into
+/// `content`, `header` left empty. An empty column adds nothing to `bm25()` and FTS5's IDF counts
+/// rows rather than columns, so this ranks exactly as the old two-column table did.
+const CONCAT_TRIGGER: &str = "
+CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
+  INSERT INTO chunks_fts(chunk_id, content, header)
+  VALUES(new.id, COALESCE(new.contextualized_content, new.content), NULL);
+  INSERT INTO chunks_trigram(chunk_id, content, header)
+  VALUES(new.id, COALESCE(new.contextualized_content, new.content), NULL);
+END;
+";
+
+/// Where the chunk's context prefix goes in the lexical index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FtsHeader {
+    /// Its own column, weighted by `bm25()` at this weight (production).
+    Column { weight: f64 },
+    /// Concatenated into the body, as before the header column existed.
+    Concat,
+}
+
+impl FtsHeader {
+    fn trigger(self) -> &'static str {
+        match self {
+            FtsHeader::Column { .. } => COLUMN_TRIGGER,
+            FtsHeader::Concat => CONCAT_TRIGGER,
+        }
+    }
+
+    /// The row label: `"column"` or `"concat"`.
+    pub fn label(self) -> &'static str {
+        match self {
+            FtsHeader::Column { .. } => "column",
+            FtsHeader::Concat => "concat",
+        }
+    }
+
+    /// The header weight `bm25()` is asked for. Irrelevant when the column is empty.
+    pub fn weight(self) -> f64 {
+        match self {
+            FtsHeader::Column { weight } => weight,
+            FtsHeader::Concat => lattice::features::search::engine::fts_query::HEADER_BM25_WEIGHT,
+        }
+    }
+}
 
 /// One retrieved chunk, carrying enough identity to attribute a document hit to a passage.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +225,8 @@ pub struct ProductionIndex {
     /// Whether a reranker was supplied, which widens the fused pool before the cross-encoder
     /// stage exactly as chat widens it.
     reranks: bool,
+    /// Candidates the cross-encoder scores; `None` keeps chat's default cap.
+    rerank_depth: Option<usize>,
     vector_weight: f32,
     keyword_weight: f32,
     /// Chat's retrieval tuning defaults: the rerank candidate cap, the rerank query budget and
@@ -207,6 +262,10 @@ pub struct IndexOptions {
     /// Branch weights of the hybrid request; the application uses 0.7 / 0.3.
     pub vector_weight: f32,
     pub keyword_weight: f32,
+    pub fts_header: FtsHeader,
+    /// Candidates the cross-encoder scores, with the fused pool widened to at least that many.
+    /// `None` keeps chat's default cap over the default pool.
+    pub rerank_depth: Option<usize>,
 }
 
 impl ProductionIndex {
@@ -224,6 +283,8 @@ impl ProductionIndex {
             rrf_k,
             vector_weight,
             keyword_weight,
+            fts_header,
+            rerank_depth,
         } = options;
         // An in-memory database only exists for as long as its one connection does, and a
         // full evaluation run outlives sqlx's default idle and lifetime reaping, so the
@@ -236,6 +297,7 @@ impl ProductionIndex {
             .connect(":memory:")
             .await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+        sqlx::raw_sql(fts_header.trigger()).execute(&pool).await?;
 
         let tokenizer = Arc::new(load_tokenizer(&embedding_dir.join("tokenizer.json"))?);
         let chunker = SemanticChunker::new(tokenizer, ChunkerConfig::default())?;
@@ -386,7 +448,7 @@ impl ProductionIndex {
         let mut search = HybridSearchUseCase::new(
             Arc::clone(&model) as Arc<dyn EmbeddingPort>,
             Arc::clone(&index) as Arc<dyn VectorSearchPort>,
-            Arc::new(SqliteTextSearch::new(pool.clone())),
+            Arc::new(SqliteTextSearch::new(pool.clone()).with_header_weight(fts_header.weight())),
         )
         .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone())))
         .with_rrf_k(rrf_k);
@@ -408,6 +470,7 @@ impl ProductionIndex {
             pool,
             search,
             reranks,
+            rerank_depth,
             vector_weight,
             keyword_weight,
             tuning: RetrievalTuningSettingsDto::default(),
@@ -425,7 +488,7 @@ impl ProductionIndex {
         SearchRequestDto {
             query: query_text.to_owned(),
             limit: Some(if self.reranks {
-                RerankOptions::candidate_pool(self.top_k)
+                RerankOptions::candidate_pool(self.top_k).max(self.rerank_depth.unwrap_or(0))
             } else {
                 self.top_k
             }),
@@ -463,7 +526,9 @@ impl ProductionIndex {
                     response,
                     &RerankOptions {
                         query: query_text.to_owned(),
-                        max_candidates: self.tuning.rerank_max_candidates as usize,
+                        max_candidates: self
+                            .rerank_depth
+                            .unwrap_or(self.tuning.rerank_max_candidates as usize),
                         query_max_chars: self.tuning.rerank_query_max_chars as usize,
                     },
                 )
@@ -760,7 +825,7 @@ fn prepare_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice::application::ports::{ChunkRepositoryPort, TextSearchPort};
+    use lattice_core::application::ports::{ChunkRepositoryPort, TextSearchPort};
 
     fn chunk(document_id: &str, chunk_index: usize, score: f32) -> RankedChunk {
         RankedChunk {
@@ -788,6 +853,10 @@ mod tests {
             .await
             .expect("in-memory pool");
         sqlx::raw_sql(SCHEMA).execute(&pool).await.expect("schema");
+        sqlx::raw_sql(COLUMN_TRIGGER)
+            .execute(&pool)
+            .await
+            .expect("trigger");
         sqlx::raw_sql(
             "INSERT INTO documents \
              (id, file_path, file_name, file_type, mime_type, size_bytes, created_at, updated_at) \
@@ -801,13 +870,14 @@ mod tests {
         .await
         .expect("seed rows");
 
-        // The trigger must mirror the contextualized text, which is what BM25 ranks.
-        let indexed: String =
-            sqlx::query_scalar("SELECT content FROM chunks_fts WHERE chunk_id = 'd::0'")
+        // The trigger must split prefix and body the way the migration does, since BM25
+        // weighs the two columns apart.
+        let indexed: (String, String) =
+            sqlx::query_as("SELECT content, header FROM chunks_fts WHERE chunk_id = 'd::0'")
                 .fetch_one(&pool)
                 .await
                 .expect("trigger populated chunks_fts");
-        assert_eq!(indexed, "[Document: d] quota");
+        assert_eq!(indexed, ("quota".to_owned(), "[Document: d]".to_owned()));
 
         // What the orchestrator's vault-wide branches read: the keyword search, which leaves
         // chat attachments out, and the chunk repository's attachment and body lookups.

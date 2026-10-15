@@ -3,24 +3,26 @@ use tauri_plugin_shell::process::TerminatedPayload;
 
 #[test]
 fn reserve_free_port_returns_nonzero_loopback_port() {
-    let reservation = reserve_free_port().expect("port allocation failed");
+    let ports = Arc::new(ReservedPorts::default());
+    let reservation = reserve_free_port(&ports).expect("port allocation failed");
     assert!(
         reservation.port() > 0,
         "expected a non-zero port, got {}",
         reservation.port()
     );
     let port = reservation.port();
-    assert!(RESERVED_PORTS.lock().contains(&port));
+    assert!(ports.taken.lock().contains(&port));
     drop(reservation);
-    assert!(!RESERVED_PORTS.lock().contains(&port));
+    assert!(!ports.taken.lock().contains(&port));
 }
 
 #[test]
 fn reserve_free_port_never_hands_out_a_live_reservation() {
     // The OS is free to hand back the same just-released ephemeral port;
     // the reservation set is what stops two sidecars sharing it.
-    let first = reserve_free_port().expect("first allocation");
-    let second = reserve_free_port().expect("second allocation");
+    let ports = Arc::new(ReservedPorts::default());
+    let first = reserve_free_port(&ports).expect("first allocation");
+    let second = reserve_free_port(&ports).expect("second allocation");
     assert_ne!(first.port(), second.port());
 }
 
@@ -991,6 +993,7 @@ fn drain_harness() -> DrainHarness {
     let signals = Arc::new(StartupSignals::default());
     let child = Arc::new(SyncMutex::new(None));
     let ready = spawn_event_drain(
+        &lattice_core::shared::runtime::background::BackgroundTasks::default(),
         rx,
         DEAD_ENDPOINT.to_string(),
         child,
@@ -1200,6 +1203,76 @@ fn build_server_args_includes_required_flags() {
 /// on the machine, browsers included, and the bundled web UI is an HTML
 /// surface we never meant to serve. The key authenticates the port, so it
 /// must not travel in argv, where `ps` hands it to those same processes.
+fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|at| args.get(at + 1))
+        .map(String::as_str)
+}
+
+/// A hybrid model rolls back to its last checkpoint on any prefix change; at
+/// the server's default spacing that was the start of an 8k prompt.
+#[test]
+fn build_server_args_checkpoint_the_prompt_cache_every_thousand_tokens() {
+    let args = build_server_args(
+        &SidecarConfig::for_model(PathBuf::from("/models/qwen.gguf")),
+        12345,
+    );
+    assert_eq!(flag_value(&args, "--ctx-checkpoints"), Some("32"));
+    assert_eq!(flag_value(&args, "--checkpoint-min-step"), Some("1024"));
+    assert!(
+        !args.iter().any(|a| a == "-fa"),
+        "flash attention is already the server's default"
+    );
+}
+
+/// MTP drafting needs both the user's opt-in and a GGUF with the head, and
+/// forces a single slot; every other combination launches as before.
+#[test]
+fn build_server_args_draft_with_mtp_only_when_asked_and_able() {
+    let base = SidecarConfig::for_model(PathBuf::from("/models/qwen-mtp.gguf"));
+    let combinations = [
+        (false, SpeculativeDecoding::Off, None),
+        (true, SpeculativeDecoding::Off, None),
+        (false, SpeculativeDecoding::MtpDraft { n_max: 4 }, None),
+        (true, SpeculativeDecoding::MtpDraft { n_max: 4 }, Some("4")),
+    ];
+    for (mtp_capable, speculative_decoding, drafted) in combinations {
+        let config = SidecarConfig {
+            mtp_capable,
+            speculative_decoding,
+            ..base.clone()
+        };
+        let args = build_server_args(&config, 12345);
+        let case = format!("{mtp_capable} {speculative_decoding:?}");
+        assert_eq!(flag_value(&args, "--spec-draft-n-max"), drafted, "{case}");
+        match drafted {
+            Some(_) => {
+                assert_eq!(
+                    flag_value(&args, "--spec-type"),
+                    Some("draft-mtp"),
+                    "{case}"
+                );
+                assert_eq!(flag_value(&args, "-np"), Some("1"), "{case}");
+            }
+            None => {
+                assert!(flag_value(&args, "--spec-type").is_none(), "{case}");
+                assert!(
+                    flag_value(&args, "-np").is_none(),
+                    "the server keeps its own slot count: {case}"
+                );
+            }
+        }
+    }
+    // A CPU fallback is the same model, so it drafts the same way.
+    let drafting = SidecarConfig {
+        mtp_capable: true,
+        speculative_decoding: SpeculativeDecoding::MtpDraft { n_max: 2 },
+        ..base
+    };
+    assert_eq!(drafting.without_gpu_offload().mtp_draft(), Some(2));
+}
+
 #[test]
 fn build_server_args_drop_the_web_ui_and_keep_the_key_out_of_argv() {
     let cfg = SidecarConfig::for_model(PathBuf::from("/models/llama.gguf"));
@@ -1222,30 +1295,33 @@ fn api_tokens_are_unguessable_and_never_repeat() {
     assert_ne!(first, second, "a token is minted per spawn");
 }
 
-use crate::features::llm::engine::gguf_metadata::GgufModelInfo;
+use crate::features::llm::engine::gguf_metadata::{GgufModelInfo, PerLayer};
 
-/// The machine that reported the bug: an M3 Max with 28753 MiB of unified
-/// memory running Ornith-1.5-9B — 32 blocks, 4 KV heads, 256-wide keys, so
-/// 128 KiB of cache per token, and a 262144 trained length it cannot
-/// possibly hold. It ran an 8192 window because nothing had looked.
-fn ornith() -> GgufModelInfo {
+/// A plain model the size of a 9B: 5.6 GB of weights and 32 layers that all
+/// attend to the whole window, 4 KV heads with 256-wide keys, so 128 KiB of
+/// cache per token at any window, and a 262144 trained length it cannot
+/// possibly hold. Qwen 3.5 9B, and Ornith-1.5-9B built on it, were sized
+/// exactly like this before hybrid layers were counted.
+fn plain_9b() -> GgufModelInfo {
     GgufModelInfo {
-        architecture: Some("qwen35".into()),
         trained_context_length: Some(262_144),
         block_count: Some(32),
-        head_count_kv: Some(4),
-        head_count: Some(16),
+        head_count_kv: Some(4.into()),
+        head_count: Some(16.into()),
         key_length: Some(256),
         value_length: Some(256),
         embedding_length: Some(4096),
+        ..Default::default()
     }
 }
 
-const ORNITH_BYTES: u64 = 5_629_109_248;
+const PLAIN_9B_BYTES: u64 = 5_629_109_248;
 
+/// The machine that reported the bug: an M3 Max with 28753 MiB of unified
+/// memory, which ran an 8192 window because nothing had looked.
 #[test]
 fn a_large_gpu_gets_the_ceiling_not_the_trained_length() {
-    let chosen = context_size_for(28.1, ORNITH_BYTES, 0, &ornith()).unwrap();
+    let chosen = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
 
     assert_eq!(chosen, AUTO_MAX_CONTEXT_SIZE);
     assert!(chosen > DEFAULT_GPU_CONTEXT_SIZE, "the old flat default");
@@ -1255,7 +1331,7 @@ fn a_large_gpu_gets_the_ceiling_not_the_trained_length() {
 /// model for 262144 would want 34 GB of KV cache.
 #[test]
 fn the_trained_length_is_never_treated_as_achievable() {
-    let roomy = context_size_for(80.0, ORNITH_BYTES, 0, &ornith()).unwrap();
+    let roomy = context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
 
     assert_eq!(roomy, AUTO_MAX_CONTEXT_SIZE);
 }
@@ -1263,12 +1339,12 @@ fn the_trained_length_is_never_treated_as_achievable() {
 /// A mid-sized card must come back with a window its memory can hold.
 #[test]
 fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
-    let chosen = context_size_for(12.0, ORNITH_BYTES, 0, &ornith()).unwrap();
+    let chosen = context_size_for(12.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
 
     let budget = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
     let cache = u64::from(chosen) * 131_072;
     assert!(
-        cache + ORNITH_BYTES <= budget,
+        cache + PLAIN_9B_BYTES <= budget,
         "{chosen} tokens needs {cache} bytes on top of the weights"
     );
     assert!(chosen < AUTO_MAX_CONTEXT_SIZE, "and below the ceiling");
@@ -1279,7 +1355,7 @@ fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
 /// guaranteed not to fit.
 #[test]
 fn a_cramped_gpu_gets_the_floor_rather_than_the_larger_default() {
-    let chosen = context_size_for(8.0, ORNITH_BYTES, 0, &ornith()).unwrap();
+    let chosen = context_size_for(8.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
 
     assert_eq!(chosen, AUTO_MIN_CONTEXT_SIZE);
     assert!(chosen < DEFAULT_GPU_CONTEXT_SIZE);
@@ -1290,10 +1366,10 @@ fn a_cramped_gpu_gets_the_floor_rather_than_the_larger_default() {
 fn a_short_trained_model_caps_at_what_it_was_trained_for() {
     let info = GgufModelInfo {
         trained_context_length: Some(4096),
-        ..ornith()
+        ..plain_9b()
     };
 
-    assert_eq!(context_size_for(28.1, ORNITH_BYTES, 0, &info), Some(4096));
+    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info), Some(4096));
 }
 
 /// The 9B (5.6 GB) on an 8 GB Mac: the weights alone exceed the usable
@@ -1302,7 +1378,7 @@ fn a_short_trained_model_caps_at_what_it_was_trained_for() {
 #[test]
 fn weights_past_the_usable_share_get_the_floor_not_the_flat_default() {
     assert_eq!(
-        context_size_for(5.3, ORNITH_BYTES, 0, &ornith()),
+        context_size_for(5.3, PLAIN_9B_BYTES, 0, &plain_9b()),
         Some(AUTO_MIN_CONTEXT_SIZE)
     );
 }
@@ -1316,11 +1392,11 @@ fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
     let vram = 10.7;
     let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
 
-    let alone = context_size_for(vram, UTILITY_BYTES, 0, &ornith()).unwrap();
+    let alone = context_size_for(vram, UTILITY_BYTES, 0, &plain_9b()).unwrap();
     assert_eq!(alone, AUTO_MAX_CONTEXT_SIZE, "the whole card to itself");
 
     let small_chat = 3_000_000_000;
-    let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &ornith()).unwrap();
+    let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &plain_9b()).unwrap();
     let cache = u64::from(beside) * 131_072;
     assert!(beside < alone);
     assert!(
@@ -1328,11 +1404,128 @@ fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
         "both servers fit the working set"
     );
 
-    let chat_9b_at_8k = ORNITH_BYTES + 8192 * 131_072;
+    let chat_9b_at_8k = PLAIN_9B_BYTES + 8192 * 131_072;
     assert_eq!(
-        context_size_for(vram, UTILITY_BYTES, chat_9b_at_8k, &ornith()),
+        context_size_for(vram, UTILITY_BYTES, chat_9b_at_8k, &plain_9b()),
         Some(AUTO_MIN_CONTEXT_SIZE),
         "no room left beside the 9B: the floor"
+    );
+}
+
+/// Qwen 3.5 9B as its header reads (`unsloth/Qwen3.5-9B-GGUF`, Q4_K_M):
+/// the plain 9B's shape, but only one layer in four attends to the whole
+/// window, so 32 KiB of cache per token.
+fn qwen35_9b() -> GgufModelInfo {
+    GgufModelInfo {
+        architecture: Some("qwen35".into()),
+        full_attention_interval: Some(4),
+        ..plain_9b()
+    }
+}
+
+const QWEN35_9B_BYTES: u64 = 5_680_522_464;
+
+/// About 0.76 GiB to spare beside the 9B's weights. Counting every layer, as
+/// the sizing used to, bought a 6144 window; a quarter of the cost a token
+/// buys four times the window.
+#[test]
+fn a_qwen_hybrid_gets_four_times_the_window_its_full_attention_layers_allow() {
+    let vram = 8.65;
+    let every_layer = GgufModelInfo {
+        full_attention_interval: None,
+        ..qwen35_9b()
+    };
+
+    let before = context_size_for(vram, QWEN35_9B_BYTES, 0, &every_layer).unwrap();
+    let after = context_size_for(vram, QWEN35_9B_BYTES, 0, &qwen35_9b()).unwrap();
+
+    assert_eq!(before, 6144);
+    assert_eq!(after, 24_576);
+
+    let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+    let cache = u64::from(after) * 32 * 1024;
+    assert!(QWEN35_9B_BYTES + cache <= budget, "and it still fits");
+}
+
+/// An 8 GB-class budget that leaves the 9B a third of a gigabyte: the floor
+/// when every layer was counted, 9216 tokens now.
+#[test]
+fn a_qwen_hybrid_clears_the_floor_where_counting_every_layer_did_not() {
+    let every_layer = GgufModelInfo {
+        full_attention_interval: None,
+        ..qwen35_9b()
+    };
+
+    assert_eq!(
+        context_size_for(8.0, QWEN35_9B_BYTES, 0, &every_layer),
+        Some(AUTO_MIN_CONTEXT_SIZE)
+    );
+    assert_eq!(
+        context_size_for(8.0, QWEN35_9B_BYTES, 0, &qwen35_9b()),
+        Some(9216)
+    );
+}
+
+/// Gemma 4 12B's header (`unsloth/gemma-4-12b-it-GGUF`, Q4_K_M): 8 global
+/// layers of 1 KV head at 512 + 512, 40 sliding layers of 8 heads at 256 +
+/// 256 over a 1024-token window.
+fn gemma4_12b() -> GgufModelInfo {
+    let pattern: Vec<bool> = (0..48).map(|layer| layer % 6 != 5).collect();
+    GgufModelInfo {
+        architecture: Some("gemma4".into()),
+        trained_context_length: Some(262_144),
+        block_count: Some(48),
+        head_count: Some(16.into()),
+        head_count_kv: Some(PerLayer::Layers(
+            pattern
+                .iter()
+                .map(|&slides| if slides { 8 } else { 1 })
+                .collect(),
+        )),
+        key_length: Some(512),
+        value_length: Some(512),
+        key_length_swa: Some(256),
+        value_length_swa: Some(256),
+        embedding_length: Some(3840),
+        sliding_window: Some(1024),
+        sliding_window_pattern: Some(pattern),
+        shared_kv_layers: Some(0),
+        ..Default::default()
+    }
+}
+
+const GEMMA4_12B_BYTES: u64 = 7_121_861_440;
+
+/// 12 GB of accelerator memory leaves Gemma 4 12B about 1.9 GB beside its
+/// weights. The sliding layers take a fixed 1.5 GB (320 KiB for each of 4608
+/// cells) and the global layers 16 KiB a token, so the window is the largest
+/// thousand under (1,897,569,881 - 1,509,949,440) / 16,384 = 23,658. The
+/// reader used to stop at the per-layer head list, fall back to 16 heads 240
+/// wide on all 48 layers (720 KiB a token) and pick the floor.
+#[test]
+fn gemma_4_sliding_layers_are_charged_their_window_not_the_whole_context() {
+    let what_the_reader_used_to_see = GgufModelInfo {
+        architecture: Some("gemma4".into()),
+        trained_context_length: Some(262_144),
+        block_count: Some(48),
+        head_count: Some(16.into()),
+        embedding_length: Some(3840),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        context_size_for(12.0, GEMMA4_12B_BYTES, 0, &what_the_reader_used_to_see),
+        Some(AUTO_MIN_CONTEXT_SIZE)
+    );
+    let chosen = context_size_for(12.0, GEMMA4_12B_BYTES, 0, &gemma4_12b()).unwrap();
+    assert_eq!(chosen, 23_552);
+
+    let spare = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64 - GEMMA4_12B_BYTES;
+    let cost = |tokens: u32| gemma4_12b().kv_cache_bytes(tokens).unwrap();
+    assert!(cost(chosen) <= spare, "the chosen window fits");
+    assert!(
+        cost(chosen + 1024) > spare,
+        "and the next thousand does not"
     );
 }
 
@@ -1345,7 +1538,7 @@ fn an_unreadable_model_declines_to_choose() {
         ..Default::default()
     };
 
-    assert_eq!(context_size_for(28.1, ORNITH_BYTES, 0, &info), None);
+    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info), None);
 }
 
 /// A missing file is the common case in tests and on a broken install; the

@@ -6,7 +6,7 @@ use crate::features::function_calling::dto::{
     SemanticSearchOutput,
 };
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Tools that can reach the user's own documents, and therefore may only run
 /// through this module's scope check. Anything else — web and wiki lookups —

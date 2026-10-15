@@ -257,6 +257,7 @@ fn main() {
                     "get_system_stats",
                     "get_version",
                     "initialize_database",
+                    "get_backend_logs",
                 ]),
             )
             .plugin(
@@ -332,6 +333,9 @@ fn main() {
                     "fetch_url_preview",
                     "extract_article",
                     "read_web_page",
+                    "get_web_page_snapshot",
+                    "capture_web_page_snapshot",
+                    "list_web_page_snapshots",
                 ]),
             )
             .plugin(
@@ -457,6 +461,8 @@ fn main() {
                     "preview_learning_pack_import",
                     "apply_learning_pack_import",
                     "cancel_learning_pack_import_preview",
+                    "save_learning_pack_as",
+                    "export_all_learning_packs",
                     "preview_learning_curriculum_revision",
                     "accept_learning_curriculum_revision",
                     "discard_learning_curriculum_revision",

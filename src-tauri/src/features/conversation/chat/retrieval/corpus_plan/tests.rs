@@ -1,8 +1,14 @@
 use super::*;
-use crate::application::ports::llm_port::CompletionResponse;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::use_cases::HybridSearchUseCase;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 #[test]
 fn exact_references_keep_subsections_and_deduplicate_before_the_budget() {
@@ -19,9 +25,9 @@ async fn section_fixture() -> sqlx::SqlitePool {
         .await
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
-        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
         INSERT INTO documents VALUES ('a','Manual','/manual',NULL),('b','Other edition','/other',NULL),('private','Private','/private',NULL);
-        INSERT INTO text_chunks VALUES
+        INSERT INTO text_chunks(id, document_id, content, chunk_index, section, page_number) VALUES
         ('a-sub','a','First subsection evidence',20,'Chapter 700 > 706.07 Actions > § 706.07(a) First action',2),
         ('a-nested','a','Nested exception',21,'Chapter 700 > 706.07 Actions > § 706.07(a) First action > 706.07(a)(1) Exception',3),
         ('a-other','a','Second subsection evidence',22,'Chapter 700 > Section 706.07(b) Second action',4),
@@ -31,7 +37,8 @@ async fn section_fixture() -> sqlx::SqlitePool {
         .execute(&pool).await.unwrap();
     for index in 0..20 {
         sqlx::query(
-            "INSERT INTO text_chunks VALUES (?, 'a', 'Parent evidence', ?, '706.07 Actions', 1)",
+            "INSERT INTO text_chunks(id, document_id, content, chunk_index, section, page_number) \
+             VALUES (?, 'a', 'Parent evidence', ?, '706.07 Actions', 1)",
         )
         .bind(format!("parent-{index}"))
         .bind(index)
@@ -73,10 +80,10 @@ async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverag
 
 #[tokio::test]
 async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models() {
-    use crate::application::ports::MockEmbeddingPort;
     use crate::features::search::engine::{
         text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
     };
+    use lattice_core::application::ports::MockEmbeddingPort;
     let pool = section_fixture().await;
     let repository = ConversationRepository::new(pool.clone());
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
@@ -115,22 +122,22 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
 /// so never found an attachment in a named space; only vector search could.
 #[tokio::test]
 async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
-    use crate::application::ports::MockEmbeddingPort;
     use crate::features::search::engine::{
         text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
     };
+    use lattice_core::application::ports::MockEmbeddingPort;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
         .await
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
-        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
         CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
         CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
         CREATE VIRTUAL TABLE chunks_trigram USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
         INSERT INTO documents VALUES ('member','Member','/member',NULL),('attached','Attached','/attached',NULL);
-        INSERT INTO text_chunks VALUES ('m1','member','unrelated notes',0,NULL,NULL),
+        INSERT INTO text_chunks(id, document_id, content, chunk_index, section, page_number) VALUES ('m1','member','unrelated notes',0,NULL,NULL),
             ('a1','attached','the quarterly budget forecast',0,NULL,NULL);
         INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
         INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;
@@ -196,7 +203,7 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
         .await
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
-        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
         INSERT INTO documents(id,file_name,file_path) VALUES ('a','Guide','/guide'), ('b','Private','/private');
         INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
     let repository = ConversationRepository::new(pool);
@@ -285,11 +292,11 @@ fn beginning_uses_explicit_chapter_sequence_not_filename_or_upload_order() {
 #[tokio::test]
 #[ignore = "requires LATTICE_RETRIEVAL_DB, LATTICE_LLAMACPP_SETTINGS and LATTICE_RETRIEVAL_REPORT"]
 async fn live_corpus_retrieval_and_answer() {
-    use crate::application::ports::EmbeddingPort;
     use crate::features::embedding::candle_service::CandleEmbeddingService;
     use crate::features::llm::llama_cpp::LlamaCppLlm;
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::features::search::engine::vector_search::USearchVectorIndex;
+    use lattice_core::application::ports::EmbeddingPort;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
@@ -379,7 +386,7 @@ async fn live_corpus_retrieval_and_answer() {
         &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
     )
     .unwrap();
-    let config: crate::application::contracts::settings::LLMSettingsDto =
+    let config: lattice_core::application::contracts::settings::LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
     let llm = LlamaCppLlm::new(&config).unwrap();
     let started = Instant::now();
@@ -389,6 +396,7 @@ async fn live_corpus_retrieval_and_answer() {
         None,
         &catalog,
         &HashMap::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -478,6 +486,7 @@ async fn live_corpus_retrieval_and_answer() {
         crate::features::conversation::chat::SearchFlags {
             force_kb_search: true,
             force_web_search: false,
+            web_fallback: false,
             force_wiki_search: false,
             deep_research_mode: false,
             force_followup_mode: false,
@@ -514,7 +523,7 @@ async fn live_corpus_retrieval_and_answer() {
         Ok(())
     };
     let request = CompletionRequest {
-        input: crate::application::services::completion_input::from_context(
+        input: lattice_core::application::services::completion_input::from_context(
             &prompts.system_prompt,
             &[],
             &prompt,
@@ -574,7 +583,9 @@ async fn live_corpus_retrieval_and_answer() {
 
 #[test]
 fn explicit_book_order_keeps_editions_separate_and_reaches_the_first_chapter() {
-    use crate::domain::value_objects::source_context::{SourceContext, SourceGroup, StructureMode};
+    use lattice_core::domain::value_objects::source_context::{
+        SourceContext, SourceGroup, StructureMode,
+    };
     let group = SourceGroup {
         id: "book-a".into(),
         title: "Manual".into(),
@@ -743,6 +754,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         None,
         &correction_catalog(),
         &correction,
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -769,14 +781,15 @@ async fn the_planner_request_carries_the_turns_cancellation() {
     let stub = PlannerStub::new(&[
         r#"{"queries":["garden leave notice period"],"opening_document_ids":[],"start_at_beginning":false}"#,
     ]);
-    let turn = CancellationToken::new();
+    let stop = CancellationToken::new();
     plan(
         &stub,
         "What about garden leave?",
         None,
         &correction_catalog(),
         &HashMap::new(),
-        &turn,
+        &PlannerTurn::with_health(&PlannerHealth::default()),
+        &stop,
     )
     .await
     .unwrap();
@@ -784,7 +797,7 @@ async fn the_planner_request_carries_the_turns_cancellation() {
         .clone()
         .expect("the turn's token");
     assert!(!carried.is_cancelled());
-    turn.cancel();
+    stop.cancel();
     assert!(carried.is_cancelled());
 }
 
@@ -806,6 +819,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         None,
         &correction_catalog(),
         &correction,
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await;
@@ -926,6 +940,7 @@ async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
         Some(&history),
         &wide_catalog(43),
         &Default::default(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -960,6 +975,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         Some(&"user: earlier turn\n".repeat(200)),
         &wide_catalog(43),
         &correction,
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await

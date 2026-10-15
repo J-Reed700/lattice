@@ -135,7 +135,7 @@ mod readiness;
 mod registry;
 mod startup;
 
-pub use config::{SidecarBinary, SidecarConfig};
+pub use config::{SidecarBinary, SidecarConfig, SpeculativeDecoding};
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;
 pub(super) use process::SpawnedChild;

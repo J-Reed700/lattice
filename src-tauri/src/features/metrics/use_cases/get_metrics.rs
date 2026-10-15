@@ -17,9 +17,9 @@
 //! println!("Searches performed: {}", metrics.searches_performed);
 //! ```
 
-use crate::application::ports::MetricsPort;
 use crate::features::metrics::dto::MetricsSnapshotDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::MetricsPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetMetricsUseCase {
@@ -50,8 +50,8 @@ impl GetMetricsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MetricsSnapshotData;
     use async_trait::async_trait;
+    use lattice_core::application::ports::MetricsSnapshotData;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct MockMetricsPort {

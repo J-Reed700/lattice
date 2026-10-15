@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 
 #[async_trait]
 pub trait SummaryRuntimePort: Send + Sync {

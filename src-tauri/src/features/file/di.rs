@@ -5,9 +5,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{
-    DocumentRepository, DocumentRepositoryPort, FileStoragePort, FileSystemPort,
-};
 use crate::features::file::repository::{
     CitingConversationsRepositoryPort, SqliteCitingConversationsRepository,
 };
@@ -19,6 +16,10 @@ use crate::features::file::use_cases::{
 use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::security::FileAccessConfig;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::{
+    ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
+    FileSystemPort,
+};
 
 #[derive(Clone)]
 pub struct FileDi {
@@ -41,6 +42,7 @@ pub fn build(
     file_access_config: Arc<FileAccessConfig>,
     vault_path: PathBuf,
     db_pool: SqlitePool,
+    preview_extractor: Arc<dyn ContentExtractionPort>,
 ) -> FileDi {
     FileDi {
         open_file_use_case: Arc::new(OpenFileUseCase::new(
@@ -73,6 +75,7 @@ pub fn build(
         read_file_content_use_case: Arc::new(ReadFileContentUseCase::new(
             file_storage.clone(),
             file_access_config.clone(),
+            preview_extractor,
         )),
         read_file_bytes_use_case: Arc::new(ReadFileBytesUseCase::new(
             file_storage,
@@ -130,7 +133,7 @@ impl Container {
 
     pub fn file_library(
         &self,
-    ) -> Arc<dyn crate::application::ports::file_library::FileLibraryPort> {
+    ) -> Arc<dyn lattice_core::application::ports::file_library::FileLibraryPort> {
         Arc::clone(self.file_ops.library())
     }
 }

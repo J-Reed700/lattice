@@ -26,26 +26,29 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        // Frozen web snapshots: served only to the main webview, hash-checked
+        // on every request, under a CSP that allows no script or network.
+        .register_asynchronous_uri_scheme_protocol(
+            lattice::features::web::snapshots::protocol::SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                let label = ctx.webview_label().to_string();
+                // raw-spawn: the scheme handler is called off the Tokio context; the response is sent when the task ends
+                tauri::async_runtime::spawn(async move {
+                    let response =
+                        lattice::features::web::snapshots::protocol::handle(app, label, request)
+                            .await;
+                    responder.respond(response);
+                });
+            },
+        )
         .setup(|app| {
             // Tracing requires the Tokio runtime available inside this hook.
             setup::setup_tracing();
-            if let Ok(resources) = app.path().resource_dir() {
-                if let Err(error) =
-                    lattice::features::learning::python_runtime::configure_python_runtime(
-                        resources.join("resources/learning-python"),
-                    )
-                {
-                    tracing::warn!(%error, "Bundled Python runtime could not be configured");
-                }
-            }
 
             // Register before the webview can announce readiness. On macOS
             // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
             setup::renderer_shutdown::install(app.handle())?;
-
-            // Lets a page that refuses the HTTP client be read in a hidden
-            // window of the app's own browser engine.
-            lattice::features::web::services::browser_reader::install(app.handle().clone());
 
             // Register the sidecar registry before anything can spawn a
             // sidecar. The LLM factory looks this up via

@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::features::backup::export_repository::{
     ExportConversationRow, ExportMessageRow, ExportNoteRow, ExportRepository,
 };
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// What an export actually wrote.
 #[derive(Debug, Clone)]

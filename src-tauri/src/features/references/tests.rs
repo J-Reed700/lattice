@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use super::commands::{build_create_record, MAX_TEXT_CHARS};
 use super::dto::CreatePassageReferenceRequestDto;
 use super::repository::{PassageReferenceRecord, PassageReferenceRepository};
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 async fn fresh_repository() -> PassageReferenceRepository {
     let pool = SqlitePool::connect(":memory:").await.unwrap();

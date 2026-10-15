@@ -2,9 +2,9 @@
 //!
 //! Provides URL preview and metadata extraction for web content ingestion.
 
-use crate::features::function_calling::dto::UrlPreview;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::contracts::web::UrlPreview;
+use lattice_core::shared::error::Result;
 
 /// Trait for web capture operations
 ///

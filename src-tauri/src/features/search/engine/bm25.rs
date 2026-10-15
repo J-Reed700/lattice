@@ -3,8 +3,8 @@ use crate::features::search::BM25SearchTrait;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 use tracing::warn;
@@ -57,7 +57,9 @@ pub struct BM25Search {
 
 /// One statement per index. Written out rather than built by string
 /// concatenation so `scripts/check-sql-contracts.py` can prepare both against
-/// the migration.
+/// the migration. The first bind is the header column's `bm25()` weight
+/// ([`fts_query::HEADER_BM25_WEIGHT`]), so this path and chat's keyword branch
+/// rank alike.
 ///
 /// Both leave out chunks of files attached to a chat. Every caller is a
 /// vault-wide search, and dropping an attachment only after `LIMIT` would
@@ -65,7 +67,7 @@ pub struct BM25Search {
 const WORDS_SQL: &str = "SELECT
         tc.id as chunk_id,
         tc.document_id as document_id,
-        bm25(chunks_fts) as score,
+        bm25(chunks_fts, 0.0, 1.0, ?) as score,
         d.file_name as filename,
         d.mime_type,
         d.size_bytes,
@@ -82,7 +84,7 @@ const WORDS_SQL: &str = "SELECT
 const TRIGRAM_SQL: &str = "SELECT
         tc.id as chunk_id,
         tc.document_id as document_id,
-        bm25(chunks_trigram) as score,
+        bm25(chunks_trigram, 0.0, 1.0, ?) as score,
         d.file_name as filename,
         d.mime_type,
         d.size_bytes,
@@ -165,6 +167,7 @@ impl BM25Search {
 
         query_with_timeout(move || async move {
             sqlx::query(sql)
+                .bind(fts_query::HEADER_BM25_WEIGHT)
                 .bind(match_expression)
                 .bind(top_k as i64)
                 .fetch_all(&pool)
@@ -260,23 +263,25 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     /// The two chunk indexes and the triggers that keep them in step, copied
-    /// from `migrations/20260916000000_init_schema.sql`.
+    /// from `migrations/20261012090000_fts_header_column.sql`.
     const FTS_SCHEMA: &str = "
         CREATE VIRTUAL TABLE chunks_fts USING fts5(
             chunk_id UNINDEXED,
             content,
+            header,
             tokenize='porter unicode61 remove_diacritics 2'
         );
         CREATE VIRTUAL TABLE chunks_trigram USING fts5(
             chunk_id UNINDEXED,
             content,
+            header,
             tokenize='trigram'
         );
         CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
-          INSERT INTO chunks_fts(chunk_id, content)
-          VALUES(new.id, COALESCE(new.contextualized_content, new.content));
-          INSERT INTO chunks_trigram(chunk_id, content)
-          VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+          INSERT INTO chunks_fts(chunk_id, content, header)
+          VALUES(new.id, new.content, new.context_prefix);
+          INSERT INTO chunks_trigram(chunk_id, content, header)
+          VALUES(new.id, new.content, new.context_prefix);
         END;
     ";
 
@@ -301,6 +306,7 @@ mod tests {
                 document_id TEXT NOT NULL,
                 content TEXT NOT NULL,
                 contextualized_content TEXT,
+                context_prefix TEXT,
                 chunk_index INTEGER NOT NULL,
                 FOREIGN KEY (document_id) REFERENCES documents(id)
             );",

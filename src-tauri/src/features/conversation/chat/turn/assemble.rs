@@ -1,16 +1,24 @@
 //! Stage 5: fit what the turn found to its budget, number it, render the
 //! prompt, and plan the typed request the model is sent.
 use super::carry::CarriedMaterial;
+use super::message::{MessageFrame, TurnMessage};
 use super::prepare::PreparedTurn;
 use super::retrieve::Retrieved;
 use super::*;
-use crate::application::ports::llm_port::CompletionInput;
-use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
+use crate::features::conversation::chat::prompting::{kb_passage, kb_passages};
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::ports::{LLMPort, ToolDefinition};
+use lattice_core::application::services::context_assembler::{render, InlineEvidence};
 
 /// The rendered prompt and the numbered sources it cites.
 pub(super) struct RenderedPrompt {
+    /// The message with all of its evidence.
     pub(super) enhanced_message: String,
+    /// The same message in parts, so the request can carry less of its
+    /// evidence than this when the window cannot hold it all. `None` for a
+    /// resumed turn, whose request was saved whole.
+    pub(super) message: Option<TurnMessage>,
     pub(super) sources: Vec<SourceDto>,
     pub(super) retrieval_trace: Option<RetrievalTraceDto>,
     /// A canned answer the router chose; no model call is made for it.
@@ -35,6 +43,7 @@ impl RenderedPrompt {
     ) -> Self {
         Self {
             enhanced_message: String::new(),
+            message: None,
             sources,
             retrieval_trace,
             short_circuit_response,
@@ -43,6 +52,30 @@ impl RenderedPrompt {
             has_grounded_context: false,
             attachment_names: Vec::new(),
             attachment_ids: Vec::new(),
+        }
+    }
+
+    /// Drop the sources of the evidence the request could not carry: a
+    /// passage the model was not shown is not a source of its answer, and the
+    /// trace should not count it as read.
+    fn keep_evidence(&mut self, kept: usize) {
+        let Some(message) = &self.message else {
+            return;
+        };
+        let before = self.sources.len();
+        message.keep_sources(kept, &mut self.sources);
+        if self.sources.len() == before {
+            return;
+        }
+        if let Some(trace) = self.retrieval_trace.as_mut() {
+            let TraceCounts {
+                passages,
+                files,
+                web_pages,
+            } = trace_counts(&self.sources);
+            trace.passages = passages;
+            trace.files = files;
+            trace.web_pages = web_pages;
         }
     }
 }
@@ -95,8 +128,10 @@ pub(super) fn render_prompt(
             .sum(),
     );
     let passage_room = evidence.remaining();
+    // Priced as the prompt shows a passage, under its document's name and id,
+    // rather than as its bare text: on a small window those lines add up.
     let budgeted_results = evidence.select(&retrieval.search_response.results, |result| {
-        llm.count_tokens(&result.content)
+        llm.count_tokens(&kb_passage(result, 0))
     });
     if budgeted_results.len() < retrieval.search_response.results.len() {
         info!(
@@ -113,6 +148,9 @@ pub(super) fn render_prompt(
         &budgeted_results,
     );
 
+    // Which sources each block of the prompt shows, kept so the sources of a
+    // block the request has to leave out can be dropped with it.
+    let mut followup_chunks = HashSet::new();
     let followup_document = match retrieval.followup_context.take() {
         // The document under discussion and the file just attached are the
         // same document: it is already carried whole, and reusing it as well
@@ -130,6 +168,10 @@ pub(super) fn render_prompt(
                 conversation_id = turn.conv_id.as_str(),
                 "Follow-up detected: reusing conversation document context"
             );
+            followup_chunks = followup_sources
+                .iter()
+                .map(|source| source.chunk_id.clone())
+                .collect();
             // Ahead of any web results the turn also fetched, which stay: the
             // prompt shows them, so the list has to number them.
             followup_sources.append(&mut retrieval.sources);
@@ -142,6 +184,11 @@ pub(super) fn render_prompt(
     // Attachments lead the list: they are the reader's own material. Whatever
     // is left pointing at a carried document goes: the whole text is already
     // there.
+    let attachment_chunks: HashSet<String> = attachments
+        .sources()
+        .into_iter()
+        .map(|source| source.chunk_id)
+        .collect();
     if !attachments.is_empty() {
         retrieval
             .sources
@@ -169,52 +216,67 @@ pub(super) fn render_prompt(
     // those same numbers. Assigning earlier would let the follow-up path
     // renumber behind the prompt's back.
     assign_citation_ids(&mut retrieval.sources);
+    let citations_of = |chunks: &HashSet<String>| -> Vec<u32> {
+        retrieval
+            .sources
+            .iter()
+            .filter(|source| chunks.contains(&source.chunk_id))
+            .filter_map(|source| source.citation_id)
+            .collect()
+    };
     let attachment_context = attachments.render(&retrieval.sources);
+    let attachment_citations = citations_of(&attachment_chunks);
     let followup_context_text =
         followup_document.and_then(|document| document.render(&retrieval.sources));
-    let web_context = retrieval::render_web_context(&retrieval.web_context, &retrieval.sources);
-    let prior_evidence_context =
-        prior_evidence::render(retrieval.sources.get(prior_start..).unwrap_or_default());
+    let followup_citations = citations_of(&followup_chunks);
+    let web_pages = retrieval::web_context_entries(&retrieval.web_context, &retrieval.sources);
+    let prior = retrieval.sources.get(prior_start..).unwrap_or_default();
+    let prior_evidence_context = prior_evidence::render(prior);
+    let prior_citations: Vec<u32> = prior
+        .iter()
+        .filter_map(|source| source.citation_id)
+        .collect();
 
     let retrieval_trace = emit_retrieval_trace(turn, &retrieval, emit);
 
-    let kb_context = build_kb_context(
+    let library = kb_passages(
         &budgeted_results,
         &citation_ids_by_chunk(&retrieval.sources),
     );
     let linked_web_sources_context = turn.linked_web_sources_context.clone();
-    let can_open_pages = web_context.is_some() || linked_web_sources_context.is_some();
+    let can_open_pages = !web_pages.is_empty() || linked_web_sources_context.is_some();
     let has_grounded_context = attachment_context.is_some()
         || followup_context_text.is_some()
-        || kb_context.is_some()
+        || !budgeted_results.is_empty()
         || can_open_pages
         || prior_evidence_context.is_some();
 
     let searches_again =
         deep_research_searches_again(flags, tool_preferences, llm.supports_tool_calling());
-    let enhanced_message = PromptMessageBuilder::new(
-        &turn.prompt_settings,
-        &turn.message,
-        retrieval.interpretation.query_type == QueryType::Greeting,
+    let message = TurnMessage::new(MessageFrame {
+        prompt_settings: turn.prompt_settings.clone(),
+        question: turn.message.clone(),
+        is_greeting: retrieval.interpretation.query_type == QueryType::Greeting,
         flags,
-    )
-    .with_explorer_context(explorer_context)
-    .with_deep_research_searches(searches_again.then(|| retrieval.web_queries.clone()))
-    .with_prior_evidence_context(prior_evidence_context)
-    .with_attachment_context(attachment_context)
-    .with_followup_context(followup_context_text)
-    .with_kb_context(kb_context)
-    .with_linked_web_sources_context(linked_web_sources_context)
-    .with_web_context(web_context)
-    .with_web_search_error(retrieval.web_search_error.clone())
-    .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
-    .with_kb_attempted(retrieval.kb_attempted)
-    .with_kb_sufficiency(retrieval.sufficiency.as_ref())
-    .build();
+        deep_research_searches: searches_again.then(|| retrieval.web_queries.clone()),
+        web_search_error: retrieval.web_search_error.clone(),
+        kb_unavailable_reason: retrieval.kb_unavailable_reason.clone(),
+        kb_attempted: retrieval.kb_attempted,
+        sufficiency: retrieval.sufficiency.clone(),
+    })
+    .with_attachments(attachment_context, attachment_citations)
+    .with_folder(explorer_context)
+    .with_prior_evidence(prior_evidence_context, prior_citations)
+    .with_followup(followup_context_text, followup_citations)
+    .with_library(library)
+    .with_linked_pages(linked_web_sources_context)
+    .with_web_pages(web_pages);
+    let enhanced_message = message.render(message.items());
     metrics.prompt_build_ms = elapsed_ms(prompt_build_start);
 
     RenderedPrompt {
         enhanced_message,
+        message: Some(message),
         sources: retrieval.sources,
         retrieval_trace,
         short_circuit_response: retrieval.short_circuit_response.take(),
@@ -302,8 +364,11 @@ pub(super) struct PlannedRequest {
 /// With bounded memory on, the context assembler plans the whole request —
 /// policy, tool schemas, memory, history and the prompt — against the
 /// window; a plan that would drop unprocessed history compacts first, once.
-/// With it off, the string history goes out as it is, already charged whole
-/// by the turn's budget.
+/// The prompt's evidence goes to it as evidence rather than as part of the
+/// message, so a window that cannot hold all of it carries the best of it,
+/// and the sources of what was left out are dropped from `prompt`. With it
+/// off, the string history goes out as it is, already charged whole by the
+/// turn's budget.
 ///
 /// # Errors
 ///
@@ -315,7 +380,7 @@ pub(super) async fn plan_request(
     turn: &PreparedTurn,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
-    prompt: &RenderedPrompt,
+    prompt: &mut RenderedPrompt,
     metrics: &mut ConversationFlowTimingMetrics,
 ) -> Result<PlannedRequest> {
     let tool_prep_start = Instant::now();
@@ -335,6 +400,25 @@ pub(super) async fn plan_request(
     } else {
         turn.llm.count_tokens(&tool_loop::tool_schema_text(&tools))
     };
+    // Read once, so a compaction retry and every tool round carry the same day.
+    let today = chrono::Local::now().date_naive();
+    // The message without its evidence is what the plan charges as fixed;
+    // the evidence is charged after the history and cut, lowest-ranked first,
+    // if the request will not fit.
+    let inline_message = prompt
+        .message
+        .as_ref()
+        .filter(|message| message.items() > 0);
+    let bare_message = inline_message.map(|message| message.render(0));
+    let render_kept =
+        |keep: usize| inline_message.map_or_else(String::new, |message| message.render(keep));
+    let inline_evidence = inline_message.map(|message| InlineEvidence {
+        items: message.items(),
+        render: &render_kept,
+    });
+    let current_input = bare_message
+        .as_deref()
+        .unwrap_or(prompt.enhanced_message.as_str());
     let memory_turn = memory_context::prepare_memory_turn(
         || async {
             let memory_turn = memory_context::build_memory_plan_for_query(
@@ -342,12 +426,16 @@ pub(super) async fn plan_request(
                 records.as_ref(),
                 &turn.llm,
                 &turn.conv_id,
-                &turn.system_prompt,
-                &prompt.enhanced_message,
-                tool_schema_tokens,
-                Vec::new(),
+                memory_context::TurnPrompt {
+                    system_policy: &turn.system_prompt,
+                    current_input,
+                    inline_evidence,
+                    tool_schema_tokens,
+                    document_evidence: Vec::new(),
+                },
                 turn.settings.llm.bounded_conversation_memory,
                 &turn.message,
+                today,
             )
             .await?;
 
@@ -373,6 +461,21 @@ pub(super) async fn plan_request(
         || container.compact_for_turn(turn.conv_id.as_str(), turn.cancel_token()),
     )
     .await?;
+    let carried = inline_message
+        .zip(memory_turn.as_ref())
+        .map(|(message, memory_turn)| {
+            (
+                memory_turn.plan.accounting.inline_evidence_kept,
+                message.items(),
+            )
+        });
+    if let Some((kept, items)) = carried.filter(|(kept, items)| kept < items) {
+        info!(
+            conversation_id = turn.conv_id.as_str(),
+            kept, items, "Cut the turn's lowest-ranked evidence to fit the model's window"
+        );
+        prompt.keep_evidence(kept);
+    }
 
     Ok(match memory_turn {
         Some(memory_turn) => PlannedRequest {
@@ -387,10 +490,16 @@ pub(super) async fn plan_request(
             input_budget: memory_turn.plan.accounting.input_budget,
         },
         None => PlannedRequest {
-            input: crate::application::services::completion_input::from_context(
+            // The date leads the final message here too, never the system
+            // prompt: that would change the head of the request every day.
+            input: lattice_core::application::services::completion_input::from_context(
                 &turn.prompt_settings.system_prompt,
                 &turn.context,
-                &prompt.enhanced_message,
+                &format!(
+                    "{}\n\n{}",
+                    render::render_date_line(today),
+                    prompt.enhanced_message
+                ),
             ),
             tools,
             max_output_tokens: turn.budget.output_tokens,
@@ -400,6 +509,44 @@ pub(super) async fn plan_request(
     })
 }
 
+/// What the tool schemas a turn sends cost once its prompt carries evidence:
+/// the grounded subset with page opening, and history and folder access on
+/// top. The turn's budget reserves this before it sizes the evidence, since
+/// the evidence and the schemas share one window.
+pub(super) fn grounded_tool_tokens(
+    container: &dyn ChatRuntime,
+    llm: &Arc<dyn LLMPort>,
+    custom_tools: &[CustomToolSettingsDto],
+    explorer: Option<&ExplorerTurn>,
+    flags: SearchFlags,
+    tool_preferences: Option<&ToolPreferences>,
+) -> usize {
+    let tools = offered_tools(
+        container,
+        llm,
+        custom_tools,
+        explorer,
+        flags,
+        tool_preferences,
+        Grounding {
+            can_open_pages: true,
+            has_grounded_context: true,
+        },
+    );
+    if tools.is_empty() {
+        0
+    } else {
+        llm.count_tokens(&tool_loop::tool_schema_text(&tools))
+    }
+}
+
+/// What the prompt carries, as far as the choice of tools goes.
+#[derive(Debug, Clone, Copy)]
+struct Grounding {
+    can_open_pages: bool,
+    has_grounded_context: bool,
+}
+
 fn select_tools(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
@@ -407,27 +554,73 @@ fn select_tools(
     tool_preferences: Option<&ToolPreferences>,
     prompt: &RenderedPrompt,
 ) -> Vec<ToolDefinition> {
-    let llm = &turn.llm;
+    let grounding = Grounding {
+        can_open_pages: prompt.can_open_pages,
+        has_grounded_context: prompt.has_grounded_context,
+    };
+    let turn_tools = offered_tools(
+        container,
+        &turn.llm,
+        &turn.settings.llm.custom_tools,
+        turn.explorer.as_ref(),
+        flags,
+        tool_preferences,
+        grounding,
+    );
+    let force_tools_for_turn = forces_tools(tool_preferences);
+    info!(
+        provider = turn.llm.provider_name(),
+        supports_tools = turn.llm.supports_tool_calling(),
+        tool_count = turn_tools.len(),
+        history_tools_offered = turn_tools
+            .iter()
+            .filter(|tool| history_tools::is_history_tool(&tool.name))
+            .count(),
+        tools_enabled_for_turn = !turn_tools.is_empty(),
+        force_tools_for_turn = force_tools_for_turn,
+        has_grounded_context = grounding.has_grounded_context,
+        "LLM capability check for conversation"
+    );
+    turn_tools
+}
+
+/// A turn in "query" mode is offered every tool, grounded or not.
+fn forces_tools(tool_preferences: Option<&ToolPreferences>) -> bool {
+    tool_preferences
+        .and_then(|preferences| preferences.turn_mode.as_deref())
+        .map(str::trim)
+        .is_some_and(|mode| mode.eq_ignore_ascii_case("query"))
+}
+
+fn offered_tools(
+    container: &dyn ChatRuntime,
+    llm: &Arc<dyn LLMPort>,
+    custom_tools: &[CustomToolSettingsDto],
+    explorer: Option<&ExplorerTurn>,
+    flags: SearchFlags,
+    tool_preferences: Option<&ToolPreferences>,
+    grounding: Grounding,
+) -> Vec<ToolDefinition> {
     let supports_tools = llm.supports_tool_calling();
     let tool_definitions = build_llm_tool_definitions(
         container,
         llm,
         tool_preferences,
-        &turn.settings.llm.custom_tools,
-        prompt.can_open_pages,
+        custom_tools,
+        grounding.can_open_pages,
     );
-    let force_tools_for_turn = tool_preferences
-        .and_then(|preferences| preferences.turn_mode.as_deref())
-        .map(str::trim)
-        .is_some_and(|mode| mode.eq_ignore_ascii_case("query"));
     let grounded_tools: Vec<_> = tool_definitions
         .iter()
         .filter(|tool| {
-            kept_with_grounded_context(&tool.name, prompt.can_open_pages, flags.deep_research_mode)
+            kept_with_grounded_context(
+                &tool.name,
+                grounding.can_open_pages,
+                flags.deep_research_mode,
+            )
         })
         .cloned()
         .collect();
-    let selected_tools = if prompt.has_grounded_context && !force_tools_for_turn {
+    let selected_tools = if grounding.has_grounded_context && !forces_tools(tool_preferences) {
         &grounded_tools
     } else {
         &tool_definitions
@@ -447,26 +640,8 @@ fn select_tools(
     // way history access does: a turn grounded in library passages may still
     // need to open the file the question is about. A closed-book turn reads
     // nothing outside its message, the folder included.
-    if let Some(explorer) = turn
-        .explorer
-        .as_ref()
-        .filter(|_| supports_tools && !flags.closed_book)
-    {
+    if let Some(explorer) = explorer.filter(|_| supports_tools && !flags.closed_book) {
         crate::features::explorer::tools::add_to_turn(&mut turn_tools, explorer.has_folder_index());
     }
-
-    info!(
-        provider = llm.provider_name(),
-        supports_tools = supports_tools,
-        tool_count = turn_tools.len(),
-        history_tools_offered = turn_tools
-            .iter()
-            .filter(|tool| history_tools::is_history_tool(&tool.name))
-            .count(),
-        tools_enabled_for_turn = !turn_tools.is_empty(),
-        force_tools_for_turn = force_tools_for_turn,
-        has_grounded_context = prompt.has_grounded_context,
-        "LLM capability check for conversation"
-    );
     turn_tools
 }

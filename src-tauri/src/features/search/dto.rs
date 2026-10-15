@@ -8,8 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
-pub use crate::features::cache::dto::CacheStatsDto;
+pub use lattice_core::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 
 /// Search request from the frontend.
 ///
@@ -38,8 +37,8 @@ impl SearchRequestDto {
             limit: Some(limit),
             threshold: None,
             mode: SearchModeDto::Hybrid {
-                vector_weight: crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                bm25_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+                vector_weight: lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                bm25_weight: lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
             },
         }
     }
@@ -180,7 +179,17 @@ pub struct EnhancedSearchResponse {
     pub cache_stats: Option<CacheStatsDto>,
 }
 
-// CacheStatsDto is defined in cache_dto.rs and re-exported from dtos/mod.rs
+/// The query cache's statistics, reported with each search response.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStatsDto {
+    pub size: usize,
+    pub capacity: usize,
+    pub hits: u64,
+    pub misses: u64,
+    pub total_time_saved_ms: u64,
+    pub hit_rate: f64,
+}
 
 // ============================================================================
 // Tests

@@ -6,12 +6,18 @@ use super::*;
 /// spawns racing — chat and utility prewarm start together — were handed the
 /// same number, and the loser died with a bind error that used to be read as
 /// a GPU fault and "fixed" by dropping the whole session to CPU-only.
-pub(super) static RESERVED_PORTS: SyncMutex<BTreeSet<u16>> = SyncMutex::new(BTreeSet::new());
+///
+/// The app's [`SidecarRegistry`] holds the set every spawn reserves from.
+#[derive(Default)]
+pub(super) struct ReservedPorts {
+    pub(super) taken: SyncMutex<BTreeSet<u16>>,
+}
 
 /// A port claimed for one sidecar, released when the reservation drops.
 /// Held by the handle, so a live server's port is never handed out again.
 pub(super) struct PortReservation {
     pub(super) port: u16,
+    ports: Arc<ReservedPorts>,
 }
 
 impl PortReservation {
@@ -22,22 +28,25 @@ impl PortReservation {
 
 impl Drop for PortReservation {
     fn drop(&mut self) {
-        RESERVED_PORTS.lock().remove(&self.port);
+        self.ports.taken.lock().remove(&self.port);
     }
 }
 
 /// Reserve an ephemeral loopback port: bind `127.0.0.1:0`, read the number
-/// back, drop the listener, and claim the number process-wide. llama-server
+/// back, drop the listener, and claim the number in `ports`. llama-server
 /// still owns the real bind, so losing that race remains possible — it is
 /// classified [`AttemptFailure::Retry`] and retried with a fresh port.
-pub(super) fn reserve_free_port() -> std::io::Result<PortReservation> {
+pub(super) fn reserve_free_port(ports: &Arc<ReservedPorts>) -> std::io::Result<PortReservation> {
     const ATTEMPTS: usize = 32;
     for _ in 0..ATTEMPTS {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
         drop(listener);
-        if RESERVED_PORTS.lock().insert(port) {
-            return Ok(PortReservation { port });
+        if ports.taken.lock().insert(port) {
+            return Ok(PortReservation {
+                port,
+                ports: Arc::clone(ports),
+            });
         }
     }
     Err(std::io::Error::new(
@@ -46,8 +55,20 @@ pub(super) fn reserve_free_port() -> std::io::Result<PortReservation> {
     ))
 }
 
+/// Prompt-cache checkpoints kept per slot: llama-server's default, pinned so a
+/// change upstream cannot quietly change how far a slot can roll back.
+const CTX_CHECKPOINTS: u32 = 32;
+
+/// Tokens between two checkpoints. A hybrid model (Qwen 3.5's Gated DeltaNet
+/// layers) cannot trim its recurrent state, so a prompt that differs from the
+/// cached one rolls back to the last checkpoint before the difference; at the
+/// server's 8192 default, a change anywhere in the first 8k tokens threw the
+/// whole prefix away. Pure-attention models trim the KV cache directly and
+/// never consult these checkpoints, so the flag costs them nothing.
+const CHECKPOINT_MIN_STEP: u32 = 1024;
+
 pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
         "--port".to_string(),
@@ -69,7 +90,24 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
         // tool-call format; without it llama-server cannot render `tools` or
         // parse `tool_calls` back out, and the tool loop gets plain text.
         "--jinja".to_string(),
-    ]
+        "--ctx-checkpoints".to_string(),
+        CTX_CHECKPOINTS.to_string(),
+        "--checkpoint-min-step".to_string(),
+        CHECKPOINT_MIN_STEP.to_string(),
+    ];
+    if let Some(n_max) = config.mtp_draft() {
+        // MTP drafting supports one slot only, so the server gives up its
+        // parallel slots for it; the scheduler sizes itself from `/props`.
+        args.extend([
+            "-np".to_string(),
+            "1".to_string(),
+            "--spec-type".to_string(),
+            "draft-mtp".to_string(),
+            "--spec-draft-n-max".to_string(),
+            n_max.to_string(),
+        ]);
+    }
+    args
 }
 
 /// Mint a bearer token for one sidecar process.
@@ -130,6 +168,7 @@ pub(super) fn new_api_token() -> String {
 /// After that signal, the drain keeps running for stderr capture
 /// even though the caller has moved on.
 pub(super) fn spawn_event_drain(
+    background: &lattice_core::shared::runtime::background::BackgroundTasks,
     rx: Receiver<CommandEvent>,
     endpoint: String,
     child_arc: Arc<SyncMutex<Option<CommandChild>>>,
@@ -138,7 +177,7 @@ pub(super) fn spawn_event_drain(
 ) -> tokio::sync::oneshot::Receiver<Result<(), StartupEnd>> {
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
 
-    let _ = crate::shared::runtime::background::spawn(async move {
+    let _ = background.spawn(async move {
         let mut rx = rx;
         let mut ready_tx = Some(ready_tx);
 

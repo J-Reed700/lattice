@@ -1,17 +1,12 @@
 //! LLM / model-management feature dependency injection.
 
+use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::loading::ModelLoader;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::llm_port::OptionalLlmLoader;
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
-    CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
-};
-use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
-use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use crate::features::download::download_repository::SqliteDownloadRepository;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::engine::HttpDownloadEngine;
@@ -30,7 +25,14 @@ use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
+    CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
+};
+use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
+use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 
 /// Output ceiling for the shared utility model.
@@ -64,6 +66,8 @@ pub async fn build(
     db_conn: Arc<DatabaseConnection>,
     data_dir: PathBuf,
     credentials: Arc<dyn CredentialsPort>,
+    backend_devices: Arc<BackendDevices>,
+    background: Arc<BackgroundTasks>,
 ) -> Result<LlmDi> {
     // Model catalog (HuggingFace + SQLite cache)
     let downloaded_model_repo = Arc::new(DownloadedModelRepository::new(db_pool.clone()));
@@ -72,7 +76,7 @@ pub async fn build(
     let model_catalog_cache = Arc::new(ModelCacheAdapter::new(db_pool.clone(), huggingface).await?);
     let model_catalog = model_catalog_cache.clone() as Arc<dyn ModelCatalogPort>;
 
-    let system_info = Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>;
+    let system_info = Arc::new(SystemInfoAdapter::new(backend_devices)) as Arc<dyn SystemInfoPort>;
 
     // Download wiring
     let download_repository = Arc::new(SqliteDownloadRepository::new(db_conn));
@@ -81,6 +85,7 @@ pub async fn build(
         download_repository,
         download_engine,
         data_dir,
+        background,
     )) as Arc<dyn DownloadManager>;
 
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
@@ -153,7 +158,11 @@ impl Container {
     }
 
     fn model_loader(&self) -> ModelLoader {
-        ModelLoader::new(self.ai.downloaded_model_repo().clone(), self.app_handle())
+        ModelLoader::new(
+            self.ai.downloaded_model_repo().clone(),
+            self.app_handle(),
+            self.llm_runtime.clone(),
+        )
     }
 
     async fn load_llm_with_fallback(&self) -> Result<Arc<dyn LLMPort>> {
@@ -255,16 +264,13 @@ impl Container {
                 })?;
 
                 let generation_config = crate::features::llm::engine::GenerationConfig {
-                    temperature: settings.llm.temperature,
-                    top_p: settings.llm.top_p,
-                    top_k: settings.llm.top_k,
                     // A ceiling, not an allowance: each caller sends the cap its own
                     // work needs and `max_output_tokens` only ever tightens this one.
                     // It was 512, which was below what several callers were already
                     // asking for — memory extraction requests 8192 — so their JSON was
                     // cut off mid-array and read back as malformed.
                     max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS,
-                    repeat_penalty: settings.llm.repeat_penalty,
+                    ..crate::features::llm::engine::GenerationConfig::from_settings(&settings.llm)
                 };
 
                 let ollama_utility_tag = {
@@ -289,7 +295,9 @@ impl Container {
                                 .load_utility_local(
                                     &active,
                                     generation_config,
-                                    settings.llm.local_context_window,
+                                    crate::features::llm::engine::factory::LocalServerOptions::from_settings(
+                                        &settings.llm,
+                                    ),
                                 )
                                 .await
                         } else {
@@ -341,11 +349,16 @@ impl Container {
     /// run on this machine.
     pub fn prewarm_active_models(&self, app_handle: tauri::AppHandle) {
         use tauri::Manager;
-        crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(&app_handle);
+        let background = self.core.background();
+        crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(
+            &app_handle,
+            Arc::clone(&self.llm_runtime.devices),
+            background,
+        );
         for role in ["chat", "utility", "embedding"] {
             let handle = app_handle.clone();
-            let cancel = crate::shared::runtime::background::cancellation_token();
-            let _ = crate::shared::runtime::background::spawn(async move {
+            let cancel = background.token();
+            let _ = background.spawn(async move {
                 if cancel.is_cancelled() {
                     return;
                 }
@@ -401,6 +414,10 @@ impl Container {
                 emit_warmup(&handle, role, phase, error);
             });
         }
+    }
+
+    pub fn get_system_capabilities_use_case(&self) -> Arc<GetSystemCapabilitiesUseCase> {
+        Arc::clone(self.ai.get_system_capabilities_use_case())
     }
 
     pub fn get_available_models_use_case(&self) -> Arc<GetAvailableModelsUseCase> {

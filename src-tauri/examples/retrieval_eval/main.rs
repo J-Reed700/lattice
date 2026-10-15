@@ -6,6 +6,8 @@
 //!     [--mode embedding|production] [--top-k N] \
 //!     [--strategy chunk-first|late-chunking] \
 //!     [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] [--sparse on|off|auto] \
+//!     [--rrf-k K] [--weights VECTOR,KEYWORD] \
+//!     [--fts-header column|concat] [--fts-header-weight W] [--rerank-depth N] \
 //!     EMBEDDING_DIR DATASET_JSON [RERANKER_DIR]
 //! ```
 //!
@@ -18,6 +20,11 @@
 //! fusion (k = 10), chat's cross-encoder stage when a reranker is given, and the chat feature's
 //! neighbouring-section evidence expansion.
 //!
+//! `--fts-header` and `--fts-header-weight` choose where the chunk's context prefix sits in the
+//! lexical index and how `bm25()` weighs it; `concat` reproduces the index before the header had
+//! its own column. `--rerank-depth` sets how many fused candidates the cross-encoder scores and
+//! widens the pool to at least that many.
+//!
 //! `--strategy`, `--compression` and `--sparse` select the retrieval features under
 //! measurement. `--strategy` applies to both modes; the other two are production-only,
 //! because they describe the index and the fusion, neither of which exists in embedding
@@ -25,13 +32,13 @@
 
 mod production;
 
-use lattice::application::ports::EmbeddingPort;
 use lattice::features::embedding::candle_service::CandleEmbeddingService;
 use lattice::features::embedding::late_chunking::EmbeddingStrategy;
 use lattice::features::search::engine::reranker::{blend_rerank_scores, load_reranker, Reranker};
 use lattice::features::search::engine::vector_search::{
     VectorIndexCompression, VectorQuantization,
 };
+use lattice_core::application::ports::EmbeddingPort;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -122,6 +129,8 @@ pub struct Args {
     pub compression: CompressionSpec,
     pub sparse: SparseSetting,
     pub fusion: FusionSpec,
+    pub fts_header: production::FtsHeader,
+    pub rerank_depth: Option<usize>,
     pub embedding_dir: PathBuf,
     pub dataset: PathBuf,
     pub reranker: Option<PathBuf>,
@@ -131,6 +140,7 @@ const USAGE: &str = "usage: retrieval_eval [--mode embedding|production] [--top-
                      [--strategy chunk-first|late-chunking] \
                      [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] [--sparse on|off|auto] \
                      [--rrf-k K] [--weights VECTOR,KEYWORD] \
+                     [--fts-header column|concat] [--fts-header-weight W] [--rerank-depth N] \
                      EMBEDDING_DIR DATASET_JSON [RERANKER_DIR]";
 
 /// How the production hybrid path fuses its vector and BM25 branches.
@@ -148,7 +158,7 @@ pub struct FusionSpec {
 impl Default for FusionSpec {
     fn default() -> Self {
         Self {
-            rrf_k: lattice::shared::constants::DEFAULT_RRF_K,
+            rrf_k: lattice_core::shared::constants::DEFAULT_RRF_K,
             vector_weight: 0.7,
             keyword_weight: 0.3,
         }
@@ -230,6 +240,9 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
     let mut sparse: Option<SparseSetting> = None;
     let mut rrf_k: Option<f32> = None;
     let mut weights: Option<(f32, f32)> = None;
+    let mut fts_concat: Option<bool> = None;
+    let mut header_weight: Option<f64> = None;
+    let mut rerank_depth: Option<usize> = None;
     let mut positional: Vec<String> = Vec::new();
     let mut remaining = raw.into_iter();
     while let Some(argument) = remaining.next() {
@@ -303,6 +316,44 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
                     .ok_or_else(|| "--weights requires a value".to_owned())?;
                 weights = Some(parse_weights(&value)?);
             }
+            "--fts-header" => {
+                let value = inline
+                    .or_else(|| remaining.next())
+                    .ok_or_else(|| "--fts-header requires a value".to_owned())?;
+                fts_concat = Some(match value.as_str() {
+                    "column" => false,
+                    "concat" => true,
+                    other => {
+                        return Err(format!(
+                            "unknown fts header '{other}'; expected 'column' or 'concat'"
+                        ))
+                    }
+                });
+            }
+            "--fts-header-weight" => {
+                let value = inline
+                    .or_else(|| remaining.next())
+                    .ok_or_else(|| "--fts-header-weight requires a value".to_owned())?;
+                let parsed: f64 = value.parse().map_err(|_| {
+                    format!("--fts-header-weight expects a non-negative number, got '{value}'")
+                })?;
+                if !parsed.is_finite() || parsed < 0.0 {
+                    return Err("--fts-header-weight must be a non-negative number".to_owned());
+                }
+                header_weight = Some(parsed);
+            }
+            "--rerank-depth" => {
+                let value = inline
+                    .or_else(|| remaining.next())
+                    .ok_or_else(|| "--rerank-depth requires a value".to_owned())?;
+                let parsed: usize = value.parse().map_err(|_| {
+                    format!("--rerank-depth expects a positive integer, got '{value}'")
+                })?;
+                if parsed == 0 {
+                    return Err("--rerank-depth must be greater than zero".to_owned());
+                }
+                rerank_depth = Some(parsed);
+            }
             "--sparse" => {
                 let value = inline
                     .or_else(|| remaining.next())
@@ -340,7 +391,30 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
         if rrf_k.is_some() || weights.is_some() {
             return Err("--rrf-k and --weights are only available in --mode production".to_owned());
         }
+        if fts_concat.is_some() || header_weight.is_some() || rerank_depth.is_some() {
+            return Err(
+                "--fts-header, --fts-header-weight and --rerank-depth are only available in \
+                 --mode production"
+                    .to_owned(),
+            );
+        }
     }
+    // A weight for a column the concatenated layout leaves empty would be recorded on every row
+    // while changing nothing.
+    if fts_concat == Some(true) && header_weight.is_some() {
+        return Err("--fts-header-weight has no effect with --fts-header concat".to_owned());
+    }
+    if rerank_depth.is_some() && positional.len() < 3 {
+        return Err("--rerank-depth needs a RERANKER_DIR".to_owned());
+    }
+    let fts_header = if fts_concat == Some(true) {
+        production::FtsHeader::Concat
+    } else {
+        production::FtsHeader::Column {
+            weight: header_weight
+                .unwrap_or(lattice::features::search::engine::fts_query::HEADER_BM25_WEIGHT),
+        }
+    };
     let default_fusion = FusionSpec::default();
     let (vector_weight, keyword_weight) =
         weights.unwrap_or((default_fusion.vector_weight, default_fusion.keyword_weight));
@@ -357,6 +431,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
             vector_weight,
             keyword_weight,
         },
+        fts_header,
+        rerank_depth,
         embedding_dir: PathBuf::from(embedding_dir),
         dataset: PathBuf::from(dataset),
         reranker: positional.get(2).map(PathBuf::from),
@@ -562,6 +638,8 @@ async fn run_production(
             rrf_k: args.fusion.rrf_k,
             vector_weight: args.fusion.vector_weight,
             keyword_weight: args.fusion.keyword_weight,
+            fts_header: args.fts_header,
+            rerank_depth: args.rerank_depth,
         },
     )
     .await?;
@@ -609,6 +687,9 @@ async fn run_production(
             "sparse": sparse_enabled,
             "rrf_k": args.fusion.rrf_k,
             "fusion_weights": [args.fusion.vector_weight, args.fusion.keyword_weight],
+            "fts_header": args.fts_header.label(),
+            "fts_header_weight": args.fts_header.weight(),
+            "rerank_depth": args.rerank_depth,
             "sufficient": sufficiency.sufficient,
             "sufficiency_reasons": sufficiency.reasons,
             "term_coverage": sufficiency.term_coverage,
@@ -639,6 +720,13 @@ mod tests {
         assert_eq!(parsed.compression, CompressionSpec::None);
         assert_eq!(parsed.sparse, SparseSetting::Auto);
         assert_eq!(parsed.fusion, FusionSpec::default());
+        assert_eq!(
+            parsed.fts_header,
+            production::FtsHeader::Column {
+                weight: lattice::features::search::engine::fts_query::HEADER_BM25_WEIGHT
+            }
+        );
+        assert_eq!(parsed.rerank_depth, None);
 
         let with_reranker =
             args(&["/models/minilm", "starter.json", "/models/rr"]).expect("reranker arg parses");
@@ -702,6 +790,52 @@ mod tests {
             vec!["--mode", "production", "--rrf-k", "0", "/m", "d.json"],
             vec!["--mode", "production", "--weights", "0,0", "/m", "d.json"],
             vec!["--mode", "production", "--weights", "0.7", "/m", "d.json"],
+            vec!["--fts-header", "concat", "/m", "d.json"],
+            vec!["--rerank-depth", "48", "/m", "d.json", "/rr"],
+            vec![
+                "--mode",
+                "production",
+                "--fts-header",
+                "both",
+                "/m",
+                "d.json",
+            ],
+            vec![
+                "--mode",
+                "production",
+                "--fts-header",
+                "concat",
+                "--fts-header-weight",
+                "0.5",
+                "/m",
+                "d.json",
+            ],
+            vec![
+                "--mode",
+                "production",
+                "--fts-header-weight",
+                "-1",
+                "/m",
+                "d.json",
+            ],
+            vec![
+                "--mode",
+                "production",
+                "--rerank-depth",
+                "0",
+                "/m",
+                "d.json",
+                "/rr",
+            ],
+            // A depth with nothing to rerank with would describe a run that did not happen.
+            vec![
+                "--mode",
+                "production",
+                "--rerank-depth",
+                "48",
+                "/m",
+                "d.json",
+            ],
             // Order must not matter: `--mode` may follow the flag it constrains.
             vec!["--sparse", "off", "--mode", "embedding", "/m", "d.json"],
         ] {
@@ -801,6 +935,28 @@ mod tests {
                 keyword_weight: 1.0
             }
         );
+    }
+
+    #[test]
+    fn header_and_rerank_depth_flags_parse_in_production_mode() {
+        let parsed = args(&[
+            "--mode=production",
+            "--fts-header-weight=0.5",
+            "--rerank-depth=100",
+            "/m",
+            "d.json",
+            "/rr",
+        ])
+        .expect("header and depth flags parse");
+        assert_eq!(
+            parsed.fts_header,
+            production::FtsHeader::Column { weight: 0.5 }
+        );
+        assert_eq!(parsed.rerank_depth, Some(100));
+
+        let concat = args(&["--mode=production", "--fts-header=concat", "/m", "d.json"])
+            .expect("concat parses");
+        assert_eq!(concat.fts_header, production::FtsHeader::Concat);
     }
 
     #[test]

@@ -7,6 +7,8 @@
 //!
 //! ## Public surface
 //!
+//! - `crate::features::download::artifact_identity` — compute/establish an
+//!   embedding model's artifact identity
 //! - `crate::features::download::download_repository` — download state repo
 //! - `crate::features::download::downloaded_model_repository` —
 //!   DownloadedModelRepository (implements the domain port)
@@ -20,12 +22,13 @@
 //!
 //! Domain types (DownloadSession, DownloadError, DownloadedModel, the
 //! DownloadedModelRepository port) live in the domain layer under
-//! `crate::domain::{download, models, repositories}` because the application layer and several other
+//! `lattice_core::domain::{download, models, repositories}` because the application layer and several other
 //! features depend on them.
 //!
 //! No use cases here — download is orchestrated *through* the LLM and
 //! model-management features, which own the model-download use cases.
 
+pub mod artifact_identity;
 pub mod commands;
 pub mod download_repository;
 pub mod downloaded_model_repository;

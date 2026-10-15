@@ -6,11 +6,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use crate::application::ports::EmbeddingPort;
-use crate::domain::value_objects::SparseEmbedding;
 use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::SparseSearchTrait;
-use crate::shared::error::Result;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::Result;
 
 /// Learned sparse retrieval over `chunk_sparse_terms`.
 ///
@@ -173,8 +173,8 @@ fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultPortDt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{ChunkSparseTerms, SparseTermStorePort};
     use crate::features::search::engine::sparse_search::store::SqliteSparseTermStore;
+    use lattice_core::application::ports::{ChunkSparseTerms, SparseTermStorePort};
 
     const MODEL: &str = "sha256:model-a";
     const OTHER_MODEL: &str = "sha256:model-b";

@@ -14,16 +14,16 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort, SourceReadLimits,
 };
-use crate::application::ports::LLMPort;
-use crate::application::services::context_assembler::{
-    ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence, TokenAccounting,
-    TokenCounter,
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::context_assembler::{
+    ContextAssembler, ContextPlan, ContextRequest, InlineEvidence, ModelCapacity, RankedEvidence,
+    TokenAccounting, TokenCounter,
 };
-use crate::domain::conversation::memory::{MemorySnapshot, SourceMessage};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::conversation::memory::{MemorySnapshot, SourceMessage};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::history_tools::{self, HistoryToolBudget, HistoryToolScope, RecallRequest};
 
@@ -109,7 +109,6 @@ fn incomplete_history(cause: Option<&AppError>) -> AppError {
 /// Propagates the assembler's budget errors — an oversized current message, an
 /// unusable model, or active requirements that do not fit. Those are reported to
 /// the user rather than resolved by dropping a constraint.
-#[allow(clippy::too_many_arguments)]
 pub async fn build_memory_plan(
     memory: &dyn ConversationMemoryPort,
     recall: &dyn ConversationMemoryReadPort,
@@ -126,32 +125,55 @@ pub async fn build_memory_plan(
         recall,
         llm,
         conversation_id,
-        system_policy,
-        current_input,
-        tool_schema_tokens,
-        document_evidence,
+        TurnPrompt {
+            system_policy,
+            current_input,
+            inline_evidence: None,
+            tool_schema_tokens,
+            document_evidence,
+        },
         enabled,
         current_input,
+        chrono::Local::now().date_naive(),
     )
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The turn's own part of the prompt, which the memory plan is built around.
+pub struct TurnPrompt<'a> {
+    pub system_policy: &'a str,
+    /// The message as it reads with none of `inline_evidence`.
+    pub current_input: &'a str,
+    /// The evidence the caller rendered into the message; the assembler cuts
+    /// it, lowest-ranked first, before it refuses a request that does not fit.
+    pub inline_evidence: Option<InlineEvidence<'a>>,
+    /// The room the tool schemas take, which ride along with every round.
+    pub tool_schema_tokens: usize,
+    pub document_evidence: Vec<RankedEvidence>,
+}
+
+/// [`build_memory_plan`] for a message that may carry its evidence inline.
+/// `query` is the message as the user wrote it, which recall searches for.
 pub async fn build_memory_plan_for_query(
     memory: &dyn ConversationMemoryPort,
     recall: &dyn ConversationMemoryReadPort,
     llm: &Arc<dyn LLMPort>,
     conversation_id: &str,
-    system_policy: &str,
-    current_input: &str,
-    tool_schema_tokens: usize,
-    document_evidence: Vec<RankedEvidence>,
+    prompt: TurnPrompt<'_>,
     enabled: bool,
     query: &str,
+    today: chrono::NaiveDate,
 ) -> Result<Option<MemoryTurnContext>> {
     if !enabled {
         return Ok(None);
     }
+    let TurnPrompt {
+        system_policy,
+        current_input,
+        inline_evidence,
+        tool_schema_tokens,
+        document_evidence,
+    } = prompt;
 
     let snapshot = memory.load_snapshot(conversation_id).await?;
 
@@ -166,13 +188,16 @@ pub async fn build_memory_plan_for_query(
         < snapshot
             .latest_sequence
             .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64);
-    let (mut recent, unread_source) =
-        load_recent(memory, conversation_id, &snapshot, watermark).await?;
+    let RecentCandidates {
+        messages: mut recent,
+        unread_source,
+        reaches_start,
+    } = load_recent(memory, conversation_id, &snapshot, watermark).await?;
     // The pending current message is supplied separately, possibly enriched
     // with documents. Compare against the raw query before removing it.
     if recent.last().is_some_and(|m| {
         m.status == "pending"
-            && m.role == crate::domain::conversation::memory::SourceRole::User
+            && m.role == lattice_core::domain::conversation::memory::SourceRole::User
             && m.content == query
     }) {
         recent.pop();
@@ -236,14 +261,17 @@ pub async fn build_memory_plan_for_query(
         conversation_id,
         system_policy,
         current_input,
+        inline_evidence,
         tool_schema_tokens,
         snapshot: Some(&snapshot),
         recent: &recent,
+        recent_reaches_start: reaches_start,
         processed_through_sequence: watermark,
         recalled: recalled.passages(),
         retrieval: recalled.diagnostics.clone(),
         recall_status: Some(recalled.availability().note()),
         document_evidence,
+        today,
         capacity,
     };
     let plan = assembler.assemble_with_memory(&request, prepared.as_ref())?;
@@ -320,8 +348,17 @@ async fn settle_exact_count(
     Ok(replanned)
 }
 
-/// The newest messages, oldest first, as assembler candidates, and whether
-/// source above the processed `watermark` went unread.
+/// The newest messages, oldest first, as assembler candidates.
+struct RecentCandidates {
+    messages: Vec<SourceMessage>,
+    /// Source above the processed watermark went unread.
+    unread_source: bool,
+    /// Nothing older than `messages` exists, so the assembler can tell when
+    /// its window carries the whole transcript.
+    reaches_start: bool,
+}
+
+/// The newest messages as assembler candidates, and what was left unread.
 ///
 /// Paged from the end rather than loading the aggregate: the whole point is that
 /// prompt construction stops reading the entire conversation. Read newest first
@@ -334,7 +371,7 @@ async fn load_recent(
     conversation_id: &str,
     snapshot: &MemorySnapshot,
     watermark: i64,
-) -> Result<(Vec<SourceMessage>, bool)> {
+) -> Result<RecentCandidates> {
     let from = snapshot
         .latest_sequence
         .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64)
@@ -367,13 +404,15 @@ async fn load_recent(
     // A failed assistant output is not an answer that was returned, so it is not
     // replayed as one. A pending or failed *user* message is kept: the user still
     // said it, and a generation failure must not erase their instruction.
-    Ok((
-        page.messages
+    Ok(RecentCandidates {
+        reaches_start: from == 0 && !page.has_more,
+        messages: page
+            .messages
             .into_iter()
             .filter(SourceMessage::is_eligible_source)
             .collect(),
         unread_source,
-    ))
+    })
 }
 
 #[cfg(test)]

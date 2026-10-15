@@ -1,5 +1,5 @@
 //! A minimal reader for the GGUF header, enough to learn what a model was
-//! trained for.
+//! trained for and what its KV cache costs.
 //!
 //! Sizing a context window is guesswork without this. Ask for more than the
 //! model was trained on and llama.cpp silently rope-scales, degrading quality
@@ -34,6 +34,32 @@ mod value_type {
     pub const FLOAT64: u32 = 12;
 }
 
+/// A header value that is either one number for every layer or one number per
+/// layer. llama.cpp accepts both for head counts, and Gemma 4 writes its KV-head
+/// count per layer because its global layers have fewer heads than its
+/// sliding ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PerLayer {
+    Uniform(u32),
+    Layers(Vec<u32>),
+}
+
+impl PerLayer {
+    /// The value for one layer, or `None` past the end of a per-layer list.
+    fn at(&self, layer: usize) -> Option<u32> {
+        match self {
+            Self::Uniform(value) => Some(*value),
+            Self::Layers(values) => values.get(layer).copied(),
+        }
+    }
+}
+
+impl From<u32> for PerLayer {
+    fn from(value: u32) -> Self {
+        Self::Uniform(value)
+    }
+}
+
 /// What the header says about a model, as far as context sizing cares.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GgufModelInfo {
@@ -41,55 +67,178 @@ pub struct GgufModelInfo {
     pub architecture: Option<String>,
     /// `{architecture}.context_length`: the window the model was trained for.
     pub trained_context_length: Option<u32>,
-    /// Transformer layers; every one of them holds its own KV cache.
+    /// Transformer layers, counting any multi-token-prediction blocks at the
+    /// end (`nextn_predict_layers`).
     pub block_count: Option<u32>,
-    /// Key/value heads. Grouped-query models have far fewer of these than
-    /// attention heads, which is most of why their caches are affordable.
-    pub head_count_kv: Option<u32>,
+    /// Key/value heads, for every layer or per layer. Grouped-query models
+    /// have far fewer of these than attention heads, which is most of why
+    /// their caches are affordable.
+    pub head_count_kv: Option<PerLayer>,
     /// Attention heads, used to derive the head dimension when the header does
     /// not state key/value lengths outright.
-    pub head_count: Option<u32>,
+    pub head_count: Option<PerLayer>,
+    /// Key and value widths of the layers that attend to the whole window.
     pub key_length: Option<u32>,
     pub value_length: Option<u32>,
+    /// Key and value widths of sliding-window layers, where they differ.
+    pub key_length_swa: Option<u32>,
+    pub value_length_swa: Option<u32>,
     pub embedding_length: Option<u32>,
+    /// Tokens a sliding-window layer attends to.
+    pub sliding_window: Option<u32>,
+    /// Which layers slide, one flag per layer. Only the per-layer list form is
+    /// read; a model whose layers cannot be told apart is sized as if none of
+    /// them slid.
+    pub sliding_window_pattern: Option<Vec<bool>>,
+    /// Hybrid models (Qwen 3.5, 3.6, 3.8): one layer in this many attends to
+    /// the whole window. The others are linear-attention layers whose
+    /// recurrent state does not grow with the window.
+    pub full_attention_interval: Option<u32>,
+    /// Multi-token-prediction blocks at the end of `block_count`.
+    pub nextn_predict_layers: Option<u32>,
+    /// Trailing layers that reuse an earlier layer's cache rather than keep
+    /// their own (Gemma 4 E2B and E4B).
+    pub shared_kv_layers: Option<u32>,
 }
 
-/// Bytes one token occupies in a full-precision KV cache.
-///
-/// llama.cpp stores a key and a value per layer per KV head, f16 by default:
-/// `blocks * kv_heads * (key_len + value_len) * 2`. For a 32-layer model with
-/// 4 KV heads and 256-wide keys that is 128 KiB per token, which is why a
-/// 256K-trained model cannot actually be run at 256K on consumer hardware.
+/// llama.cpp stores keys and values as f16 by default: two bytes an element.
 const KV_CACHE_BYTES_PER_ELEMENT: u64 = 2;
 
+/// Slots llama-server opens when it is launched without `--parallel`, as the
+/// sidecar is: four sequences over one unified cache. A sliding-window layer
+/// keeps a window for each of them.
+const SERVER_SLOTS: u64 = 4;
+
+/// llama.cpp's default micro-batch. A sliding-window layer also holds the
+/// batch being decoded past its window.
+const MICRO_BATCH_TOKENS: u64 = 512;
+
+/// llama.cpp rounds a sliding-window cache up to a multiple of this many cells.
+const SLIDING_CACHE_ALIGNMENT: u64 = 256;
+
+/// One layer that keeps a KV cache of its own.
+struct LayerCache {
+    /// Key plus value bytes for one cached token.
+    bytes_per_token: u64,
+    /// Whether the cache stops growing at the sliding window.
+    sliding: bool,
+}
+
 impl GgufModelInfo {
-    /// How many bytes of KV cache one token of context costs, when the header
-    /// says enough to work it out.
-    pub fn kv_cache_bytes_per_token(&self) -> Option<u64> {
-        let blocks = u64::from(self.block_count?);
-        let kv_heads = u64::from(self.head_count_kv.or(self.head_count)?);
+    /// Bytes of KV cache llama-server allocates for a window of
+    /// `context_tokens`, when the header says enough to work it out.
+    ///
+    /// Counted the way llama.cpp allocates it rather than as if every layer
+    /// attended to the whole window:
+    /// - a layer that reuses an earlier layer's cache (`shared_kv_layers`)
+    ///   costs nothing;
+    /// - a hybrid's linear-attention layers (all but one in
+    ///   `full_attention_interval`) keep a fixed-size recurrent state instead,
+    ///   which is not counted here;
+    /// - a sliding-window layer holds at most its window for each server slot
+    ///   plus one micro-batch, rounded up to 256 cells;
+    /// - every other layer holds the whole window, at its own KV-head count
+    ///   and key/value widths.
+    ///
+    /// A plain model therefore costs `blocks * kv_heads * (key_len +
+    /// value_len) * 2` bytes per token, as before. For 32 layers with 4 KV
+    /// heads and 256-wide keys that is 128 KiB per token; Qwen 3.5 9B has that
+    /// shape but attends to the whole window in only 8 of its 32 layers, so it
+    /// costs 32 KiB.
+    ///
+    /// Multi-token-prediction blocks are charged as full attention.
+    /// llama-server allocates their cache only when it drafts with them, which
+    /// the header cannot say, so the estimate errs by one layer towards a
+    /// window that fits.
+    pub fn kv_cache_bytes(&self, context_tokens: u32) -> Option<u64> {
+        let layers = self.layer_caches()?;
+        if layers.iter().all(|layer| layer.bytes_per_token == 0) {
+            return None;
+        }
+
+        let tokens = u64::from(context_tokens);
+        // A layer is only marked sliding when the window is known.
+        let window = u64::from(self.sliding_window.unwrap_or(0));
+        let sliding_cap = (window * SERVER_SLOTS + MICRO_BATCH_TOKENS)
+            .div_ceil(SLIDING_CACHE_ALIGNMENT)
+            * SLIDING_CACHE_ALIGNMENT;
+        let sliding_tokens = tokens.min(sliding_cap);
+
+        layers.iter().try_fold(0u64, |total, layer| {
+            let cached = if layer.sliding {
+                sliding_tokens
+            } else {
+                tokens
+            };
+            total.checked_add(layer.bytes_per_token.checked_mul(cached)?)
+        })
+    }
+
+    /// Every layer that keeps a KV cache of its own, with what one token of
+    /// it costs. `None` when a layer's heads or widths cannot be worked out.
+    fn layer_caches(&self) -> Option<Vec<LayerCache>> {
+        let blocks = self.block_count?;
+        let trunk = blocks.saturating_sub(self.nextn_predict_layers.unwrap_or(0));
+        // Layers from here on read an earlier layer's cache.
+        let with_own_cache = blocks
+            .checked_sub(self.shared_kv_layers.unwrap_or(0))
+            .unwrap_or(blocks);
+        let kv_heads = self.head_count_kv.as_ref().or(self.head_count.as_ref())?;
 
         // Prefer the stated key/value widths. Otherwise every head splits the
         // embedding evenly, which is the usual arrangement.
         let head_dim = || {
-            let embedding = u64::from(self.embedding_length?);
-            let heads = u64::from(self.head_count?);
+            let embedding = self.embedding_length?;
+            let heads = self.head_count.as_ref()?.at(0)?;
             (heads > 0).then(|| embedding / heads)
         };
-        let key = match self.key_length {
-            Some(length) => u64::from(length),
-            None => head_dim()?,
-        };
-        let value = match self.value_length {
-            Some(length) => u64::from(length),
-            None => head_dim()?,
-        };
+        let full_key = || self.key_length.or_else(head_dim);
+        let full_value = || self.value_length.or_else(head_dim);
 
-        let per_token = blocks
-            .checked_mul(kv_heads)?
-            .checked_mul(key.checked_add(value)?)?
-            .checked_mul(KV_CACHE_BYTES_PER_ELEMENT)?;
-        (per_token > 0).then_some(per_token)
+        (0..with_own_cache)
+            .filter(|&layer| !self.is_recurrent(layer, trunk))
+            .map(|layer| {
+                let index = usize::try_from(layer).ok()?;
+                let sliding = self.is_sliding(index);
+                let (key, value) = if sliding {
+                    (
+                        self.key_length_swa.or_else(full_key)?,
+                        self.value_length_swa.or_else(full_value)?,
+                    )
+                } else {
+                    (full_key()?, full_value()?)
+                };
+                let bytes_per_token = u64::from(kv_heads.at(index)?)
+                    .checked_mul(u64::from(key).checked_add(u64::from(value))?)?
+                    .checked_mul(KV_CACHE_BYTES_PER_ELEMENT)?;
+                Some(LayerCache {
+                    bytes_per_token,
+                    sliding,
+                })
+            })
+            .collect()
+    }
+
+    /// llama.cpp's rule for hybrids: counting from one, every
+    /// `full_attention_interval`-th layer attends to the whole window and the
+    /// rest are recurrent. Multi-token-prediction blocks past the trunk are
+    /// attention layers.
+    fn is_recurrent(&self, layer: u32, trunk: u32) -> bool {
+        match self.full_attention_interval {
+            Some(interval) if interval > 0 => {
+                layer < trunk && !(layer + 1).is_multiple_of(interval)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_sliding(&self, layer: usize) -> bool {
+        self.sliding_window.is_some_and(|window| window > 0)
+            && self
+                .sliding_window_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.get(layer))
+                .is_some_and(|&slides| slides)
     }
 }
 
@@ -119,17 +268,6 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
     let mut context_lengths: Vec<(String, u32)> = Vec::new();
     let mut info = GgufModelInfo::default();
 
-    // Suffixes worth stopping for. Everything else — tokenizer vocabularies
-    // above all — is skipped without being materialised.
-    const WANTED: [&str; 6] = [
-        ".block_count",
-        ".attention.head_count_kv",
-        ".attention.head_count",
-        ".attention.key_length",
-        ".attention.value_length",
-        ".embedding_length",
-    ];
-
     for _ in 0..kv_count {
         let Some(key) = read_string(&mut reader) else {
             break;
@@ -142,30 +280,52 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             architecture = read_string(&mut reader);
             continue;
         }
-        if key.ends_with(".context_length") {
-            if let Some(length) = read_scalar_as_u32(&mut reader, kind) {
-                context_lengths.push((key, length));
-                continue;
-            }
+
+        // Numbers and short lists of them are kept; everything else, the
+        // tokenizer vocabularies above all, is skipped without being
+        // materialised.
+        let Some(value) = read_value(&mut reader, kind) else {
             break;
-        }
-        if let Some(suffix) = WANTED.iter().find(|suffix| key.ends_with(*suffix)) {
-            let Some(value) = read_scalar_as_u32(&mut reader, kind) else {
-                break;
-            };
-            match *suffix {
-                ".block_count" => info.block_count = Some(value),
-                ".attention.head_count_kv" => info.head_count_kv = Some(value),
-                ".attention.head_count" => info.head_count = Some(value),
-                ".attention.key_length" => info.key_length = Some(value),
-                ".attention.value_length" => info.value_length = Some(value),
-                ".embedding_length" => info.embedding_length = Some(value),
-                _ => {}
-            }
+        };
+
+        // Sizing keys are `{architecture}.{name}`. A longer prefix, such as a
+        // vision tower's `{architecture}.vision.block_count`, is not the
+        // language model's.
+        let Some((_, name)) = key.split_once('.') else {
             continue;
-        }
-        if skip_value(&mut reader, kind).is_none() {
-            break;
+        };
+        match (name, value) {
+            ("context_length", Value::Number(length)) => context_lengths.push((key, length)),
+            ("block_count", Value::Number(count)) => info.block_count = Some(count),
+            ("attention.head_count_kv", value) => info.head_count_kv = value.per_layer(),
+            ("attention.head_count", value) => info.head_count = value.per_layer(),
+            ("attention.key_length", Value::Number(length)) => info.key_length = Some(length),
+            ("attention.value_length", Value::Number(length)) => {
+                info.value_length = Some(length);
+            }
+            ("attention.key_length_swa", Value::Number(length)) => {
+                info.key_length_swa = Some(length);
+            }
+            ("attention.value_length_swa", Value::Number(length)) => {
+                info.value_length_swa = Some(length);
+            }
+            ("embedding_length", Value::Number(length)) => info.embedding_length = Some(length),
+            ("attention.sliding_window", Value::Number(window)) => {
+                info.sliding_window = Some(window);
+            }
+            ("attention.sliding_window_pattern", Value::Numbers(flags)) => {
+                info.sliding_window_pattern = Some(flags.iter().map(|&flag| flag != 0).collect());
+            }
+            ("full_attention_interval", Value::Number(interval)) => {
+                info.full_attention_interval = Some(interval);
+            }
+            ("nextn_predict_layers", Value::Number(count)) => {
+                info.nextn_predict_layers = Some(count);
+            }
+            ("attention.shared_kv_layers", Value::Number(count)) => {
+                info.shared_kv_layers = Some(count);
+            }
+            _ => {}
         }
     }
 
@@ -240,24 +400,92 @@ fn read_string(reader: &mut impl Read) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Read a numeric value of the given type, widened to `u32`. A context length
-/// is a small positive number in every type it is written as.
-fn read_scalar_as_u32(reader: &mut (impl Read + Seek), kind: u32) -> Option<u32> {
-    let value = match kind {
-        value_type::UINT8 | value_type::BOOL => u64::from(read_exact::<1>(reader)?[0]),
-        value_type::INT8 => u64::try_from(i8::from_le_bytes(read_exact::<1>(reader)?)).ok()?,
-        value_type::UINT16 => u64::from(u16::from_le_bytes(read_exact::<2>(reader)?)),
-        value_type::INT16 => u64::try_from(i16::from_le_bytes(read_exact::<2>(reader)?)).ok()?,
-        value_type::UINT32 => u64::from(read_u32(reader)?),
-        value_type::INT32 => u64::try_from(i32::from_le_bytes(read_exact::<4>(reader)?)).ok()?,
-        value_type::UINT64 => read_u64(reader)?,
-        value_type::INT64 => u64::try_from(i64::from_le_bytes(read_exact::<8>(reader)?)).ok()?,
-        _ => {
-            skip_value(reader, kind)?;
-            return None;
+/// A header value, as far as sizing cares.
+enum Value {
+    Number(u32),
+    /// A list of numbers short enough to be one per layer.
+    Numbers(Vec<u32>),
+    /// Anything else: text, a float, a number past `u32`, a long list. It has
+    /// already been read past.
+    Other,
+}
+
+impl Value {
+    fn per_layer(self) -> Option<PerLayer> {
+        match self {
+            Self::Number(value) => Some(PerLayer::Uniform(value)),
+            Self::Numbers(values) => Some(PerLayer::Layers(values)),
+            Self::Other => None,
         }
+    }
+}
+
+/// The longest list kept as per-layer values. llama.cpp allows 512 layers; a
+/// tokenizer's token-type list runs to hundreds of thousands and is skipped.
+const MAX_PER_LAYER_VALUES: u64 = 4096;
+
+/// Read a value of the given type. `None` only when the header itself cannot
+/// be read past, which ends the scan.
+fn read_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<Value> {
+    if kind == value_type::ARRAY {
+        let element_type = read_u32(reader)?;
+        let count = read_u64(reader)?;
+        if !is_integer(element_type) || count > MAX_PER_LAYER_VALUES {
+            skip_elements(reader, element_type, count)?;
+            return Some(Value::Other);
+        }
+        let mut values = Vec::new();
+        let mut all_fit = true;
+        for _ in 0..count {
+            match read_integer(reader, element_type)? {
+                Some(value) => values.push(value),
+                None => all_fit = false,
+            }
+        }
+        return Some(if all_fit {
+            Value::Numbers(values)
+        } else {
+            Value::Other
+        });
+    }
+    if is_integer(kind) {
+        return Some(read_integer(reader, kind)?.map_or(Value::Other, Value::Number));
+    }
+    skip_value(reader, kind)?;
+    Some(Value::Other)
+}
+
+fn is_integer(kind: u32) -> bool {
+    matches!(
+        kind,
+        value_type::UINT8
+            | value_type::INT8
+            | value_type::UINT16
+            | value_type::INT16
+            | value_type::UINT32
+            | value_type::INT32
+            | value_type::UINT64
+            | value_type::INT64
+            | value_type::BOOL
+    )
+}
+
+/// Read an integer of the given type, widened to `u32`. The outer `None` means
+/// the header could not be read; the inner one a value no count or length
+/// could be, negative or past `u32`, which has still been read past.
+fn read_integer(reader: &mut impl Read, kind: u32) -> Option<Option<u32>> {
+    let value = match kind {
+        value_type::UINT8 | value_type::BOOL => i128::from(read_exact::<1>(reader)?[0]),
+        value_type::INT8 => i128::from(i8::from_le_bytes(read_exact::<1>(reader)?)),
+        value_type::UINT16 => i128::from(u16::from_le_bytes(read_exact::<2>(reader)?)),
+        value_type::INT16 => i128::from(i16::from_le_bytes(read_exact::<2>(reader)?)),
+        value_type::UINT32 => i128::from(read_u32(reader)?),
+        value_type::INT32 => i128::from(i32::from_le_bytes(read_exact::<4>(reader)?)),
+        value_type::UINT64 => i128::from(read_u64(reader)?),
+        value_type::INT64 => i128::from(i64::from_le_bytes(read_exact::<8>(reader)?)),
+        _ => return None,
     };
-    u32::try_from(value).ok()
+    Some(u32::try_from(value).ok())
 }
 
 /// Advance past a value the caller does not need.
@@ -277,15 +505,7 @@ fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<()> {
         value_type::ARRAY => {
             let element_type = read_u32(reader)?;
             let count = read_u64(reader)?;
-            // GGUF arrays are flat. Reject corrupt recursion/lengths before
-            // inspecting an untrusted remote header or local model file.
-            if element_type == value_type::ARRAY || count > 1_000_000 {
-                return None;
-            }
-            for _ in 0..count {
-                skip_value(reader, element_type)?;
-            }
-            return Some(());
+            return skip_elements(reader, element_type, count);
         }
         _ => return None,
     };
@@ -293,283 +513,18 @@ fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<()> {
     Some(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    struct GgufBuilder {
-        bytes: Vec<u8>,
-        kv_count: u64,
-        body: Vec<u8>,
+/// Advance past the elements of an array whose type and count are read.
+fn skip_elements(reader: &mut (impl Read + Seek), element_type: u32, count: u64) -> Option<()> {
+    // GGUF arrays are flat. Reject corrupt recursion/lengths before
+    // inspecting an untrusted remote header or local model file.
+    if element_type == value_type::ARRAY || count > 1_000_000 {
+        return None;
     }
-
-    impl GgufBuilder {
-        fn new(version: u32) -> Self {
-            let mut bytes = Vec::new();
-            bytes.extend_from_slice(&GGUF_MAGIC.to_le_bytes());
-            bytes.extend_from_slice(&version.to_le_bytes());
-            bytes.extend_from_slice(&0u64.to_le_bytes()); // tensor count
-            Self {
-                bytes,
-                kv_count: 0,
-                body: Vec::new(),
-            }
-        }
-
-        fn key(&mut self, key: &str) {
-            self.body
-                .extend_from_slice(&(key.len() as u64).to_le_bytes());
-            self.body.extend_from_slice(key.as_bytes());
-            self.kv_count += 1;
-        }
-
-        fn string(mut self, key: &str, value: &str) -> Self {
-            self.key(key);
-            self.body
-                .extend_from_slice(&value_type::STRING.to_le_bytes());
-            self.body
-                .extend_from_slice(&(value.len() as u64).to_le_bytes());
-            self.body.extend_from_slice(value.as_bytes());
-            self
-        }
-
-        fn u32_value(mut self, key: &str, value: u32) -> Self {
-            self.key(key);
-            self.body
-                .extend_from_slice(&value_type::UINT32.to_le_bytes());
-            self.body.extend_from_slice(&value.to_le_bytes());
-            self
-        }
-
-        fn u64_value(mut self, key: &str, value: u64) -> Self {
-            self.key(key);
-            self.body
-                .extend_from_slice(&value_type::UINT64.to_le_bytes());
-            self.body.extend_from_slice(&value.to_le_bytes());
-            self
-        }
-
-        fn float(mut self, key: &str, value: f32) -> Self {
-            self.key(key);
-            self.body
-                .extend_from_slice(&value_type::FLOAT32.to_le_bytes());
-            self.body.extend_from_slice(&value.to_le_bytes());
-            self
-        }
-
-        /// A tokenizer vocabulary, the reason skipping has to be efficient and
-        /// correct: it sits between the keys that matter.
-        fn string_array(mut self, key: &str, values: &[&str]) -> Self {
-            self.key(key);
-            self.body
-                .extend_from_slice(&value_type::ARRAY.to_le_bytes());
-            self.body
-                .extend_from_slice(&value_type::STRING.to_le_bytes());
-            self.body
-                .extend_from_slice(&(values.len() as u64).to_le_bytes());
-            for value in values {
-                self.body
-                    .extend_from_slice(&(value.len() as u64).to_le_bytes());
-                self.body.extend_from_slice(value.as_bytes());
-            }
-            self
-        }
-
-        fn write(self) -> tempfile::NamedTempFile {
-            let mut file = tempfile::NamedTempFile::new().unwrap();
-            let mut bytes = self.bytes;
-            bytes.extend_from_slice(&self.kv_count.to_le_bytes());
-            bytes.extend_from_slice(&self.body);
-            file.write_all(&bytes).unwrap();
-            file.flush().unwrap();
-            file
-        }
+    for _ in 0..count {
+        skip_value(reader, element_type)?;
     }
-
-    #[test]
-    fn the_trained_context_length_is_read_for_its_own_architecture() {
-        let file = GgufBuilder::new(3)
-            .string("general.architecture", "qwen3")
-            .string_array("tokenizer.ggml.tokens", &["hello", "world", "<|im_start|>"])
-            .u32_value("qwen3.block_count", 32)
-            .u32_value("qwen3.context_length", 32768)
-            .float("qwen3.attention.layer_norm_rms_epsilon", 1e-6)
-            .write();
-
-        let info = read_model_info(file.path()).unwrap();
-
-        assert_eq!(info.architecture.as_deref(), Some("qwen3"));
-        assert_eq!(info.trained_context_length, Some(32768));
-    }
-
-    /// Keys arrive in whatever order the converter wrote them, so the
-    /// architecture cannot be assumed to come first.
-    #[test]
-    fn the_context_length_is_found_before_the_architecture_that_names_it() {
-        let file = GgufBuilder::new(3)
-            .u32_value("llama.context_length", 4096)
-            .string("general.architecture", "llama")
-            .write();
-
-        assert_eq!(
-            read_model_info(file.path()).unwrap().trained_context_length,
-            Some(4096)
-        );
-    }
-
-    /// A context length written as a 64-bit value is still a context length.
-    #[test]
-    fn a_context_length_of_any_integer_width_is_understood() {
-        let file = GgufBuilder::new(3)
-            .string("general.architecture", "llama")
-            .u64_value("llama.context_length", 8192)
-            .write();
-
-        assert_eq!(
-            read_model_info(file.path()).unwrap().trained_context_length,
-            Some(8192)
-        );
-    }
-
-    /// Several architectures' keys in one file must not be guessed between.
-    #[test]
-    fn an_ambiguous_context_length_without_an_architecture_is_not_guessed() {
-        let file = GgufBuilder::new(3)
-            .u32_value("llama.context_length", 4096)
-            .u32_value("qwen3.context_length", 32768)
-            .write();
-
-        assert_eq!(
-            read_model_info(file.path()).unwrap().trained_context_length,
-            None
-        );
-    }
-
-    #[test]
-    fn a_file_that_is_not_gguf_is_declined_rather_than_misread() {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(b"this is not a model").unwrap();
-        file.flush().unwrap();
-
-        assert!(read_model_info(file.path()).is_none());
-    }
-
-    #[test]
-    fn a_missing_file_is_declined() {
-        assert!(read_model_info(Path::new("/nonexistent/model.gguf")).is_none());
-    }
-
-    /// A truncated download must not panic or hang; whatever was already read
-    /// is still usable.
-    #[test]
-    fn a_truncated_header_yields_what_was_read_so_far() {
-        let file = GgufBuilder::new(3)
-            .string("general.architecture", "llama")
-            .u32_value("llama.context_length", 4096)
-            .write();
-        let mut bytes = std::fs::read(file.path()).unwrap();
-        bytes.truncate(bytes.len() - 3);
-        let truncated = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(truncated.path(), &bytes).unwrap();
-
-        let info = read_model_info(truncated.path()).unwrap();
-
-        assert_eq!(info.architecture.as_deref(), Some("llama"));
-    }
-
-    #[test]
-    fn a_version_one_file_is_declined_rather_than_misparsed() {
-        let file = GgufBuilder::new(1)
-            .string("general.architecture", "llama")
-            .write();
-
-        assert!(read_model_info(file.path()).is_none());
-    }
-
-    /// The real numbers from the Ornith-1.5-9B header, cross-checked against an
-    /// independent read of the same file: 32 blocks, 4 KV heads, 256-wide keys
-    /// and values. 128 KiB per token is what makes a 262144-trained model
-    /// impossible to actually run at 262144 on consumer hardware.
-    #[test]
-    fn a_grouped_query_cache_costs_what_its_dimensions_say() {
-        let info = GgufModelInfo {
-            block_count: Some(32),
-            head_count_kv: Some(4),
-            key_length: Some(256),
-            value_length: Some(256),
-            ..Default::default()
-        };
-
-        assert_eq!(info.kv_cache_bytes_per_token(), Some(128 * 1024));
-    }
-
-    /// Older headers state no key/value width, so the head dimension comes from
-    /// the embedding split across the attention heads.
-    #[test]
-    fn a_header_without_key_widths_derives_them_from_the_embedding() {
-        let info = GgufModelInfo {
-            block_count: Some(32),
-            head_count: Some(32),
-            head_count_kv: Some(32),
-            embedding_length: Some(4096),
-            ..Default::default()
-        };
-
-        // 4096 / 32 = 128 per head, key and value: 32 * 32 * 256 * 2.
-        assert_eq!(info.kv_cache_bytes_per_token(), Some(32 * 32 * 256 * 2));
-    }
-
-    /// Without the dimensions there is no honest answer, and a guess would size
-    /// a cache that does not fit.
-    #[test]
-    fn an_incomplete_header_refuses_to_estimate() {
-        let info = GgufModelInfo {
-            block_count: Some(32),
-            ..Default::default()
-        };
-
-        assert_eq!(info.kv_cache_bytes_per_token(), None);
-    }
-
-    #[test]
-    fn the_full_set_of_sizing_keys_is_read_together() {
-        let file = GgufBuilder::new(3)
-            .string("general.architecture", "qwen35")
-            .string_array("tokenizer.ggml.tokens", &["a", "b"])
-            .u32_value("qwen35.block_count", 32)
-            .u32_value("qwen35.context_length", 262_144)
-            .u32_value("qwen35.embedding_length", 4096)
-            .u32_value("qwen35.attention.head_count", 16)
-            .u32_value("qwen35.attention.head_count_kv", 4)
-            .u32_value("qwen35.attention.key_length", 256)
-            .u32_value("qwen35.attention.value_length", 256)
-            .write();
-
-        let info = read_model_info(file.path()).unwrap();
-
-        assert_eq!(info.trained_context_length, Some(262_144));
-        assert_eq!(info.block_count, Some(32));
-        assert_eq!(info.head_count_kv, Some(4));
-        assert_eq!(info.kv_cache_bytes_per_token(), Some(128 * 1024));
-    }
-
-    /// Synthetic fixtures only prove the parser agrees with itself. This reads a
-    /// GGUF that actually exists on the machine, when one does.
-    #[test]
-    #[ignore = "requires LATTICE_GGUF_MODEL to point at a .gguf on this machine"]
-    fn a_real_gguf_on_this_machine_parses() {
-        let path = std::env::var("LATTICE_GGUF_MODEL").unwrap();
-        let info = read_model_info(Path::new(&path)).expect("a real GGUF must parse");
-
-        println!("architecture: {:?}", info.architecture);
-        println!("trained context: {:?}", info.trained_context_length);
-        println!("blocks: {:?}", info.block_count);
-        println!("kv heads: {:?}", info.head_count_kv);
-        println!("kv bytes/token: {:?}", info.kv_cache_bytes_per_token());
-
-        assert!(info.architecture.is_some());
-        assert!(info.trained_context_length.is_some());
-        assert!(info.kv_cache_bytes_per_token().is_some());
-    }
+    Some(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -8,7 +8,6 @@
 //!
 //! ## Public surface
 //!
-//! - `crate::features::embedding::artifact_identity` — compute/establish a model's artifact identity
 //! - `crate::features::embedding::dto` — embedding DTOs
 //! - `crate::features::embedding::entity` — `Embedding` domain entity
 //! - `crate::features::embedding::use_cases` — embedding use cases
@@ -30,7 +29,6 @@
 //! Ports (EmbeddingPort, EmbeddingRepositoryPort, MockEmbeddingPort)
 //! stay in `application/ports/`.
 
-pub mod artifact_identity;
 pub mod candle_service;
 pub mod commands;
 pub mod compatibility;

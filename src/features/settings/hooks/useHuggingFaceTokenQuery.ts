@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
+import { describeFailure } from '@/lib/errorHandling';
 import type { HfTokenStatus } from '@/types/api/credentials';
 
 export const HF_TOKEN_QUERY_KEY = ['huggingface', 'token-status'] as const;
@@ -18,7 +19,7 @@ export function useHuggingFaceTokenStatusQuery() {
     queryFn: async () => {
       const result = await VaultAPI.getHuggingFaceTokenStatus();
       if (!result.ok) {
-        throw new Error(result.error);
+        throw new Error(describeFailure(result));
       }
       return result.data;
     },
@@ -41,7 +42,7 @@ export function useSetHuggingFaceTokenMutation() {
     mutationFn: async (token) => {
       const result = await VaultAPI.setHuggingFaceToken(token);
       if (!result.ok) {
-        throw new Error(result.error);
+        throw new Error(describeFailure(result));
       }
     },
     onSuccess: () => {
@@ -60,7 +61,7 @@ export function useDeleteHuggingFaceTokenMutation() {
     mutationFn: async () => {
       const result = await VaultAPI.deleteHuggingFaceToken();
       if (!result.ok) {
-        throw new Error(result.error);
+        throw new Error(describeFailure(result));
       }
     },
     onSuccess: () => {

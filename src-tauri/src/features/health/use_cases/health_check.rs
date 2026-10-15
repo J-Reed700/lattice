@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::health::HealthCheckUseCase;
+//! use lattice_core::application::use_cases::health::HealthCheckUseCase;
 //!
 //! # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute().await?;
@@ -27,9 +27,9 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::health::dto::HealthCheckResponseDto;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::Result;
 
 /// Health check use case.
 ///
@@ -61,10 +61,10 @@ impl HealthCheckUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::application::use_cases::health::HealthCheckUseCase;
+    /// use lattice_core::application::use_cases::health::HealthCheckUseCase;
     /// # use std::sync::Arc;
     /// # use sqlx::SqlitePool;
-    /// # use lattice::application::ports::{EmbeddingPort, LLMPort};
+    /// # use lattice_core::application::ports::{EmbeddingPort, LLMPort};
     ///
     /// # async fn example(
     /// #     pool: SqlitePool,
@@ -101,7 +101,7 @@ impl HealthCheckUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::health::HealthCheckUseCase;
+    /// # use lattice_core::application::use_cases::health::HealthCheckUseCase;
     /// # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let response = use_case.execute().await?;
     ///
@@ -193,8 +193,8 @@ impl HealthCheckUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use async_trait::async_trait;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
     struct MockEmbedder {
         is_ready: bool,

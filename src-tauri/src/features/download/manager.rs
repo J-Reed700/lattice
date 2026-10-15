@@ -17,7 +17,7 @@
 //! - [`operations`] — the `DownloadManager` implementation callers drive.
 //!
 //! Domain types (`DownloadSession`, `DownloadError`, …) live in
-//! `crate::domain::download`; UI-facing events live in
+//! `lattice_core::domain::download`; UI-facing events live in
 //! `crate::features::download::events`.
 
 mod operations;

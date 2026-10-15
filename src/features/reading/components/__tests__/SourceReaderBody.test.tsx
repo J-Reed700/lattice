@@ -3,12 +3,15 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
+import { useWebPageSnapshotStore } from '@/features/reading/snapshot/webPageSnapshotStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
 const mocks = vi.hoisted(() => ({
   getFilePathById: vi.fn(),
   readFileContent: vi.fn(),
+  getWebPageSnapshot: vi.fn(),
+  activeConversationId: null as string | null,
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -19,7 +22,7 @@ vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) =>
     selector({
-      activeConversationId: null,
+      activeConversationId: mocks.activeConversationId,
       conversations: [],
       spaces: [],
       selectedSpaceId: null,
@@ -33,6 +36,14 @@ vi.mock('@/features/reading', () => ({
 }));
 vi.mock('@/features/reading/components/ContentViewer/renderers/HTMLViewer', () => ({ HTMLViewer: () => null }));
 vi.mock('@/features/reading/components/WebArticleView', () => ({ WebArticleView: () => null }));
+vi.mock('@/features/reading/snapshot/api', () => ({
+  getWebPageSnapshot: mocks.getWebPageSnapshot,
+  captureWebPageSnapshot: vi.fn(),
+  listWebPageSnapshots: vi.fn(),
+}));
+vi.mock('@/features/reading/snapshot/WebPageSnapshotView', () => ({
+  WebPageSnapshotView: ({ toggle }: { toggle?: React.ReactNode }) => <div data-testid="page-view">{toggle}</div>,
+}));
 vi.mock('@/features/reading/components/CitationRail', () => ({ CitationRail: () => null }));
 vi.mock('@/features/reading/components/JournalCapturePreview', () => ({ JournalCapturePreview: () => null }));
 vi.mock('@/features/reading/components/viewers/AudioViewer', () => ({
@@ -78,6 +89,9 @@ function renderBody(currentSource: SourceWithMetadata) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.activeConversationId = null;
+  mocks.getWebPageSnapshot.mockResolvedValue(null);
+  useWebPageSnapshotStore.setState({ mode: null });
   mocks.getFilePathById.mockImplementation(async (documentId: string) => ({
     ok: true,
     data: documentId.startsWith('223e') ? '/vault/current/second.txt' : '/vault/current/notes.txt',
@@ -202,5 +216,49 @@ describe('SourceReaderBody minimize affordance', () => {
     await screen.findByText('Full file at its current path');
 
     expect(screen.queryByRole('button', { name: 'Minimize reader' })).toBeNull();
+  });
+});
+
+describe('SourceReaderBody Reader | Page toggle', () => {
+  const webSource = () =>
+    source({
+      documentId: 'web:https%3A%2F%2Fexample.com%2Fstory',
+      fileName: 'Example story',
+      filePath: 'https://example.com/story',
+      mimeType: 'text/html',
+      category: 'web',
+    });
+
+  it('shows the toggle for a web citation, on Reader when there is no frozen copy', async () => {
+    mocks.activeConversationId = 'conv-1';
+    renderBody(webSource());
+
+    const reader = await screen.findByRole('tab', { name: 'Reader' });
+    expect(screen.getByRole('tablist')).toBeTruthy();
+    expect(reader.getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByTestId('page-view')).toBeNull();
+    expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('conv-1', 'https://example.com/story');
+  });
+
+  it('opens on Page when a ready frozen copy exists, and keeps the choice made', async () => {
+    mocks.activeConversationId = 'conv-1';
+    mocks.getWebPageSnapshot.mockResolvedValue({ id: 'snap-1', status: 'ready' });
+    renderBody(webSource());
+
+    expect(await screen.findByTestId('page-view')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Page' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Reader' }));
+    expect(screen.queryByTestId('page-view')).toBeNull();
+    expect(useWebPageSnapshotStore.getState().mode).toBe('reader');
+  });
+
+  it('leaves the toggle out for a local file', async () => {
+    mocks.activeConversationId = 'conv-1';
+    renderBody(source());
+    await screen.findByText('Full file at its current path');
+
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(mocks.getWebPageSnapshot).not.toHaveBeenCalled();
   });
 });

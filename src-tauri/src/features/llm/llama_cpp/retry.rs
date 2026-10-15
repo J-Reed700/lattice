@@ -26,9 +26,9 @@ pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 /// why short prompts are not given the full batch.
 pub(super) fn prefill_allowance(messages: &[Value]) -> Duration {
     let chars: usize = messages.iter().map(|m| m.to_string().chars().count()).sum();
-    let tokens = crate::application::ports::llm_port::tokens_for_chars(
+    let tokens = lattice_core::application::ports::llm_port::tokens_for_chars(
         chars,
-        crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
     )
     .min(PREFILL_BATCH_TOKENS);
     FIRST_FRAME_FLOOR + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
@@ -217,7 +217,7 @@ impl LlamaCppLlm {
                 Failure::Permanent(error)
             }
         })?;
-        let response = read_stream(
+        let (response, timings) = read_stream(
             response.bytes_stream(),
             Patience {
                 first_frame,
@@ -229,6 +229,7 @@ impl LlamaCppLlm {
             emitted,
         )
         .await?;
+        log_served(body, timings);
         // The same request would hit the same limit again; retrying only
         // spends the budget several times over.
         if response.finish_reason == "length" && response.text.trim().is_empty() {
@@ -257,6 +258,38 @@ pub(super) struct Patience {
     pub stall: Duration,
 }
 
+/// One line per answered request: how much of the prompt the server reused
+/// from its cache, how much it evaluated, and how fast it generated. This is
+/// the measurement for keeping a conversation's prefix byte-stable; a server
+/// that reports no timings logs nothing.
+fn log_served(body: &Value, timings: Option<streaming::ServerTimings>) {
+    let Some(timings) = timings else { return };
+    let prompt_tokens = timings.cached_prompt_tokens + timings.evaluated_prompt_tokens;
+    // Read before the macro: its expansion brings tracing's own `Value` into scope.
+    let tool_choice = body.get("tool_choice").and_then(Value::as_str);
+    let thinking = body
+        .pointer("/chat_template_kwargs/enable_thinking")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let slot = body.get("id_slot").and_then(Value::as_u64);
+    tracing::info!(
+        cached_prompt_tokens = timings.cached_prompt_tokens,
+        evaluated_prompt_tokens = timings.evaluated_prompt_tokens,
+        cached_share = format!(
+            "{:.2}",
+            timings.cached_prompt_tokens as f64 / prompt_tokens.max(1) as f64
+        ),
+        prompt_ms = timings.prompt_ms.round() as u64,
+        generated_tokens = timings.generated_tokens,
+        tokens_per_second = format!("{:.1}", timings.generated_per_second),
+        tools = body.get("tools").is_some(),
+        tool_choice = tool_choice.unwrap_or("auto"),
+        thinking,
+        slot,
+        "llama.cpp request served"
+    );
+}
+
 fn silent(wait: Duration) -> Failure {
     Failure::Permanent(AppError::ServiceNotAvailable(format!(
         "llama-server sent nothing for {}s before starting its answer",
@@ -278,7 +311,7 @@ pub(super) async fn read_stream<S, B, E>(
     on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
     on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
     emitted: &mut bool,
-) -> std::result::Result<CompletionResponse, Failure>
+) -> std::result::Result<(CompletionResponse, Option<streaming::ServerTimings>), Failure>
 where
     S: futures::Stream<Item = std::result::Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
@@ -337,5 +370,7 @@ where
     decoder
         .finish()
         .map_err(|error| Failure::Retry(error, None))?;
-    decoder.into_response().map_err(Failure::Permanent)
+    let timings = decoder.timings();
+    let response = decoder.into_response().map_err(Failure::Permanent)?;
+    Ok((response, timings))
 }

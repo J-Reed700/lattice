@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
+pub use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackAccessRequestDto {

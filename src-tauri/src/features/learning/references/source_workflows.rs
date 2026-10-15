@@ -1,11 +1,11 @@
 //! Web-source ingestion workflow. The command supplies the guarded fetch operation.
-use crate::features::function_calling::dto::FetchUrlContentOutput;
 use crate::features::learning::dto::{
     AddLearningWebSourceRequestDto, LearningSourceKind, LearningSourceWorkspaceDto,
 };
 use crate::features::learning::source_identity::{source_request_hash, validate_source_ids};
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use crate::shared::error::Result;
+use lattice_core::application::contracts::web::FetchUrlContentOutput;
+use lattice_core::shared::error::Result;
 
 pub async fn add_web_source<F, Fetch>(
     repository: &LearningSourceLibraryRepository,
@@ -23,17 +23,17 @@ where
         &request.operation_id,
     )?;
     let url = url::Url::parse(&request.url).map_err(|_| {
-        crate::shared::error::AppError::InvalidInput(
+        lattice_core::shared::error::AppError::InvalidInput(
             "Source URL must be a valid HTTP or HTTPS address.".into(),
         )
     })?;
     if request.url.chars().count() > 2048 {
-        return Err(crate::shared::error::AppError::InvalidInput(
+        return Err(lattice_core::shared::error::AppError::InvalidInput(
             "Source URL must not exceed 2048 characters.".into(),
         ));
     }
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(crate::shared::error::AppError::InvalidInput(
+        return Err(lattice_core::shared::error::AppError::InvalidInput(
             "Source URL must use HTTP or HTTPS.".into(),
         ));
     }
@@ -63,7 +63,7 @@ where
         .is_empty()
         || article.content.trim().is_empty()
     {
-        return Err(crate::shared::error::AppError::InvalidInput(
+        return Err(lattice_core::shared::error::AppError::InvalidInput(
             "The page did not contain usable article text.".into(),
         ));
     }
@@ -78,15 +78,17 @@ where
             .into(),
     };
     repo.add(
-        &request.operation_id,
-        &request.source_id,
-        &request.version_id,
-        &request.program_id,
-        LearningSourceKind::Web,
-        "add_web",
-        requested_url,
-        Some(requested_url),
-        request.freshness_policy,
+        crate::features::learning::source_library::NewLearningSource {
+            operation_id: &request.operation_id,
+            source_id: &request.source_id,
+            version_id: &request.version_id,
+            program_id: &request.program_id,
+            kind: LearningSourceKind::Web,
+            operation_kind: "add_web",
+            origin: requested_url,
+            requested_url: Some(requested_url),
+            freshness: request.freshness_policy,
+        },
         captured,
         hash,
     )

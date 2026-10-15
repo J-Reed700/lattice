@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::indexing::index_directory::IndexDirectoryUseCase;
-//! use lattice::application::dtos::indexing_dto::{IndexDirectoryRequestDto, ChunkingStrategyDto};
+//! use lattice_core::application::use_cases::indexing::index_directory::IndexDirectoryUseCase;
+//! use lattice_core::application::dtos::indexing_dto::{IndexDirectoryRequestDto, ChunkingStrategyDto};
 //!
 //! # async fn example(use_case: IndexDirectoryUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IndexDirectoryRequestDto {
@@ -37,7 +37,7 @@ use crate::features::indexing::dto::{
 };
 use crate::features::indexing::engine::IndexingState;
 use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Index directory use case.
 ///

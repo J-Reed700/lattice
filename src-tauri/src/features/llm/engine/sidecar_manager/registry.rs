@@ -62,6 +62,18 @@ pub struct SidecarRegistry {
     /// roles are using it.
     pub(super) shared: SharedProcesses<SidecarConfig, SidecarHandle>,
 
+    /// Ports reserved for this app's sidecars, so two concurrent spawns are
+    /// never handed the same number.
+    pub(super) ports: Arc<ReservedPorts>,
+
+    /// What `--version` said about each bundled build, so a model load does
+    /// not run the preflight again within its TTL.
+    pub(super) preflight: PreflightCache,
+
+    /// The id the next registered child gets; ids only need to be unique
+    /// within this registry, which is where their owners release them.
+    next_id: AtomicU64,
+
     /// Windows Job Object (no-op on other platforms). Sidecar PIDs
     /// get assigned to this object on spawn so Windows kernel kills
     /// them automatically when our process handle closes — even on
@@ -113,6 +125,9 @@ impl SidecarRegistry {
                 closed: false,
             }),
             shared: SharedProcesses::new(),
+            ports: Arc::default(),
+            preflight: PreflightCache::new(),
+            next_id: AtomicU64::new(1),
             #[cfg(windows)]
             job: SyncMutex::new(job),
         }
@@ -132,8 +147,7 @@ impl SidecarRegistry {
         child: &Arc<SyncMutex<Option<CommandChild>>>,
         endpoint: &str,
     ) -> Option<u64> {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         let admitted = self.with_open_entries(|entries| {
             // Admission and insertion share the state lock with `kill_all`.
@@ -294,7 +308,8 @@ pub(super) struct JobObjectGuard {
 
 #[cfg(windows)]
 impl JobObjectGuard {
-    pub(super) fn create() -> Result<Self, String> {
+    pub(super) fn create() -> lattice_core::shared::error::Result<Self> {
+        use lattice_core::shared::error::AppError;
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::JobObjects::{
             CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
@@ -310,10 +325,12 @@ impl JobObjectGuard {
         // the FFI boundary.
         #[allow(unsafe_code)]
         let handle: HANDLE = unsafe { CreateJobObjectW(None, windows::core::PCWSTR::null()) }
-            .map_err(|e| format!("CreateJobObjectW failed: {e}"))?;
+            .map_err(|e| AppError::InternalError(format!("CreateJobObjectW failed: {e}")))?;
 
         if handle.is_invalid() {
-            return Err("CreateJobObjectW returned invalid handle".to_string());
+            return Err(AppError::InternalError(
+                "CreateJobObjectW returned invalid handle".to_string(),
+            ));
         }
 
         // Configure: kill all child processes when the job handle
@@ -349,13 +366,16 @@ impl JobObjectGuard {
             unsafe {
                 let _ = windows::Win32::Foundation::CloseHandle(handle);
             }
-            return Err(format!("SetInformationJobObject failed: {err}"));
+            return Err(AppError::InternalError(format!(
+                "SetInformationJobObject failed: {err}"
+            )));
         }
 
         Ok(Self { handle })
     }
 
-    pub(super) fn assign_pid(&self, pid: u32) -> Result<(), String> {
+    pub(super) fn assign_pid(&self, pid: u32) -> lattice_core::shared::error::Result<()> {
+        use lattice_core::shared::error::AppError;
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::JobObjects::AssignProcessToJobObject;
         use windows::Win32::System::Threading::{
@@ -370,8 +390,9 @@ impl JobObjectGuard {
         // (we spawned it).
         #[allow(unsafe_code)]
         let child_handle =
-            unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid) }
-                .map_err(|e| format!("OpenProcess(pid={pid}) failed: {e}"))?;
+            unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid) }.map_err(
+                |e| AppError::InternalError(format!("OpenProcess(pid={pid}) failed: {e}")),
+            )?;
 
         // SAFETY: Both handles are valid — we created `self.handle`
         // in `create()` and just opened `child_handle`.
@@ -386,7 +407,9 @@ impl JobObjectGuard {
             let _ = CloseHandle(child_handle);
         }
 
-        assign_result.map_err(|e| format!("AssignProcessToJobObject(pid={pid}) failed: {e}"))?;
+        assign_result.map_err(|e| {
+            AppError::InternalError(format!("AssignProcessToJobObject(pid={pid}) failed: {e}"))
+        })?;
         Ok(())
     }
 }

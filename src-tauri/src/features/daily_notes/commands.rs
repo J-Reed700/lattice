@@ -1,10 +1,9 @@
+use super::ports::{LinkedConversationArchive, NoteProjection};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
-use crate::features::conversation::repository::ConversationRepository;
 use crate::features::qa::dto::SourceDto;
-use crate::features::vault::writeback;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
-use crate::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use uuid::Uuid;
 
 pub(super) use super::dto::row_to_dto;
@@ -16,12 +15,7 @@ async fn get_note_by_id(
     repository: &DailyNotesRepository,
     note_id: &str,
 ) -> Result<WorkspaceNoteDto> {
-    hydrate_workspace_note(
-        repository,
-        &ConversationRepository::new(container.db_pool().clone()),
-        repository.get(note_id).await?,
-    )
-    .await
+    hydrate_workspace_note(repository, container, repository.get(note_id).await?).await
 }
 
 pub async fn list_workspace_notes_impl(
@@ -34,10 +28,9 @@ pub async fn list_workspace_notes_impl(
         None => repository.list().await?,
     };
 
-    let conversations = ConversationRepository::new(container.db_pool().clone());
     let mut notes = Vec::with_capacity(rows.len());
     for row in rows {
-        notes.push(hydrate_workspace_note(&repository, &conversations, row).await?);
+        notes.push(hydrate_workspace_note(&repository, container, row).await?);
     }
     Ok(notes)
 }
@@ -78,7 +71,7 @@ pub async fn create_workspace_note_impl(
     let note = get_note_by_id(container, &repository, &note_id).await?;
     // Vault writeback: fire-and-forget. Failures log but never block
     // the SQL commit; the database is still the canonical write.
-    writeback::spawn_sync_workspace_note(container);
+    container.note_saved();
     Ok(note)
 }
 
@@ -88,7 +81,7 @@ pub async fn update_workspace_note_impl(
 ) -> Result<WorkspaceNoteDto> {
     let note_id = note.id.clone();
     enrich_sources_from_linked_conversations(
-        &ConversationRepository::new(container.db_pool().clone()),
+        container,
         &note.linked_conversation_ids,
         &mut note.sources,
     )
@@ -115,7 +108,7 @@ pub async fn update_workspace_note_impl(
         .await?;
 
     let updated = row_to_dto(saved)?;
-    writeback::spawn_sync_workspace_note(container);
+    container.note_saved();
     Ok(updated)
 }
 
@@ -123,7 +116,7 @@ pub async fn update_workspace_note_impl(
 /// explicitly linked conversations while their archive is available, but do
 /// not guess if linked conversations saved different versions of the URL.
 async fn enrich_sources_from_linked_conversations(
-    repository: &ConversationRepository,
+    archive: &dyn LinkedConversationArchive,
     conversation_ids: &[String],
     sources: &mut [SourceDto],
 ) -> bool {
@@ -148,10 +141,7 @@ async fn enrich_sources_from_linked_conversations(
         let mut snapshots = Vec::with_capacity(conversation_ids.len());
         let mut every_link_has_snapshot = true;
         for conversation_id in conversation_ids {
-            match repository
-                .conversation_web_source_snapshot(conversation_id.clone(), url.to_string())
-                .await
-            {
+            match archive.archived_web_page(conversation_id, url).await {
                 Ok(Some(snapshot)) => snapshots.push(snapshot),
                 // Without a snapshot in every linked chat, we cannot know
                 // which archived version this old citation came from.
@@ -189,7 +179,7 @@ async fn enrich_sources_from_linked_conversations(
 
 pub(crate) async fn hydrate_workspace_note(
     repository: &DailyNotesRepository,
-    conversations: &ConversationRepository,
+    archive: &dyn LinkedConversationArchive,
     mut row: WorkspaceNoteRecord,
 ) -> Result<WorkspaceNoteDto> {
     // Retry a few times if an edit races hydration. Each persistence attempt
@@ -199,7 +189,7 @@ pub(crate) async fn hydrate_workspace_note(
         let mut note = row_to_dto(row.clone())?;
         let mut sources = note.sources.clone();
         if !enrich_sources_from_linked_conversations(
-            conversations,
+            archive,
             &note.linked_conversation_ids,
             &mut sources,
         )
@@ -231,7 +221,7 @@ pub async fn delete_workspace_note_impl(
     // Remove the mirrored markdown too. Without this the file outlives its
     // row, and the next vault rescan sees a file with no matching row, treats
     // it as an external addition, and re-imports the note the user deleted.
-    writeback::spawn_delete_workspace_note(container);
+    container.note_deleted();
 
     Ok(())
 }
@@ -293,7 +283,7 @@ pub async fn quick_capture_impl(
             conversation_ids.unwrap_or_default(),
         )
         .await?;
-    writeback::spawn_sync_workspace_note(container);
+    container.note_saved();
     Ok(result)
 }
 
@@ -304,7 +294,7 @@ pub async fn capture_reference_impl(
     let result = DailyNotesRepository::new(container.db_pool().clone())
         .capture_reference(request)
         .await?;
-    writeback::spawn_sync_workspace_note(container);
+    container.note_saved();
     Ok(result)
 }
 
@@ -360,7 +350,7 @@ pub async fn update_daily_note_content_impl(
     // Daily notes share the same `daily_notes_workspace` table as
     // workspace notes — backend-side they're the same entity. Reuse the
     // workspace writeback path so vault export is consistent.
-    writeback::spawn_sync_workspace_note(container);
+    container.note_saved();
     Ok(())
 }
 

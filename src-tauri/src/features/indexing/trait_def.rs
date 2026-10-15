@@ -89,17 +89,17 @@ pub trait IndexStorageTrait: Send + Sync {
     async fn chunk_ids_in_order(
         &self,
         document_id: &str,
-    ) -> crate::shared::error::Result<Vec<String>>;
+    ) -> lattice_core::shared::error::Result<Vec<String>>;
 
     /// Store document with contextualized chunks.
     async fn store_document_with_context_for_model(
         &self,
         path: &std::path::Path,
         mime_type: &str,
-        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
+        chunks: Vec<lattice_core::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
         _model_identity: &str,
-    ) -> crate::shared::error::Result<String> {
+    ) -> lattice_core::shared::error::Result<String> {
         self.store_document_with_context(path, mime_type, chunks, embeddings)
             .await
     }
@@ -108,7 +108,7 @@ pub trait IndexStorageTrait: Send + Sync {
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
+        chunks: Vec<lattice_core::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> crate::features::indexing::engine::error::Result<String>;
 
@@ -118,7 +118,7 @@ pub trait IndexStorageTrait: Send + Sync {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
+        chunks: Vec<lattice_core::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> crate::features::indexing::engine::error::Result<String>;
 }

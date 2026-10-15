@@ -87,7 +87,7 @@ check_matches() {
     # Repository-barrier checks apply to production code. In this codebase,
     # cfg(test) modules are terminal sections of their source files.
     awk '/^[[:space:]]*#\[cfg\(test\)\]/{exit} {print}' "$file" |
-      rg -n "$pattern" || true
+      grep -nE "$pattern" || true
   )
 }
 

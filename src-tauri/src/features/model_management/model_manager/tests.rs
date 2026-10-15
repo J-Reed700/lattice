@@ -16,7 +16,8 @@
 
 use super::{DownloadProgress, ModelManager};
 use crate::infrastructure::services::traits::ModelManagerTrait;
-use crate::shared::error::AppError;
+use lattice_core::shared::constants::RERANKER_MODEL_DIR;
+use lattice_core::shared::error::AppError;
 use mockito;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -441,7 +442,7 @@ async fn test_is_reranker_ready() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let manager = create_test_manager(&temp_dir);
 
-    fs::create_dir_all(temp_dir.path().join("reranker"))
+    fs::create_dir_all(temp_dir.path().join(RERANKER_MODEL_DIR))
         .await
         .expect("Failed to create reranker dir");
     fs::write(manager.get_reranker_path(), b"model")
@@ -450,9 +451,12 @@ async fn test_is_reranker_ready() {
     fs::write(manager.get_reranker_tokenizer_path(), b"tokenizer")
         .await
         .expect("Failed to write tokenizer");
-    fs::write(temp_dir.path().join("reranker/config.json"), b"{}")
-        .await
-        .expect("Failed to write config");
+    fs::write(
+        temp_dir.path().join(RERANKER_MODEL_DIR).join("config.json"),
+        b"{}",
+    )
+    .await
+    .expect("Failed to write config");
 
     let is_ready = manager.is_reranker_ready().await;
 
@@ -469,11 +473,17 @@ async fn test_get_reranker_paths() {
 
     assert_eq!(
         model_path,
-        temp_dir.path().join("reranker/model.safetensors")
+        temp_dir
+            .path()
+            .join(RERANKER_MODEL_DIR)
+            .join("model.safetensors")
     );
     assert_eq!(
         tokenizer_path,
-        temp_dir.path().join("reranker/tokenizer.json")
+        temp_dir
+            .path()
+            .join(RERANKER_MODEL_DIR)
+            .join("tokenizer.json")
     );
 }
 

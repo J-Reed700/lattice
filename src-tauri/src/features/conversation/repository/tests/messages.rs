@@ -1,8 +1,8 @@
 //! Appending and reading messages.
 
 use super::*;
-use crate::domain::conversation::MessageRole;
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::domain::conversation::MessageRole;
 
 #[tokio::test]
 async fn test_add_message() {

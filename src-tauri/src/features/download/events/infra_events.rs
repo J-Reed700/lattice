@@ -1,8 +1,13 @@
-use crate::domain::download::snapshot::{BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot};
+use lattice_core::domain::download::snapshot::{
+    BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, RwLock};
+
+mod snapshots;
 
 const RECONCILIATION_BATCH_SIZE: usize = 64;
 const RECONCILIATION_ACTIVE_POLL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -55,23 +60,23 @@ impl DownloadEventEmitter {
         Self { app_handle }
     }
 
-    pub async fn emit(&self, event: DownloadEvent) -> Result<(), String> {
+    pub async fn emit(&self, event: DownloadEvent) -> Result<()> {
         self.app_handle
             .emit("download:progress", event)
-            .map_err(|e| format!("Failed to emit event: {}", e))
+            .map_err(|e| AppError::InternalError(format!("Failed to emit event: {}", e)))
     }
 
-    pub async fn emit_batch(&self, events: Vec<DownloadEvent>) -> Result<(), String> {
+    pub async fn emit_batch(&self, events: Vec<DownloadEvent>) -> Result<()> {
         for event in events {
             self.emit(event).await?;
         }
         Ok(())
     }
 
-    pub async fn emit_failed(&self, event: DownloadFailedEvent) -> Result<(), String> {
+    pub async fn emit_failed(&self, event: DownloadFailedEvent) -> Result<()> {
         self.app_handle
             .emit("download:failed", event)
-            .map_err(|e| format!("Failed to emit failed event: {}", e))
+            .map_err(|e| AppError::InternalError(format!("Failed to emit failed event: {}", e)))
     }
 }
 
@@ -199,7 +204,7 @@ impl DownloadEventBridge {
                             }
                             let delay = reconciliation_poll_delay(sessions.len(), false);
                             for session in sessions {
-                                use crate::domain::download::DownloadState;
+                                use lattice_core::domain::download::DownloadState;
                                 use crate::features::download::manager::DownloadEvent as ManagerEvent;
 
                                 let event = match session.state() {
@@ -361,7 +366,7 @@ impl DownloadEventBridge {
     async fn publish_domain_event(
         &self,
         manager_event: &crate::features::download::manager::DownloadEvent,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         use crate::features::download::events::model_download_events::{
             FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadStartedEvent,
             ModelDownloadEvent,
@@ -391,11 +396,12 @@ impl DownloadEventBridge {
             ME::Progress { .. } | ME::Paused { .. } | ME::Resumed { .. } => return Ok(()),
         };
 
-        let Some(session) = self
-            .repository
-            .get(session_id)
-            .await
-            .map_err(|e| format!("Failed to load download session {}: {}", session_id, e))?
+        let Some(session) = self.repository.get(session_id).await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to load download session {}: {}",
+                session_id, e
+            ))
+        })?
         else {
             return Ok(());
         };
@@ -495,453 +501,12 @@ impl DownloadEventBridge {
             }
         }
     }
-
-    /// Check if a download session is part of a multi-file batch
-    /// Returns Some(model_id) if session belongs to a batch with >1 files
-    async fn is_batch_download(&self, session_id: &str) -> Result<Option<String>, String> {
-        let session = self
-            .repository
-            .get(session_id)
-            .await
-            .map_err(|e| format!("Failed to fetch session: {}", e))?
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
-
-        if let Some(model_id) = session.model_id() {
-            // Query repository for all sessions with this model_id
-            let all_sessions = self
-                .repository
-                .list()
-                .await
-                .map_err(|e| format!("Failed to list sessions: {}", e))?;
-
-            let model_sessions: Vec<_> = all_sessions
-                .iter()
-                .filter(|s| s.model_id() == Some(model_id))
-                .collect();
-
-            // If multiple sessions share this model_id, it's a batch
-            if model_sessions.len() > 1 {
-                return Ok(Some(model_id.to_string()));
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Create batch snapshot by aggregating all files in a model download
-    async fn create_batch_snapshot(
-        &self,
-        model_id: &str,
-    ) -> Result<crate::domain::download::snapshot::BatchSnapshot, String> {
-        use crate::domain::download::snapshot::{
-            BatchSnapshot, DownloadStatus, FileSnapshot, FileStatus,
-        };
-
-        let all_sessions = self
-            .repository
-            .list()
-            .await
-            .map_err(|e| format!("Failed to list sessions: {}", e))?;
-
-        let model_sessions: Vec<_> = all_sessions
-            .into_iter()
-            .filter(|s| s.model_id() == Some(model_id))
-            .collect();
-
-        if model_sessions.is_empty() {
-            return Err(format!("No sessions found for model {}", model_id));
-        }
-
-        let model_name = model_sessions
-            .first()
-            .and_then(|s| s.model_name())
-            .unwrap_or("Unknown Model")
-            .to_string();
-
-        let mut files = Vec::new();
-        let mut aggregate_bytes_downloaded = 0u64;
-        let mut aggregate_total_bytes = 0u64;
-        let mut aggregate_bytes_per_second = 0.0;
-        let mut completed_files = 0usize;
-        let mut overall_status = DownloadStatus::Downloading;
-
-        for session in &model_sessions {
-            // The path inside the model, not the bare file name: a sentence-
-            // transformers model has a `config.json` and a `1_Pooling/config.json`,
-            // and the frontend keys a row by this.
-            let filename = session
-                .model_file_name()
-                .or_else(|| session.destination().file_name().and_then(|n| n.to_str()))
-                .unwrap_or("unknown")
-                .to_string();
-
-            let file_status = match session.state() {
-                crate::domain::download::DownloadState::Pending => FileStatus::Pending,
-                crate::domain::download::DownloadState::Downloading => FileStatus::Downloading,
-                crate::domain::download::DownloadState::Completed => {
-                    completed_files += 1;
-                    FileStatus::Completed
-                }
-                crate::domain::download::DownloadState::Failed => FileStatus::Error,
-                crate::domain::download::DownloadState::Cancelled => FileStatus::Error,
-                crate::domain::download::DownloadState::Paused => FileStatus::Pending,
-            };
-
-            files.push(FileSnapshot {
-                id: session.id().to_string(),
-                filename,
-                bytes_downloaded: session.progress().bytes_downloaded(),
-                total_bytes: session.progress().total_bytes().unwrap_or(0),
-                status: file_status,
-            });
-
-            aggregate_bytes_downloaded += session.progress().bytes_downloaded();
-            aggregate_total_bytes += session.progress().total_bytes().unwrap_or(0);
-            aggregate_bytes_per_second += session.progress().bytes_per_second();
-        }
-
-        // Determine overall status
-        if completed_files == model_sessions.len() && !model_sessions.is_empty() {
-            overall_status = DownloadStatus::Completed;
-        } else if model_sessions
-            .iter()
-            .any(|s| s.state() == &crate::domain::download::DownloadState::Failed)
-        {
-            overall_status = DownloadStatus::Error;
-        } else if model_sessions
-            .iter()
-            .any(|s| s.state() == &crate::domain::download::DownloadState::Paused)
-        {
-            overall_status = DownloadStatus::Paused;
-        }
-
-        let aggregate_percentage = if aggregate_total_bytes > 0 {
-            (aggregate_bytes_downloaded as f64 / aggregate_total_bytes as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        let aggregate_eta_seconds = if aggregate_bytes_per_second > 0.0
-            && aggregate_total_bytes > aggregate_bytes_downloaded
-        {
-            Some(
-                ((aggregate_total_bytes - aggregate_bytes_downloaded) as f64
-                    / aggregate_bytes_per_second) as u64,
-            )
-        } else {
-            None
-        };
-
-        Ok(BatchSnapshot {
-            id: model_id.to_string(),
-            group_name: model_name,
-            files,
-            total_files: model_sessions.len() as u32,
-            completed_files: completed_files as u32,
-            aggregate_bytes_downloaded,
-            aggregate_total_bytes,
-            aggregate_bytes_per_second: aggregate_bytes_per_second as u64,
-            aggregate_percentage,
-            aggregate_eta_seconds,
-            status: overall_status,
-        })
-    }
-
-    async fn convert_event(
-        &self,
-        event: crate::features::download::manager::DownloadEvent,
-    ) -> Result<DownloadEvent, String> {
-        use crate::domain::download::snapshot::{DownloadStatus, SingleFileSnapshot};
-        use crate::features::download::manager::DownloadEvent as ME;
-
-        match event {
-            ME::Started { id } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded: 0,
-                    total_bytes: session.progress().total_bytes(),
-                    bytes_per_second: 0,
-                    percentage: Some(0.0),
-                    eta_seconds: None,
-                    status: DownloadStatus::Pending,
-                }))
-            }
-            ME::Progress {
-                id,
-                bytes_downloaded,
-                bytes_per_second,
-            } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                let total_bytes = session.progress().total_bytes();
-                let (percentage, eta_seconds) = if let Some(total) = total_bytes {
-                    let pct = if total > 0 {
-                        Some((bytes_downloaded as f64 / total as f64) * 100.0)
-                    } else {
-                        None
-                    };
-                    let eta = if bytes_per_second > 0.0 && total > bytes_downloaded {
-                        Some(((total - bytes_downloaded) as f64 / bytes_per_second) as u64)
-                    } else {
-                        None
-                    };
-                    (pct, eta)
-                } else {
-                    (None, None)
-                };
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded,
-                    total_bytes,
-                    bytes_per_second: bytes_per_second as u64,
-                    percentage,
-                    eta_seconds,
-                    status: DownloadStatus::Downloading,
-                }))
-            }
-            ME::Paused { id } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                let bytes_downloaded = session.progress().bytes_downloaded();
-                let total_bytes = session.progress().total_bytes();
-                let percentage = if let Some(total) = total_bytes {
-                    if total > 0 {
-                        Some((bytes_downloaded as f64 / total as f64) * 100.0)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded,
-                    total_bytes,
-                    bytes_per_second: 0,
-                    percentage,
-                    eta_seconds: None,
-                    status: DownloadStatus::Paused,
-                }))
-            }
-            ME::Resumed { id } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                let bytes_downloaded = session.progress().bytes_downloaded();
-                let total_bytes = session.progress().total_bytes();
-                let percentage = if let Some(total) = total_bytes {
-                    if total > 0 {
-                        Some((bytes_downloaded as f64 / total as f64) * 100.0)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded,
-                    total_bytes,
-                    bytes_per_second: 0,
-                    percentage,
-                    eta_seconds: None,
-                    status: DownloadStatus::Downloading,
-                }))
-            }
-            ME::Completed { id } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                let total_bytes = session.progress().total_bytes();
-                let percentage = if total_bytes.is_some() {
-                    Some(100.0)
-                } else {
-                    None
-                };
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded: total_bytes.unwrap_or(0),
-                    total_bytes,
-                    bytes_per_second: 0,
-                    percentage,
-                    eta_seconds: None,
-                    status: DownloadStatus::Completed,
-                }))
-            }
-            ME::Failed { id, error: _ } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                let bytes_downloaded = session.progress().bytes_downloaded();
-                let total_bytes = session.progress().total_bytes();
-                let percentage = if let Some(total) = total_bytes {
-                    if total > 0 {
-                        Some((bytes_downloaded as f64 / total as f64) * 100.0)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded,
-                    total_bytes,
-                    bytes_per_second: 0,
-                    percentage,
-                    eta_seconds: None,
-                    status: DownloadStatus::Error,
-                }))
-            }
-            ME::Cancelled { id } => {
-                let session = self
-                    .repository
-                    .get(&id)
-                    .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
-
-                if let Some(model_id) = self.is_batch_download(&id).await? {
-                    let batch = self.create_batch_snapshot(&model_id).await?;
-                    return Ok(DownloadEvent::from_batch(batch));
-                }
-
-                let bytes_downloaded = session.progress().bytes_downloaded();
-                let total_bytes = session.progress().total_bytes();
-                let percentage = if let Some(total) = total_bytes {
-                    if total > 0 {
-                        Some((bytes_downloaded as f64 / total as f64) * 100.0)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                Ok(DownloadEvent::from_single(SingleFileSnapshot {
-                    id,
-                    filename: session
-                        .destination()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    bytes_downloaded,
-                    total_bytes,
-                    bytes_per_second: 0,
-                    percentage,
-                    eta_seconds: None,
-                    status: DownloadStatus::Cancelled,
-                }))
-            }
-        }
-    }
 }
 
 async fn process_queue_after_terminal(
     manager: &dyn crate::features::download::manager::DownloadManager,
     terminal_event: bool,
-) -> Result<(), crate::domain::download::DownloadError> {
+) -> Result<(), lattice_core::domain::download::DownloadError> {
     if terminal_event {
         manager.process_pending_queue().await?;
     }
@@ -957,7 +522,9 @@ fn is_terminal_manager_event(event: &crate::features::download::manager::Downloa
     )
 }
 
-fn model_file_name_for_session(session: &crate::domain::download::DownloadSession) -> String {
+fn model_file_name_for_session(
+    session: &lattice_core::domain::download::DownloadSession,
+) -> String {
     session
         .model_file_name()
         .map(str::to_string)
@@ -972,211 +539,4 @@ fn model_file_name_for_session(session: &crate::domain::download::DownloadSessio
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        is_terminal_manager_event, model_file_name_for_session, process_queue_after_terminal,
-        reconciliation_poll_delay, RECONCILIATION_ACTIVE_POLL, RECONCILIATION_BATCH_SIZE,
-        RECONCILIATION_IDLE_POLL,
-    };
-    use crate::domain::download::DownloadSession;
-    use crate::features::download::download_repository::mock::MockDownloadRepository;
-    use crate::features::download::download_repository::DownloadRepository;
-    use crate::features::download::manager::{
-        DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
-    };
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    struct GatedEngine {
-        first_url: String,
-        first_fails: bool,
-        first_started: tokio::sync::Notify,
-        release_first: tokio::sync::Notify,
-    }
-
-    #[async_trait::async_trait]
-    impl crate::features::download::engine::DownloadEngine for GatedEngine {
-        async fn download(
-            &self,
-            options: crate::features::download::engine::DownloadOptions,
-        ) -> Result<
-            crate::features::download::engine::DownloadResult,
-            crate::domain::download::DownloadError,
-        > {
-            if options.url == self.first_url {
-                self.first_started.notify_one();
-                self.release_first.notified().await;
-                if self.first_fails {
-                    return Err(crate::domain::download::DownloadError::NetworkError(
-                        "test failure".into(),
-                    ));
-                }
-            }
-            Ok(crate::features::download::engine::DownloadResult {
-                bytes_downloaded: 1000,
-                total_bytes: Some(1000),
-                sha256_checksum: "a".repeat(64),
-                elapsed: Duration::from_millis(1),
-            })
-        }
-
-        async fn get_file_size(
-            &self,
-            url: &str,
-        ) -> Result<(Option<u64>, String), crate::domain::download::DownloadError> {
-            Ok((Some(1000), url.to_string()))
-        }
-
-        async fn supports_resume(
-            &self,
-            _url: &str,
-        ) -> Result<bool, crate::domain::download::DownloadError> {
-            Ok(true)
-        }
-    }
-
-    #[test]
-    fn queue_promotion_is_requested_after_terminal_events_only() {
-        use crate::features::download::manager::DownloadEvent;
-        assert!(super::is_terminal_manager_event(
-            &DownloadEvent::Completed { id: "done".into() }
-        ));
-        assert!(super::is_terminal_manager_event(&DownloadEvent::Failed {
-            id: "failed".into(),
-            error: "x".into()
-        }));
-        assert!(super::is_terminal_manager_event(
-            &DownloadEvent::Cancelled {
-                id: "cancelled".into()
-            }
-        ));
-        assert!(!super::is_terminal_manager_event(
-            &DownloadEvent::Progress {
-                id: "active".into(),
-                bytes_downloaded: 1,
-                bytes_per_second: 1.0
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn terminal_failure_and_completion_each_promote_the_next_queued_download() {
-        for first_fails in [false, true] {
-            let dir = tempfile::tempdir().unwrap();
-            let repository = Arc::new(MockDownloadRepository::new());
-            let first_url = if first_fails {
-                "https://example.test/failure"
-            } else {
-                "https://example.test/completion"
-            };
-            let second_url = "https://example.test/queued";
-            let engine = Arc::new(GatedEngine {
-                first_url: first_url.into(),
-                first_fails,
-                first_started: tokio::sync::Notify::new(),
-                release_first: tokio::sync::Notify::new(),
-            });
-            let manager = DownloadManagerService::new(
-                repository.clone(),
-                engine.clone(),
-                dir.path().to_path_buf(),
-            )
-            .with_max_concurrent(1);
-            let mut events = manager.subscribe_to_events().write().await.take().unwrap();
-
-            std::fs::write(dir.path().join("first.bin"), vec![1_u8; 1000]).unwrap();
-            std::fs::write(dir.path().join("queued.bin"), vec![1_u8; 1000]).unwrap();
-
-            let first_id = manager
-                .start_download(DownloadRequest {
-                    url: first_url.into(),
-                    destination: dir.path().join("first.bin"),
-                    checksum: None,
-                    auth_token: None,
-                    model_name: None,
-                    model_id: None,
-                    model_file_name: None,
-                })
-                .await
-                .unwrap();
-            engine.first_started.notified().await;
-            let queued_id = manager
-                .start_download(DownloadRequest {
-                    url: second_url.into(),
-                    destination: dir.path().join("queued.bin"),
-                    checksum: None,
-                    auth_token: None,
-                    model_name: None,
-                    model_id: None,
-                    model_file_name: None,
-                })
-                .await
-                .unwrap();
-            engine.release_first.notify_one();
-
-            let terminal = tokio::time::timeout(Duration::from_secs(5), async {
-                loop {
-                    let event = events.recv().await.expect("manager event channel closed");
-                    let terminal_for_first = matches!(
-                        &event,
-                        DownloadEvent::Completed { id } | DownloadEvent::Failed { id, .. } if id == &first_id
-                    );
-                    if terminal_for_first { break event; }
-                }
-            }).await.expect("first download should finish");
-            process_queue_after_terminal(&manager, is_terminal_manager_event(&terminal))
-                .await
-                .unwrap();
-
-            tokio::time::timeout(Duration::from_secs(5), async {
-                loop {
-                    if repository
-                        .get(&queued_id)
-                        .await
-                        .unwrap()
-                        .is_some_and(|session| {
-                            session.state() != &crate::domain::download::DownloadState::Pending
-                        })
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("terminal event should promote queued download");
-        }
-    }
-
-    #[test]
-    fn session_preserves_manifest_relative_file_name() {
-        let session = DownloadSession::new(
-            "download-id".to_string(),
-            "https://example.test/onnx/model.onnx".to_string(),
-            std::path::PathBuf::from("/home/u/.cache/lattice/models/all-mpnet-base-v2/model.onnx"),
-            Some(42),
-            None,
-        )
-        .expect("session")
-        .with_model_file_name("onnx/model.onnx".to_string());
-
-        assert_eq!(model_file_name_for_session(&session), "onnx/model.onnx");
-    }
-
-    #[test]
-    fn reconciliation_poll_slows_when_idle_or_after_an_error_but_keeps_paging_backlog() {
-        assert_eq!(
-            reconciliation_poll_delay(0, false),
-            RECONCILIATION_IDLE_POLL
-        );
-        assert_eq!(
-            reconciliation_poll_delay(RECONCILIATION_BATCH_SIZE - 1, false),
-            RECONCILIATION_IDLE_POLL
-        );
-        assert_eq!(reconciliation_poll_delay(0, true), RECONCILIATION_IDLE_POLL);
-        assert_eq!(
-            reconciliation_poll_delay(RECONCILIATION_BATCH_SIZE, false),
-            RECONCILIATION_ACTIVE_POLL
-        );
-    }
-}
+mod tests;

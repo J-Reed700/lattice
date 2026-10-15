@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::HashSet;
 
+mod web_fallback;
+
 #[test]
 fn clarify_response_without_recent_document_is_generic() {
     let settings = RouterSettingsDto::default();
@@ -23,6 +25,7 @@ fn retrieval_plan_does_not_short_circuit_clarify_without_recent_document() {
     let flags = SearchFlags {
         force_kb_search: false,
         force_web_search: false,
+        web_fallback: false,
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
@@ -59,12 +62,13 @@ fn followup_with_forced_web_prefers_kb_first_without_external_intent() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
+        web_fallback: false,
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
         closed_book: false,
     };
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "Right, I am talking about a scenario with my company",
         QueryType::Followup,
     );
@@ -78,12 +82,13 @@ fn question_with_forced_web_keeps_web_enabled() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
+        web_fallback: false,
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
         closed_book: false,
     };
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "latest updates?",
         QueryType::Question,
     );
@@ -96,6 +101,7 @@ fn flags(kb: bool, web: bool, wiki: bool, followup: bool) -> SearchFlags {
     SearchFlags {
         force_kb_search: kb,
         force_web_search: web,
+        web_fallback: false,
         force_wiki_search: wiki,
         deep_research_mode: false,
         force_followup_mode: followup,
@@ -137,15 +143,18 @@ fn kb_runs_first_when_external_search_is_its_fallback_or_absent() {
 fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
     // KB retrieval classifies a turn as a follow-up only in follow-up mode, so
     // whenever the pipeline runs KB concurrently, the post-KB gate stays open.
-    for bits in 0u8..16 {
-        let flags = flags(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+    for bits in 0u8..32 {
+        let flags = SearchFlags {
+            web_fallback: bits & 16 != 0,
+            ..flags(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
+        };
         let kb_query_type = if flags.force_followup_mode {
             QueryType::Followup
         } else {
             QueryType::Question
         };
         let kb_interpretation =
-            crate::domain::qa::hyde::HyDEInterpretation::raw_only("q", kb_query_type);
+            lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only("q", kb_query_type);
         if kb_can_run_alongside_external(flags) {
             assert!(
                 !should_use_external_as_fallback(flags, &kb_interpretation),
@@ -158,7 +167,7 @@ fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
 fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
     RetrievalPipelineOutcome {
         short_circuit_response: None,
-        interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+        interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
             "q",
             QueryType::Question,
         ),
@@ -304,7 +313,7 @@ fn empty_wiki_search_leaves_web_context_alone() {
 
 #[test]
 fn web_query_prefers_raw_user_text_for_followups_when_specific() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::hybrid(
         "What health benefits do those compounds provide?",
         "What health benefits are linked to glucosinolate-derived isothiocyanates in arugula?",
         QueryType::Followup,
@@ -318,7 +327,7 @@ fn web_query_prefers_raw_user_text_for_followups_when_specific() {
 
 #[test]
 fn web_query_prefers_raw_user_text_for_questions() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::for_question(
         "is the bitterness in arugula from nitric oxide?",
         "Investigate nitric oxide and glucosinolate pathways in arugula.",
     );
@@ -330,7 +339,7 @@ fn web_query_prefers_raw_user_text_for_questions() {
 
 #[test]
 fn web_query_prefers_raw_user_text_for_non_followup_questions() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::for_question(
         "What are the health benefits though?",
         "What health benefits are associated with glucosinolates and isothiocyanates in arugula?",
     );
@@ -346,7 +355,7 @@ fn web_query_condenses_a_rambling_message_instead_of_searching_it_verbatim() {
                apple tv. I watched it but need a deep recap. Season 1 and 2, really in \
                depth recap. I've watched both but I just need a very deep deep deep in \
                depth refresher";
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::for_question(
         raw,
         "Episode-by-episode recaps of Silo seasons 1 and 2 on Apple TV+, covering plot, \
          character arcs and the finale twists.",
@@ -367,7 +376,7 @@ fn web_query_condenses_a_rambling_message_instead_of_searching_it_verbatim() {
 
 #[test]
 fn web_query_falls_back_to_terms_for_generic_search_command() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::hybrid(
         "search web",
         "Search for the SAVE America Act bill text and Senate status updates.",
         QueryType::Command,
@@ -412,15 +421,17 @@ fn turn_anchor_terms_drop_generic_shared_words() {
     assert!(!anchors.is_empty());
 }
 
-fn skip_catalog() -> Vec<crate::application::contracts::search::CorpusDocument> {
-    vec![crate::application::contracts::search::CorpusDocument {
-        sections: Vec::new(),
-        source_context: None,
-        id: "handbook".into(),
-        name: "Employment handbook".into(),
-        opening: "Introduction".into(),
-        chapter_number: None,
-    }]
+fn skip_catalog() -> Vec<lattice_core::application::contracts::search::CorpusDocument> {
+    vec![
+        lattice_core::application::contracts::search::CorpusDocument {
+            sections: Vec::new(),
+            source_context: None,
+            id: "handbook".into(),
+            name: "Employment handbook".into(),
+            opening: "Introduction".into(),
+            chapter_number: None,
+        },
+    ]
 }
 
 fn anchors(terms: &[&str]) -> HashSet<String> {
@@ -536,7 +547,7 @@ fn public_sufficiency_facade_reports_the_pipelines_own_verdict() {
 /// stale one put a document the space no longer holds straight into the prompt.
 #[test]
 fn a_remembered_document_outside_the_space_is_forgotten() {
-    let reference = |id: &str| crate::domain::conversation::DocumentReference {
+    let reference = |id: &str| lattice_core::domain::conversation::DocumentReference {
         document_id: id.to_string(),
         chunk_id: None,
         relevance_score: None,
@@ -564,7 +575,7 @@ fn web_query_timeout_keeps_grow_light_subject_and_discards_tracking_ids() {
 
 Grow light: https://www.sansiled.com/products/br30-36w-led-grow-light-bulb?currency=USD&country=US&variant=43716789043426&utm_source=google&utm_medium=cpc&utm_campaign=Google%20Shopping&stkn=e3067c49e087&gad_source=1&gad_campaignid=23836680380&gbraid=0AAAAAoPQO5oRdg3iBkBYv0p1o7_GLgAIW&gclid=Cj0KCQjw8c3VBhCsARIsAA_xJ91otG_q8tN8C19x05OVlvViMxInRhI3QZk187rS3Tk1DtDU4XJBxj8aAoPqEALw_wcB"#;
     let interpretation =
-        crate::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Followup);
+        lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Followup);
     let anchors = ["research", "smaller", "sunlight"]
         .into_iter()
         .map(str::to_string)
@@ -586,19 +597,19 @@ Grow light: https://www.sansiled.com/products/br30-36w-led-grow-light-bulb?curre
 fn web_query_strips_tracking_even_for_a_short_product_link() {
     let raw = "https://example.com/products/36w-grow-light?gclid=opaqueidentifier&utm_campaign=unrelated#tracking";
     let interpretation =
-        crate::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Question);
+        lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Question);
     let query = select_web_search_query(raw, &interpretation, None);
     assert!(query.contains("grow light"), "{query}");
     assert!(!query.contains("opaqueidentifier"), "{query}");
     assert!(!query.contains("unrelated"), "{query}");
 }
 
-/// The intent classifier wanting the web used to switch the vault off: its
-/// `needs_web` became `force_web_search`, and the plan read that as "web
-/// instead of the library". Web now adds to the vault, and the two run side by
-/// side so both sets of sources reach the answer.
+/// The intent classifier wanting the web used to switch the vault off, then
+/// ran the web beside it, so a question about the user's own policy went out
+/// as a public search and the pages joined the answer. Now `needs_web` is a
+/// fallback: the plan still searches the vault, and never beside the web.
 #[test]
-fn an_intent_that_needs_the_web_still_searches_the_vault() {
+fn an_intent_that_needs_the_web_searches_the_vault_first() {
     let intent = crate::features::conversation::chat::intent::TurnIntent {
         needs_knowledge_base: false,
         needs_web: true,
@@ -606,7 +617,8 @@ fn an_intent_that_needs_the_web_still_searches_the_vault() {
         confidence: 0.9,
     };
     let merged = super::super::apply_turn_intent(SearchFlags::from_preferences(None), &intent);
-    assert!(merged.force_web_search);
+    assert!(!merged.force_web_search);
+    assert!(merged.web_fallback);
     assert!(!merged.force_kb_search);
 
     let decision = RouterDecisionOutcome {
@@ -620,7 +632,67 @@ fn an_intent_that_needs_the_web_still_searches_the_vault() {
 
     assert!(plan.should_search_kb);
     assert!(plan.should_search_web);
-    assert!(kb_can_run_alongside_external(merged));
+    assert!(!kb_can_run_alongside_external(merged));
+}
+
+/// The user's own toggle keeps what it always had: the web beside the vault.
+#[test]
+fn a_web_search_the_user_asked_for_still_runs_beside_the_vault() {
+    let toggled = flags(false, true, false, false);
+    let query_turn = flags(true, true, false, false);
+
+    assert!(kb_can_run_alongside_external(toggled));
+    assert!(kb_can_run_alongside_external(query_turn));
+    let question =
+        lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only("q", QueryType::Question);
+    assert!(!should_use_external_as_fallback(toggled, &question));
+}
+
+/// The fallback asks the web only after the vault has been searched, and only
+/// when the vault found nothing or its passages were judged too weak.
+#[test]
+fn an_intent_web_search_waits_for_the_vault_and_its_verdict() {
+    // Never before the vault has been tried.
+    assert_eq!(intent_web_fallback(false, false, None), None);
+    assert_eq!(intent_web_fallback(false, true, Some(false)), None);
+    // Nothing came back.
+    assert_eq!(
+        intent_web_fallback(true, false, None),
+        Some(WebSearchReason::VaultEmpty)
+    );
+    assert_eq!(
+        intent_web_fallback(true, false, Some(false)),
+        Some(WebSearchReason::VaultEmpty)
+    );
+    // Passages, judged too weak to answer from.
+    assert_eq!(
+        intent_web_fallback(true, true, Some(false)),
+        Some(WebSearchReason::VaultInsufficient)
+    );
+    // Passages that answer keep the question on the machine.
+    assert_eq!(intent_web_fallback(true, true, Some(true)), None);
+    assert_eq!(intent_web_fallback(true, true, None), None);
+}
+
+/// The turn record says why the question left the machine, in words a
+/// reader can tell apart from a search the model ran on its own.
+#[test]
+fn a_web_search_step_says_why_it_ran() {
+    let labels = [
+        WebSearchReason::Requested.step_label(),
+        WebSearchReason::VaultEmpty.step_label(),
+        WebSearchReason::VaultInsufficient.step_label(),
+    ];
+    assert!(labels[0].contains("as you asked"));
+    assert!(labels[1].contains("your documents had nothing"));
+    assert!(labels[2].contains("your documents fell short"));
+    for label in labels {
+        assert!(label.starts_with("Searching the web"), "{label}");
+        assert_ne!(
+            label, "Searching the web",
+            "a pipeline search names its reason"
+        );
+    }
 }
 
 /// An Explorer turn is about the folder on screen. The router's default "new

@@ -30,6 +30,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useCommandPalette } from '@/features/palette/hooks/useCommandPalette'
 import { selectPaletteGroups, usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore'
 import VaultAPI from '@/lib/api'
+import { describeFailure } from '@/lib/errorHandling'
 import { getErrorMessage } from '@/lib/errorUtils'
 import { toast } from '@/stores/toastStore'
 import type { SearchResult } from '@/types'
@@ -97,7 +98,7 @@ export function CommandPalette() {
           if (result.ok) {
             setSearchResults(result.data)
           } else {
-            setSearchError(result.error)
+            setSearchError(describeFailure(result))
           }
           setIsSearching(false)
         } catch (error) {

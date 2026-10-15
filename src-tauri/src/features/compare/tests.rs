@@ -9,14 +9,16 @@
     clippy::panic
 )]
 
+use super::di::CompareDeps;
 use super::parser::parse_compare_response;
 use super::retrieval::RetrievedChunk;
 use super::use_case::{assemble_cells, fill_row, map_quote_to_chunk};
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
 };
-use crate::application::ports::LLMPort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::Result;
+use std::sync::Arc;
 
 fn columns() -> Vec<String> {
     vec!["method".to_string(), "sample size".to_string()]
@@ -221,6 +223,25 @@ async fn container_with_chunks(contents: &[String]) -> crate::interfaces::di::Co
     container
 }
 
+/// Bind the retrieval deps from a test container. The loader is a placeholder:
+/// the retrieval tests never load a model.
+fn retrieval_deps(container: &crate::interfaces::di::Container) -> CompareDeps {
+    CompareDeps {
+        load_llm: super::di::LlmLoader::new(|| {
+            Box::pin(async {
+                Err(lattice_core::shared::error::AppError::InternalError(
+                    "not used in retrieval tests".into(),
+                ))
+            })
+        }),
+        documents: container.document_repository(),
+        search: Arc::new(super::scoped_search::HybridScopedSearch::new(
+            container.hybrid_search_use_case(),
+        )),
+        chunks: container.chunk_repository(),
+    }
+}
+
 /// Columns are searched with the library's hybrid search, as chat searches
 /// it: with no embedding model the keyword branch still finds the passage a
 /// column names, so the row is not reduced to the document's opening.
@@ -230,7 +251,8 @@ async fn without_an_embedding_model_the_keyword_branch_still_finds_the_column() 
     contents.push("The method was a randomised controlled trial.".to_string());
     let container = container_with_chunks(&contents).await;
 
-    let retrieved = super::retrieval::retrieve_for_document(&container, "doc", &columns())
+    let deps = retrieval_deps(&container);
+    let retrieved = super::retrieval::retrieve_for_document(&deps, "doc", &columns())
         .await
         .expect("retrieve");
 
@@ -247,7 +269,8 @@ async fn a_document_the_search_finds_nothing_in_falls_back_to_its_opening_chunks
         .collect();
     let container = container_with_chunks(&contents).await;
 
-    let retrieved = super::retrieval::retrieve_for_document(&container, "doc", &columns())
+    let deps = retrieval_deps(&container);
+    let retrieved = super::retrieval::retrieve_for_document(&deps, "doc", &columns())
         .await
         .expect("retrieve");
 

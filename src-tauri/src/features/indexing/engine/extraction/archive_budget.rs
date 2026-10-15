@@ -1,10 +1,11 @@
 //! Limits for reading compressed office document parts.
 
+use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
 use std::io::{Read, Take};
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use zip::ZipArchive;
@@ -15,24 +16,28 @@ pub(super) const MAX_ARCHIVE_MEMBERS: usize = 20_000;
 pub(super) const MAX_ARCHIVE_MEMBER_BYTES: u64 = 16 * 1024 * 1024;
 /// Maximum uncompressed bytes read from relevant parts in one document.
 pub(super) const MAX_ARCHIVE_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_ARCHIVE_WORKERS: usize = 2;
+pub(super) const MAX_ARCHIVE_WORKERS: usize = 2;
 const ARCHIVE_WORK_TIMEOUT: Duration = Duration::from_secs(30);
 
-static ARCHIVE_WORKERS: OnceLock<Arc<Semaphore>> = OnceLock::new();
-
-fn archive_workers() -> Arc<Semaphore> {
-    Arc::clone(ARCHIVE_WORKERS.get_or_init(|| Arc::new(Semaphore::new(MAX_ARCHIVE_WORKERS))))
-}
-
-/// Run one office document extraction under a process-wide worker limit.
+/// Run one office document extraction under the app's archive worker limit.
 /// Admission happens before `spawn_blocking`; the blocking closure owns the
 /// permit until it exits, even if this future times out or is cancelled.
-pub(super) async fn run_archive_work<T, F>(path: PathBuf, operation: F) -> Result<T>
+pub(super) async fn run_archive_work<T, F>(
+    workers: &ExtractionWorkers,
+    path: PathBuf,
+    operation: F,
+) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,
 {
-    run_archive_work_with_gate(archive_workers(), path, ARCHIVE_WORK_TIMEOUT, operation).await
+    run_archive_work_with_gate(
+        Arc::clone(&workers.archives),
+        path,
+        ARCHIVE_WORK_TIMEOUT,
+        operation,
+    )
+    .await
 }
 
 async fn run_archive_work_with_gate<T, F>(

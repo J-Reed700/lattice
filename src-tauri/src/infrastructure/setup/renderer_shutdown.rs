@@ -46,7 +46,7 @@ struct Response {
     saved: bool,
 }
 
-pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn install(app: &tauri::AppHandle) -> lattice_core::shared::error::Result<()> {
     app.manage(State::default());
     let handle = app.clone();
     app.listen("lattice:renderer-ready", move |_| {

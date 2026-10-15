@@ -1,3 +1,4 @@
+use crate::features::learning::recall::{study_dto::*, study_repository::StudyRepository};
 use crate::features::learning::source_selector::LearningQuoteMatchStatus;
 use crate::features::learning::{
     dto::GetLearningSourceVersionRequestDto,
@@ -7,10 +8,7 @@ use crate::features::learning::{
     source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     tests,
 };
-use crate::{
-    features::learning::recall::{study_dto::*, study_repository::StudyRepository},
-    shared::error::Result,
-};
+use lattice_core::shared::error::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
 
@@ -20,14 +18,14 @@ fn id() -> String {
 
 async fn file_pool(path: &std::path::Path) -> Result<sqlx::SqlitePool> {
     let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?
         .create_if_missing(true)
         .foreign_keys(true);
     SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
 }
 
 async fn active_program(
@@ -57,7 +55,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
     memory
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
@@ -115,7 +113,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
         .cards
         .first()
         .map(|card| card.scheduler.clone())
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("recall card".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("recall card".into()))?;
     assert!(first.stability.is_some() && first.difficulty.is_some());
     assert!(first.interval_days >= 1);
     assert_eq!(
@@ -148,7 +146,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
         .cards
         .first()
         .map(|card| card.scheduler.clone())
-        .ok_or_else(|| crate::shared::error::AppError::NotFound("recall card".into()))?;
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("recall card".into()))?;
     assert_eq!(schedule.review_count, 2);
     assert_eq!(schedule.due_at, studied.due_at);
     assert!(schedule.due_at > first.due_at);
@@ -165,15 +163,17 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
     let first_version = id();
     sources
         .add(
-            &id(),
-            &source_id,
-            &first_version,
-            &program.summary.id,
-            crate::features::learning::dto::LearningSourceKind::Pasted,
-            "add_text",
-            "My text",
-            None,
-            crate::features::learning::dto::LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &first_version,
+                program_id: &program.summary.id,
+                kind: crate::features::learning::dto::LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "My text",
+                requested_url: None,
+                freshness: crate::features::learning::dto::LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "Source title".into(),
                 publisher: None,
@@ -356,7 +356,9 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
         .iter()
         .find(|item| item.status == LearningRecallDuplicateStatus::Pending)
         .ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("Expected a duplicate suggestion".into())
+            lattice_core::shared::error::AppError::InvalidState(
+                "Expected a duplicate suggestion".into(),
+            )
         })?;
     let decide = DecideLearningRecallDuplicateRequestDto {
         operation_id: id(),
@@ -389,7 +391,7 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
     memory
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
@@ -399,7 +401,7 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
             .bind(&program.summary.id)
             .fetch_one(&pool)
             .await
-            .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let card_id = id();
     sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)")
         .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
@@ -407,13 +409,13 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
         .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
         .bind("multiple_choice")
         .execute(&pool).await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let review_id = id();
     sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
         .bind(&review_id).bind(&card_id).bind(100_i64).bind("good").bind("quiz")
         .bind(1_i64).bind(1_i64)
         .execute(&pool).await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
 
     let workspace = LearningRecallRepository::new(pool.clone())
         .workspace(&program.summary.id)
@@ -425,7 +427,7 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
         .bind(review_id)
         .fetch_one(&pool)
         .await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     assert_eq!(preserved, 1);
     Ok(())
 }
@@ -433,20 +435,20 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
 #[tokio::test]
 async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<()> {
     let directory = tempfile::tempdir()
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let path = directory.path().join("learning-recall.sqlite");
     let pool = file_pool(&path).await?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let program = active_program(&pool).await?;
     let lesson = program
         .modules
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
     LearningRepository::new(pool.clone())
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
@@ -478,7 +480,7 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
     sqlx::migrate!("./migrations")
         .run(&reopened)
         .await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let workspace = LearningRecallRepository::new(reopened)
         .workspace(&program.summary.id)
         .await?;
@@ -500,7 +502,7 @@ async fn typed_recall_formats_round_trip_through_canonical_study_rows() -> Resul
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| {
-            crate::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
     LearningRepository::new(pool.clone())
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")

@@ -16,7 +16,7 @@
 //! - **Capacity**: Configurable (default: 100 queries)
 //! - **Key**: Search query text (normalized)
 //! - **Value**: Search results with embeddings and scores
-//! - **Thread-Safe**: Global singleton with internal locking
+//! - **Thread-Safe**: One cache per app, held by the container, with internal locking
 //!
 //! # Performance Benefits
 //!
@@ -33,9 +33,10 @@
 //!
 //! Manual clearing available via `clear_search_cache` command.
 
-use crate::features::cache::query_cache::QUERY_CACHE;
-use crate::shared::error::AppError;
+use crate::interfaces::di::Container;
+use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
+use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -113,11 +114,11 @@ pub struct CacheMetrics {
 ///
 /// # Architecture
 ///
-/// Direct accessor to global QUERY_CACHE singleton
+/// Clears the app's query cache, which the container holds
 #[tauri::command]
 #[specta::specta]
-pub fn clear_search_cache() -> Result<(), AppError> {
-    QUERY_CACHE.clear();
+pub fn clear_search_cache(container: State<'_, Container>) -> Result<(), AppError> {
+    container.query_cache().clear();
     tracing::info!("Search cache manually cleared");
     Ok(())
 }
@@ -191,11 +192,11 @@ pub fn clear_search_cache() -> Result<(), AppError> {
 ///
 /// # Architecture
 ///
-/// Direct accessor to global QUERY_CACHE singleton statistics
+/// Reads the statistics of the app's query cache, which the container holds
 #[tauri::command]
 #[specta::specta]
-pub fn get_cache_stats() -> Result<SearchCacheStats, AppError> {
-    let stats = QUERY_CACHE.stats();
+pub fn get_cache_stats(container: State<'_, Container>) -> Result<SearchCacheStats, AppError> {
+    let stats = container.query_cache().stats();
     Ok(SearchCacheStats {
         size: stats.size,
         capacity: stats.capacity,
@@ -269,11 +270,11 @@ pub fn get_cache_stats() -> Result<SearchCacheStats, AppError> {
 ///
 /// # Architecture
 ///
-/// Direct accessor to global QUERY_CACHE singleton metrics
+/// Reads the metrics of the app's query cache, which the container holds
 #[tauri::command]
 #[specta::specta]
-pub fn get_cache_metrics() -> Result<CacheMetrics, AppError> {
-    let metrics = QUERY_CACHE.metrics();
+pub fn get_cache_metrics(container: State<'_, Container>) -> Result<CacheMetrics, AppError> {
+    let metrics = container.query_cache().metrics();
     Ok(CacheMetrics {
         hits: metrics.hits,
         misses: metrics.misses,
@@ -307,6 +308,6 @@ pub fn get_cache_metrics() -> Result<CacheMetrics, AppError> {
 /// the same operation. Use whichever name is more convenient for your use case.
 #[tauri::command]
 #[specta::specta]
-pub fn clear_cache() -> Result<(), AppError> {
-    clear_search_cache()
+pub fn clear_cache(container: State<'_, Container>) -> Result<(), AppError> {
+    clear_search_cache(container)
 }

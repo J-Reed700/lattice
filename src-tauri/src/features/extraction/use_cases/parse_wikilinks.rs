@@ -20,7 +20,7 @@ use crate::features::extraction::dto::{
     ParseWikilinksRequestDto, ParseWikilinksResponseDto, WikiLinkDto,
 };
 use crate::infrastructure::extraction::LinkParser;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 pub struct ParseWikilinksUseCase {
     link_parser: LinkParser,

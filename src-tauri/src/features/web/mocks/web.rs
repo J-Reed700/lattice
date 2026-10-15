@@ -3,17 +3,17 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::features::function_calling::dto::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-};
-#[cfg(test)]
 use crate::features::web::traits::web::{
     WebIngestionResult, WebIngestionServiceTrait, WebServiceTrait,
 };
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
+};
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -238,7 +238,7 @@ impl WebServiceTrait for MockWebService {
 
     fn validate_url(&self, url: &str) -> Result<()> {
         if url.contains("localhost") || url.contains("127.0.0.1") {
-            return Err(crate::shared::error::AppError::InvalidUrl(
+            return Err(lattice_core::shared::error::AppError::InvalidUrl(
                 "localhost not allowed".to_string(),
             ));
         }

@@ -31,6 +31,8 @@ pub(super) struct PromptMessageBuilder<'a> {
     /// Set on a deep-research turn that may search again: the searches its
     /// first round already ran.
     deep_research_searches: Option<Vec<String>>,
+    /// Some of the evidence the turn found was left out to fit the window.
+    evidence_cut: bool,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -58,7 +60,16 @@ impl<'a> PromptMessageBuilder<'a> {
             kb_attempted: false,
             thin_kb_reason: None,
             deep_research_searches: None,
+            evidence_cut: false,
         }
+    }
+
+    /// Say that evidence the turn found was left out because the model's
+    /// window could not hold it, so the model neither reports a search that
+    /// found nothing nor takes what is left for everything there is.
+    pub(super) fn with_evidence_cut(mut self, evidence_cut: bool) -> Self {
+        self.evidence_cut = evidence_cut;
+        self
     }
 
     /// A deep-research turn that may search again after its first round,
@@ -175,15 +186,7 @@ impl<'a> PromptMessageBuilder<'a> {
         // retrieved. With no knowledge-base section at all, the templates below
         // already say there was nothing to go on.
         let thin_kb_reason = self.thin_kb_reason.as_deref().filter(|_| has_kb_context);
-        let mut context_sections: Vec<String> = vec![
-            "Conversation continuity: Answer the ongoing question using the user's established facts, \
-             conversation memory, and relevant original evidence from earlier turns together with new sources. \
-             New search results supplement that evidence; they do not replace it. Ignore unrelated results. \
-             Before declaring information unavailable, consult retained evidence and available history/source \
-             tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
-             Earlier assistant claims alone are not source evidence; use the numbered original passages \
-             supplied now, or retrieve the original source.".to_string()
-        ];
+        let mut context_sections: Vec<String> = vec![CONTINUITY_NOTE.to_string()];
         if let Some(context) = self.explorer_context.as_ref() {
             context_sections.push(context.clone());
         }
@@ -232,6 +235,9 @@ from general knowledge as though it came from the user's documents."
                 context_sections.push(deep_research_instruction(searches));
             }
         }
+        if self.evidence_cut && context_sections.len() > 1 {
+            context_sections.push(EVIDENCE_CUT_NOTE.to_string());
+        }
 
         if context_sections.len() > 1 {
             return render_prompt_template(
@@ -249,7 +255,13 @@ from general knowledge as though it came from the user's documents."
             );
         }
 
-        if self.force_web_search && self.web_context.is_none() && self.kb_context.is_none() {
+        // Evidence that was found and then cut for room is not a failed
+        // search, so the two notes below do not describe it.
+        if self.force_web_search
+            && !self.evidence_cut
+            && self.web_context.is_none()
+            && self.kb_context.is_none()
+        {
             let web_failure_note = self
                 .web_search_error
                 .as_deref()
@@ -262,7 +274,7 @@ Do not mention the knowledge base unless asked.\n\nQuestion: {question}",
             );
         }
 
-        if self.force_kb_search && self.kb_context.is_none() {
+        if self.force_kb_search && !self.evidence_cut && self.kb_context.is_none() {
             let kb_reason = self
                 .kb_unavailable_reason
                 .as_deref()
@@ -289,8 +301,16 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
     /// a vault with nothing in it tells the reader their documents were read
     /// and rejected, which is a claim about their documents that nobody made.
     /// The reason for an unreachable vault is already computed during
-    /// retrieval — it just never reached the prompt on this path.
+    /// retrieval — it just never reached the prompt on this path. Evidence
+    /// that was found and then cut for room is a fourth outcome, and the
+    /// same care applies: it is not a search that found nothing.
     fn retrieval_note(&self) -> String {
+        if self.evidence_cut {
+            return "Evidence was found for this turn, but the model's context window had no room \
+to carry any of it. Say so, and use the document search and read tools if they are available, \
+rather than describing this as a search that found nothing."
+                .to_string();
+        }
         if let Some(reason) = self.kb_unavailable_reason.as_deref() {
             return format!(
                 "Their documents were not searched for this turn, because {reason}. Do not describe this as a search that found nothing."
@@ -302,6 +322,35 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
         }
         "No passages from their documents were available for this turn.".to_string()
     }
+}
+
+/// The standing instruction that opens every evidence-carrying message.
+const CONTINUITY_NOTE: &str = "Conversation continuity: Answer the ongoing question using the user's established facts, \
+     conversation memory, and relevant original evidence from earlier turns together with new sources. \
+     New search results supplement that evidence; they do not replace it. Ignore unrelated results. \
+     Before declaring information unavailable, consult retained evidence and available history/source \
+     tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
+     Earlier assistant claims alone are not source evidence; use the numbered original passages \
+     supplied now, or retrieve the original source.";
+
+/// Closes the evidence of a message whose lowest-ranked evidence was cut to
+/// fit the model's window.
+const EVIDENCE_CUT_NOTE: &str =
+    "Context window: Lower-ranked evidence found for this turn was left \
+out because the model's context window could not hold it. If what is here does not settle the \
+question, use the document search and read tools before concluding the evidence is missing.";
+
+/// The message an evidence-carrying turn sends with every passage taken out:
+/// the template, its standing instructions and the question.
+///
+/// The turn's budget charges this as the message before it sizes the
+/// evidence, because it is what the evidence travels in.
+pub(super) fn evidence_frame(prompt_settings: &LLMPromptSettingsDto, question: &str) -> String {
+    render_prompt_template(
+        &prompt_settings.rag_prompt_template,
+        CONTINUITY_NOTE,
+        question,
+    )
 }
 
 /// The most searches a deep-research instruction lists, and the longest each.
@@ -375,6 +424,9 @@ fn describe_thin_evidence(reasons: &[&'static str]) -> String {
 ///
 /// Each number identifies one evidence passage, even when several passages
 /// come from the same document. Never invent a number for missing evidence.
+/// The turn renders them through [`kb_passages`], one item each, so it can
+/// cut them one at a time; this is the section they make whole.
+#[cfg(test)]
 pub(super) fn build_kb_context(
     budgeted_results: &[&SearchResultDto],
     citation_ids: &std::collections::HashMap<String, u32>,
@@ -384,37 +436,56 @@ pub(super) fn build_kb_context(
     }
 
     Some(
-        budgeted_results
-            .iter()
-            .filter_map(|result| {
-                let doc_name = result.path.as_ref().unwrap_or(&result.title);
-                let doc_id_line = result
-                    .document_id
-                    .as_deref()
-                    .map(|id| format!("\nDocument ID: {}", id))
-                    .unwrap_or_default();
-
-                let citation = citation_ids.get(&result.id)?;
-
-                let page = result
-                    .metadata
-                    .get("pageNumber")
-                    .and_then(|v| v.as_u64())
-                    .map(|p| format!("\nPhysical PDF page: {p}"))
-                    .unwrap_or_default();
-                let section = result
-                    .metadata
-                    .get("section")
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!("\nSource heading: {s}"))
-                    .unwrap_or_default();
-                Some(format!(
-                    "[{}] Document: {}{}{}{}\nContent: {}",
-                    citation, doc_name, doc_id_line, page, section, result.content
-                ))
-            })
+        kb_passages(budgeted_results, citation_ids)
+            .into_iter()
+            .map(|(_, passage)| passage)
             .collect::<Vec<_>>()
             .join("\n\n"),
+    )
+}
+
+/// Each retrieved passage as the prompt shows it, beside its citation number,
+/// best first. A passage with no number is left out.
+pub(super) fn kb_passages(
+    budgeted_results: &[&SearchResultDto],
+    citation_ids: &std::collections::HashMap<String, u32>,
+) -> Vec<(u32, String)> {
+    budgeted_results
+        .iter()
+        .filter_map(|result| {
+            let citation = *citation_ids.get(&result.id)?;
+            Some((citation, kb_passage(result, citation)))
+        })
+        .collect()
+}
+
+/// One retrieved passage under its citation number.
+pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
+    let doc_name = result.path.as_ref().unwrap_or(&result.title);
+    let doc_id_line = result
+        .document_id
+        .as_deref()
+        .map(|id| format!("\nDocument ID: {}", id))
+        .unwrap_or_default();
+    let page = result
+        .metadata
+        .get("pageNumber")
+        .and_then(|v| v.as_u64())
+        .map(|p| format!("\nPhysical PDF page: {p}"))
+        .unwrap_or_default();
+    let section = result
+        .metadata
+        .get("section")
+        .and_then(|v| v.as_str())
+        .map(|s| format!("\nSource heading: {s}"))
+        .unwrap_or_default();
+    let ocr = match result.metadata.get("ocr").and_then(|v| v.as_bool()) {
+        Some(true) => "\nText: OCR of a scanned page; odd characters may be recognition errors",
+        _ => "",
+    };
+    format!(
+        "[{}] Document: {}{}{}{}{}\nContent: {}",
+        citation, doc_name, doc_id_line, page, section, ocr, result.content
     )
 }
 
@@ -430,569 +501,20 @@ pub(super) fn enforce_numeric_citation_format(template: &str) -> String {
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod citation_numbering_tests {
-    use super::*;
-    use crate::features::qa::dto::SourceDto;
-    use std::collections::HashMap;
-
-    fn chunk(id: &str, document_id: &str, title: &str, content: &str) -> SearchResultDto {
-        SearchResultDto {
-            id: id.to_string(),
-            title: title.to_string(),
-            content: content.to_string(),
-            score: 0.9,
-            path: Some(title.to_string()),
-            document_id: Some(document_id.to_string()),
-            position: None,
-            vector_score: None,
-            bm25_score: None,
-            vector_rank: None,
-            bm25_rank: None,
-            metadata: HashMap::new(),
-        }
-    }
-
-    fn source(chunk_id: &str, document_id: &str, file_name: &str, citation_id: u32) -> SourceDto {
-        SourceDto {
-            page_number: None,
-            document_id: document_id.to_string(),
-            chunk_id: chunk_id.to_string(),
-            content: String::new(),
-            score: 0.9,
-            path: Some(file_name.to_string()),
-            position: None,
-            file_name: file_name.to_string(),
-            file_path: file_name.to_string(),
-            mime_type: "text/plain".to_string(),
-            category: "Text".to_string(),
-            file_size_bytes: 0,
-            modified_at: String::new(),
-            excerpt: None,
-            highlights: None,
-            section: None,
-            chunk_index: None,
-            chunk_excerpts: None,
-            citation_id: Some(citation_id),
-
-            web_snapshot: None,
-        }
-    }
-
-    /// The exact scenario from the audit: one document contributes three
-    /// chunks and a second contributes one. The prompt used to number the
-    /// four *chunks* [1][2][3][4] while the UI resolved [n] against a
-    /// two-entry, per-document list — so [3] and [4] pointed at nothing
-    /// sensible and [2] opened the wrong file.
-    #[test]
-    fn separate_passages_from_one_document_get_distinct_citations() {
-        let results = [
-            chunk("c1", "doc-a", "alpha.md", "first chunk of A"),
-            chunk("c2", "doc-a", "alpha.md", "second chunk of A"),
-            chunk("c3", "doc-a", "alpha.md", "third chunk of A"),
-            chunk("c4", "doc-b", "beta.md", "only chunk of B"),
-        ];
-        let refs: Vec<&SearchResultDto> = results.iter().collect();
-
-        let sources = crate::features::conversation::chat::retrieval::deduplicate_sources(vec![
-            source("c1", "doc-a", "alpha.md", 1),
-            source("c2", "doc-a", "alpha.md", 2),
-            source("c3", "doc-a", "alpha.md", 3),
-            source("c4", "doc-b", "beta.md", 4),
-            source("c1", "doc-a", "alpha.md", 1),
-        ]);
-        assert_eq!(sources.len(), 4);
-        let ids = crate::features::conversation::chat::retrieval::citation_ids_by_chunk(&sources);
-        let context = build_kb_context(&refs, &ids).expect("context");
-        for n in 1..=3 {
-            assert!(context.contains(&format!("[{n}] Document: alpha.md")));
-        }
-        assert!(context.contains("[4] Document: beta.md"));
-    }
-
-    /// Budget trimming drops chunks from the prompt. The surviving chunks
-    /// must keep their passage's number rather than being renumbered from 1.
-    #[test]
-    fn budget_trimming_does_not_renumber_surviving_chunks() {
-        // doc-a was dropped by the token budget; only doc-b's chunk survives.
-        let results = [chunk("c4", "doc-b", "beta.md", "only chunk of B")];
-        let refs: Vec<&SearchResultDto> = results.iter().collect();
-
-        let sources = vec![
-            source("c1", "doc-a", "alpha.md", 1),
-            source("c4", "doc-b", "beta.md", 4),
-        ];
-        let ids = crate::features::conversation::chat::retrieval::citation_ids_by_chunk(&sources);
-
-        let context = build_kb_context(&refs, &ids).expect("context");
-
-        assert!(
-            context.contains("[4] Document: beta.md"),
-            "surviving chunk must keep its passage's number, got:\n{}",
-            context
-        );
-        assert!(
-            !context.contains("[1]"),
-            "a trimmed prompt must not renumber from 1:\n{}",
-            context
-        );
-    }
-
-    #[test]
-    fn tool_passages_append_without_renumbering_existing_citations() {
-        let mut added = source("new", "doc-a", "alpha.md", 99);
-        added.citation_id = None;
-        let mut sources = vec![source("original", "doc-a", "alpha.md", 1), added];
-        crate::features::conversation::chat::retrieval::assign_citation_ids(&mut sources);
-        assert_eq!(sources[0].citation_id, Some(1));
-        assert_eq!(sources[1].citation_id, Some(2));
-    }
-
-    #[test]
-    fn missing_passage_never_gets_an_invented_citation() {
-        let results = [chunk("c1", "doc-unknown", "orphan.md", "content")];
-        let refs: Vec<&SearchResultDto> = results.iter().collect();
-        let ids: HashMap<String, u32> = HashMap::new();
-
-        let context = build_kb_context(&refs, &ids).expect("context");
-        assert!(!context.contains("[1]"));
-    }
-}
+mod citation_numbering_tests;
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod thin_evidence_tests {
-    use super::*;
-    use crate::features::conversation::chat::retrieval::sufficiency_reason as reason;
-    use crate::features::conversation::chat::retrieval::SufficiencyVerdict;
-
-    fn flags() -> SearchFlags {
-        SearchFlags {
-            force_kb_search: false,
-            force_web_search: false,
-            force_wiki_search: false,
-            deep_research_mode: false,
-            force_followup_mode: false,
-            closed_book: false,
-        }
-    }
-
-    fn weak(reasons: Vec<&'static str>) -> SufficiencyVerdict {
-        SufficiencyVerdict {
-            sufficient: false,
-            reasons,
-            ..Default::default()
-        }
-    }
-
-    fn prompt_with(
-        settings: &LLMPromptSettingsDto,
-        kb: Option<&str>,
-        web: Option<&str>,
-        verdict: Option<&SufficiencyVerdict>,
-    ) -> String {
-        PromptMessageBuilder::new(settings, "Does silo hold up?", false, flags())
-            .with_kb_context(kb.map(str::to_string))
-            .with_web_context(web.map(str::to_string))
-            .with_kb_sufficiency(verdict)
-            .build()
-    }
-
-    #[test]
-    fn weak_passages_are_named_as_weak_in_the_prompt() {
-        let settings = LLMPromptSettingsDto::default();
-        let prompt = prompt_with(
-            &settings,
-            Some("[1] A passage about something else."),
-            None,
-            Some(&weak(vec![reason::LOW_TOP_SCORE])),
-        );
-
-        assert!(
-            prompt.contains("Evidence quality:"),
-            "a turn the app judged unanswerable must say so to the model:\n{prompt}"
-        );
-        assert!(
-            prompt.contains("do not fill the gap"),
-            "the instruction that stops a confident answer off weak text is the \
-             point of the note:\n{prompt}"
-        );
-    }
-
-    #[test]
-    fn sufficient_passages_carry_no_warning() {
-        let settings = LLMPromptSettingsDto::default();
-        let prompt = prompt_with(
-            &settings,
-            Some("[1] Directly on point."),
-            None,
-            Some(&SufficiencyVerdict::default()),
-        );
-
-        assert!(!prompt.contains("Evidence quality:"), "{prompt}");
-    }
-
-    #[test]
-    fn a_turn_with_no_verdict_is_left_alone() {
-        let settings = LLMPromptSettingsDto::default();
-        let prompt = prompt_with(&settings, Some("[1] A passage."), None, None);
-
-        assert!(!prompt.contains("Evidence quality:"), "{prompt}");
-    }
-
-    #[test]
-    fn weak_passages_stop_outranking_the_web_by_rule() {
-        let settings = LLMPromptSettingsDto::default();
-        let strong = prompt_with(
-            &settings,
-            Some("[1] On point."),
-            Some("Web result"),
-            Some(&SufficiencyVerdict::default()),
-        );
-        let thin = prompt_with(
-            &settings,
-            Some("[1] Off point."),
-            Some("Web result"),
-            Some(&weak(vec![reason::LOW_TERM_COVERAGE])),
-        );
-
-        assert!(
-            strong.contains("Prefer Knowledge Base Results first"),
-            "{strong}"
-        );
-        assert!(
-            !thin.contains("Prefer Knowledge Base Results first"),
-            "ranking known-weak passages above the web is the failure this \
-             avoids:\n{thin}"
-        );
-        assert!(thin.contains("on their merits"), "{thin}");
-    }
-
-    #[test]
-    fn nothing_is_flagged_when_no_passages_were_retrieved() {
-        let settings = LLMPromptSettingsDto::default();
-        // The no-context templates already explain an empty knowledge base;
-        // adding a note about weak passages would describe passages that do
-        // not exist.
-        let prompt = prompt_with(&settings, None, None, Some(&weak(vec![reason::NO_RESULTS])));
-
-        assert!(!prompt.contains("Evidence quality:"), "{prompt}");
-    }
-
-    #[test]
-    fn each_deciding_reason_gets_its_own_words() {
-        let low_score = describe_thin_evidence(&[reason::LOW_TOP_SCORE]);
-        let low_coverage = describe_thin_evidence(&[reason::LOW_TERM_COVERAGE]);
-        let too_few = describe_thin_evidence(&[reason::TOO_FEW_RESULTS]);
-
-        assert_ne!(low_score, low_coverage);
-        assert_ne!(low_coverage, too_few);
-        for described in [&low_score, &low_coverage, &too_few] {
-            assert!(described.ends_with('.'), "{described}");
-        }
-    }
-
-    #[test]
-    fn reasons_about_the_judgement_are_not_reported_as_weak_evidence() {
-        // A missing reranker says how the call was made, not that the passages
-        // are poor. Describing it to the model would be a false claim about
-        // the user's documents.
-        let described = describe_thin_evidence(&[reason::NO_RERANKER, reason::FLAT_RERANK_SPREAD]);
-
-        assert!(!described.contains("rerank"), "{described}");
-        assert_eq!(
-            described, "the retrieved passages were judged too weak to answer from.",
-            "with nothing specific to report, the note stays general rather \
-             than inventing a cause"
-        );
-    }
-
-    #[test]
-    fn several_reasons_read_as_one_sentence() {
-        let described = describe_thin_evidence(&[reason::LOW_TOP_SCORE, reason::LOW_TERM_COVERAGE]);
-
-        assert!(described.contains(", and "), "{described}");
-        assert_eq!(described.matches('.').count(), 1, "{described}");
-    }
-}
+mod thin_evidence_tests;
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod empty_vault_tests {
-    use super::*;
-
-    fn flags() -> SearchFlags {
-        SearchFlags {
-            force_kb_search: false,
-            force_web_search: false,
-            force_wiki_search: false,
-            deep_research_mode: false,
-            force_followup_mode: false,
-            closed_book: false,
-        }
-    }
-
-    fn prompt(reason: Option<&str>, kb_attempted: bool) -> String {
-        let settings = LLMPromptSettingsDto::default();
-        PromptMessageBuilder::new(&settings, "What should I grow?", false, flags())
-            .with_kb_unavailable_reason(reason.map(str::to_string))
-            .with_kb_attempted(kb_attempted)
-            .build()
-    }
-
-    /// The turn this was written for: a space holding nothing, an answer that
-    /// told the reader their documents had been searched and had nothing to
-    /// offer, and a sources panel listing thirty-seven pages beneath it.
-    #[test]
-    fn an_empty_space_is_not_reported_as_a_search_that_found_nothing() {
-        let prompt = prompt(
-            Some("no indexed documents are assigned to this conversation’s space"),
-            false,
-        );
-
-        assert!(
-            prompt.contains("not searched for this turn"),
-            "the reader must be told the vault was never reached:\n{prompt}"
-        );
-        assert!(
-            prompt.contains("no indexed documents are assigned to this conversation’s space"),
-            "retrieval already worked out why; the prompt must carry it:\n{prompt}"
-        );
-        assert!(
-            !prompt.contains("No relevant documents were found"),
-            "this wording claims a search ran and rejected the documents:\n{prompt}"
-        );
-    }
-
-    #[test]
-    fn a_search_that_really_ran_still_says_so() {
-        let prompt = prompt(None, true);
-
-        assert!(
-            prompt.contains("were searched for this turn"),
-            "a vault that was read and came back empty is a different fact:\n{prompt}"
-        );
-    }
-
-    /// Neither of the two sentences above fits a turn that never planned a
-    /// knowledge-base search, so it gets one that claims neither.
-    #[test]
-    fn a_turn_that_never_planned_a_search_claims_neither() {
-        let prompt = prompt(None, false);
-
-        assert!(
-            prompt.contains("No passages from their documents were available"),
-            "{prompt}"
-        );
-        assert!(!prompt.contains("were searched for this turn"), "{prompt}");
-    }
-
-    #[test]
-    fn the_default_template_has_somewhere_to_put_the_reason() {
-        let settings = LLMPromptSettingsDto::default();
-
-        assert!(
-            settings.no_context_prompt_template.contains("{context}"),
-            "without the slot the reason is computed and dropped, which is the \
-             bug this fixes"
-        );
-        assert!(
-            !settings
-                .no_context_prompt_template
-                .contains("No relevant documents were found"),
-            "the default must not assert a search that may not have happened"
-        );
-    }
-}
+mod empty_vault_tests;
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod attachment_prompt_tests {
-    use super::*;
-
-    fn web_turn_flags() -> SearchFlags {
-        SearchFlags {
-            force_kb_search: false,
-            force_web_search: true,
-            force_wiki_search: false,
-            deep_research_mode: true,
-            force_followup_mode: false,
-            closed_book: false,
-        }
-    }
-
-    fn builder<'a>(settings: &'a LLMPromptSettingsDto) -> PromptMessageBuilder<'a> {
-        PromptMessageBuilder::new(
-            settings,
-            "here it is, are you not receiving it?",
-            false,
-            web_turn_flags(),
-        )
-    }
-
-    /// The turn this was written for. Deep research had the vault switched
-    /// off, so the attached file reached the model only if something carried
-    /// it — and nothing did. The answer was "no file came through", with the
-    /// file indexed in the library.
-    #[test]
-    fn an_attachment_reaches_a_forced_web_turn() {
-        let settings = LLMPromptSettingsDto::default();
-
-        let prompt = builder(&settings)
-            .with_attachment_context(Some(
-                "Attached Files:\n[1] Attached file: greens.txt\nContent: kale, chard".to_string(),
-            ))
-            .with_web_context(Some("Web Results".to_string()))
-            .build();
-
-        assert!(prompt.contains("greens.txt"), "{prompt}");
-        assert!(prompt.contains("kale, chard"), "{prompt}");
-    }
-
-    /// Attaching a file is the reader saying "this one". A follow-up would
-    /// otherwise hand the model the *previous* document as the whole prompt
-    /// and drop the new one.
-    #[test]
-    fn an_attachment_outranks_the_document_from_the_last_turn() {
-        let settings = LLMPromptSettingsDto::default();
-
-        let prompt = builder(&settings)
-            .with_attachment_context(Some("Attached Files:\nthe new file".to_string()))
-            .with_followup_context(Some("[1] Document: older.txt\nContent: older".to_string()))
-            .build();
-
-        let attachment_at = prompt.find("the new file").expect("attachment is carried");
-        let followup_at = prompt
-            .find("older.txt")
-            .expect("the earlier document stays");
-        assert!(
-            attachment_at < followup_at,
-            "the attached file must lead the context:\n{prompt}"
-        );
-    }
-
-    /// Without an attachment the follow-up path is unchanged: the last
-    /// document is still the whole prompt.
-    #[test]
-    fn a_plain_followup_still_reuses_the_last_document_alone() {
-        let settings = LLMPromptSettingsDto::default();
-
-        let prompt = builder(&settings)
-            .with_followup_context(Some("[1] Document: older.txt\nContent: older".to_string()))
-            .with_kb_context(Some("Knowledge Base".to_string()))
-            .build();
-
-        assert!(prompt.contains("older.txt"), "{prompt}");
-        assert!(!prompt.contains("Knowledge Base"), "{prompt}");
-    }
-
-    #[test]
-    fn prior_evidence_survives_new_research_and_followup_prompt_paths() {
-        let settings = LLMPromptSettingsDto::default();
-        for followup in [None, Some("[1] earlier document".to_string())] {
-            let prompt = builder(&settings)
-                .with_followup_context(followup)
-                .with_prior_evidence_context(Some("[11] retained grow light evidence".to_string()))
-                .with_web_context(Some("[2] new product specifications".to_string()))
-                .build();
-            assert!(
-                prompt.contains("[11] retained grow light evidence"),
-                "{prompt}"
-            );
-            assert!(
-                prompt.contains("[2] new product specifications"),
-                "{prompt}"
-            );
-            assert!(prompt.contains("supplement that evidence"), "{prompt}");
-        }
-    }
-
-    /// A file that arrived but could not be read is still a file that
-    /// arrived; the prompt must never let the model deny it.
-    #[test]
-    fn an_attachment_alone_is_enough_context_to_answer_from() {
-        let settings = LLMPromptSettingsDto::default();
-
-        let prompt = builder(&settings)
-            .with_attachment_context(Some("Attached but not readable yet: scan.pdf".to_string()))
-            .build();
-
-        assert!(prompt.contains("scan.pdf"), "{prompt}");
-        assert!(
-            !prompt.contains("live web retrieval is currently unavailable"),
-            "an attachment is context, so the empty-turn templates must not fire:\n{prompt}"
-        );
-    }
-}
+mod attachment_prompt_tests;
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod deep_research_prompt_tests {
-    use super::*;
-
-    fn flags() -> SearchFlags {
-        SearchFlags {
-            force_kb_search: false,
-            force_web_search: true,
-            force_wiki_search: false,
-            deep_research_mode: true,
-            force_followup_mode: false,
-            closed_book: false,
-        }
-    }
-
-    fn prompt(web: Option<&str>, searches: Option<Vec<String>>) -> String {
-        let settings = LLMPromptSettingsDto::default();
-        PromptMessageBuilder::new(
-            &settings,
-            "what is going on with the weather in China?",
-            false,
-            flags(),
-        )
-        .with_web_context(web.map(str::to_string))
-        .with_deep_research_searches(searches)
-        .build()
-    }
-
-    /// The turn this was written for: a wide first round, then one page read
-    /// and an answer, because nothing asked the model to look further and it
-    /// had no search left to look with.
-    #[test]
-    fn deep_research_sends_the_model_after_what_the_first_round_missed() {
-        let searches = vec![
-            "China extreme weather events 2026".to_string(),
-            "China typhoon track October 2026".to_string(),
-        ];
-        let text = prompt(Some("[1] Storms test resilience"), Some(searches));
-        let results = text.find("Web Results").unwrap();
-        let instruction = text.find("Deep research:").unwrap();
-        assert!(
-            instruction > results,
-            "the instruction follows the results it is about:\n{text}"
-        );
-        assert!(text.contains(
-            "\"China extreme weather events 2026\"; \"China typhoon track October 2026\""
-        ));
-        assert!(text.contains("call web_search"));
-        assert!(text.contains("several calls in one reply"));
-        assert!(text.contains("Do not repeat a search listed here"));
-    }
-
-    #[test]
-    fn no_instruction_without_a_first_round_or_a_way_to_search() {
-        // The turn may not search again (web search off, or no tool calling).
-        assert!(!prompt(Some("[1] Storms"), None).contains("Deep research:"));
-        // No web results: the empty-turn templates speak for the turn instead.
-        assert!(!prompt(None, Some(vec!["q".to_string()])).contains("Deep research:"));
-    }
-
-    #[test]
-    fn the_list_of_searches_is_bounded() {
-        let many: Vec<String> = (0..40)
-            .map(|n| format!("query {n} {}", "x".repeat(300)))
-            .collect();
-        let text = deep_research_instruction(&many);
-        assert_eq!(text.matches("\"query ").count(), LISTED_SEARCHES);
-        assert!(!text.contains(&"x".repeat(LISTED_SEARCH_CHARS)));
-        assert!(!deep_research_instruction(&[]).contains("Searches already run"));
-    }
-}
+mod deep_research_prompt_tests;

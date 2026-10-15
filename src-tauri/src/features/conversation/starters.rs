@@ -13,17 +13,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use async_trait::async_trait;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::services::completion_input::{complete_text, TextCall};
+use super::chat::ports::{ChatRuntime, ChatStarterCache};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::starters_dto::{ChatStarterDto, ChatStartersDto};
-use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
-use crate::shared::ipc::ApiError;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::services::completion_input::{complete_text, TextCall};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::ipc::ApiError;
 
 /// Bump when the fingerprint algorithm changes so old rows auto-invalidate.
 const FINGERPRINT_VERSION: &str = "starters-v2";
@@ -245,6 +246,45 @@ impl ChatStarterCacheRepository {
         }
         Ok(latest)
     }
+
+    /// The documents this space can see — the same allow-list every retrieval
+    /// path uses, so the questions can only be about documents this chat could
+    /// actually answer from. The rule stays in the one statement
+    /// [`ConversationRepository::space_document_scope`] owns.
+    pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>> {
+        ConversationRepository::new(self.pool.clone())
+            .space_document_scope(space_id)
+            .await
+    }
+}
+
+#[async_trait]
+impl ChatStarterCache for ChatStarterCacheRepository {
+    async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>> {
+        ChatStarterCacheRepository::space_document_scope(self, space_id).await
+    }
+    async fn get(&self, fingerprint: &str) -> Result<Option<(String, String)>> {
+        ChatStarterCacheRepository::get(self, fingerprint).await
+    }
+    async fn put(&self, fingerprint: &str, starters_json: &str, created_at: &str) -> Result<()> {
+        ChatStarterCacheRepository::put(self, fingerprint, starters_json, created_at).await
+    }
+    async fn prune(&self, keep: i64) -> Result<()> {
+        ChatStarterCacheRepository::prune(self, keep).await
+    }
+    async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>> {
+        ChatStarterCacheRepository::type_mix(self, allowed_ids).await
+    }
+    async fn recent_titles(
+        &self,
+        allowed_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        ChatStarterCacheRepository::recent_titles(self, allowed_ids, limit).await
+    }
+    async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String> {
+        ChatStarterCacheRepository::latest_indexed_at(self, allowed_ids).await
+    }
 }
 
 /// A stable bind order, so the same scope always produces the same statements.
@@ -381,7 +421,7 @@ Rules:\n\
 /// space's documents. Reading the whole vault instead was the bug: a chat in a
 /// Movies space suggested questions about documents it is not allowed to read.
 pub async fn generate_chat_starters_impl(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     space_id: Option<String>,
 ) -> std::result::Result<ChatStartersDto, ApiError> {
     let now = Utc::now().to_rfc3339();
@@ -392,7 +432,8 @@ pub async fn generate_chat_starters_impl(
 
     // The same allow-list every retrieval path uses, so the questions can only
     // be about documents this chat could actually answer from.
-    let allowed_ids = ConversationRepository::new(container.db_pool().clone())
+    let cache = runtime.chat_starter_cache();
+    let allowed_ids = cache
         .space_document_scope(&space_id)
         .await
         .map_err(ApiError::from)?;
@@ -408,7 +449,6 @@ pub async fn generate_chat_starters_impl(
         });
     }
 
-    let cache = ChatStarterCacheRepository::new(container.db_pool().clone());
     let type_mix = cache.type_mix(&allowed_ids).await.map_err(ApiError::from)?;
     let latest_indexed_at = cache
         .latest_indexed_at(&allowed_ids)
@@ -432,9 +472,9 @@ pub async fn generate_chat_starters_impl(
         .await
         .unwrap_or_default();
 
-    let llm = match container.get_or_load_utility_llm().await {
+    let llm = match runtime.get_or_load_utility_llm().await {
         Ok(Some(util)) => Some(util),
-        _ => container.get_or_load_llm().await.ok(),
+        _ => runtime.get_or_load_llm().await.ok(),
     };
 
     let starters = match llm {
@@ -620,9 +660,9 @@ mod tests {
 
     /// The anti-fabrication guard: with no LLM, the payload carries no questions.
     ///
-    /// `generate_chat_starters_impl` needs a `Container`, which cannot be built
-    /// in a unit test, so the invariant is asserted where it actually lives —
-    /// the parse/fallback path that produces the list.
+    /// `generate_chat_starters_impl` needs a `ChatRuntime`, which cannot be
+    /// built in a unit test, so the invariant is asserted where it actually
+    /// lives — the parse/fallback path that produces the list.
     #[test]
     fn test_fallback_without_llm_returns_no_questions() {
         let fallback: Vec<ChatStarterDto> = Vec::new();

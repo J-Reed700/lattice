@@ -6,7 +6,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { useLearningLessonEvidence, useLearningOutlineEvidence } from '@/features/learning/api/evidenceQueries';
 import { learningLessonEvidenceKey, learningOutlineEvidenceKey, learningProgramKey, LEARNING_PROGRAMS_KEY } from '@/features/learning/api/learningQueryKeys';
-import { useApplyLearningPackImport, useDeleteLearningSourceV2, useReimportLearningSource } from '@/features/learning/portability/useLearningPortability';
+import { useDeleteLearningSourceV2, useImportCourse, useReimportLearningSource } from '@/features/learning/portability/useLearningPortability';
 import { useAddLearningTextSource, useAdoptLearningSourceVersion, useRefreshLearningSource } from '@/features/learning/sources/useLearningSources';
 import type { AddLearningTextSourceRequestDto, AdoptLearningSourceVersionRequestDto, ApplyLearningPackImportRequestDto, DeleteLearningSourceRequestDto, RefreshLearningSourceRequestDto, ReimportLearningSourceRequestDto } from '@/lib/bindings';
 
@@ -43,7 +43,7 @@ function setup(enabled = false) {
     outline: useLearningOutlineEvidence('course', 1, enabled),
     add: useAddLearningTextSource(), adopt: useAdoptLearningSourceVersion(), refresh: useRefreshLearningSource(),
     remove: useDeleteLearningSourceV2('course'), reimport: useReimportLearningSource('course'),
-    importPack: useApplyLearningPackImport('course'),
+    importPack: useImportCourse().apply,
   }), { initialProps: { enabled }, wrapper });
   return { ...hook, client };
 }

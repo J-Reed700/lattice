@@ -21,6 +21,7 @@ export function toJournalCitationSource(source: SourceDto): SourceWithMetadata {
     ...(source.section != null ? { section: source.section } : {}),
     ...(source.chunkIndex != null ? { chunkIndex: source.chunkIndex } : {}),
     ...(source.pageNumber != null ? { pageNumber: source.pageNumber } : {}),
+    ...(source.fromOcr ? { fromOcr: true } : {}),
     ...(source.chunkExcerpts != null
       ? {
           chunkExcerpts: source.chunkExcerpts.map((chunk) => ({

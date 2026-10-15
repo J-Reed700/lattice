@@ -11,13 +11,11 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::search::engine::vector_search::USearchVectorIndex;
 use crate::features::summaries::entity::{DocumentSummary, SummaryHit, SummaryLevel};
 use crate::features::summaries::openings::select_opening_documents;
@@ -28,7 +26,9 @@ use crate::features::summaries::runtime::SummaryRuntimePort;
 use crate::features::summaries::search::SummarySearchPort;
 use crate::features::summaries::source::{SummarySection, SummarySource, SummarySourcePort};
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
-use crate::shared::error::Result;
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::Result;
 
 const DIMENSION: usize = 8;
 const IDENTITY: &str = "test-embedder:v1";
@@ -693,7 +693,7 @@ async fn summary_search_ranks_documents_and_ignores_rows_that_are_gone() {
             .unwrap();
         index
             .publish_embeddings(vec![
-                crate::application::ports::vector_search_port::VectorIndexEntry {
+                lattice_core::application::ports::vector_search_port::VectorIndexEntry {
                     id: document.vector_id(),
                     embedding: WordEmbedder::vector(&document.summary_text),
                     content: document.summary_text.clone(),

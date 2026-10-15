@@ -1,7 +1,15 @@
 import { vi } from 'vitest';
 
+import type { VaultClients } from '@/lib/apiClients';
+
 /**
- * Mock implementation of VaultAPI for testing
+ * Mock implementation of VaultAPI for testing.
+ *
+ * The object is checked against the composed facade: every method name must
+ * exist on `VaultClients` and each stub must be assignable to the real
+ * signature, so a renamed or removed command fails the type-check instead of
+ * surfacing as `undefined is not a function` in an unrelated test. Only the
+ * surface tests actually exercise is stubbed, hence `Partial`.
  */
 export function createVaultAPIMock() {
   const mockSettings = {
@@ -58,9 +66,14 @@ export function createVaultAPIMock() {
       provider: 'auto',
       model: 'llama3.2:latest',
       temperature: 0.7,
-      topP: 0.9,
-      topK: 40,
-      repeatPenalty: 1.1,
+      topP: 0.8,
+      topK: 20,
+      repeatPenalty: 1.0,
+      presencePenalty: 1.5,
+      answerThinking: false,
+      thinkingOverride: 'auto',
+      thinkingSampling: { temperature: 1, topP: 0.95, topK: 20, presencePenalty: 1.5, repeatPenalty: 1 },
+      speculativeDecoding: { mode: 'off' },
       maxTokens: 131072,
       contextWindow: 131072,
       ollamaUrl: 'http://localhost:11434',
@@ -96,7 +109,7 @@ export function createVaultAPIMock() {
       },
       router: {
         enabled: true,
-        model: 'phi-3.5-mini-instruct-q4_k_m',
+        model: 'qwen3.5-4b-q4_k_m',
         timeoutMs: 350,
         maxTokens: 120,
         temperature: 0.1,
@@ -138,20 +151,7 @@ export function createVaultAPIMock() {
     // File operations
     indexFile: vi.fn().mockResolvedValue({ success: true }),
     clearIndexingFailure: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
-    indexDirectory: vi.fn().mockResolvedValue({ success: true }),
     deleteDocument: vi.fn().mockResolvedValue({ success: true }),
-
-    // Search operations
-    search: vi.fn().mockResolvedValue({
-      results: [],
-      total: 0,
-      facets: {}
-    }),
-    hybridSearch: vi.fn().mockResolvedValue({
-      results: [],
-      total: 0,
-      facets: {}
-    }),
 
     // Model operations
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
@@ -163,7 +163,6 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
     downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
-    listModels: vi.fn().mockResolvedValue([]),
     getModelDownloadPath: vi
       .fn()
       .mockResolvedValue({ ok: true, data: '/tmp/lattice/models' }),
@@ -216,30 +215,9 @@ export function createVaultAPIMock() {
     applyTags: vi.fn().mockResolvedValue({ ok: true, data: [] }),
     removeTagFromDocument: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
 
-    // Stats operations
-    getStats: vi.fn().mockResolvedValue({
-      totalDocuments: 0,
-      totalChunks: 0,
-      indexSize: 0
-    }),
-
-    // Progress operations
-    getProgress: vi.fn().mockResolvedValue({
-      status: 'idle',
-      processedFiles: 0,
-      totalFiles: 0,
-      percentage: 0
-    }),
     cancelIndexing: vi.fn().mockResolvedValue({ success: true }),
 
     // Conversation operations
-    startConversation: vi.fn().mockResolvedValue({
-      conversationId: 'test-id'
-    }),
-    sendMessage: vi.fn().mockResolvedValue({
-      response: 'mock response',
-      sources: []
-    }),
     getConversationMessages: vi.fn().mockResolvedValue({
       ok: true,
       data: { messages: [], total: 0 },
@@ -446,7 +424,7 @@ export function createVaultAPIMock() {
         }
       });
     }),
-  };
+  } satisfies Partial<VaultClients> & { __reset: () => void };
 
   return api;
 }

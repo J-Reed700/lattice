@@ -5,8 +5,8 @@
     clippy::panic
 )]
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::shared::runtime::jobs::JobStore;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::runtime::jobs::JobStore;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -63,6 +63,14 @@ fn context(prompt: &str) -> Value {
 /// instructions followed by the user's request; a single claim check reads as
 /// its user prompt, which is where the check states the claim.
 pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
+    // A two-step call's prose step is answered by `fixture_completion` alone,
+    // so scripted replies and call counts belong to the structured answer.
+    if crate::features::learning::lessons::structured_call::is_draft_request(request) {
+        return Vec::new();
+    }
+    if let Some(schema) = &request.json_schema {
+        assert_schema_request_holds_the_shape(request, schema);
+    }
     let (system, user) = fixture_messages(request);
     if let Some(batch) = fixture_batch(user) {
         let challenge = system.starts_with("Plan independent evidence searches");
@@ -97,6 +105,11 @@ pub(crate) fn fixture_completion(
     request: &CompletionRequest,
     replies: Vec<String>,
 ) -> CompletionResponse {
+    if crate::features::learning::lessons::structured_call::is_draft_request(request) {
+        return CompletionResponse::from_text(
+            crate::features::learning::lessons::structured_call::FIXTURE_DRAFT,
+        );
+    }
     let (system, user) = fixture_messages(request);
     let text = if let Some(batch) = fixture_batch(user) {
         let challenge = system.starts_with("Plan independent evidence searches");
@@ -130,21 +143,61 @@ pub(crate) fn fixture_completion(
     CompletionResponse::from_text(text)
 }
 
-fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
-    let message = |wanted: &str| {
-        request.input.iter().rev().find_map(|item| match item {
-            crate::application::ports::llm_port::CompletionInput::Message { role, content }
-                if role == wanted =>
-            {
-                Some(content.as_str())
-            }
-            _ => None,
-        })
+/// Every schema-constrained learning request a fixture answers: its grammar
+/// survives llama.cpp's repetition limit, so the server holds the shape, and
+/// none of its messages also asks for the format in words.
+fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &Value) {
+    use crate::features::conversation::memory::prompts::{
+        largest_repetition_bound, GRAMMAR_REPETITION_LIMIT,
     };
-    (
-        message("system").unwrap_or(""),
-        message("user").unwrap_or(""),
-    )
+    let (bound, path) = largest_repetition_bound(schema);
+    assert!(
+        bound <= GRAMMAR_REPETITION_LIMIT as u64,
+        "schema bound {bound} at {path} would make llama.cpp drop the grammar"
+    );
+    // The batched claim check is the shared claim-verification service's
+    // prompt (application/services/claim_verification/batch.rs), not
+    // learning's; it still says "Return JSON with checks" and is left to its
+    // owner.
+    let shared_claim_check = request.input.iter().any(|item| {
+        matches!(
+            item,
+            lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
+                if role == "system" && content.contains("Check the supplied claims independently.")
+        )
+    });
+    if shared_claim_check {
+        return;
+    }
+    for item in &request.input {
+        if let lattice_core::application::ports::llm_port::CompletionInput::Message {
+            content,
+            ..
+        } = item
+        {
+            for demand in [
+                "Return only JSON",
+                "Return JSON",
+                "strict JSON",
+                "JSON only",
+                "matching the schema",
+                "supplied schema",
+                "original schema",
+                "requested JSON",
+            ] {
+                assert!(
+                    !content.contains(demand),
+                    "a schema request still asks for the format in words: {demand}"
+                );
+            }
+        }
+    }
+}
+
+/// The task's own system and user text, so the answer step of a two-step call
+/// reads as the one-step request it replaces.
+fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
+    crate::features::learning::lessons::structured_call::task_messages(request)
 }
 
 fn is_claim_check(user: &str) -> bool {
@@ -401,11 +454,13 @@ mod review_resume_tests;
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
     let mut model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
     let lesson = candidate(GOOD);
     let mut sources = vec![source()];
     let mut checks = ClaimChecks::default();
     let first = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -419,6 +474,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     sources.push(unrelated);
     let expanded = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -434,6 +490,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = true;
     let failed = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -448,6 +505,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = false;
     verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -461,6 +519,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 
     let edited = verify_with_references(
         &model,
+        &runtimes,
         &candidate(BAD),
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -474,6 +533,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 #[tokio::test]
 async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
     let model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let mut lesson = candidate(GOOD);
@@ -482,11 +542,13 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         .unwrap()
         .push(candidate(BAD)["blocks"][0].clone());
     let mut checks = ClaimChecks::default();
-    let first = verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    let first =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 2);
     assert_eq!(first.findings[1].verdict, ClaimVerdict::Contradicted);
     lesson["blocks"][1] = candidate(GOOD)["blocks"][0].clone();
-    let repaired = verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    let repaired =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert!(repaired.issues.is_empty());
     assert_eq!(
         *model.judge_calls.lock().unwrap(),
@@ -499,7 +561,7 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         "{} Additional wording.",
         lesson["blocks"][0]["body"].as_str().unwrap()
     ));
-    verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 3);
     Ok(())
 }
@@ -1571,13 +1633,15 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
 
 #[tokio::test]
 async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     let good = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nconsole.log(2 + 3);\n```"}]});
-    let observed = execution::observe(&good).await?;
+    let observed = execution::observe(&runtimes, &good).await?;
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains('5'));
     let bad = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nthrow new Error('broken example');\n```"}]});
-    assert!(!execution::observe(&bad).await?[0].passed());
+    assert!(!execution::observe(&runtimes, &bad).await?[0].passed());
     assert!(execution::observe(
+        &runtimes,
         &json!({"blocks":[{"kind":"worked_example","body":"```python\nprint(1)"}]})
     )
     .await
@@ -1587,6 +1651,7 @@ async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run()
 
 #[tokio::test]
 async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
     let model=ScriptedModel {outputs:Mutex::new(vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
     let tree = "project/\n└── main.rs\n";
@@ -1601,17 +1666,18 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
             "Directory tree:\n```text\n{tree}```\nRunnable example:\n```javascript\n{code}```\n"
         )
     );
-    let observed = execution::observe(&corrected).await?;
+    let observed = execution::observe(&runtimes, &corrected).await?;
     assert_eq!(observed.len(), 1);
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains(" a  b "));
     let titled = json!({"blocks":[{"kind":"worked_example","body":"```javascript title=example.js\nconsole.log(42);\n```"}]});
-    assert!(execution::observe(&titled).await?[0].passed());
+    assert!(execution::observe(&runtimes, &titled).await?[0].passed());
     Ok(())
 }
 
 #[tokio::test]
 async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
+    let runtimes = BuiltinRuntimes::for_tests();
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
     let lesson = json!({"blocks":[{"kind":"worked_example","body":"```\nconsole.log(42);\n```"}],"questions":[]});
     for response in [
@@ -1627,7 +1693,7 @@ async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
             .await
             .is_err());
     }
-    assert!(execution::observe(&lesson).await.is_err());
+    assert!(execution::observe(&runtimes, &lesson).await.is_err());
 }
 
 struct TypedModel {
@@ -1919,7 +1985,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         assert!(prompts[1].contains(SOURCE));
         assert!(prompts[1].contains("Correct the response format"));
     }
-    use crate::application::services::claim_verification::parse_verdict_word;
+    use lattice_core::application::services::claim_verification::parse_verdict_word;
     assert_eq!(
         parse_verdict_word("Label: unsupported\nReason: Missing source."),
         Some(ClaimVerdict::Unsupported)
@@ -2026,15 +2092,17 @@ pub(crate) async fn install_source(
     let id = || uuid::Uuid::new_v4().to_string();
     LearningSourceLibraryRepository::new(pool.clone())
         .add(
-            &id(),
-            &id(),
-            &id(),
-            program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Test reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &id(),
+                version_id: &id(),
+                program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Test reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "Test reference".into(),
                 publisher: None,
@@ -2051,11 +2119,12 @@ pub(crate) async fn install_source(
 
 #[tokio::test]
 async fn unsupported_languages_are_disclosed_and_csv_fixture_is_test_only() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     let rust = json!({"blocks":[{"kind":"worked_example","body":"```rust\nfn main() {}\n```"}]});
-    assert!(execution::observe(&rust).await?.is_empty());
+    assert!(execution::observe(&runtimes, &rust).await?.is_empty());
     assert_eq!(execution::unexecuted_languages(&rust), vec!["rust"]);
     let csv = json!({"blocks":[{"kind":"worked_example","body":format!("```python\n{}\n```", include_str!("csv_reference.py"))}]});
-    let observed = execution::observe(&csv).await?;
+    let observed = execution::observe(&runtimes, &csv).await?;
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains("header_whitespace"));
     Ok(())

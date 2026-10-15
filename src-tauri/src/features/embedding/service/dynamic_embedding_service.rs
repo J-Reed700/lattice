@@ -2,19 +2,21 @@
 //!
 //! Uses a read-only model provider and exposes EmbeddingServiceTrait.
 
-use crate::application::ports::{EmbeddingPort, MockEmbeddingPort};
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::ports::{EmbeddingPort, MockEmbeddingPort};
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct DynamicEmbeddingService {
-    provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
 }
 
 impl DynamicEmbeddingService {
-    pub fn new(provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>) -> Self {
+    pub fn new(
+        provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    ) -> Self {
         Self { provider }
     }
 
@@ -34,7 +36,7 @@ impl EmbeddingServiceTrait for DynamicEmbeddingService {
         &self,
         text: &str,
         prefix: &str,
-    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+    ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>> {
         self.get_embedding_port().split_text(text, prefix)
     }
 
@@ -54,7 +56,7 @@ impl EmbeddingServiceTrait for DynamicEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
+        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         let texts: Vec<String> = chunks
             .iter()
@@ -75,7 +77,7 @@ impl EmbeddingServiceTrait for DynamicEmbeddingService {
     async fn embed_sparse_batch(
         &self,
         texts: &[String],
-    ) -> Result<Vec<crate::domain::value_objects::SparseEmbedding>> {
+    ) -> Result<Vec<lattice_core::domain::value_objects::SparseEmbedding>> {
         self.get_embedding_port().embed_sparse_batch(texts).await
     }
 
@@ -84,7 +86,7 @@ impl EmbeddingServiceTrait for DynamicEmbeddingService {
         texts: &[String],
     ) -> Result<(
         Vec<Vec<f32>>,
-        Vec<crate::domain::value_objects::SparseEmbedding>,
+        Vec<lattice_core::domain::value_objects::SparseEmbedding>,
     )> {
         self.get_embedding_port()
             .embed_batch_with_sparse(texts)
@@ -94,7 +96,7 @@ impl EmbeddingServiceTrait for DynamicEmbeddingService {
     async fn embed_sparse_query(
         &self,
         text: &str,
-    ) -> Result<crate::domain::value_objects::SparseEmbedding> {
+    ) -> Result<lattice_core::domain::value_objects::SparseEmbedding> {
         self.get_embedding_port().embed_sparse_query(text).await
     }
 

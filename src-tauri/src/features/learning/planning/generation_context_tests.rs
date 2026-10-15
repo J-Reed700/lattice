@@ -10,7 +10,7 @@ use crate::features::learning::{
     lesson_drafts,
     tests::{fixture, pool},
 };
-use crate::shared::runtime::jobs::RecoveryPolicy;
+use lattice_core::shared::runtime::jobs::RecoveryPolicy;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
     let mut result = PreparedLearningLesson {

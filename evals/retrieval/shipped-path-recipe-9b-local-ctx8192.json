@@ -1,0 +1,22 @@
+{
+  "name": "shipped-path-qwen3.5-9b-local",
+  "corpus": "evals/retrieval/synthetic-library-v3.json",
+  "questions": "evals/retrieval/desktop-path-v1.json",
+  "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+  "embedding_model_id": "qwen3-embedding-0.6b",
+  "server": {
+    "url": "http://127.0.0.1:8089",
+    "model": "Qwen3.5-9B-Q4_K_M.gguf",
+    "gguf": "~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+    "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+    "launch": "src-tauri/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 8192 -np 1 --jinja",
+    "expected_ctx": 8192,
+    "expected_slots": 1,
+    "thinking": "off"
+  },
+  "index": {"chunk_tokens": 800},
+  "settings": {
+    "llm": {"contextWindow": 8192}
+  },
+  "wait": {"verification_secs": 300, "quiet_ms": 3000, "quiet_cap_secs": 600}
+}

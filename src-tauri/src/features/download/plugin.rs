@@ -5,6 +5,7 @@
 use crate::features::download::commands::{
     self, DownloadCommandState, DownloadStatusResponse, StartDownloadRequest,
 };
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,
@@ -15,8 +16,10 @@ use tauri::{
 pub async fn start_model_download(
     state: State<'_, DownloadCommandState>,
     request: StartDownloadRequest,
-) -> Result<String, String> {
-    commands::start_model_download(state, request).await
+) -> Result<String, ApiError> {
+    commands::start_model_download(state, request)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -24,8 +27,10 @@ pub async fn start_model_download(
 pub async fn pause_download(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<(), String> {
-    commands::pause_download(state, id).await
+) -> Result<(), ApiError> {
+    commands::pause_download(state, id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -33,8 +38,10 @@ pub async fn pause_download(
 pub async fn resume_download(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<(), String> {
-    commands::resume_download(state, id).await
+) -> Result<(), ApiError> {
+    commands::resume_download(state, id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -42,8 +49,10 @@ pub async fn resume_download(
 pub async fn cancel_download(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<(), String> {
-    commands::cancel_download(state, id).await
+) -> Result<(), ApiError> {
+    commands::cancel_download(state, id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -51,8 +60,10 @@ pub async fn cancel_download(
 pub async fn retry_download(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<(), String> {
-    commands::retry_download(state, id).await
+) -> Result<(), ApiError> {
+    commands::retry_download(state, id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -60,16 +71,20 @@ pub async fn retry_download(
 pub async fn remove_download(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<(), String> {
-    commands::remove_download(state, id).await
+) -> Result<(), ApiError> {
+    commands::remove_download(state, id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_completed_downloads(
     state: State<'_, DownloadCommandState>,
-) -> Result<usize, String> {
-    commands::clear_completed_downloads(state).await
+) -> Result<usize, ApiError> {
+    commands::clear_completed_downloads(state)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -77,16 +92,20 @@ pub async fn clear_completed_downloads(
 pub async fn get_download_status(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<Option<DownloadStatusResponse>, String> {
-    commands::get_download_status(state, id).await
+) -> Result<Option<DownloadStatusResponse>, ApiError> {
+    commands::get_download_status(state, id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn list_downloads(
     state: State<'_, DownloadCommandState>,
-) -> Result<Vec<DownloadStatusResponse>, String> {
-    commands::list_downloads(state).await
+) -> Result<Vec<DownloadStatusResponse>, ApiError> {
+    commands::list_downloads(state)
+        .await
+        .map_err(ApiError::from)
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

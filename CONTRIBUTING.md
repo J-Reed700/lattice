@@ -24,9 +24,9 @@ entry points. Put implementation and operational helpers in their owning folders
 | `src/shared/` | Shared IPC transport and cross-feature primitives |
 | `src/components/` | Shared UI primitives and the app shell (`Layout`, `RootLayout`) |
 | `src-tauri/src/features/<feature>/` | Desktop capabilities, including their commands, loaders, services, and repositories |
-| `src-tauri/src/application/` | Cross-feature contracts, ports, and orchestration |
-| `src-tauri/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
-| `src-tauri/src/shared/` | Cross-cutting types, errors, IPC, filesystem, HTTP, persistence formatting, runtime, and resilience helpers |
+| `src-tauri/crates/lattice-core/src/application/` | Cross-feature contracts, ports, and orchestration (the `lattice-core` crate) |
+| `src-tauri/crates/lattice-core/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
+| `src-tauri/crates/lattice-core/src/shared/` | Cross-cutting types, errors, IPC, filesystem, HTTP, persistence formatting, runtime, and resilience helpers |
 | `src-tauri/src/infrastructure/` | Shared technical implementations, grouped by responsibility |
 | `src-tauri/src/interfaces/` | Dependency injection and shared IPC adapters |
 | `src-tauri/src/bin/<tool>/` | Developer executables and their private helpers |
@@ -153,8 +153,8 @@ npm run lint
 npm run contracts:check
 npm run test:unit
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
-cargo test --manifest-path src-tauri/Cargo.toml --lib
+cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets
+cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml

@@ -3,10 +3,10 @@
 //! and removal with and without the folder's threads.
 
 use super::*;
-use crate::domain::conversation::MessageRole;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::explorer::{folders, repository};
-use crate::shared::AppError;
+use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::AppError;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
@@ -282,7 +282,7 @@ async fn removing_a_folder_keeps_its_threads_unless_asked() {
     let chat = thread(&pool, None, "ordinary").await;
 
     // Kept: the index and the row go, closed first; the threads stay bound.
-    let deleted = folders::remove(&container, &manager, &text(&root), false)
+    let deleted = folders::remove(&pool, &container, &manager, &text(&root), false)
         .await
         .unwrap();
     assert_eq!(deleted, 0);
@@ -309,7 +309,7 @@ async fn removing_a_folder_keeps_its_threads_unless_asked() {
     );
 
     // Deleted: through the conversation delete, messages and all.
-    let deleted = folders::remove(&container, &manager, &text(&root), true)
+    let deleted = folders::remove(&pool, &container, &manager, &text(&root), true)
         .await
         .unwrap();
     assert_eq!(deleted, 2);

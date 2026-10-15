@@ -14,13 +14,13 @@ pub(crate) trait CachedModel {
     fn is_alive(&self) -> bool;
 }
 
-impl CachedModel for std::sync::Arc<dyn crate::application::ports::LLMPort> {
+impl CachedModel for std::sync::Arc<dyn lattice_core::application::ports::LLMPort> {
     fn is_alive(&self) -> bool {
-        crate::application::ports::LLMPort::is_alive(self.as_ref())
+        lattice_core::application::ports::LLMPort::is_alive(self.as_ref())
     }
 }
 
-impl CachedModel for std::sync::Arc<dyn crate::application::ports::EmbeddingPort> {
+impl CachedModel for std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort> {
     fn is_alive(&self) -> bool {
         true
     }
@@ -130,10 +130,12 @@ impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
     }
 }
 
-impl crate::application::ports::LoadedChatModelPort
-    for ModelCache<(), std::sync::Arc<dyn crate::application::ports::LLMPort>>
+impl lattice_core::application::ports::LoadedChatModelPort
+    for ModelCache<(), std::sync::Arc<dyn lattice_core::application::ports::LLMPort>>
 {
-    fn current_model(&self) -> Option<std::sync::Arc<dyn crate::application::ports::LLMPort>> {
+    fn current_model(
+        &self,
+    ) -> Option<std::sync::Arc<dyn lattice_core::application::ports::LLMPort>> {
         self.get(&(), self.generation())
     }
 }
@@ -141,9 +143,9 @@ impl crate::application::ports::LoadedChatModelPort
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-    use crate::application::ports::{LLMPort, LoadedChatModelPort};
     use crate::features::llm::engine::factory::MockLLMPort;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::ports::{LLMPort, LoadedChatModelPort};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -165,7 +167,7 @@ mod tests {
         async fn complete(
             &self,
             request: &CompletionRequest,
-        ) -> crate::shared::error::Result<CompletionResponse> {
+        ) -> lattice_core::shared::error::Result<CompletionResponse> {
             Ok(CompletionResponse::from_text(
                 self.respond(request.user_text()).await?,
             ))
@@ -179,7 +181,7 @@ mod tests {
         fn count_tokens(&self, text: &str) -> usize {
             text.len()
         }
-        async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
             Ok(true)
         }
         fn is_alive(&self) -> bool {
@@ -187,7 +189,7 @@ mod tests {
         }
     }
     impl Killable {
-        async fn respond(&self, _prompt: &str) -> crate::shared::error::Result<String> {
+        async fn respond(&self, _prompt: &str) -> lattice_core::shared::error::Result<String> {
             Ok(String::new())
         }
     }

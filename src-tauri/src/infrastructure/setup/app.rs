@@ -1,8 +1,9 @@
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::features::download::saga::DownloadSaga;
 use crate::infrastructure::events::event_bus::EventBus;
-use crate::shared::runtime::supervised_task::supervise_cancellable;
+use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::runtime::supervised_task::supervise_cancellable;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
 use std::path::PathBuf;
@@ -16,17 +17,17 @@ struct StartupFailure {
 }
 
 impl StartupFailure {
-    fn setup(message: String) -> Self {
+    fn setup(error: AppError) -> Self {
         Self {
             title: "Application Setup Failed",
-            message,
+            message: error.to_string(),
         }
     }
 
-    fn initialization(message: String) -> Self {
+    fn initialization(error: AppError) -> Self {
         Self {
             title: "Application Initialization Failed",
-            message,
+            message: error.to_string(),
         }
     }
 }
@@ -41,10 +42,10 @@ impl StartupFailure {
 /// * `db_path` - Path to the SQLite database file
 ///
 /// # Returns
-/// * `Result<DatabaseConnection, String>` - Database connection or error
+/// * `Result<DatabaseConnection, AppError>` - Database connection or error
 async fn initialize_database_layer(
     db_path: PathBuf,
-) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, String> {
+) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, AppError> {
     tracing::info!("Initializing database...");
     match super::setup_database(db_path).await {
         Ok(conn) => {
@@ -82,7 +83,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 /// * `config` - Application configuration
 ///
 /// # Returns
-/// * `Result<Container, String>` - Container (always succeeds, AI features optional)
+/// * `Result<Container, AppError>` - Container (always succeeds, AI features optional)
 async fn create_container(
     pool: sqlx::SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
@@ -92,7 +93,8 @@ async fn create_container(
     ollama_endpoint: String,
     ollama_model: String,
     app_handle: tauri::AppHandle,
-) -> Result<crate::interfaces::di::Container, String> {
+    background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
+) -> Result<crate::interfaces::di::Container, AppError> {
     use crate::interfaces::di::Container;
 
     tracing::info!("Creating DI Container (pure DDD architecture)");
@@ -117,10 +119,11 @@ async fn create_container(
         &ollama_endpoint,
         &ollama_model,
         data_dir,
+        background,
     )
     .await
     .map(|c| c.with_app_handle(app_handle))
-    .map_err(|e| format!("Failed to create container: {}", e))
+    .map_err(|e| e.with_context("Failed to create container"))
 }
 
 /// Orchestrates the sequential initialization of all application layers.
@@ -179,9 +182,10 @@ pub fn initialize_app(app: &mut tauri::App) {
 /// Components go directly to heap via Tauri State.
 #[tracing::instrument(skip(app_handle))]
 async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), StartupFailure> {
-    let background = crate::shared::runtime::background::BackgroundTasks::install();
+    let background =
+        Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default());
     let shutdown_token = background.token();
-    app_handle.manage(background);
+    app_handle.manage(Arc::clone(&background));
     app_handle.manage(shutdown_token.clone());
     let app_dir = super::setup_app_directories(&app_handle).map_err(StartupFailure::setup)?;
 
@@ -195,16 +199,11 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let model_dir_for_init = model_dir.clone();
 
     let app_handle_for_container = app_handle.clone();
+    let background_for_container = Arc::clone(&background);
 
     let container = async move {
         // Sequential initialization with clear error propagation
         let conn = initialize_database_layer(db_path).await?;
-        crate::infrastructure::audit::sinks::sqlite::configure_sqlite_audit_sink(
-            &crate::infrastructure::audit::get_audit_logger(),
-            conn.pool().clone(),
-        )
-        .await
-        .map_err(|error| format!("Failed to initialize local audit persistence: {error}"))?;
         let security_context = initialize_security_layer();
 
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
@@ -219,11 +218,11 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         let bootstrap_settings_repo =
             crate::features::settings::repository::SettingsRepository::new(app_dir.clone())
                 .await
-                .map_err(|e| format!("Failed to read settings during startup: {e}"))?;
+                .map_err(|e| e.with_context("Failed to read settings during startup"))?;
         let bootstrap_settings = bootstrap_settings_repo
             .get_all()
             .await
-            .map_err(|e| format!("Failed to load settings during startup: {e}"))?;
+            .map_err(|e| e.with_context("Failed to load settings during startup"))?;
         let ollama_endpoint = bootstrap_settings.llm.ollama_url.clone();
         let ollama_model = bootstrap_settings.llm.model.clone();
 
@@ -236,6 +235,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             ollama_endpoint,
             ollama_model,
             app_handle_for_container,
+            background_for_container,
         )
         .await?;
 
@@ -248,31 +248,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             tracing::warn!(error = %e, "failed to compute file-access allowed roots");
         }
 
-        Ok::<crate::interfaces::di::Container, String>(container)
+        Ok::<crate::interfaces::di::Container, AppError>(container)
     }
     .await
     .map_err(StartupFailure::initialization)?;
-
-    // Age retention is enforced at startup and daily while the app is open;
-    // the SQLite insert trigger independently enforces the hard row cap.
-    let audit_pool = container.db_pool().clone();
-    let audit_shutdown = shutdown_token.clone();
-    crate::shared::runtime::background::spawn(async move {
-        let mut prune_tick = tokio::time::interval_at(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(24 * 60 * 60),
-            std::time::Duration::from_secs(24 * 60 * 60),
-        );
-        loop {
-            tokio::select! {
-                _ = audit_shutdown.cancelled() => break,
-                _ = prune_tick.tick() => {
-                    if let Err(error) = crate::infrastructure::audit::sinks::sqlite::SqliteAuditSink::prune_expired_from_pool(&audit_pool).await {
-                        tracing::warn!(%error, "Failed to prune expired local audit events");
-                    }
-                }
-            }
-        }
-    });
 
     if let Err(e) = container
         .system
@@ -296,7 +275,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // IMPORTANT: Use the same DownloadManager instance the container/use-cases use.
     // This keeps model downloads and download drawer events in sync.
     let download_manager = container.download_manager().map_err(|e| {
-        StartupFailure::initialization(format!("Failed to get shared download manager: {}", e))
+        StartupFailure::initialization(e.with_context("Failed to get shared download manager"))
     })?;
 
     // Background tasks use tokio::spawn - async state is on heap, not stack
@@ -312,7 +291,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     );
 
     let model_dir_for_cleanup = model_dir.clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::{
             reconcile_orphaned_files, reconcile_orphaned_sessions, reconcile_stale_downloads,
         };
@@ -357,7 +336,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // A question the last run quit under would show as in flight for good;
     // fail it so it can be retried.
     let turns_pool = container.db_pool().clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::reconcile_stuck_turns;
         match reconcile_stuck_turns(&turns_pool).await {
             Ok(count) if count > 0 => {
@@ -373,7 +352,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // A grounding check the last run quit under would show "Checking…" for
     // good; mark it not checked before the first conversation loads.
     let verification_pool = container.db_pool().clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::reconcile_interrupted_verifications;
         match reconcile_interrupted_verifications(&verification_pool).await {
             Ok(count) if count > 0 => {
@@ -391,7 +370,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // the files. Without this they stay on disk forever and get packed into
     // every backup.
     let library_gc = container.library_gc();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         match library_gc.sweep().await {
             Ok(report) => tracing::info!(
                 removed = report.removed,
@@ -404,6 +383,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             }
         }
     });
+    // Frozen web snapshots whose rows are gone, and writes a crash cut short.
+    container
+        .web_page_snapshots()
+        .sweep_in_background("startup");
 
     // Collect attachments whose conversation is gone. They are owned by a chat
     // that no longer exists, so they are hidden from the library and reachable
@@ -412,7 +395,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // on the next startup.
     let orphan_scope = container.document_scope();
     let orphan_delete = container.delete_document_use_case();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         let orphans = match orphan_scope.orphaned_conversation_owned_documents().await {
             Ok(ids) => ids,
             Err(error) => {
@@ -464,13 +447,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository::new(
             container.db_pool().clone()
         )
-    ) as Arc<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort>;
+    ) as Arc<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort>;
 
     let uow_factory = Arc::new(
         crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory::new(
             container.db_pool().clone()
         )
-    ) as Arc<dyn crate::application::ports::UnitOfWorkFactory>;
+    ) as Arc<dyn lattice_core::application::ports::UnitOfWorkFactory>;
 
     let download_saga = Arc::new(DownloadSaga::new(
         Arc::clone(&event_bus),
@@ -509,7 +492,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // steady-state operation are unlikely. Refactoring the bridge to
     // be restartable is a separate task.
     let bridge_cancel = shutdown_token.clone();
-    let bridge_handle = crate::shared::runtime::background::spawn(async move {
+    let bridge_handle = background.spawn(async move {
         event_bridge.start(bridge_cancel).await;
     });
     app_handle.manage(super::background_workers::BackgroundWorkers::new(
@@ -521,7 +504,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // event channel would otherwise deadlock the consumer on its own sends.
     let queue_manager = download_manager.clone();
     let queue_cancel = shutdown_token.clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         loop {
             tokio::select! {
                 biased;
@@ -571,8 +554,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 /// Read the stored `summary_index_enabled` search setting, defaulting to off
 /// when settings cannot be read so startup never depends on it.
 async fn read_summary_tier_flag(data_dir: &std::path::Path) -> bool {
-    use crate::application::ports::SettingsRepositoryPort;
     use crate::features::settings::repository::SettingsRepository;
+    use lattice_core::application::ports::SettingsRepositoryPort;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {

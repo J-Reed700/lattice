@@ -10,8 +10,8 @@ use super::dto::{
     ExplorerSearchMatchDto, ExplorerSearchResultDto,
 };
 use super::scope::{Scope, ScopedPath};
-use crate::shared::{AppError, Result};
 use ignore::WalkBuilder;
+use lattice_core::shared::{AppError, Result};
 use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
 use std::ffi::OsString;

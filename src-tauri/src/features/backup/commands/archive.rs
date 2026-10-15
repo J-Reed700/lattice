@@ -1,5 +1,5 @@
 //! `create_archive` / `restore_archive`: the two archive operations that need
-//! rate limiting and an audit trail, split from their Tauri wrappers the same
+//! rate limiting, split from their Tauri wrappers the same
 //! way `create.rs` and `restore.rs` are.
 //!
 //! Everything else in the archive command surface is configuration, which
@@ -10,10 +10,9 @@ use std::path::PathBuf;
 use crate::features::backup::archive::format::ArchiveError;
 use crate::features::backup::archive::restore::RestoreOutcome;
 use crate::features::backup::dto::{archive_outcome, ArchiveRunDto, RestoreArchiveResultDto};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::ipc::{ApiError, ErrorCode};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::ipc::{ApiError, ErrorCode};
 
 /// Write one archive now.
 ///
@@ -21,8 +20,6 @@ use crate::shared::ipc::{ApiError, ErrorCode};
 /// corpus and both are one button click away, so a wedged UI must not be able
 /// to spin them.
 pub async fn create_archive_impl(container: &Container) -> Result<ArchiveRunDto, AppError> {
-    let audit_logger = get_audit_logger();
-
     container
         .security_context()
         .rate_limiters()
@@ -36,30 +33,6 @@ pub async fn create_archive_impl(container: &Container) -> Result<ArchiveRunDto,
         .create_now()
         .await
         .map_err(AppError::from);
-
-    match &result {
-        Ok(run) => {
-            let event = AuditEvent::new(AuditAction::BackupCreated, AuditResult::success())
-                .with_resource_id(run.path.to_string_lossy().as_ref())
-                .with_metadata("operation", "create_archive")
-                .with_metadata("backup_type", "archive");
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::BackupCreated,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id("archive_failed")
-            .with_metadata("operation", "create_archive")
-            .with_metadata("backup_type", "archive");
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result.map(|run| ArchiveRunDto {
         path: run.path.to_string_lossy().to_string(),
@@ -80,41 +53,10 @@ pub async fn restore_archive_impl(
     secret: Option<String>,
     container: &Container,
 ) -> Result<RestoreArchiveResultDto, ArchiveError> {
-    let audit_logger = get_audit_logger();
-    let source_display = source.to_string_lossy().to_string();
-
     let result = container
         .archive_service()
         .restore(&source, secret.as_deref())
         .await;
-
-    // Only a completed restore is a state change worth recording as one; a
-    // prompt for a passphrase is not, and logging those as failures would
-    // bury the real events.
-    match &result {
-        Ok(RestoreOutcome::Restored { .. }) => {
-            let event = AuditEvent::new(AuditAction::BackupRestored, AuditResult::success())
-                .with_resource_id(&source_display)
-                .with_metadata("operation", "restore_archive")
-                .with_metadata("backup_type", "archive");
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Ok(_) => {}
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::BackupRestored,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&source_display)
-            .with_metadata("operation", "restore_archive")
-            .with_metadata("backup_type", "archive");
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result.map(restore_result_dto)
 }

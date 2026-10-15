@@ -98,7 +98,7 @@ impl TagService {
     pub async fn acquire_lock_with_timeout(
         &self,
         document_id: &str,
-    ) -> Result<DocumentLockGuard, String> {
+    ) -> Result<DocumentLockGuard, lattice_core::shared::error::AppError> {
         let lock = self.get_document_lock(document_id);
 
         // Use lock_owned() to get an OwnedMutexGuard that owns an Arc to the mutex
@@ -108,10 +108,12 @@ impl TagService {
                 let lock_guard = DocumentLockGuard::new(guard);
                 Ok(lock_guard)
             }
-            Err(_) => Err(
-                "Tag operation timed out - another operation is in progress for this document"
-                    .to_string(),
-            ),
+            Err(_) => Err(lattice_core::shared::error::AppError::ConcurrentModification {
+                resource: format!("document {}", document_id),
+                details:
+                    "Tag operation timed out - another operation is in progress for this document"
+                        .to_string(),
+            }),
         }
     }
 
@@ -147,11 +149,11 @@ impl TagServiceTrait for TagService {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag, crate::shared::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
-            return Err(crate::shared::error::AppError::InvalidInput(
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
                 "Tag name must be 1-100 characters".into(),
             ));
         }
@@ -160,7 +162,7 @@ impl TagServiceTrait for TagService {
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
         tag_repo.create(&normalized_name, color).await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Failed to create tag: {}", e))
+            lattice_core::shared::error::AppError::Database(format!("Failed to create tag: {}", e))
         })
     }
 
@@ -169,12 +171,12 @@ impl TagServiceTrait for TagService {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag, crate::shared::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
             if n.is_empty() || n.len() > 100 {
-                return Err(crate::shared::error::AppError::InvalidInput(
+                return Err(lattice_core::shared::error::AppError::InvalidInput(
                     "Tag name must be 1-100 characters".into(),
                 ));
             }
@@ -187,39 +189,45 @@ impl TagServiceTrait for TagService {
             .update(tag_id, normalized_name.as_deref(), color)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!("Failed to update tag: {}", e))
+                lattice_core::shared::error::AppError::Database(format!(
+                    "Failed to update tag: {}",
+                    e
+                ))
             })
     }
 
-    async fn delete_tag(&self, tag_id: &str) -> Result<(), crate::shared::error::AppError> {
+    async fn delete_tag(&self, tag_id: &str) -> Result<(), lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo.delete(tag_id).await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Failed to delete tag: {}", e))
+            lattice_core::shared::error::AppError::Database(format!("Failed to delete tag: {}", e))
         })
     }
 
     async fn get_all_tags(
         &self,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::shared::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, lattice_core::shared::error::AppError>
+    {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo.get_all().await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Failed to get tags: {}", e))
+            lattice_core::shared::error::AppError::Database(format!("Failed to get tags: {}", e))
         })
     }
 
     async fn get_all_tags_with_counts(
         &self,
-    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::shared::error::AppError>
-    {
+    ) -> Result<
+        Vec<crate::features::tags::dto::TagWithCountDto>,
+        lattice_core::shared::error::AppError,
+    > {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         let results = tag_repo.get_all_with_counts().await.map_err(|e| {
-            crate::shared::error::AppError::Database(format!(
+            lattice_core::shared::error::AppError::Database(format!(
                 "Failed to get tags with counts: {}",
                 e
             ))
@@ -240,7 +248,8 @@ impl TagServiceTrait for TagService {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::shared::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, lattice_core::shared::error::AppError>
+    {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -248,7 +257,7 @@ impl TagServiceTrait for TagService {
             .get_tags_for_document(document_id)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!(
+                lattice_core::shared::error::AppError::Database(format!(
                     "Failed to get document tags: {}",
                     e
                 ))
@@ -259,7 +268,8 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::shared::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, lattice_core::shared::error::AppError>
+    {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -282,14 +292,17 @@ impl TagServiceTrait for TagService {
             .add_tags_to_document_by_names(document_id, merged_tags)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!("Failed to apply tags: {}", e))
+                lattice_core::shared::error::AppError::Database(format!(
+                    "Failed to apply tags: {}",
+                    e
+                ))
             })?;
 
         tag_repo
             .get_tags_for_document(document_id)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!(
+                lattice_core::shared::error::AppError::Database(format!(
                     "Failed to get updated tags: {}",
                     e
                 ))
@@ -300,7 +313,7 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> crate::shared::error::Result<()> {
+    ) -> lattice_core::shared::error::Result<()> {
         crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
             .replace_document_tags(document_id, tag_names)
             .await
@@ -310,7 +323,7 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_id: &str,
-    ) -> Result<(), crate::shared::error::AppError> {
+    ) -> Result<(), lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -318,14 +331,17 @@ impl TagServiceTrait for TagService {
             .remove_tag_from_document(document_id, tag_id)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!("Failed to remove tag: {}", e))
+                lattice_core::shared::error::AppError::Database(format!(
+                    "Failed to remove tag: {}",
+                    e
+                ))
             })
     }
 
     async fn search_documents_by_tag(
         &self,
         tag_name: &str,
-    ) -> Result<Vec<String>, crate::shared::error::AppError> {
+    ) -> Result<Vec<String>, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -333,7 +349,7 @@ impl TagServiceTrait for TagService {
             .find_documents_by_tag_name(tag_name)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!(
+                lattice_core::shared::error::AppError::Database(format!(
                     "Failed to search documents by tag: {}",
                     e
                 ))
@@ -344,8 +360,8 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         max_tags: usize,
-    ) -> Result<Vec<String>, crate::shared::error::AppError> {
-        Err(crate::shared::error::AppError::ServiceNotAvailable(
+    ) -> Result<Vec<String>, lattice_core::shared::error::AppError> {
+        Err(lattice_core::shared::error::AppError::ServiceNotAvailable(
             format!(
                 "Tag generation requires AI model (document_id={}, max_tags={})",
                 document_id, max_tags
@@ -356,8 +372,8 @@ impl TagServiceTrait for TagService {
     async fn auto_tag_all_documents(
         &self,
         max_documents: usize,
-    ) -> Result<usize, crate::shared::error::AppError> {
-        Err(crate::shared::error::AppError::ServiceNotAvailable(
+    ) -> Result<usize, lattice_core::shared::error::AppError> {
+        Err(lattice_core::shared::error::AppError::ServiceNotAvailable(
             format!(
                 "Auto-tagging requires AI model (max_documents={})",
                 max_documents
@@ -368,30 +384,26 @@ impl TagServiceTrait for TagService {
     async fn acquire_lock_with_timeout(
         &self,
         document_id: &str,
-    ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
-        TagService::acquire_lock_with_timeout(self, document_id)
-            .await
-            .map_err(crate::shared::error::AppError::Other)
+    ) -> Result<DocumentLockGuard, lattice_core::shared::error::AppError> {
+        TagService::acquire_lock_with_timeout(self, document_id).await
     }
 
     async fn acquire_lock(
         &self,
         document_id: &str,
-    ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
-        TagService::acquire_lock_with_timeout(self, document_id)
-            .await
-            .map_err(crate::shared::error::AppError::Other)
+    ) -> Result<DocumentLockGuard, lattice_core::shared::error::AppError> {
+        TagService::acquire_lock_with_timeout(self, document_id).await
     }
 
     async fn get_or_create(
         &self,
         name: &str,
         color: &str,
-    ) -> Result<crate::features::tags::entity::Tag, crate::shared::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
-            return Err(crate::shared::error::AppError::InvalidInput(
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
                 "Tag name must be 1-100 characters".into(),
             ));
         }
@@ -402,14 +414,16 @@ impl TagServiceTrait for TagService {
             .get_or_create(&normalized_name, Some(color))
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Database(format!("Failed to get tag: {}", e))
+                lattice_core::shared::error::AppError::Database(format!("Failed to get tag: {}", e))
             })
     }
 
     async fn get_all_with_counts(
         &self,
-    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::shared::error::AppError>
-    {
+    ) -> Result<
+        Vec<crate::features::tags::dto::TagWithCountDto>,
+        lattice_core::shared::error::AppError,
+    > {
         self.get_all_tags_with_counts().await
     }
 

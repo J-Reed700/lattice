@@ -3,16 +3,16 @@ use super::branching_dto::*;
 use super::chat::{
     chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
 };
-use crate::features::conversation::repository::ConversationRepository;
+use crate::features::conversation::chat::ports::{ChatRuntime, ConversationBranches};
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
-use crate::interfaces::di::Container;
-use crate::shared::{error::AppError, ipc::ApiError};
+use lattice_core::shared::{error::AppError, ipc::ApiError};
 
 pub async fn create_conversation_tangent_impl(
     request: CreateTangentRequestDto,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<ConversationTangentDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    runtime
+        .conversation_branches()
         .create_tangent(request)
         .await
         .map_err(ApiError::from)
@@ -20,9 +20,10 @@ pub async fn create_conversation_tangent_impl(
 
 pub async fn list_conversation_tangents_impl(
     conversation_id: String,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<Vec<ConversationTangentDto>, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    runtime
+        .conversation_branches()
         .list_tangents(&conversation_id)
         .await
         .map_err(ApiError::from)
@@ -30,24 +31,26 @@ pub async fn list_conversation_tangents_impl(
 
 pub async fn promote_conversation_tangent_impl(
     conversation_id: String,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<crate::features::conversation::dto::ConversationDto, ApiError> {
-    let repo = ConversationRepository::new(container.db_pool().clone());
-    repo.promote_tangent(&conversation_id)
+    let branches = runtime.conversation_branches();
+    branches
+        .promote_tangent(&conversation_id)
         .await
         .map_err(ApiError::from)?;
-    let conversation = repo
+    let conversation = branches
         .find_by_id(&conversation_id)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::from(AppError::NotFound("Tangent no longer exists.".into())))?;
-    repo.project_conversation(&conversation)
+    branches
+        .project_conversation(&conversation)
         .await
         .map_err(ApiError::from)
 }
 
 fn to_message_dto(
-    message: &crate::domain::conversation::ConversationMessage,
+    message: &lattice_core::domain::conversation::ConversationMessage,
 ) -> crate::features::conversation::dto::MessageDto {
     crate::features::conversation::dto::MessageDto {
         id: message.id.to_string(),
@@ -63,11 +66,11 @@ fn to_message_dto(
 
 pub async fn truncate_conversation_after_impl(
     request: TruncateConversationAfterRequestDto,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<TruncateConversationAfterResponseDto, ApiError> {
-    let repo = ConversationRepository::new(container.db_pool().clone());
+    let branches = runtime.conversation_branches();
 
-    let deleted = repo
+    let deleted = branches
         .truncate_after(
             &request.conversation_id,
             &request.message_id,
@@ -76,7 +79,7 @@ pub async fn truncate_conversation_after_impl(
         .await
         .map_err(ApiError::from)?;
 
-    let messages = repo
+    let messages = branches
         .get_messages(&request.conversation_id)
         .await
         .map_err(ApiError::from)?;
@@ -90,11 +93,11 @@ pub async fn truncate_conversation_after_impl(
 
 pub async fn fork_conversation_impl(
     request: ForkConversationRequestDto,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<ForkConversationResponseDto, ApiError> {
-    let repo = ConversationRepository::new(container.db_pool().clone());
+    let branches = runtime.conversation_branches();
 
-    let source = repo
+    let source = branches
         .find_by_id(&request.conversation_id)
         .await
         .map_err(ApiError::from)?
@@ -111,7 +114,7 @@ pub async fn fork_conversation_impl(
     }
     let new_id = uuid::Uuid::new_v4().to_string();
 
-    let (new_id, copied) = repo
+    let (new_id, copied) = branches
         .fork(
             &request.conversation_id,
             request.up_to_message_id.as_deref(),
@@ -121,7 +124,7 @@ pub async fn fork_conversation_impl(
         .await
         .map_err(ApiError::from)?;
 
-    let created = repo
+    let created = branches
         .find_by_id(&new_id)
         .await
         .map_err(ApiError::from)?
@@ -132,7 +135,7 @@ pub async fn fork_conversation_impl(
         })?;
 
     Ok(ForkConversationResponseDto {
-        conversation: ConversationRepository::new(container.db_pool().clone())
+        conversation: branches
             .project_conversation(&created)
             .await
             .map_err(ApiError::from)?,
@@ -141,15 +144,15 @@ pub async fn fork_conversation_impl(
 }
 
 pub async fn regenerate_response_impl(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     conversation_id: String,
     tool_preferences: Option<ToolPreferences>,
     request_id: Option<String>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
-    let repo = ConversationRepository::new(container.db_pool().clone());
+    let branches = runtime.conversation_branches();
 
-    let (content, _tokens, metadata) = repo
+    let (content, _tokens, metadata) = branches
         .take_last_user_turn(&conversation_id)
         .await
         .map_err(ApiError::from)?
@@ -185,14 +188,14 @@ pub async fn regenerate_response_impl(
     // How long the thread is without the question, so a failure can tell
     // whether the turn got as far as saving it again.
     // Unreadable means unknown, and an unknown thread gets the question back.
-    let baseline = repo
+    let baseline = branches
         .get_messages(&conversation_id)
         .await
         .map(|messages| messages.len())
         .ok();
 
     let fut = run_chat_with_conversation_impl(
-        container,
+        runtime,
         Some(conversation_id.clone()),
         content.clone(),
         tool_preferences,
@@ -207,7 +210,7 @@ pub async fn regenerate_response_impl(
         Ok(response) => Ok(response),
         Err(error) => {
             restore_lifted_question(
-                &repo,
+                branches.as_ref(),
                 &conversation_id,
                 baseline,
                 &content,
@@ -226,16 +229,16 @@ pub async fn regenerate_response_impl(
 /// failed copies. Only a turn that failed before that point — the thread no
 /// longer than it was when the question was lifted — needs it put back.
 async fn restore_lifted_question(
-    repo: &ConversationRepository,
+    branches: &dyn ConversationBranches,
     conversation_id: &str,
     baseline: Option<usize>,
     content: &str,
     metadata: Option<&str>,
 ) {
     let Some(baseline) = baseline else {
-        return insert_failed_question(repo, conversation_id, content, metadata).await;
+        return insert_failed_question(branches, conversation_id, content, metadata).await;
     };
-    let saved = match repo.get_messages(conversation_id).await {
+    let saved = match branches.get_messages(conversation_id).await {
         Ok(messages) => messages.len() > baseline,
         Err(error) => {
             tracing::warn!(
@@ -247,20 +250,20 @@ async fn restore_lifted_question(
         }
     };
     if !saved {
-        insert_failed_question(repo, conversation_id, content, metadata).await;
+        insert_failed_question(branches, conversation_id, content, metadata).await;
     }
 }
 
 async fn insert_failed_question(
-    repo: &ConversationRepository,
+    branches: &dyn ConversationBranches,
     conversation_id: &str,
     content: &str,
     metadata: Option<&str>,
 ) {
-    if let Err(persist_error) = repo
+    if let Err(persist_error) = branches
         .add_message_with_status(
             conversation_id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             content,
             0,
             metadata,
@@ -279,6 +282,7 @@ async fn insert_failed_question(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::conversation::repository::ConversationRepository;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn thread() -> (ConversationRepository, String) {
@@ -300,7 +304,7 @@ mod tests {
         // What the chat turn leaves behind when generation fails.
         repo.add_message_with_status(
             &id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             "why?",
             0,
             None,

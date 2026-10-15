@@ -4,7 +4,8 @@
 use super::{FunctionExecutor, WIKIPEDIA_USER_AGENT};
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::*;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::WebSearchInput;
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, USER_AGENT};
 use tracing::{debug, info};
 

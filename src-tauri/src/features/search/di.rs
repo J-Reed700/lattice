@@ -7,12 +7,7 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{
-    ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
-};
-use crate::domain::models::downloaded::DownloadedModel;
-use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
-use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmbeddingService};
+use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
@@ -29,7 +24,14 @@ use crate::features::search::{BM25SearchTrait, SearchServiceTrait, SparseSearchT
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
+};
+use lattice_core::domain::models::checkpoint::has_loadable_weights;
+use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// Whether the learned sparse branch joins the fusion.
 ///
@@ -58,8 +60,9 @@ pub async fn build(
     db_pool: SqlitePool,
     usearch_index_path: std::path::PathBuf,
     models_path: std::path::PathBuf,
-    model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
     active_embedding_dimension: Option<usize>,
+    background: Arc<BackgroundTasks>,
 ) -> Result<SearchDi> {
     // Defaults: the historical uncompressed, chunk-first index. The composition
     // root (`src/interfaces/di/modules.rs`) reads the user's settings and calls
@@ -72,6 +75,7 @@ pub async fn build(
         active_embedding_dimension,
         VectorIndexCompression::None,
         EmbeddingStrategy::default(),
+        background,
     )
     .await
 }
@@ -89,15 +93,15 @@ pub async fn build(
 /// not interchangeable with chunk-first vectors of the same model, so the
 /// strategy joins the artifact digest in the embedding identity that selects
 /// which persisted vectors this index is rebuilt from.
-#[allow(clippy::too_many_arguments)]
 pub async fn build_with_compression(
     db_pool: SqlitePool,
     usearch_index_path: std::path::PathBuf,
     models_path: std::path::PathBuf,
-    model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
     active_embedding_dimension: Option<usize>,
     compression: VectorIndexCompression,
     strategy: EmbeddingStrategy,
+    background: Arc<BackgroundTasks>,
 ) -> Result<SearchDi> {
     let repository =
         crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
@@ -119,7 +123,7 @@ pub async fn build_with_compression(
     // A backup restore leaves this marker because archives carry no vectors.
     let reembed_marker = usearch_index_path
         .parent()
-        .map(|dir| dir.join(crate::shared::constants::REEMBED_MARKER_FILE));
+        .map(|dir| dir.join(lattice_core::shared::constants::REEMBED_MARKER_FILE));
     let usearch_index_path =
         usearch_index_path.with_file_name(format!("usearch-{}.usearch", generation));
     // Candle-era models vary in output dimension (384 / 768 / 1024). The
@@ -245,7 +249,7 @@ pub async fn build_with_compression(
             dimension,
             usearch_index_path.clone(),
         ));
-        crate::shared::runtime::background::spawn(Arc::clone(&persistence).run());
+        background.spawn(Arc::clone(&persistence).run(background.token()));
         index_persistence = Some(persistence);
     }
 
@@ -268,6 +272,7 @@ pub async fn build_with_compression(
             usearch_index_path,
             compression,
             index_persistence,
+            background,
         ),
     );
     let vector_search = runtime_index.clone() as Arc<dyn VectorSearchPort>;
@@ -281,7 +286,9 @@ pub async fn build_with_compression(
     let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
         as Arc<dyn SearchEnrichmentServiceTrait>;
     let reranker = Arc::new(LazyReranker::new(
-        models_path.join("reranker").join("model.safetensors"),
+        models_path
+            .join(lattice_core::shared::constants::RERANKER_MODEL_DIR)
+            .join("model.safetensors"),
     )) as Arc<dyn Reranker>;
 
     let dynamic_embedding =
@@ -358,6 +365,12 @@ fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy)
 
 /// Search's registrar surface on `Container`.
 impl Container {
+    /// The app's search result cache: the search commands read it, the cache
+    /// commands report and clear it, and every indexer invalidates it.
+    pub fn query_cache(&self) -> &Arc<crate::features::search::query_cache::QueryCache> {
+        &self.query_cache
+    }
+
     // Search (from SearchModule)
     pub fn semantic_search_use_case(&self) -> Arc<SemanticSearchUseCase> {
         Arc::clone(self.search.semantic_search_use_case())
@@ -365,6 +378,15 @@ impl Container {
 
     pub fn hybrid_search_use_case(&self) -> Arc<HybridSearchUseCase> {
         Arc::clone(self.search.hybrid_search_use_case())
+    }
+
+    /// The reranker setup's toggle. The container itself answers it, reading
+    /// the user's `search.enableReranking` setting on demand, so flipping the
+    /// switch takes effect without a restart.
+    pub fn reranking_toggle(
+        &self,
+    ) -> Arc<dyn crate::features::search::reranker_setup::RerankingToggle> {
+        Arc::new(self.clone())
     }
 
     /// Get vector search service (for legacy search commands, from SearchModule)
@@ -384,7 +406,9 @@ impl Container {
 
     /// Library chunks and scoped hybrid search for a feature that keeps its
     /// own copy of library documents.
-    pub fn library_passages(&self) -> Arc<dyn crate::application::ports::LibraryPassagesPort> {
+    pub fn library_passages(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::LibraryPassagesPort> {
         Arc::new(crate::features::search::use_cases::LibraryPassages::new(
             self.hybrid_search_use_case(),
             self.document_repository(),
@@ -437,7 +461,7 @@ mod reembed_marker_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir
             .path()
-            .join(crate::shared::constants::REEMBED_MARKER_FILE);
+            .join(lattice_core::shared::constants::REEMBED_MARKER_FILE);
         std::fs::write(&path, b"2026-09-16T00:00:00Z").unwrap();
         (dir, path)
     }
@@ -476,11 +500,13 @@ mod reembed_marker_tests {
 #[cfg(test)]
 mod index_identity_tests {
     use super::index_identity;
-    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-    use crate::domain::models::metadata::ModelType;
-    use crate::domain::value_objects::ArtifactIdentity;
-    use crate::features::embedding::candle_service::WEIGHTS_SAFETENSORS;
     use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
+    use lattice_core::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
+    use lattice_core::domain::models::downloaded::{
+        DownloadedModel, ModelLocation, StoredDownloadedModel,
+    };
+    use lattice_core::domain::models::metadata::ModelType;
+    use lattice_core::domain::value_objects::ArtifactIdentity;
     use std::path::Path;
 
     fn recorded() -> ArtifactIdentity {
@@ -488,23 +514,23 @@ mod index_identity_tests {
     }
 
     fn model(location: ModelLocation, identity: Option<ArtifactIdentity>) -> DownloadedModel {
-        DownloadedModel::from_db(
-            "row-1".into(),
-            "embedder".into(),
-            "org/embedder".into(),
+        DownloadedModel::from_db(StoredDownloadedModel {
+            id: "row-1".into(),
+            model_name: "embedder".into(),
+            model_id: "org/embedder".into(),
             location,
-            0,
-            ModelType::TextEmbeddings,
-            "bert".into(),
-            chrono::Utc::now(),
-            None,
-            0,
-            false,
-            true,
-            None,
-            false,
-            identity,
-        )
+            file_size_bytes: 0,
+            model_type: ModelType::TextEmbeddings,
+            architecture: "bert".into(),
+            downloaded_at: chrono::Utc::now(),
+            last_used_at: None,
+            use_count: 0,
+            is_active_for_chat: false,
+            is_active_for_embedding: true,
+            metadata: None,
+            is_active_for_utility: false,
+            embedding_artifact_identity: identity,
+        })
     }
 
     fn local(dir: &Path) -> ModelLocation {
@@ -545,8 +571,8 @@ mod index_identity_tests {
 
     #[test]
     fn a_prefixed_model_is_named_as_the_loaded_service_names_itself() {
-        use crate::application::ports::EmbeddingPort;
         use crate::features::embedding::candle_service::CandleEmbeddingService;
+        use lattice_core::application::ports::EmbeddingPort;
         let root = tempfile::tempdir().unwrap();
         // Tiny real checkpoint; the directory name selects E5's `passage: `.
         let dir = root.path().join("multilingual-e5-small");

@@ -221,7 +221,7 @@ impl SidecarManager {
         //    first call per build runs `--version`; later calls reuse it.
         if let PreflightOutcome::Unusable {
             message, reason, ..
-        } = preflight(app, binary, preflight_cache()).await
+        } = registered_preflight(app, binary).await
         {
             return Err(AttemptError {
                 kind: AttemptFailure::BinaryUnusable(reason),
@@ -233,7 +233,11 @@ impl SidecarManager {
         //    concurrent spawn (chat and utility prewarm start together)
         //    cannot be handed the same number; llama-server still owns the
         //    actual bind, and losing that race is a `Retry`.
-        let reservation = reserve_free_port().map_err(|err| {
+        let ports = app
+            .try_state::<SidecarRegistry>()
+            .map(|registry| Arc::clone(&registry.ports))
+            .unwrap_or_default();
+        let reservation = reserve_free_port(&ports).map_err(|err| {
             AttemptError::fatal(format!("Failed to allocate ephemeral port: {err}"))
         })?;
         let port = reservation.port();
@@ -252,6 +256,16 @@ impl SidecarManager {
             config.context_size,
         );
 
+        // The drain below runs in the app's background scope, so shutdown
+        // joins it. A host without one cannot supervise a server.
+        let Some(background) =
+            app.try_state::<Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
+        else {
+            return Err(AttemptError::fatal(
+                "No background scope is managed; the sidecar cannot be supervised".into(),
+            ));
+        };
+
         // 5. Spawn via tauri-plugin-shell. `.sidecar()` looks the binary
         //    up next to the app executable. A failure here (missing file,
         //    no execute permission, wrong executable format) means the
@@ -269,6 +283,7 @@ impl SidecarManager {
         let tail = Arc::new(SyncMutex::new(OutputTail::default()));
         let signals = Arc::new(StartupSignals::default());
         let ready_rx = spawn_event_drain(
+            &background,
             rx,
             endpoint.clone(),
             spawned.child(),

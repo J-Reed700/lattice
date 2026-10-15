@@ -8,15 +8,15 @@
 //! mock repository would assert that the code calls itself.
 
 use super::*;
-use crate::application::ports::conversation_memory::{
+use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::application::ports::conversation_memory::{
     MemoryCommitCandidate, MemoryCommitPreconditions, SourceReadLimits, SourceSpanRef,
     SummaryUpdate,
 };
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem, MemoryKind,
     MemoryReview, MemoryState, MemoryValidity, SourceRole,
 };
-use crate::features::conversation::repository::ConversationRepository;
 
 async fn write_test_vector(
     repository: &ConversationRepository,
@@ -24,7 +24,7 @@ async fn write_test_vector(
     vector_id: &str,
     message_id: &str,
     content: &str,
-) -> crate::shared::error::Result<u64> {
+) -> lattice_core::shared::error::Result<u64> {
     repository
         .persist_memory_vector(
             conversation_id,
@@ -1629,4 +1629,197 @@ async fn regenerating_a_cited_turn_rebuilds_extraction_but_keeps_what_the_user_e
             .await
             .unwrap();
     assert_eq!(kept, vec![user_edited.as_str().to_string()]);
+}
+
+/// Commit a summary through `mm4` and a watermark of 4, with no item citing
+/// anything: the state consolidation leaves after the second answer.
+async fn commit_summary_through_mm4(repo: &ConversationRepository, conversation_id: &str) {
+    let snapshot = repo.load_memory_snapshot(conversation_id).await.unwrap();
+    assert_eq!(snapshot.summary_through_sequence, None);
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.to_string(),
+            expected_transcript_revision: snapshot.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-through-mm4".into(),
+        },
+        &candidate(
+            MemoryCommit {
+                processed_through_sequence: 4,
+                ..Default::default()
+            },
+            snapshot.transcript_revision,
+            Some(SummaryUpdate {
+                summary_text: "Deploys wait for approval; the importer budget is $120.".into(),
+                up_to_message_id: "mm4".into(),
+                original_message_count: 4,
+                original_tokens: 30,
+                summary_tokens: 10,
+            }),
+        ),
+    )
+    .await
+    .unwrap();
+    let committed = repo.load_memory_snapshot(conversation_id).await.unwrap();
+    assert_eq!(
+        committed.summary_through_sequence,
+        Some(4),
+        "the snapshot says where the summary ends, in the same read as its text"
+    );
+}
+
+/// Regenerate deletes the latest answer, which is where consolidation ended the
+/// summary. With nothing citing it, the summary goes and the ledger stays: the
+/// state the compaction job must fold the earlier turns back in from.
+#[tokio::test]
+async fn deleting_the_summary_boundary_leaves_a_usable_ledger_with_no_summary() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    commit_summary_through_mm4(&repo, &conversation_id).await;
+
+    repo.delete_messages(&conversation_id, &["mm4".to_string()])
+        .await
+        .unwrap();
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert!(
+        after.is_usable(),
+        "an uncited delete does not ask for a rebuild"
+    );
+    assert_eq!(after.summary, None);
+    assert_eq!(after.summary_through_sequence, None);
+    assert_eq!(
+        after.state.processed_through_sequence, 3,
+        "the watermark still covers the earlier turn"
+    );
+}
+
+/// Deleting an early message drops a summary that may repeat it, but leaves the
+/// watermark where it was.
+#[tokio::test]
+async fn deleting_an_early_message_drops_the_summary_but_not_the_watermark() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    commit_summary_through_mm4(&repo, &conversation_id).await;
+
+    repo.delete_messages(&conversation_id, &["mm1".to_string()])
+        .await
+        .unwrap();
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert!(after.is_usable());
+    assert_eq!(after.summary, None);
+    assert_eq!(after.summary_through_sequence, None);
+    assert_eq!(after.state.processed_through_sequence, 4);
+}
+
+/// A user's forget writes the suppression every summary fold redacts with. It
+/// comes back for that message in one batched read scoped to the conversation,
+/// and cuts exactly the forgotten text. The forgotten item's label is what the
+/// summariser is told to leave out.
+#[tokio::test]
+async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
+    use crate::features::conversation::knowledge_dto::KnowledgeRequestDto;
+    use lattice_core::domain::conversation::memory::{redact_suppressed, SuppressedSpan};
+
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+
+    let id = MemoryId::new();
+    let mut span = whole_message_span(&pool, "mm3", EvidencePurpose::Assertion).await;
+    span.start_byte = "Budget is ".len() as u32;
+    span.end_byte = span.start_byte + "$120".len() as u32;
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.clone(),
+            expected_transcript_revision: snapshot.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-forget".into(),
+        },
+        &candidate(
+            MemoryCommit {
+                inserts: vec![item(&id, &conversation_id, MemoryKind::UserFact, span)],
+                processed_through_sequence: 4,
+                ..Default::default()
+            },
+            snapshot.transcript_revision,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+
+    repo.knowledge(&KnowledgeRequestDto {
+        conversation_id: conversation_id.clone(),
+        action: "forget".into(),
+        item_id: Some(id.as_str().to_string()),
+        text: None,
+        scope: None,
+        kind: None,
+        valid_from: None,
+        valid_until: None,
+        offset: None,
+    })
+    .await
+    .unwrap();
+
+    let ids = vec![
+        "mm1".to_string(),
+        "mm3".to_string(),
+        "not-a-message".to_string(),
+    ];
+    let spans = repo
+        .memory_suppressed_spans(&conversation_id, &ids)
+        .await
+        .unwrap();
+    assert_eq!(spans.len(), 1, "one forgotten span, in mm3");
+    assert_eq!(spans[0].message_id, "mm3");
+    let content: String =
+        sqlx::query_scalar("SELECT content FROM conversation_messages WHERE id = 'mm3'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let refs: Vec<&SuppressedSpan> = spans.iter().collect();
+    assert_eq!(
+        redact_suppressed(&content, &refs),
+        "Budget is [forgotten] for the importer."
+    );
+
+    let other = repo
+        .create_conversation("Other", "model", None)
+        .await
+        .unwrap();
+    assert!(
+        repo.memory_suppressed_spans(&other.id.to_string(), &ids)
+            .await
+            .unwrap()
+            .is_empty(),
+        "another conversation cannot read them by message id"
+    );
+
+    assert_eq!(
+        repo.memory_forgotten_labels(&conversation_id, 32)
+            .await
+            .unwrap(),
+        vec!["Approval required before deploy".to_string()]
+    );
+    assert!(repo
+        .memory_forgotten_labels(&conversation_id, 0)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(
+        repo.memory_forgotten_labels(&other.id.to_string(), 32)
+            .await
+            .unwrap()
+            .is_empty(),
+        "another conversation's forgotten facts stay its own"
+    );
 }

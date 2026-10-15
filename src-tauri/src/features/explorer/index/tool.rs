@@ -7,9 +7,9 @@
 use super::dto::FolderIndexState;
 use super::manager::group_digits;
 use super::search::{FolderHit, FolderSearch};
-use crate::application::ports::ToolDefinition;
 use crate::features::explorer::tools::{number_line, number_width};
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::{AppError, Result};
 use serde_json::Value;
 
 pub const TOOL_SEARCH_FOLDER: &str = "search_folder";

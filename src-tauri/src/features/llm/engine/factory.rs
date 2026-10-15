@@ -13,7 +13,7 @@
 //!     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 //! };
 //!
-//! let llm = create_llm(config).await?;
+//! let llm = create_llm(config, &schedulers, &devices).await?;
 //! ```
 
 use async_trait::async_trait;
@@ -22,18 +22,23 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
 use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
+use crate::features::llm::engine::sidecar_manager::SpeculativeDecoding;
+use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
-use crate::features::llm::scheduler::{ollama_scheduler, ScheduledLlm};
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
+use lattice_core::application::contracts::settings::{LLMSettingsDto, SpeculativeDecodingDto};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 /// Configuration for LLM client creation.
 ///
@@ -56,9 +61,8 @@ pub enum LLMConfig {
         /// only acceptable in test fixtures that don't reach the
         /// sidecar dispatch path.
         app_handle: Option<tauri::AppHandle>,
-        /// The user's explicit context window, if they set one. `None` lets the
-        /// sidecar size it from the model and the GPU.
-        context_window: Option<u32>,
+        /// How the user asked the bundled server to run.
+        server: LocalServerOptions,
     },
     /// Ollama HTTP API
     Ollama {
@@ -73,6 +77,32 @@ pub enum LLMConfig {
     },
 }
 
+/// How the user asked a bundled server to run, as opposed to which model it
+/// runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalServerOptions {
+    /// The user's explicit context window, if they set one. `None` lets the
+    /// sidecar size it from the model and the GPU.
+    pub context_window: Option<u32>,
+    /// Speculative decoding the user opted into; it reaches the server only
+    /// for a model that can draft.
+    pub speculative_decoding: SpeculativeDecoding,
+}
+
+impl LocalServerOptions {
+    pub fn from_settings(settings: &LLMSettingsDto) -> Self {
+        Self {
+            context_window: settings.local_context_window,
+            speculative_decoding: match settings.speculative_decoding {
+                SpeculativeDecodingDto::Off => SpeculativeDecoding::Off,
+                SpeculativeDecodingDto::MtpDraft { n_max } => {
+                    SpeculativeDecoding::MtpDraft { n_max }
+                }
+            },
+        }
+    }
+}
+
 /// Create an LLM client from configuration.
 ///
 /// This factory function attempts to create the requested LLM client,
@@ -81,6 +111,8 @@ pub enum LLMConfig {
 /// # Arguments
 ///
 /// * `config` - LLM configuration specifying backend and parameters
+/// * `schedulers` - The app's per-backend schedulers the client queues behind
+/// * `devices` - The app's probe of the devices a local server can offload to
 ///
 /// # Returns
 ///
@@ -101,19 +133,23 @@ pub enum LLMConfig {
 ///     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 /// };
 ///
-/// match create_llm(config).await {
+/// match create_llm(config, &schedulers, &devices).await {
 ///     Ok(llm) => println!("LLM ready: {}", llm.model_name()),
 ///     Err(e) => eprintln!("Failed to create LLM: {}", e),
 /// }
 /// ```
-pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
+pub(crate) async fn create_llm(
+    config: LLMConfig,
+    schedulers: &SchedulerRegistry,
+    devices: &BackendDevices,
+) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     match config {
         LLMConfig::Local {
             model_path,
             n_gpu_layers,
             generation_config,
             app_handle,
-            context_window,
+            server,
         } => {
             // The Tauri AppHandle is populated through
             // Container::with_app_handle.
@@ -129,7 +165,9 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
                 &model_path,
                 n_gpu_layers,
                 generation_config,
-                context_window,
+                server,
+                schedulers,
+                devices,
             )
             .await
         }
@@ -138,7 +176,16 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
             model,
             auth_header,
             generation_config,
-        } => create_ollama_llm(&endpoint, &model, auth_header, generation_config).await,
+        } => {
+            create_ollama_llm(
+                &endpoint,
+                &model,
+                auth_header,
+                generation_config,
+                schedulers,
+            )
+            .await
+        }
     }
 }
 
@@ -159,7 +206,9 @@ async fn create_local_llm_sidecar(
     model_path: &Path,
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
-    context_window: Option<u32>,
+    server: LocalServerOptions,
+    schedulers: &SchedulerRegistry,
+    devices: &BackendDevices,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
@@ -186,7 +235,7 @@ async fn create_local_llm_sidecar(
         )));
     }
 
-    let capabilities = detect_capabilities_with_app(app).await;
+    let capabilities = detect_capabilities_with_app(app, devices).await;
     tracing::info!(
         "Detected system capabilities for sidecar: {}",
         capabilities.summary()
@@ -198,9 +247,14 @@ async fn create_local_llm_sidecar(
         .map_or(0, |registry| registry.resident_gpu_bytes(model_path));
     let mut config =
         SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities, resident_bytes);
-    if let Some(requested) = context_window {
+    if let Some(requested) = server.context_window {
         config = config.with_context_override(requested, &capabilities, resident_bytes);
     }
+    // Whether this GGUF can draft is the model catalog's to say; the user's
+    // choice only applies to a model that can.
+    config.mtp_capable =
+        lattice_core::domain::models::curated::chat_model_uses_mtp_draft(model_path);
+    config.speculative_decoding = server.speculative_decoding;
 
     if n_gpu_layers >= 0 {
         let override_ngl = u32::try_from(n_gpu_layers).unwrap_or(99);
@@ -236,28 +290,35 @@ async fn create_local_llm_sidecar(
     let supports_tools = model_path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(crate::domain::models::curated::chat_model_file_supports_tool_calling);
+        .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling);
 
+    let model_thinking =
+        crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);
     let llm = crate::features::llm::llama_cpp::LlamaCppLlm::sidecar(
         handle,
         model_name,
         generation_config,
         supports_tools,
+        model_thinking,
     )
     .map_err(|e| LLMError::Other(e.to_string()))?;
     info!(
         binary,
-        n_gpu_layers, supports_tools, "Local LLM (sidecar) ready"
+        n_gpu_layers,
+        supports_tools,
+        ?model_thinking,
+        "Local LLM (sidecar) ready"
     );
-    Ok(llm.schedule().await)
+    Ok(llm.schedule(schedulers).await)
 }
 
 /// Create an Ollama LLM client.
-pub async fn create_ollama_llm(
+pub(crate) async fn create_ollama_llm(
     endpoint: &str,
     model: &str,
     auth_header: Option<(String, String)>,
     generation_config: GenerationConfig,
+    schedulers: &SchedulerRegistry,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     info!("Creating Ollama LLM client: {} @ {}", model, endpoint);
 
@@ -289,7 +350,7 @@ pub async fn create_ollama_llm(
     }
 
     info!("Ollama LLM client created successfully");
-    let scheduler = ollama_scheduler(
+    let scheduler = schedulers.ollama(
         endpoint,
         crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
     );
@@ -599,158 +660,4 @@ pub fn find_local_model() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_infer_model_info_llama() {
-        let path = PathBuf::from("models/llama-3.1-8b-Q4_K_M.gguf");
-        let info = infer_model_info(&path);
-
-        assert!(matches!(info.family, ModelFamily::Llama));
-        assert!(matches!(info.quantization, Some(Quantization::Q4)));
-    }
-
-    #[test]
-    fn test_infer_model_info_mistral() {
-        let path = PathBuf::from("models/mistral-7b-Q5_K_M.gguf");
-        let info = infer_model_info(&path);
-
-        assert!(matches!(info.family, ModelFamily::Mistral));
-        assert!(matches!(info.quantization, Some(Quantization::Q5)));
-    }
-
-    #[test]
-    fn test_infer_model_info_dolphin_mixtral_not_phi() {
-        let path = PathBuf::from("models/dolphin-2.7-mixtral-8x7b.Q3_K_M.gguf");
-        let info = infer_model_info(&path);
-
-        assert!(matches!(info.family, ModelFamily::Mistral));
-        assert_eq!(info.quantization, None);
-    }
-
-    #[test]
-    fn test_detect_format_gguf_file_extension() {
-        // Doesn't have to exist on disk — extension is the gating signal.
-        let path = PathBuf::from("/some/where/llama-3.1-8b-Q4_K_M.gguf");
-        assert_eq!(detect_model_format(&path), ModelFormat::Gguf);
-    }
-
-    #[test]
-    fn test_detect_format_safetensors_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
-        std::fs::write(dir.path().join("model.safetensors"), [0u8; 16]).unwrap();
-        assert_eq!(detect_model_format(dir.path()), ModelFormat::Safetensors);
-    }
-
-    #[test]
-    fn test_detect_format_safetensors_sharded() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
-        std::fs::write(
-            dir.path().join("model-00001-of-00002.safetensors"),
-            [0u8; 16],
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("model-00002-of-00002.safetensors"),
-            [0u8; 16],
-        )
-        .unwrap();
-        assert_eq!(detect_model_format(dir.path()), ModelFormat::Safetensors);
-    }
-
-    #[test]
-    fn test_detect_format_directory_missing_config_falls_back_to_gguf() {
-        // No config.json — not a valid HF safetensors layout.
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("model.safetensors"), [0u8; 16]).unwrap();
-        assert_eq!(detect_model_format(dir.path()), ModelFormat::Gguf);
-    }
-
-    #[test]
-    fn test_detect_format_directory_missing_safetensors_falls_back_to_gguf() {
-        // config.json present but no shard — not a valid HF layout.
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
-        assert_eq!(detect_model_format(dir.path()), ModelFormat::Gguf);
-    }
-
-    #[test]
-    fn test_sum_safetensors_dir_sums_all_shards() {
-        let dir = tempfile::tempdir().unwrap();
-        // 1 MiB + 2 MiB total
-        std::fs::write(
-            dir.path().join("model-00001-of-00002.safetensors"),
-            vec![0u8; 1_048_576],
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("model-00002-of-00002.safetensors"),
-            vec![0u8; 2 * 1_048_576],
-        )
-        .unwrap();
-        // Files that aren't shards should be ignored.
-        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
-        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
-
-        let mb = sum_safetensors_dir_size_mb(dir.path()).unwrap();
-        assert_eq!(mb, 3);
-    }
-
-    #[test]
-    fn test_sum_safetensors_dir_returns_none_when_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(sum_safetensors_dir_size_mb(dir.path()).is_none());
-    }
-
-    #[test]
-    fn test_map_local_model_load_error_tensor_metadata() {
-        let path = PathBuf::from("models/dolphin-2.7-mixtral-8x7b.Q3_K_M.gguf");
-        let original =
-            LLMError::Other("Cannot find tensor info for blk.0.ffn_gate.weight".to_string());
-
-        let mapped = map_local_model_load_error(original, &path);
-        let message = mapped.to_string();
-
-        assert!(message.contains("incompatible"));
-        assert!(message.contains("dolphin-2.7-mixtral-8x7b.Q3_K_M.gguf"));
-        assert!(message.contains("Cannot find tensor info for blk.0.ffn_gate.weight"));
-    }
-
-    #[tokio::test]
-
-    async fn test_mock_llm_port() {
-        let mock = MockLLMPort::new();
-
-        use crate::application::services::completion_input::{complete_text, TextCall};
-        let response = complete_text(&mock, "test prompt", &[], TextCall::default())
-            .await
-            .unwrap();
-        assert!(response.contains("mock mode") || response.contains("asking about"));
-
-        let response_with_context =
-            complete_text(&mock, "test", &["doc1".to_string()], TextCall::default())
-                .await
-                .unwrap();
-        assert!(response_with_context.contains("context"));
-
-        let ready = mock.is_ready().await.unwrap();
-        assert!(ready);
-    }
-
-    #[tokio::test]
-    async fn test_create_llm_with_invalid_path() {
-        let config = LLMConfig::Local {
-            model_path: PathBuf::from("/nonexistent/model.gguf"),
-            n_gpu_layers: 0,
-            generation_config: GenerationConfig::default(),
-            app_handle: None,
-            context_window: None,
-        };
-
-        let result = create_llm(config).await;
-        assert!(result.is_err());
-    }
-}
+mod tests;

@@ -1,8 +1,8 @@
 //! Architecture support for the exact pinned local engine. This is a format
 //! check, not a promise that every quantization fits or runs on every machine.
 use super::gguf_metadata::architecture_from_prefix;
-use crate::shared::error::{AppError, Result};
 use futures::StreamExt;
+use lattice_core::shared::error::{AppError, Result};
 use std::time::Duration;
 
 const ARCHITECTURES: &str = include_str!("../../../../scripts/llama-architectures.txt");

@@ -6,7 +6,8 @@
 //! 3. [`carry`]: the material the turn reads whole — attachments, the folder.
 //! 4. [`retrieve`]: evidence earlier turns cited, then the retrieval pipeline.
 //! 5. [`assemble`]: fit evidence to the budget, number it, render the prompt,
-//!    and plan the typed request.
+//!    and plan the typed request, which may cut the lowest-ranked evidence
+//!    when the window cannot hold all of it.
 //! 6. [`generate`]: the agentic tool loop.
 //! 7. [`finalize`]: persist the answer, then start the background check.
 //!
@@ -15,7 +16,7 @@
 //! resumed one starts at stage 6 from there.
 //!
 //! Every pool the prompt carries is sized from one
-//! [`BudgetAllocation`](crate::application::services::context_assembler::BudgetAllocation):
+//! [`BudgetAllocation`](lattice_core::application::services::context_assembler::BudgetAllocation):
 //! the turn's [`budget::TurnBudget`] before retrieval, and the context
 //! assembler's plan when the request is assembled.
 use super::dto::SourceDto;
@@ -27,6 +28,7 @@ mod carry;
 mod classify;
 mod finalize;
 mod generate;
+mod message;
 mod prepare;
 mod research;
 mod retrieve;
@@ -66,8 +68,6 @@ pub(super) struct TurnRequest {
 ///
 /// - **Rate Limiting (CWE-770)**: 10 requests per minute
 /// - **Input Validation**: Message length and content validation
-/// - **Audit Logging (CWE-778)**: Logs chat interactions with context size
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
@@ -91,8 +91,10 @@ pub(super) async fn run_turn(
                 warn!(%error, conversation_id = conv_id.as_str(), "Could not stop a research job");
                 false
             });
-        let cancelled =
-            cancel_generation_for_conversation(&conv_id, request_id.as_deref()) || research;
+        let cancelled = container
+            .turn_cancellation()
+            .request_cancel(&conv_id, request_id.as_deref())
+            || research;
         return Ok(ChatResponse {
             conversation_id: conv_id,
             message: if cancelled {
@@ -189,7 +191,7 @@ pub(super) async fn run_stages(
     .await?;
     turn.ensure_not_cancelled()?;
 
-    let prompt = assemble::render_prompt(
+    let mut prompt = assemble::render_prompt(
         &turn,
         flags,
         preferences,
@@ -209,7 +211,7 @@ pub(super) async fn run_stages(
             &turn,
             flags,
             preferences,
-            &prompt,
+            &mut prompt,
             &mut metrics,
         )
         .await
@@ -241,8 +243,15 @@ pub(super) async fn run_stages(
 
     // A research turn plans before it saves the question, then saves both at
     // once: a restart between the two would otherwise ask the question twice.
-    let planned =
-        assemble::plan_request(container, &turn, flags, preferences, &prompt, &mut metrics).await?;
+    let planned = assemble::plan_request(
+        container,
+        &turn,
+        flags,
+        preferences,
+        &mut prompt,
+        &mut metrics,
+    )
+    .await?;
     let persist_start = Instant::now();
     let (user_message_id, message_tokens) = persist_question(&turn, &prompt).await?;
     metrics.persist_user_message_ms = elapsed_ms(persist_start);

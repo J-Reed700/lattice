@@ -29,7 +29,7 @@ fn assistant(response: &CompletionResponse) -> Value {
 
 /// Plain text through the typed path, as string-only callers make it.
 async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
-    crate::application::services::completion_input::complete_text(
+    lattice_core::application::services::completion_input::complete_text(
         client,
         prompt,
         context,
@@ -298,7 +298,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
                 role: "user".into(),
                 content: "Find rust".into(),
             }],
-            tools: vec![crate::application::ports::ToolDefinition {
+            tools: vec![lattice_core::application::ports::ToolDefinition {
                 name: "search".into(),
                 description: "Search".into(),
                 parameters: json!({"type":"object"}),
@@ -1318,20 +1318,6 @@ async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
 }
 
 #[test]
-fn internal_requests_do_not_disable_model_reasoning() {
-    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
-    for effort in [None, Some("none")] {
-        let request = CompletionRequest {
-            reasoning_effort: effort.map(str::to_owned),
-            ..Default::default()
-        };
-        let body = client.body(&request).unwrap();
-        assert!(body.get("reasoning_effort").is_none());
-        assert!(body.get("chat_template_kwargs").is_none());
-    }
-}
-
-#[test]
 fn reasoning_probabilities_are_never_treated_as_verdict_confidence() {
     let probability = |word: &str| json!({"content":[{"token":word,"logprob":-0.1,"top_logprobs":[{"token":word,"logprob":-0.1}]}]});
     let mut decoder = streaming::Decoder::for_completion();
@@ -1393,7 +1379,7 @@ async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
 
     let llm = LlamaCppLlm::new(&settings(server.uri()))
         .unwrap()
-        .schedule()
+        .schedule(&SchedulerRegistry::default())
         .await;
     assert!(llm.counts_tokens_exactly());
     assert_eq!(llm.count_tokens_exact("four tokens here").await.unwrap(), 4);
@@ -1404,16 +1390,11 @@ fn server_config(prefill_guard: bool) -> ServerConfig {
     let settings = settings("http://localhost:8080".into());
     ServerConfig {
         model: "test-model".into(),
-        generation: GenerationConfig {
-            temperature: settings.temperature,
-            top_p: settings.top_p,
-            top_k: settings.top_k,
-            max_tokens: settings.max_tokens as usize,
-            repeat_penalty: settings.repeat_penalty,
-        },
+        generation: GenerationConfig::from_settings(&settings),
         context_window: settings.context_window as usize,
         stall_timeout: Duration::from_secs(30),
         supports_tools: true,
+        model_thinking: ThinkingPolicy::PerRequest,
         prefill_guard,
     }
 }
@@ -1463,14 +1444,16 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
                 output: "Found Rust docs".into(),
             },
         ],
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search".into(),
             parameters: json!({"type":"object"}),
         }],
         json_schema: Some(json!({"type":"object"})),
         reasoning_effort: Some("low".into()),
-        sampling: Some(crate::application::ports::llm_port::SamplingOverride::deterministic()),
+        sampling: Some(
+            lattice_core::application::ports::llm_port::SamplingOverride::deterministic(),
+        ),
         max_output_tokens: Some(512),
         want_logprobs: true,
         assigned_slot: Some(2),
@@ -1485,10 +1468,13 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
     let sidecar_body = sent(sidecar_server.received_requests().await.unwrap());
     assert_eq!(remote_body, sidecar_body);
     assert_eq!(remote_body["id_slot"], 2);
+    // An effort level is not a switch: the tool round still goes out with
+    // thinking explicitly off.
     assert_eq!(
-        remote_body["chat_template_kwargs"]["reasoning_effort"],
-        "low"
+        remote_body["chat_template_kwargs"]["enable_thinking"],
+        false
     );
+    assert!(remote_body.get("reasoning_effort").is_none());
     assert_eq!(remote_body["max_tokens"], 512);
 }
 
@@ -1566,6 +1552,7 @@ async fn read(
         &mut false,
     )
     .await
+    .map(|(response, _)| response)
 }
 
 /// Ninety seconds of prompt processing, reported every 45, then the answer.

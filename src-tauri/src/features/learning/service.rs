@@ -1,6 +1,6 @@
 //! Learning command orchestration and boundary validation.
-use super::{dto::*, repository::LearningRepository};
-use crate::{
+use super::{dto::*, outline_draft::DraftRunRegistry, repository::LearningRepository};
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -56,15 +56,17 @@ pub fn validate_request(request: &GenerateLearningProgramRequestDto) -> Result<(
 
 pub async fn generate(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
 ) -> Result<LearningProgramDto> {
-    generate_with_references(repo, llm, request, sources, &[]).await
+    generate_with_references(repo, drafts, llm, request, sources, &[]).await
 }
 
 pub async fn generate_with_references(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
@@ -72,6 +74,7 @@ pub async fn generate_with_references(
 ) -> Result<LearningProgramDto> {
     generate_with_references_and_progress(
         repo,
+        drafts,
         llm,
         request,
         sources,
@@ -84,6 +87,7 @@ pub async fn generate_with_references(
 
 pub async fn generate_with_references_and_progress(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
@@ -148,7 +152,7 @@ pub async fn generate_with_references_and_progress(
         attempts: vec![],
     };
     progress.check_cancelled()?;
-    let _run = super::outline_draft::DraftRun::acquire(&program.summary.id)?;
+    let _run = drafts.acquire(&program.summary.id)?;
     repo.create_outline_draft(&program, references, Some(&draft))
         .await?;
     progress.saved(&program.summary.id);
@@ -218,17 +222,19 @@ fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]
 
 pub async fn accept(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     request: AcceptLearningProgramRequestDto,
 ) -> Result<LearningProgramDto> {
     uuid(&request.program_id, "program")?;
     bounded(&request.title, "Program title", 120, true)?;
-    let _run = super::outline_draft::DraftRun::acquire(&request.program_id)?;
+    let _run = drafts.acquire(&request.program_id)?;
     repo.accept(&request).await?;
     repo.get(&request.program_id).await
 }
 pub async fn prepare(
     repo: &LearningRepository,
     llm: &dyn LLMPort,
+    runtimes: &super::embedded_runtime::BuiltinRuntimes,
     request: PrepareLearningLessonRequestDto,
 ) -> Result<LearningProgramDto> {
     uuid(&request.program_id, "program")?;
@@ -262,7 +268,7 @@ pub async fn prepare(
             "Ready lessons are immutable.".into(),
         ));
     }
-    let prepared = super::generation::prepare_lesson(llm, &program, lesson).await?;
+    let prepared = super::generation::prepare_lesson(llm, runtimes, &program, lesson).await?;
     validate_prepared(&prepared, &program)?;
     repo.prepare(
         &request.program_id,

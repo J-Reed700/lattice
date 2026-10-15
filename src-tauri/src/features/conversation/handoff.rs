@@ -7,18 +7,19 @@
 use super::branching_dto::{
     ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
 };
-use super::commands as conversation;
-use crate::application::ports::llm_port::{
+use super::memory::MAX_FORGOTTEN_LABELS;
+use crate::features::conversation::chat::ports::ChatRuntime;
+use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
+use lattice_core::application::ports::llm_port::{
     chars_within_tokens, InferencePriority, SamplingOverride,
 };
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
-use crate::domain::conversation::ConversationMessage;
-use crate::features::conversation::repository::ConversationRepository;
-use crate::interfaces::di::Container;
-use crate::shared::{error::AppError, ipc::ApiError};
+use lattice_core::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
+use lattice_core::domain::conversation::ConversationMessage;
+use lattice_core::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -163,17 +164,77 @@ fn handoff_task(title: &str, from_notes: bool) -> String {
 }
 
 const SYSTEM: &str = "You summarize conversations faithfully and concisely. You never add facts the material does not contain.";
+
+/// What the user told memory to forget in the conversation being handed on.
+///
+/// The note becomes the new conversation's only memory of this one, so a forget
+/// holds here as it does in the working summary: forgotten spans are cut out of
+/// the transcript, and the forgotten facts are named so that a later message
+/// repeating or correcting one is left out of the note too.
+#[derive(Default)]
+struct Forgotten {
+    spans: Vec<SuppressedSpan>,
+    labels: Vec<String>,
+}
+
+impl Forgotten {
+    async fn read(
+        memory: &dyn ConversationMemoryPort,
+        conversation_id: &str,
+        messages: &[ConversationMessage],
+    ) -> lattice_core::shared::error::Result<Self> {
+        let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
+        Ok(Self {
+            spans: memory.suppressed_spans(conversation_id, &ids).await?,
+            labels: memory
+                .forgotten_labels(conversation_id, MAX_FORGOTTEN_LABELS)
+                .await?,
+        })
+    }
+
+    /// `messages` with every forgotten span replaced by a marker.
+    fn redact(&self, mut messages: Vec<ConversationMessage>) -> Vec<ConversationMessage> {
+        let forgotten = SuppressionsByMessage::new(&self.spans);
+        for message in &mut messages {
+            if let std::borrow::Cow::Owned(redacted) =
+                forgotten.redact(&message.id, &message.content)
+            {
+                message.content = redacted;
+            }
+        }
+        messages
+    }
+
+    /// The rule a summarizing call is given, when anything was forgotten.
+    fn rule(&self) -> Option<String> {
+        (!self.labels.is_empty()).then(|| {
+            std::iter::once(
+                "The user asked memory to forget the facts below. Leave each of them out, with any value, name or number it gives, even where the material repeats or corrects it. [forgotten] marks text already removed: do not guess what it was.".to_string(),
+            )
+            .chain(self.labels.iter().map(|label| format!("- {label}")))
+            .collect::<Vec<_>>()
+            .join("\n")
+        })
+    }
+}
 /// One call's wall-clock limit. A long part on a local model takes a few
 /// minutes; past this something is stuck.
 const CALL_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
 const CALL_MAX_OUTPUT_TOKENS: usize = 2_048;
 
-/// One summarizing call that carries every passage it is given whole.
+/// One summarizing call that carries every passage it is given whole, told
+/// what was forgotten. Every call and every room estimate is built here, so the
+/// rule is counted wherever the transcript is planned.
 fn summary_request(
     task: String,
+    forgotten: &Forgotten,
     evidence: Vec<EvidencePassage>,
     conversation_id: &str,
 ) -> GroundedRequest {
+    let task = match forgotten.rule() {
+        Some(rule) => format!("{task}\n\n{rule}"),
+        None => task,
+    };
     let mut request = GroundedRequest::new(SYSTEM, task);
     request.evidence = evidence;
     request.selection = EvidenceSelection::All;
@@ -219,25 +280,27 @@ pub struct HandoffsInFlight(std::sync::Mutex<HashSet<String>>);
 
 /// A claimed conversation. The guard releases its id on drop, so an error or
 /// a panic cannot leave a conversation locked.
-struct InFlight {
+struct HandoffClaim {
     set: Arc<HandoffsInFlight>,
     id: String,
 }
 
-impl InFlight {
-    fn claim(set: &Arc<HandoffsInFlight>, id: &str) -> Option<Self> {
+impl HandoffsInFlight {
+    /// Claim a conversation for summarizing, or `None` when one is already
+    /// running. The returned guard releases the claim on drop.
+    fn claim(set: &Arc<HandoffsInFlight>, id: &str) -> Option<HandoffClaim> {
         let mut running = set
             .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        running.insert(id.to_string()).then(|| Self {
+        running.insert(id.to_string()).then(|| HandoffClaim {
             set: Arc::clone(set),
             id: id.to_string(),
         })
     }
 }
 
-impl Drop for InFlight {
+impl Drop for HandoffClaim {
     fn drop(&mut self) {
         self.set
             .0
@@ -249,10 +312,13 @@ impl Drop for InFlight {
 
 pub async fn continue_in_new_conversation_impl(
     request: ContinueInNewConversationRequestDto,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<ContinueInNewConversationResponseDto, ApiError> {
     let source_id = request.conversation_id.trim().to_string();
-    let source = conversation::get_conversation_impl(container, source_id.clone())
+    let branches = runtime.conversation_branches();
+    let aggregate = runtime
+        .conversation_service()
+        .get_conversation(&source_id)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| {
@@ -261,9 +327,16 @@ pub async fn continue_in_new_conversation_impl(
                 source_id
             )))
         })?;
-    let messages = conversation::get_conversation_messages_impl(container, source_id.clone())
-        .await
-        .map_err(ApiError::from)?;
+    let source_title = aggregate.title().to_string();
+    let messages = aggregate.messages().to_vec();
+    let forgotten = Forgotten::read(
+        runtime.conversation_memory().as_ref(),
+        &source_id,
+        &messages,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    let messages = forgotten.redact(messages);
     let passages = transcript_passages(&messages);
     if passages.is_empty() {
         return Err(ApiError::from(AppError::InvalidInput(
@@ -274,7 +347,7 @@ pub async fn continue_in_new_conversation_impl(
     // One summary per conversation at a time. A second click, or a click after
     // a page reload lost the first one's spinner, would otherwise start a
     // parallel run and open a second copy.
-    let _running = match InFlight::claim(&container.handoffs_in_flight(), &source_id) {
+    let _running = match HandoffsInFlight::claim(&runtime.handoffs_in_flight(), &source_id) {
         Some(guard) => guard,
         None => {
             return Err(ApiError::from(AppError::InvalidState(
@@ -286,13 +359,18 @@ pub async fn continue_in_new_conversation_impl(
     // Straight to the model, as compaction does: no conversation, retrieval,
     // tools or streaming. Running it as a chat turn created visible scratch
     // chats and let the turn reach for tools.
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let llm = runtime.get_or_load_llm().await.map_err(ApiError::from)?;
     // The whole transcript in one call when the window holds it; otherwise it
     // is noted part by part, each part as much as the window holds, and the
     // notes are merged.
     let whole_room = grounded_generation::evidence_room(
         llm.as_ref(),
-        &summary_request(handoff_task(&source.title, false), Vec::new(), &source_id),
+        &summary_request(
+            handoff_task(&source_title, false),
+            &forgotten,
+            Vec::new(),
+            &source_id,
+        ),
     )
     .map_err(|error| ApiError::from(AppError::from(error)))?;
     let transcript_tokens: usize = passages
@@ -305,7 +383,8 @@ pub async fn continue_in_new_conversation_impl(
         let part_room = grounded_generation::evidence_room(
             llm.as_ref(),
             &summary_request(
-                notes_task(&source.title, usize::MAX, usize::MAX),
+                notes_task(&source_title, usize::MAX, usize::MAX),
+                &forgotten,
                 Vec::new(),
                 &source_id,
             ),
@@ -351,7 +430,12 @@ pub async fn continue_in_new_conversation_impl(
     let summary = if total == 1 {
         let transcript = parts.into_iter().flatten().collect();
         ask(
-            summary_request(handoff_task(&source.title, false), transcript, &source_id),
+            summary_request(
+                handoff_task(&source_title, false),
+                &forgotten,
+                transcript,
+                &source_id,
+            ),
             "handoff",
         )
         .await?
@@ -361,7 +445,8 @@ pub async fn continue_in_new_conversation_impl(
             notes.push(
                 ask(
                     summary_request(
-                        notes_task(&source.title, index + 1, total),
+                        notes_task(&source_title, index + 1, total),
+                        &forgotten,
                         part,
                         &source_id,
                     ),
@@ -378,7 +463,8 @@ pub async fn continue_in_new_conversation_impl(
         };
         ask(
             summary_request(
-                handoff_task(&source.title, true),
+                handoff_task(&source_title, true),
+                &forgotten,
                 vec![material],
                 &source_id,
             ),
@@ -388,17 +474,17 @@ pub async fn continue_in_new_conversation_impl(
     };
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let new_title = truncate_chars(&format!("{} · continued", source.title), TITLE_CHAR_LIMIT);
+    let new_title = truncate_chars(&format!("{} · continued", source_title), TITLE_CHAR_LIMIT);
     let metadata = serde_json::json!({
-        "continuedFrom": { "conversationId": source_id, "title": source.title },
+        "continuedFrom": { "conversationId": source_id, "title": source_title },
     })
     .to_string();
 
-    let repo = ConversationRepository::new(container.db_pool().clone());
-    repo.create_continuation(&source_id, &new_id, &new_title, &summary, &metadata)
+    branches
+        .create_continuation(&source_id, &new_id, &new_title, &summary, &metadata)
         .await
         .map_err(ApiError::from)?;
-    let created = repo
+    let created = branches
         .find_by_id(&new_id)
         .await
         .map_err(ApiError::from)?
@@ -409,7 +495,7 @@ pub async fn continue_in_new_conversation_impl(
         })?;
 
     Ok(ContinueInNewConversationResponseDto {
-        conversation: repo
+        conversation: branches
             .project_conversation(&created)
             .await
             .map_err(ApiError::from)?,
@@ -474,8 +560,8 @@ mod tests {
 
     #[test]
     fn failed_and_empty_messages_are_not_evidence() {
-        use crate::domain::conversation::MessageRole;
-        use crate::shared::types::ConversationId;
+        use lattice_core::domain::conversation::MessageRole;
+        use lattice_core::shared::types::ConversationId;
         let message = |id: &str, content: &str, status: &str| ConversationMessage {
             id: id.into(),
             conversation_id: ConversationId::new(),
@@ -500,12 +586,12 @@ mod tests {
     #[test]
     fn a_conversation_cannot_be_summarized_twice_at_once() {
         let set = Arc::new(HandoffsInFlight::default());
-        let first = InFlight::claim(&set, "conv-a").unwrap();
-        assert!(InFlight::claim(&set, "conv-a").is_none());
-        assert!(InFlight::claim(&set, "conv-b").is_some());
+        let first = HandoffsInFlight::claim(&set, "conv-a").unwrap();
+        assert!(HandoffsInFlight::claim(&set, "conv-a").is_none());
+        assert!(HandoffsInFlight::claim(&set, "conv-b").is_some());
         drop(first);
         assert!(
-            InFlight::claim(&set, "conv-a").is_some(),
+            HandoffsInFlight::claim(&set, "conv-a").is_some(),
             "released on drop"
         );
     }
@@ -523,5 +609,62 @@ mod tests {
         }
         assert!(prompt.contains("transcript"));
         assert!(handoff_task("Tomatoes", true).contains("notes below"));
+    }
+
+    /// A forget holds in the note: the span is cut out of the transcript, and
+    /// the fact is named in every request, so the rooms planned for the
+    /// transcript count it too.
+    #[test]
+    fn forgotten_text_is_cut_and_forgotten_facts_are_named() {
+        use lattice_core::domain::conversation::memory::compute_digest;
+        use lattice_core::domain::conversation::MessageRole;
+        use lattice_core::shared::types::ConversationId;
+        let message = |id: &str, content: &str| ConversationMessage {
+            id: id.into(),
+            conversation_id: ConversationId::new(),
+            role: MessageRole::User,
+            content: content.into(),
+            tokens: 0,
+            created_at: chrono::Utc::now(),
+            metadata: None,
+            status: "completed".into(),
+        };
+        let locker = "My locker code is 4471, keep it handy.";
+        let start = locker.find("4471").unwrap() as i64;
+        let forgotten = Forgotten {
+            spans: vec![SuppressedSpan {
+                message_id: "m1".into(),
+                start_byte: start,
+                end_byte: start + 4,
+                content_digest: compute_digest(locker),
+            }],
+            labels: vec!["Locker code is 4471".into()],
+        };
+
+        let passages = transcript_passages(&forgotten.redact(vec![
+            message("m1", locker),
+            message("m2", "Scratch 4471, the locker was rekeyed."),
+        ]));
+        assert_eq!(
+            passages[0].text,
+            "My locker code is [forgotten], keep it handy."
+        );
+        assert_eq!(
+            passages[1].text, "Scratch 4471, the locker was rekeyed.",
+            "a restatement is no span; the named fact covers it"
+        );
+
+        let request = summary_request(handoff_task("Lab", false), &forgotten, Vec::new(), "conv-a");
+        assert!(request.task.starts_with(&handoff_task("Lab", false)));
+        assert!(request.task.contains("asked memory to forget"));
+        assert!(request.task.ends_with("\n- Locker code is 4471"));
+
+        let plain = summary_request(
+            handoff_task("Lab", false),
+            &Forgotten::default(),
+            Vec::new(),
+            "conv-a",
+        );
+        assert_eq!(plain.task, handoff_task("Lab", false));
     }
 }

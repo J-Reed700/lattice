@@ -44,7 +44,7 @@ async fn smoke_test_get_models_with_metadata_happy_path() {
                 e
             );
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }
@@ -75,7 +75,7 @@ async fn smoke_test_set_active_chat_model_nonexistent() {
                 e
             );
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }
@@ -105,7 +105,7 @@ async fn smoke_test_get_active_chat_model_none_set() {
                 e
             );
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }
@@ -134,7 +134,7 @@ async fn smoke_test_set_active_embedding_model_nonexistent() {
                 e
             );
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }
@@ -163,7 +163,7 @@ async fn smoke_test_get_active_embedding_model_none_set() {
                 e
             );
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }
@@ -191,7 +191,7 @@ async fn smoke_test_delete_model_nonexistent() {
         Err(e) => {
             println!("✅ delete_downloaded_model_and_file_impl rejected nonexistent model gracefully: {:?}", e);
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }
@@ -222,7 +222,7 @@ async fn smoke_test_delete_model_with_file_deletion() {
         Err(e) => {
             println!("✅ delete_downloaded_model_and_file_impl with file deletion handled error gracefully: {:?}", e);
             assert!(
-                !e.contains("panic") && !e.contains("unwrap"),
+                !e.to_string().contains("panic") && !e.to_string().contains("unwrap"),
                 "Error should not indicate panic or unwrap failure"
             );
         }

@@ -7,12 +7,12 @@
 //! - Store mentions in database with context
 //! - Search mentions and get backlinks
 
-use crate::application::ports::mention_repository_port::{
-    MentionData, MentionRepositoryPort, MentionWithContextData,
-};
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::Utc;
+use lattice_core::application::ports::mention_repository_port::{
+    MentionData, MentionRepositoryPort, MentionWithContextData,
+};
+use lattice_core::shared::error::{AppError, Result};
 use lazy_regex::regex;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -257,7 +257,7 @@ impl MentionRepositoryPort for MentionRepository {
     }
 
     async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<MentionData>, AppError> {
-        let search_pattern = crate::shared::persistence::sql_like::contains_pattern(query);
+        let search_pattern = lattice_core::shared::persistence::sql_like::contains_pattern(query);
 
         let rows = sqlx::query(
             r#"

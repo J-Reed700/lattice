@@ -12,6 +12,7 @@
 //! plain inherent methods. If polymorphism is ever needed, extract
 //! the trait at that point.
 
+mod branching_port;
 mod chat_port;
 mod conversations;
 mod document_references;
@@ -26,10 +27,10 @@ mod messages;
 mod port;
 mod pruning;
 mod tangents;
-mod workspace;
 
 #[cfg(test)]
 mod tests;
+mod workspace;
 
 use sqlx::SqlitePool;
 
@@ -44,7 +45,7 @@ use sqlx::SqlitePool;
 #[derive(Clone)]
 pub struct ConversationRepository {
     pool: SqlitePool,
-    memory_embedding: Option<std::sync::Arc<dyn crate::application::ports::EmbeddingPort>>,
+    memory_embedding: Option<std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort>>,
 }
 
 impl ConversationRepository {
@@ -64,7 +65,7 @@ impl ConversationRepository {
 impl ConversationRepository {
     pub fn with_memory_embedding(
         mut self,
-        embedding: Option<std::sync::Arc<dyn crate::application::ports::EmbeddingPort>>,
+        embedding: Option<std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort>>,
     ) -> Self {
         self.memory_embedding = embedding;
         self

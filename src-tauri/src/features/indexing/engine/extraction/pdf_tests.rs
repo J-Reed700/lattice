@@ -268,7 +268,9 @@ async fn type_sizes_become_markdown_headings_for_the_chunker() {
     operations.extend(body_paragraphs(660.0));
     let path = write_pdf(dir.path(), "report.pdf", vec![TestPage::text(operations)]);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(
         extracted.text.contains("## Annual Report"),
@@ -297,7 +299,9 @@ async fn a_bold_line_at_body_size_is_a_heading_too() {
     operations.extend(body_paragraphs(660.0));
     let path = write_pdf(dir.path(), "bold.pdf", vec![TestPage::text(operations)]);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(
         extracted.text.contains("# Risk Factors"),
@@ -324,7 +328,9 @@ async fn aligned_columns_become_a_markdown_table() {
     }
     let path = write_pdf(dir.path(), "table.pdf", vec![TestPage::text(operations)]);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(
         extracted.text.contains("| Region | Revenue | Growth |"),
@@ -356,7 +362,9 @@ async fn a_scanned_page_is_reported_instead_of_failing_the_document() {
         ],
     );
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert_eq!(extracted.needs_ocr, vec![2]);
     assert_eq!(extracted.page_ranges.len(), 3);
@@ -373,12 +381,12 @@ async fn a_fully_scanned_pdf_still_asks_for_ocr() {
         vec![TestPage::scan(), TestPage::scan()],
     );
 
-    let without_provider = extract_pdf(&path, NO_SIZE_LIMIT, None)
+    let without_provider = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
         .await
         .unwrap_err()
         .to_string();
-    let noop: Arc<dyn OcrPort> = Arc::new(crate::application::ports::NoopOcr);
-    let with_noop = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop))
+    let noop: Arc<dyn OcrPort> = Arc::new(lattice_core::application::ports::NoopOcr);
+    let with_noop = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop), &ExtractionWorkers::new())
         .await
         .unwrap_err()
         .to_string();
@@ -401,7 +409,9 @@ async fn recognized_text_lands_inside_its_own_page_range() {
     );
     let ocr: Arc<dyn OcrPort> = Arc::new(StubOcr);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr)).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr), &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(extracted.needs_ocr.is_empty());
     assert_ranges_cover(&extracted.text, &extracted.page_ranges);
@@ -412,6 +422,167 @@ async fn recognized_text_lands_inside_its_own_page_range() {
         .copied()
         .expect("page two has a range");
     assert_eq!(&extracted.text[start..end], "\nRecognized scan of page 2");
+}
+
+/// The scanned page OCR read is marked as OCR text; the text-layer pages on
+/// either side of it are not, and neither is a scan nobody recognized.
+#[tokio::test]
+async fn only_the_pages_ocr_read_are_marked_as_ocr_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "mixed-ocr.pdf",
+        vec![
+            TestPage::text(body_paragraphs(720.0)),
+            TestPage::scan(),
+            TestPage::text(body_paragraphs(720.0)),
+        ],
+    );
+    let ocr: Arc<dyn OcrPort> = Arc::new(StubOcr);
+
+    let read = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr), &ExtractionWorkers::new())
+        .await
+        .unwrap();
+    let unread = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
+
+    assert_eq!(read.ocr_pages, vec![2]);
+    assert_eq!(unread.needs_ocr, vec![2]);
+    assert!(unread.ocr_pages.is_empty(), "{:?}", unread.ocr_pages);
+}
+
+/// Answers each page from a script, counting the questions.
+struct ScriptedOcr {
+    answer: fn(u32) -> std::result::Result<String, OcrError>,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl ScriptedOcr {
+    fn new(answer: fn(u32) -> std::result::Result<String, OcrError>) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            asked: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl OcrPort for ScriptedOcr {
+    async fn recognize_page(
+        &self,
+        _document: &Path,
+        page: u32,
+    ) -> std::result::Result<String, OcrError> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        (self.answer)(page)
+    }
+}
+
+/// A server that cannot start would fail every page the same way, each after
+/// its own startup attempt; one answer is enough.
+#[tokio::test]
+async fn unavailable_ocr_is_asked_once_and_named_in_the_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "scans.pdf",
+        vec![TestPage::scan(), TestPage::scan(), TestPage::scan()],
+    );
+    let ocr = ScriptedOcr::new(|_| {
+        Err(OcrError::Unavailable {
+            reason: "llama-server exited during startup".into(),
+        })
+    });
+    let port: Arc<dyn OcrPort> = ocr.clone();
+
+    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port), &ExtractionWorkers::new())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert_eq!(ocr.asked(), 1);
+    assert!(error.contains("OCR could not run"), "{error}");
+    assert!(error.contains("exited during startup"), "{error}");
+}
+
+#[tokio::test]
+async fn a_scan_without_an_ocr_model_points_at_the_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(dir.path(), "scan.pdf", vec![TestPage::scan()]);
+    let noop: Arc<dyn OcrPort> = Arc::new(lattice_core::application::ports::NoopOcr);
+
+    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop), &ExtractionWorkers::new())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("Settings → AI → Models"), "{error}");
+    assert!(error.contains("OCR"), "{error}");
+}
+
+/// One unreadable page is that page's problem; the next scan is still read
+/// and keeps its own page number.
+#[tokio::test]
+async fn a_failed_page_does_not_stop_the_next_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "two-scans.pdf",
+        vec![
+            TestPage::scan(),
+            TestPage::scan(),
+            TestPage::text(body_paragraphs(720.0)),
+        ],
+    );
+    let ocr = ScriptedOcr::new(|page| match page {
+        1 => Err(OcrError::Recognition {
+            page,
+            reason: "no answer within 180 s".into(),
+        }),
+        _ => Ok(format!("Recognized scan of page {page}")),
+    });
+    let port: Arc<dyn OcrPort> = ocr.clone();
+
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port), &ExtractionWorkers::new())
+        .await
+        .unwrap();
+
+    assert_eq!(ocr.asked(), 2);
+    assert_eq!(extracted.needs_ocr, vec![1]);
+    assert_eq!(extracted.ocr_pages, vec![2]);
+    assert_ranges_cover(&extracted.text, &extracted.page_ranges);
+    let (_, start, end) = extracted
+        .page_ranges
+        .iter()
+        .find(|(page, _, _)| *page == 2)
+        .copied()
+        .expect("page two has a range");
+    assert!(extracted.text[start..end].contains("Recognized scan of page 2"));
+}
+
+/// A document with a text layer never reaches the OCR server.
+#[tokio::test]
+async fn a_text_pdf_never_asks_for_ocr() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "text.pdf",
+        vec![TestPage::text(body_paragraphs(720.0))],
+    );
+    let ocr = ScriptedOcr::new(|_| Ok("should not be asked".into()));
+    let port: Arc<dyn OcrPort> = ocr.clone();
+
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port), &ExtractionWorkers::new())
+        .await
+        .unwrap();
+
+    assert_eq!(ocr.asked(), 0);
+    assert!(extracted.ocr_pages.is_empty());
 }
 
 #[test]
@@ -437,11 +608,13 @@ fn successful_pages_keep_their_citation_ranges() {
             page: 1,
             text: "Patent".into(),
             needs_ocr: false,
+            from_ocr: false,
         },
         PageText {
             page: 2,
             text: "Examination".into(),
             needs_ocr: false,
+            from_ocr: false,
         },
     ];
 
@@ -457,11 +630,13 @@ fn only_an_entirely_textless_document_is_unreadable() {
         page,
         text: String::new(),
         needs_ocr: true,
+        from_ocr: false,
     };
     let readable = PageText {
         page: 1,
         text: "Examination guidance".into(),
         needs_ocr: false,
+        from_ocr: false,
     };
 
     assert!(is_unreadable("", &[scan(1), scan(2)]));
@@ -500,7 +675,9 @@ fn recognized_text_is_appended_to_whatever_the_page_did_have() {
 async fn real_pdf_keeps_its_structure_and_page_ranges() {
     let path = PathBuf::from(std::env::var("LATTICE_LAYOUT_PDF").unwrap());
 
-    let extracted = extract_pdf(&path, 200 * 1024 * 1024, None).await.unwrap();
+    let extracted = extract_pdf(&path, 200 * 1024 * 1024, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert_ranges_cover(&extracted.text, &extracted.page_ranges);
     let headings: Vec<&str> = extracted
@@ -558,5 +735,9 @@ async fn compressed_pdf_page_cannot_exceed_decoded_stream_budget() {
     document.compress();
     document.save(&path).unwrap();
     assert!(std::fs::metadata(&path).unwrap().len() < 100_000);
-    assert!(extract_pdf(&path, 50 * 1024 * 1024, None).await.is_err());
+    assert!(
+        extract_pdf(&path, 50 * 1024 * 1024, None, &ExtractionWorkers::new())
+            .await
+            .is_err()
+    );
 }

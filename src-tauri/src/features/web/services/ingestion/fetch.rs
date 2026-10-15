@@ -3,8 +3,8 @@
 
 use super::extract::{ExtractionStrategy, YtDlpMetadata};
 use super::WebIngestionService;
-use crate::features::function_calling::dto::CleanArticle;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::{AppError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;

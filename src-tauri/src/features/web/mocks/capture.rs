@@ -3,15 +3,15 @@
 //! Provides deterministic, thread-safe mock implementation of WebCaptureServiceTrait.
 
 #[cfg(test)]
-use crate::features::function_calling::dto::UrlPreview;
-#[cfg(test)]
 use crate::features::web::WebCaptureServiceTrait;
-#[cfg(test)]
-use crate::shared::error::{AppError, Result};
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
 use chrono::Utc;
+#[cfg(test)]
+use lattice_core::application::contracts::web::UrlPreview;
+#[cfg(test)]
+use lattice_core::shared::error::{AppError, Result};
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -52,7 +52,7 @@ impl MockWebCaptureService {
     /// # Example
     /// ```rust
     /// use lattice::infrastructure::services::mocks::MockWebCaptureService;
-    /// use lattice::application::dtos::function_calling_dto::UrlPreview;
+    /// use lattice_core::application::dtos::function_calling_dto::UrlPreview;
     ///
     /// let service = MockWebCaptureService::new();
     /// service.set_preview_for_url(

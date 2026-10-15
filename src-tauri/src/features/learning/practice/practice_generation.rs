@@ -1,7 +1,7 @@
 //! Bounded strict-JSON prompts for the grounded practice tutor and grader.
 use crate::features::learning::dto::*;
 use crate::features::learning::model_call;
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -97,11 +97,13 @@ fn source_context(sources: &[LearningSourceVersionDto]) -> serde_json::Value {
     serde_json::Value::Array(sources.iter().map(|s|serde_json::json!({"sourceId":s.source_id,"versionId":s.version.id,"title":s.version.title,"text":s.full_text.chars().take(12_000).collect::<String>()})).collect())
 }
 fn tutor_schema() -> serde_json::Value {
+    // Length caps above 2000 are checked after parsing: as schema bounds they
+    // would void llama.cpp's whole grammar.
     serde_json::json!({
         "type":"object", "additionalProperties":false,
         "required":["response","citations","proposals"],
         "properties": {
-            "response":{"type":"string","minLength":1,"maxLength":6000},
+            "response":{"type":"string","minLength":1},
             "citations":{"type":"array","maxItems":5,"items":{
                 "type":"object","additionalProperties":false,
                 "required":["sourceId","versionId","quote"],
@@ -116,10 +118,12 @@ fn tutor_schema() -> serde_json::Value {
     })
 }
 fn solution_schema() -> serde_json::Value {
+    // Length caps above 2000 are checked after parsing: as schema bounds they
+    // would void llama.cpp's whole grammar.
     serde_json::json!({
         "type":"object", "additionalProperties":false,
         "required":["solution","citations"],
-        "properties":{"solution":{"type":"string","minLength":1,"maxLength":6000},"citations":{"type":"array","maxItems":5,"items":{
+        "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","maxItems":5,"items":{
             "type":"object","additionalProperties":false,
             "required":["sourceId","versionId","quote"],
             "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1,"maxLength":700}}
@@ -134,7 +138,7 @@ pub async fn tutor(
     sources: &[LearningSourceVersionDto],
 ) -> Result<TutorJson> {
     let prompt=serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"recentTurns":session.tutor_turns.iter().rev().take(4).map(|t|serde_json::json!({"request":t.prompt,"response":t.response,"hintLevel":t.hint_level})).collect::<Vec<_>>(),"revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":source_context(sources)}).to_string();
-    let raw=complete_json(llm,"You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery. Return strict JSON.",prompt,tutor_schema(),1400).await?;
+    let raw=complete_json(llm,"You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.",prompt,tutor_schema(),1400).await?;
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
     if parsed.response.trim().is_empty()
@@ -164,7 +168,7 @@ pub async fn solution(
     sources: &[LearningSourceVersionDto],
 ) -> Result<SolutionJson> {
     let prompt=serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"sourceSnapshots":source_context(sources)}).to_string();
-    let raw=complete_json(llm,"Give a concise worked reference solution for the learning task. When source snapshots are supplied, use them for factual claims. Without sources, use the stated task and general knowledge, acknowledge uncertainty, and return no citations. Cite exact quotations and do not imply that viewing this solution is evidence of learner ability. Return strict JSON.",prompt,solution_schema(),1400).await?;
+    let raw=complete_json(llm,"Give a concise worked reference solution for the learning task. When source snapshots are supplied, use them for factual claims. Without sources, use the stated task and general knowledge, acknowledge uncertainty, and return no citations. Cite exact quotations and do not imply that viewing this solution is evidence of learner ability.",prompt,solution_schema(),1400).await?;
     let parsed: SolutionJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The model returned a malformed reference solution."))?;
     if parsed.solution.trim().is_empty()
@@ -208,7 +212,7 @@ pub async fn grade(
     let rubric:Vec<_>=session.rubric.iter().map(|c|serde_json::json!({"id":c.id,"dimension":c.dimension,"title":c.title,"description":c.description,"maxPoints":c.max_points})).collect();
     let task = serde_json::json!({"taskPrompt":session.task_prompt,"artifact":session.artifact.text,"rubric":rubric});
     let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["status","criteria"],"properties":{"status":{"enum":["provisional","uncertain"]},"criteria":{"type":"array","minItems":session.rubric.len(),"maxItems":session.rubric.len(),"items":{"type":"object","additionalProperties":false,"required":["criterion_id","score","observation","evidence_quote"],"properties":{"criterion_id":{"type":"string"},"score":{"type":["integer","null"],"minimum":0,"maximum":session.rubric.iter().map(|c|c.max_points).max().unwrap_or(4)},"observation":{"type":"string","minLength":1,"maxLength":900},"evidence_quote":{"type":["string","null"],"maxLength":500}}}}}});
-    let system = "Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null. Return strict JSON only.";
+    let system = "Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null.";
     let mut prompt = task.to_string();
     let budget = session.rubric.len().saturating_mul(500).saturating_add(800);
     for attempt in 0..2 {
@@ -216,7 +220,7 @@ pub async fn grade(
         match validate_grade(&raw, session) {
             Ok(result) => return Ok(result),
             Err(error) if attempt == 0 => {
-                prompt = serde_json::json!({"task":task,"rejectedFeedback":raw,"validationIssue":error.to_string(),"instruction":"Correct the rejected feedback against the original artifact and rubric. Copy each evidence_quote as one exact contiguous substring, with no ellipses or reformatted whitespace. Keep valid judgments. Return all criteria in the original schema. No feedback has been saved yet."}).to_string();
+                prompt = serde_json::json!({"task":task,"rejectedFeedback":raw,"validationIssue":error.to_string(),"instruction":"Correct the rejected feedback against the original artifact and rubric. Copy each evidence_quote as one exact contiguous substring, with no ellipses or reformatted whitespace. Keep valid judgments and correct every criterion. No feedback has been saved yet."}).to_string();
             }
             Err(error) => return Err(error),
         }

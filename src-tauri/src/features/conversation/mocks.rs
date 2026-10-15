@@ -5,9 +5,9 @@
 #[cfg(test)]
 use super::trait_def::ConversationServiceTrait;
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 #[cfg(test)]
 use std::sync::{Arc, RwLock};
 
@@ -20,7 +20,10 @@ use std::sync::{Arc, RwLock};
 pub struct MockConversationService {
     conversations: Arc<
         RwLock<
-            std::collections::HashMap<String, crate::domain::conversation::ConversationAggregate>,
+            std::collections::HashMap<
+                String,
+                lattice_core::domain::conversation::ConversationAggregate,
+            >,
         >,
     >,
 }
@@ -61,7 +64,7 @@ impl ConversationServiceTrait for MockConversationService {
             if conversation.messages().iter().any(|m| {
                 m.id == user_message_id
                     && m.status == "pending"
-                    && m.role == crate::domain::conversation::MessageRole::User
+                    && m.role == lattice_core::domain::conversation::MessageRole::User
             }) {
                 conversation.update_message_status(user_message_id, "failed".into())?;
             }
@@ -75,17 +78,17 @@ impl ConversationServiceTrait for MockConversationService {
         content: String,
         tokens: i64,
         metadata: Option<String>,
-    ) -> Result<crate::domain::conversation::ConversationMessage> {
-        use crate::domain::conversation::{ConversationAggregate, MessageRole};
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+        use lattice_core::domain::conversation::{ConversationAggregate, MessageRole};
         let mut conversations = self.conversations.write().unwrap();
         let current = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound("Conversation not found".into())
+            lattice_core::shared::error::AppError::NotFound("Conversation not found".into())
         })?;
         let mut updated = current.clone();
         if !updated.messages().iter().any(|m| {
             m.id == user_message_id && m.role == MessageRole::User && m.status == "pending"
         }) {
-            return Err(crate::shared::error::AppError::InvalidState(
+            return Err(lattice_core::shared::error::AppError::InvalidState(
                 "Turn is no longer pending in this conversation".into(),
             ));
         }
@@ -108,8 +111,8 @@ impl ConversationServiceTrait for MockConversationService {
         title: String,
         model_name: String,
         system_prompt: Option<String>,
-    ) -> Result<crate::domain::conversation::Conversation> {
-        use crate::domain::conversation::ConversationAggregate;
+    ) -> Result<lattice_core::domain::conversation::Conversation> {
+        use lattice_core::domain::conversation::ConversationAggregate;
 
         let aggregate = ConversationAggregate::new(title, model_name, system_prompt)?;
         let conversation = aggregate.conversation().clone();
@@ -125,7 +128,7 @@ impl ConversationServiceTrait for MockConversationService {
     async fn get_conversation(
         &self,
         id: &str,
-    ) -> Result<Option<crate::domain::conversation::ConversationAggregate>> {
+    ) -> Result<Option<lattice_core::domain::conversation::ConversationAggregate>> {
         Ok(self.conversations.read().unwrap().get(id).cloned())
     }
 
@@ -133,7 +136,7 @@ impl ConversationServiceTrait for MockConversationService {
         &self,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> Result<Vec<crate::domain::conversation::Conversation>> {
+    ) -> Result<Vec<lattice_core::domain::conversation::Conversation>> {
         let conversations = self.conversations.read().unwrap();
         let mut all: Vec<_> = conversations
             .values()
@@ -160,7 +163,10 @@ impl ConversationServiceTrait for MockConversationService {
             .unwrap()
             .remove(id)
             .ok_or_else(|| {
-                crate::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
+                lattice_core::shared::error::AppError::NotFound(format!(
+                    "Conversation not found: {}",
+                    id
+                ))
             })?;
         Ok(())
     }
@@ -168,7 +174,10 @@ impl ConversationServiceTrait for MockConversationService {
     async fn rename_conversation(&self, id: &str, new_title: String) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
+            lattice_core::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                id
+            ))
         })?;
 
         // Use the domain method to ensure validation
@@ -182,7 +191,10 @@ impl ConversationServiceTrait for MockConversationService {
     async fn update_system_prompt(&self, id: &str, system_prompt: Option<String>) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
+            lattice_core::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();
@@ -197,12 +209,12 @@ impl ConversationServiceTrait for MockConversationService {
         conversation_id: &str,
         content: String,
         tokens: i64,
-    ) -> Result<crate::domain::conversation::ConversationMessage> {
-        use crate::domain::conversation::MessageRole;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+        use lattice_core::domain::conversation::MessageRole;
 
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!(
+            lattice_core::shared::error::AppError::NotFound(format!(
                 "Conversation not found: {}",
                 conversation_id
             ))
@@ -222,12 +234,12 @@ impl ConversationServiceTrait for MockConversationService {
         conversation_id: &str,
         content: String,
         tokens: i64,
-    ) -> Result<crate::domain::conversation::ConversationMessage> {
-        use crate::domain::conversation::MessageRole;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+        use lattice_core::domain::conversation::MessageRole;
 
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!(
+            lattice_core::shared::error::AppError::NotFound(format!(
                 "Conversation not found: {}",
                 conversation_id
             ))
@@ -248,12 +260,12 @@ impl ConversationServiceTrait for MockConversationService {
         content: String,
         tokens: i64,
         metadata: Option<String>,
-    ) -> Result<crate::domain::conversation::ConversationMessage> {
-        use crate::domain::conversation::MessageRole;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+        use lattice_core::domain::conversation::MessageRole;
 
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!(
+            lattice_core::shared::error::AppError::NotFound(format!(
                 "Conversation not found: {}",
                 conversation_id
             ))
@@ -276,7 +288,7 @@ impl ConversationServiceTrait for MockConversationService {
     ) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!(
+            lattice_core::shared::error::AppError::NotFound(format!(
                 "Conversation not found: {}",
                 conversation_id
             ))
@@ -298,7 +310,7 @@ impl ConversationServiceTrait for MockConversationService {
     ) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!(
+            lattice_core::shared::error::AppError::NotFound(format!(
                 "Conversation not found: {}",
                 conversation_id
             ))
@@ -314,14 +326,14 @@ impl ConversationServiceTrait for MockConversationService {
     async fn add_message_with_status(
         &self,
         conversation_id: &str,
-        role: crate::domain::conversation::MessageRole,
+        role: lattice_core::domain::conversation::MessageRole,
         content: String,
         tokens: i64,
         status: String,
-    ) -> Result<crate::domain::conversation::ConversationMessage> {
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::shared::error::AppError::NotFound(format!(
+            lattice_core::shared::error::AppError::NotFound(format!(
                 "Conversation not found: {}",
                 conversation_id
             ))

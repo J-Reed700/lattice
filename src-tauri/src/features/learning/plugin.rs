@@ -1,9 +1,10 @@
 use super::{
-    curriculum::LearningGenerationJob, dto::*, plan_dto::*, portability_dto::*, practical_dto::*,
-    repository::LearningRepository, service,
+    curriculum::LearningGenerationJob, dto::*, embedded_runtime::BuiltinRuntimes, plan_dto::*,
+    portability_dto::*, practical_dto::*, repository::LearningRepository, service,
 };
 use crate::features::web::traits::WebServiceTrait;
-use crate::{interfaces::di::Container, shared::ipc::ApiError};
+use crate::interfaces::di::Container;
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,
@@ -14,6 +15,21 @@ use super::source_identity::validate_source_ids;
 
 fn source_library(container: &Container) -> super::source_library::LearningSourceLibraryRepository {
     super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone())
+}
+
+/// Source-acquisition dependencies, assembled once at the command layer so
+/// the acquisition code never sees the container.
+fn source_deps(container: &Container) -> crate::features::learning::sources::SourceDeps {
+    crate::features::learning::sources::SourceDeps {
+        library: container.library_passages(),
+        web: container.web_service(),
+        web_ingest: container
+            .security_context()
+            .rate_limiters()
+            .web_ingest
+            .clone(),
+        pool: container.db_pool().clone(),
+    }
 }
 
 mod program;
@@ -43,15 +59,32 @@ pub use practical::*;
 mod study;
 pub use study::*;
 
+/// The Python bundle shipped in the app's resources, verified once at startup.
+/// A missing or damaged bundle leaves Python labs reporting it unavailable.
+fn bundled_python<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<super::python_runtime::PythonRuntime> {
+    let resources = app.path().resource_dir().ok()?;
+    super::python_runtime::PythonRuntime::verify(resources.join("resources/learning-python"))
+        .inspect_err(|error| {
+            tracing::warn!(%error, "Bundled Python runtime could not be configured");
+        })
+        .ok()
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
             let container = app.state::<Container>().inner().clone();
+            // One set of built-in runtimes for every lab this app runs: the
+            // practical commands and lesson verification share its guest slots.
+            let runtimes = BuiltinRuntimes::new(bundled_python(app));
+            app.manage(runtimes.clone());
             // Registration settles lesson jobs the last process left running,
             // then starts delivering saved work.
             tauri::async_runtime::block_on(container.jobs().register(
                 super::curriculum_repository::LESSON_PREPARATION,
-                std::sync::Arc::new(generation_worker(&container)),
+                std::sync::Arc::new(generation_worker(&container, runtimes)),
                 super::curriculum_repository::lesson_job_config(),
             ))?;
             let practical = super::practical_repository::LearningPracticalRepository::new(
@@ -69,6 +102,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             preview_learning_pack_import,
             apply_learning_pack_import,
             cancel_learning_pack_import_preview,
+            save_learning_pack_as,
+            export_all_learning_packs,
             preview_learning_curriculum_revision,
             accept_learning_curriculum_revision,
             discard_learning_curriculum_revision,

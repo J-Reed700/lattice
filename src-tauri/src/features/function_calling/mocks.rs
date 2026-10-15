@@ -11,9 +11,9 @@ use crate::features::function_calling::domain::{
 #[cfg(test)]
 use crate::features::settings::dto::CustomToolSettingsDto;
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -56,7 +56,7 @@ impl FunctionRegistryTrait for MockFunctionRegistry {
     fn register(&self, tool: ToolDefinition) -> Result<()> {
         let mut tools = self.tools.write().unwrap();
         if tools.contains_key(&tool.name) {
-            return Err(crate::shared::error::AppError::InvalidData(format!(
+            return Err(lattice_core::shared::error::AppError::InvalidData(format!(
                 "Tool '{}' already registered",
                 tool.name
             )));
@@ -147,7 +147,9 @@ impl FunctionExecutorTrait for MockFunctionExecutor {
     ) -> Result<()> {
         let validation_errors = self.validation_errors.read().unwrap();
         if let Some(error) = validation_errors.get(function_name) {
-            Err(crate::shared::error::AppError::InvalidInput(error.clone()))
+            Err(lattice_core::shared::error::AppError::InvalidInput(
+                error.clone(),
+            ))
         } else {
             Ok(())
         }

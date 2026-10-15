@@ -5,13 +5,13 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::{ConversationMessage, MessageRole};
 use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
-use crate::shared::error::Result;
-use crate::shared::text::build_excerpt;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
+use lattice_core::shared::error::Result;
+use lattice_core::shared::text::build_excerpt;
 
 use super::retrieval::WEB_SOURCE_PREFIX;
 
@@ -204,7 +204,7 @@ pub(super) fn render(sources: &[SourceDto]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::conversation::ConversationAggregate;
+    use lattice_core::domain::conversation::ConversationAggregate;
 
     fn source(id: &str, body: &str) -> SourceDto {
         SourceDto {
@@ -226,6 +226,7 @@ mod tests {
             chunk_excerpts: None,
             citation_id: Some(1),
             page_number: None,
+            from_ocr: false,
             position: None,
 
             web_snapshot: None,

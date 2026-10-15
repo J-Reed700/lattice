@@ -3,12 +3,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::ports::CredentialsPort;
 use crate::features::credentials::adapter::CredentialsAdapter;
 use crate::features::credentials::use_cases::{
     DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::CredentialsPort;
 
 #[derive(Clone)]
 pub struct CredentialsDi {

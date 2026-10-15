@@ -20,8 +20,9 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::features::function_calling::dto::CleanArticle;
-use crate::shared::error::Result;
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::Result;
 
 /// Trait for web archive operations
 ///
@@ -31,7 +32,7 @@ use crate::shared::error::Result;
 ///
 /// - **Save Article**: Converts CleanArticle to markdown with YAML frontmatter
 /// - **Load Article**: Parses markdown file back to CleanArticle
-/// - **Delete Article**: Removes article from archive
+/// - **Delete Article**: Removes article from archive (`ArticleArchive`)
 /// - **Directory Organization**: Organizes articles by domain (e.g., github.com/)
 /// - **README Generation**: Creates helpful README explaining the archive
 ///
@@ -73,7 +74,7 @@ use crate::shared::error::Result;
 /// - `WebArchiveService`: Production implementation with tokio::fs
 /// - `MockWebArchiveService`: In-memory mock for testing
 #[async_trait]
-pub trait WebArchiveServiceTrait: Send + Sync {
+pub trait WebArchiveServiceTrait: ArticleArchive {
     /// Save web article to archive as markdown file
     ///
     /// Converts the article to markdown with YAML frontmatter and saves it
@@ -94,7 +95,7 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     /// # Example
     /// ```rust,no_run
     /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
-    /// use lattice::application::dtos::function_calling_dto::CleanArticle;
+    /// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
     ///
     /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let article = CleanArticle {
@@ -146,33 +147,6 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     /// ```
     async fn load_article(&self, path: &Path) -> Result<CleanArticle>;
 
-    /// Delete article from archive
-    ///
-    /// Removes the markdown file from the archive. Does not fail if file
-    /// doesn't exist (idempotent operation).
-    ///
-    /// # Arguments
-    /// * `path` - Path to the markdown file to delete
-    ///
-    /// # Returns
-    /// `Ok(())` if file was deleted or didn't exist
-    ///
-    /// # Errors
-    /// - `AppError::Io` if file deletion fails due to permissions or other I/O error
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
-    /// use std::path::PathBuf;
-    ///
-    /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
-    /// let path = PathBuf::from("/Users/user/.lattice/web-archive/example.com/article.md");
-    /// service.delete_article(&path).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    async fn delete_article(&self, path: &Path) -> Result<()>;
-
     /// List all articles in the archive
     ///
     /// Returns paths to all markdown files in the archive directory tree.
@@ -195,12 +169,4 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     /// # }
     /// ```
     async fn list_articles(&self) -> Result<Vec<PathBuf>>;
-
-    /// True when `path` is inside this archive.
-    ///
-    /// Web documents keep the article path in `documents.file_path`, and
-    /// deletion has to tell an archived article apart from a library blob or a
-    /// file the user keeps somewhere of their own. Only the archive knows
-    /// where its own base directory is, so only it can answer.
-    fn owns(&self, path: &Path) -> bool;
 }

@@ -17,6 +17,7 @@ use zeroize::Zeroize;
 
 use super::crypto::MasterKey;
 use super::format::ArchiveError;
+use lattice_core::shared::error::AppError;
 
 /// Keyring service name. Distinct from the credentials adapter's service so
 /// "forget my API keys" can never take the backup key with it.
@@ -26,6 +27,8 @@ pub const KEYRING_USER: &str = "backup-master-key";
 /// File fallback name under `<app_data_dir>/backup/`.
 pub const KEY_FILE_NAME: &str = "master.key";
 
+// global-state: the warning is about this machine's keyring, so it is said
+// once per process however many key stores are built.
 static FALLBACK_WARNED: Once = Once::new();
 
 fn warn_fallback_once(reason: &str) {
@@ -80,7 +83,7 @@ impl MasterKeyStore {
             match self.load_from_keyring() {
                 Ok(Some(key)) => return Ok(Some(key)),
                 Ok(None) => {}
-                Err(e) => warn_fallback_once(&e),
+                Err(e) => warn_fallback_once(&e.to_string()),
             }
         }
         self.load_from_file()
@@ -93,7 +96,7 @@ impl MasterKeyStore {
             match self.store_in_keyring(&encoded) {
                 Ok(()) => Ok(()),
                 Err(e) => {
-                    warn_fallback_once(&e);
+                    warn_fallback_once(&e.to_string());
                     self.store_in_file(&encoded)
                 }
             }
@@ -121,18 +124,21 @@ impl MasterKeyStore {
         }
     }
 
-    fn load_from_keyring(&self) -> Result<Option<MasterKey>, String> {
-        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(|e| e.to_string())?;
+    /// Any error here sends `load` to the file fallback; it is only logged.
+    fn load_from_keyring(&self) -> Result<Option<MasterKey>, AppError> {
+        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(keyring_error)?;
         match entry.get_password() {
-            Ok(encoded) => decode_key(&encoded).map(Some).map_err(|e| e.to_string()),
+            Ok(encoded) => decode_key(&encoded)
+                .map(Some)
+                .map_err(|e| AppError::InvalidData(e.to_string())),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(keyring_error(e)),
         }
     }
 
-    fn store_in_keyring(&self, encoded: &str) -> Result<(), String> {
-        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(|e| e.to_string())?;
-        entry.set_password(encoded).map_err(|e| e.to_string())
+    fn store_in_keyring(&self, encoded: &str) -> Result<(), AppError> {
+        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(keyring_error)?;
+        entry.set_password(encoded).map_err(keyring_error)
     }
 
     fn load_from_file(&self) -> Result<Option<MasterKey>, ArchiveError> {
@@ -171,6 +177,10 @@ fn restrict_permissions(_path: &Path) -> Result<(), ArchiveError> {
     // Windows inherits the app data directory's ACL, which is already
     // per-user. There is no portable mode bit to set.
     Ok(())
+}
+
+fn keyring_error(err: keyring::Error) -> AppError {
+    AppError::KeyringError(err.to_string())
 }
 
 fn decode_key(encoded: &str) -> Result<MasterKey, ArchiveError> {

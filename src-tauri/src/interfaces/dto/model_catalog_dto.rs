@@ -89,11 +89,11 @@ pub enum ModelSourceDto {
     External,
 }
 
-impl From<crate::domain::models::catalog::ModelSource> for ModelSourceDto {
-    fn from(domain: crate::domain::models::catalog::ModelSource) -> Self {
+impl From<lattice_core::domain::models::catalog::ModelSource> for ModelSourceDto {
+    fn from(domain: lattice_core::domain::models::catalog::ModelSource) -> Self {
         match domain {
-            crate::domain::models::catalog::ModelSource::Curated => Self::Curated,
-            crate::domain::models::catalog::ModelSource::External => Self::External,
+            lattice_core::domain::models::catalog::ModelSource::Curated => Self::Curated,
+            lattice_core::domain::models::catalog::ModelSource::External => Self::External,
         }
     }
 }
@@ -113,8 +113,8 @@ pub struct ModelFileMetadataDto {
     pub downloaded: bool,
 }
 
-impl From<crate::domain::ModelFileMetadata> for ModelFileMetadataDto {
-    fn from(domain: crate::domain::ModelFileMetadata) -> Self {
+impl From<lattice_core::domain::ModelFileMetadata> for ModelFileMetadataDto {
+    fn from(domain: lattice_core::domain::ModelFileMetadata) -> Self {
         Self {
             filename: domain.filename,
             size_bytes: domain.size_bytes,
@@ -321,8 +321,8 @@ pub struct ModelSearchResultDto {
     pub popularity_likes: Option<u64>,
 }
 
-impl From<crate::domain::models::catalog::ModelSearchResult> for ModelSearchResultDto {
-    fn from(domain: crate::domain::models::catalog::ModelSearchResult) -> Self {
+impl From<lattice_core::domain::models::catalog::ModelSearchResult> for ModelSearchResultDto {
+    fn from(domain: lattice_core::domain::models::catalog::ModelSearchResult) -> Self {
         Self {
             model: domain.model.into(),
             relevance_score: domain.relevance_score,

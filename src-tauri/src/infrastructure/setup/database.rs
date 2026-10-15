@@ -1,11 +1,12 @@
 use crate::infrastructure::persistence::database as db;
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 
-pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection, String> {
+pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection> {
     let conn = db::DatabaseConnection::new(db_path.clone())
         .await
         .map_err(|e| {
-            format!(
+            AppError::Database(format!(
                 "Failed to create database connection at {:?}.\n\n\
                               Possible causes:\n\
                               - Database file is locked by another process\n\
@@ -17,11 +18,11 @@ pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection, 
                               - Delete lattice.db if corrupted (WARNING: loses data)\n\n\
                               Error: {}",
                 db_path, e
-            )
+            ))
         })?;
 
     db::initialize_database(conn.pool()).await.map_err(|e| {
-        format!(
+        AppError::Migration(format!(
             "Failed to initialize database schema.\n\n\
                               Possible causes:\n\
                               - Corrupted database file\n\
@@ -33,7 +34,7 @@ pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection, 
                               - Reinstall the application\n\n\
                               Error: {}",
             e
-        )
+        ))
     })?;
 
     Ok(conn)

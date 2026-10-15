@@ -2,10 +2,10 @@
 
 use super::checksum::calculate_checksum;
 use crate::features::embedding::service::MODEL_NAME;
-use crate::features::indexing::engine::chunker::ContextualizedChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
-use crate::shared::fs::path::path_to_string;
 use chrono::Utc;
+use lattice_core::domain::value_objects::ContextualizedChunk;
+use lattice_core::shared::fs::path::path_to_string;
 use serde::Deserialize;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::Path;

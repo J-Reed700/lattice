@@ -1,14 +1,6 @@
 //! Unit tests for [`super::FunctionExecutor`].
 
 use super::*;
-use crate::application::ports::DocumentRepositoryPort;
-use crate::application::ports::{
-    ChunkRepositoryPort, FavoritesRepositoryPort, FileMetadata, FileStoragePort,
-    RecentDocumentsRepositoryPort,
-};
-use crate::domain::entities::Document;
-use crate::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
-use crate::domain::value_objects::Checksum;
 use crate::features::embedding::mocks::MockEmbeddingService;
 use crate::features::favorites::dto::FavoriteDto;
 use crate::features::function_calling::dto::{
@@ -21,9 +13,17 @@ use crate::features::search::mocks::{empty_hybrid_search, MockBM25Search, MockSe
 use crate::features::tags::mocks::MockTagService;
 use crate::features::web::mocks::MockWebService;
 use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
-use crate::RepositoryPort;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use lattice_core::application::ports::DocumentRepositoryPort;
+use lattice_core::application::ports::RepositoryPort;
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, FavoritesRepositoryPort, FileMetadata, FileStoragePort,
+    RecentDocumentsRepositoryPort,
+};
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
+use lattice_core::domain::value_objects::Checksum;
 use std::path::{Path, PathBuf};
 
 struct MockFileStoragePort;
@@ -191,7 +191,7 @@ impl RepositoryPort<Document> for SingleDocumentRepository {
 
     async fn find_by_filter(
         &self,
-        _filter: &dyn crate::application::ports::repository_port::Filter,
+        _filter: &dyn lattice_core::application::ports::repository_port::Filter,
     ) -> Result<Vec<Document>> {
         Ok(vec![self.document.clone()])
     }
@@ -271,7 +271,7 @@ impl DocumentRepositoryPort for SingleDocumentRepository {
     }
 }
 
-impl crate::application::ports::DocumentRepository for SingleDocumentRepository {}
+impl lattice_core::application::ports::DocumentRepository for SingleDocumentRepository {}
 
 #[tokio::test]
 async fn test_execute_unknown_function() {
@@ -281,7 +281,7 @@ async fn test_execute_unknown_function() {
     let bm25 = Arc::new(MockBM25Search::new());
     let hybrid = empty_hybrid_search();
     let mock = Arc::new(DddMockDocRepo::new());
-    use crate::application::ports::DocumentRepository;
+    use lattice_core::application::ports::DocumentRepository;
     let doc_repo = mock as Arc<dyn DocumentRepository>;
     let chunk_repo = Arc::new(MockChunkRepository::new()) as Arc<dyn ChunkRepositoryPort>;
     let tag_service = Arc::new(MockTagService::new()) as Arc<dyn TagServiceTrait>;
@@ -290,20 +290,20 @@ async fn test_execute_unknown_function() {
     let favorites_repository = Arc::new(MockFavoritesRepository::new());
     let recent_documents_repository = Arc::new(MockRecentDocumentsRepository::new());
 
-    let executor = FunctionExecutor::new(
-        registry as Arc<dyn FunctionRegistryTrait>,
-        embedding as Arc<dyn EmbeddingServiceTrait>,
-        search as Arc<dyn SearchServiceTrait>,
-        bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid,
-        doc_repo,
-        chunk_repo,
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: registry as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        search_service: search as Arc<dyn SearchServiceTrait>,
+        bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
+        hybrid_search: hybrid,
+        document_repository: doc_repo,
+        chunk_repository: chunk_repo,
         tag_service,
         favorites_repository,
         recent_documents_repository,
         file_storage,
-        web as Arc<dyn WebServiceTrait>,
-    );
+        web_service: web as Arc<dyn WebServiceTrait>,
+    });
 
     let call = FunctionCall::new("call_123", "unknown_function", serde_json::json!({}));
 
@@ -337,7 +337,7 @@ async fn test_validate_arguments() {
     let bm25 = Arc::new(MockBM25Search::new());
     let hybrid = empty_hybrid_search();
     let mock = Arc::new(DddMockDocRepo::new());
-    use crate::application::ports::DocumentRepository;
+    use lattice_core::application::ports::DocumentRepository;
     let doc_repo = mock as Arc<dyn DocumentRepository>;
     let chunk_repo = Arc::new(MockChunkRepository::new()) as Arc<dyn ChunkRepositoryPort>;
     let tag_service = Arc::new(MockTagService::new()) as Arc<dyn TagServiceTrait>;
@@ -346,20 +346,20 @@ async fn test_validate_arguments() {
     let file_storage = Arc::new(MockFileStoragePort) as Arc<dyn FileStoragePort>;
     let web = Arc::new(MockWebService::new());
 
-    let executor = FunctionExecutor::new(
-        registry as Arc<dyn FunctionRegistryTrait>,
-        embedding as Arc<dyn EmbeddingServiceTrait>,
-        search as Arc<dyn SearchServiceTrait>,
-        bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid,
-        doc_repo,
-        chunk_repo,
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: registry as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        search_service: search as Arc<dyn SearchServiceTrait>,
+        bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
+        hybrid_search: hybrid,
+        document_repository: doc_repo,
+        chunk_repository: chunk_repo,
         tag_service,
         favorites_repository,
         recent_documents_repository,
         file_storage,
-        web as Arc<dyn WebServiceTrait>,
-    );
+        web_service: web as Arc<dyn WebServiceTrait>,
+    });
 
     // Valid arguments
     let valid = json!({"required_param": "value"});
@@ -443,8 +443,10 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     let documents = Arc::new(SqliteDocuments::new(pool.clone()));
     for name in ["mpep-0100.pdf", "mpep-0200.pdf"] {
         let document = Document::new(
-            crate::shared::types::ValidatedFilePath::new(PathBuf::from(format!("/tmp/{name}")))
-                .unwrap(),
+            lattice_core::shared::types::ValidatedFilePath::new(PathBuf::from(format!(
+                "/tmp/{name}"
+            )))
+            .unwrap(),
             name.to_string(),
             "application/pdf".to_string(),
             1024,
@@ -454,20 +456,22 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     }
     let favorites = Arc::new(FavoritesRepository::new(pool.clone()));
     let recent = Arc::new(RecentDocumentsRepository::new(pool));
-    let executor = FunctionExecutor::new(
-        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
-        Arc::new(MockEmbeddingService::default()),
-        Arc::new(MockSearchService::new()),
-        Arc::new(MockBM25Search::new()),
-        empty_hybrid_search(),
-        documents,
-        Arc::new(MockChunkRepository::new()),
-        Arc::new(MockTagService::new()),
-        favorites.clone(),
-        recent.clone(),
-        Arc::new(MockFileStoragePort),
-        Arc::new(MockWebService::new()),
-    );
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: Arc::new(
+            crate::features::function_calling::registry::init_function_registry().unwrap(),
+        ),
+        embedding_service: Arc::new(MockEmbeddingService::default()),
+        search_service: Arc::new(MockSearchService::new()),
+        bm25_service: Arc::new(MockBM25Search::new()),
+        hybrid_search: empty_hybrid_search(),
+        document_repository: documents,
+        chunk_repository: Arc::new(MockChunkRepository::new()),
+        tag_service: Arc::new(MockTagService::new()),
+        favorites_repository: favorites.clone(),
+        recent_documents_repository: recent.clone(),
+        file_storage: Arc::new(MockFileStoragePort),
+        web_service: Arc::new(MockWebService::new()),
+    });
     let list = |args| {
         let executor = &executor;
         async move {
@@ -502,9 +506,9 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
 
 #[tokio::test]
 async fn test_get_document_supports_internal_pagination() {
-    use crate::application::ports::DocumentRepository;
     use crate::features::function_calling::domain::ToolDefinition;
-    use crate::shared::types::ValidatedFilePath;
+    use lattice_core::application::ports::DocumentRepository;
+    use lattice_core::shared::types::ValidatedFilePath;
     use serde_json::json;
 
     let registry = Arc::new(FunctionRegistry::new());
@@ -562,20 +566,20 @@ async fn test_get_document_supports_internal_pagination() {
         content: "A".repeat(2500),
     }) as Arc<dyn FileStoragePort>;
 
-    let executor = FunctionExecutor::new(
-        registry as Arc<dyn FunctionRegistryTrait>,
-        embedding as Arc<dyn EmbeddingServiceTrait>,
-        search as Arc<dyn SearchServiceTrait>,
-        bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid,
-        doc_repo,
-        chunk_repo,
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: registry as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        search_service: search as Arc<dyn SearchServiceTrait>,
+        bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
+        hybrid_search: hybrid,
+        document_repository: doc_repo,
+        chunk_repository: chunk_repo,
         tag_service,
         favorites_repository,
         recent_documents_repository,
         file_storage,
-        web,
-    );
+        web_service: web,
+    });
 
     let call = FunctionCall::new(
         "call_get_doc",
@@ -623,7 +627,8 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let documents = Arc::new(SqliteDocuments::new(pool.clone()));
     let document = Document::new(
-        crate::shared::types::ValidatedFilePath::new(PathBuf::from("/tmp/quotas.md")).unwrap(),
+        lattice_core::shared::types::ValidatedFilePath::new(PathBuf::from("/tmp/quotas.md"))
+            .unwrap(),
         "quotas.md".to_string(),
         "text/markdown".to_string(),
         1024,
@@ -641,26 +646,28 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
     // No embedding model: the keyword branch answers alone, as it would in chat.
     let search = Arc::new(
         HybridSearchUseCase::new(
-            Arc::new(crate::application::ports::MockEmbeddingPort::new_degraded()),
+            Arc::new(lattice_core::application::ports::MockEmbeddingPort::new_degraded()),
             Arc::new(USearchVectorIndex::new(4, None).unwrap()),
             Arc::new(SqliteTextSearch::new(pool.clone())),
         )
         .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone()))),
     );
-    let executor = FunctionExecutor::new(
-        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
-        Arc::new(MockEmbeddingService::default()),
-        Arc::new(MockSearchService::new()),
-        Arc::new(MockBM25Search::new()),
-        search,
-        documents,
-        Arc::new(MockChunkRepository::new()),
-        Arc::new(MockTagService::new()),
-        Arc::new(MockFavoritesRepository::new()),
-        Arc::new(MockRecentDocumentsRepository::new()),
-        Arc::new(MockFileStoragePort),
-        Arc::new(MockWebService::new()),
-    );
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: Arc::new(
+            crate::features::function_calling::registry::init_function_registry().unwrap(),
+        ),
+        embedding_service: Arc::new(MockEmbeddingService::default()),
+        search_service: Arc::new(MockSearchService::new()),
+        bm25_service: Arc::new(MockBM25Search::new()),
+        hybrid_search: search,
+        document_repository: documents,
+        chunk_repository: Arc::new(MockChunkRepository::new()),
+        tag_service: Arc::new(MockTagService::new()),
+        favorites_repository: Arc::new(MockFavoritesRepository::new()),
+        recent_documents_repository: Arc::new(MockRecentDocumentsRepository::new()),
+        file_storage: Arc::new(MockFileStoragePort),
+        web_service: Arc::new(MockWebService::new()),
+    });
 
     let result = executor
         .execute(FunctionCall::new(

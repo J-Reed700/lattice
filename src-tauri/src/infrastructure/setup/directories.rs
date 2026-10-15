@@ -1,12 +1,13 @@
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use tauri::Manager;
 
-pub fn setup_app_directories(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn setup_app_directories(app: &tauri::AppHandle) -> Result<PathBuf> {
     let app_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Could not determine app data directory. This may indicate a system configuration issue.\n\nError: {}", e))?;
+        .map_err(|e| AppError::FileSystem(format!("Could not determine app data directory. This may indicate a system configuration issue.\n\nError: {}", e)))?;
 
     std::fs::create_dir_all(&app_dir).map_err(|e| {
-        format!(
+        AppError::FileSystem(format!(
             "Failed to create app data directory at {:?}.\n\n\
                               Possible causes:\n\
                               - Missing write permissions\n\
@@ -18,17 +19,17 @@ pub fn setup_app_directories(app: &tauri::AppHandle) -> Result<PathBuf, String> 
                               - Check antivirus settings\n\n\
                               Error: {}",
             app_dir, e
-        )
+        ))
     })?;
 
     Ok(app_dir)
 }
 
-pub fn setup_model_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let model_dir =
-        crate::get_model_dir(app).map_err(|e| format!("Failed to get model directory: {}", e))?;
+pub fn setup_model_directory(app: &tauri::AppHandle) -> Result<PathBuf> {
+    let model_dir = crate::get_model_dir(app)
+        .map_err(|e| AppError::FileSystem(format!("Failed to get model directory: {}", e)))?;
     std::fs::create_dir_all(&model_dir).map_err(|e| {
-        format!(
+        AppError::FileSystem(format!(
             "Failed to create models directory at {:?}.\n\n\
                               Possible causes:\n\
                               - Missing write permissions\n\
@@ -40,7 +41,7 @@ pub fn setup_model_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> 
                               - Check antivirus settings\n\n\
                               Error: {}",
             model_dir, e
-        )
+        ))
     })?;
 
     Ok(model_dir)

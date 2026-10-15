@@ -10,6 +10,7 @@
 //!
 //! These models enforce business rules (e.g., valid tool names, parameter schemas).
 
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -72,28 +73,34 @@ impl ToolDefinition {
         name: impl Into<String>,
         description: impl Into<String>,
         input_schema: serde_json::Value,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let name = name.into();
         let description = description.into();
 
         // Validate name (alphanumeric + underscores only)
         if name.is_empty() {
-            return Err("Tool name cannot be empty".to_string());
-        }
-
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return Err(format!(
-                "Tool name '{}' must contain only alphanumeric characters and underscores",
-                name
+            return Err(AppError::InvalidInput(
+                "Tool name cannot be empty".to_string(),
             ));
         }
 
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(AppError::InvalidInput(format!(
+                "Tool name '{}' must contain only alphanumeric characters and underscores",
+                name
+            )));
+        }
+
         if description.is_empty() {
-            return Err("Tool description cannot be empty".to_string());
+            return Err(AppError::InvalidInput(
+                "Tool description cannot be empty".to_string(),
+            ));
         }
 
         if !input_schema.is_object() {
-            return Err("Input schema must be a JSON object".to_string());
+            return Err(AppError::InvalidInput(
+                "Input schema must be a JSON object".to_string(),
+            ));
         }
 
         Ok(Self {

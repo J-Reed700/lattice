@@ -4587,6 +4587,12 @@
           "markdownDescription": "Denies the list_available_functions command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_backend_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:allow-get-backend-logs",
+          "markdownDescription": "Enables the get_backend_logs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_system_stats command without any pre-configured scope.",
           "type": "string",
           "const": "health:allow-get-system-stats",
@@ -4609,6 +4615,12 @@
           "type": "string",
           "const": "health:allow-initialize-database",
           "markdownDescription": "Enables the initialize_database command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_backend_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:deny-get-backend-logs",
+          "markdownDescription": "Denies the get_backend_logs command without any pre-configured scope."
         },
         {
           "description": "Denies the get_system_stats command without any pre-configured scope.",
@@ -4861,6 +4873,12 @@
           "type": "string",
           "const": "learning:allow-ensure-learning-lesson-note",
           "markdownDescription": "Enables the ensure_learning_lesson_note command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_all_learning_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-export-all-learning-packs",
+          "markdownDescription": "Enables the export_all_learning_packs command without any pre-configured scope."
         },
         {
           "description": "Enables the export_learning_pack command without any pre-configured scope.",
@@ -5157,6 +5175,12 @@
           "markdownDescription": "Enables the save_learning_card_draft command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_learning_pack_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-pack-as",
+          "markdownDescription": "Enables the save_learning_pack_as command without any pre-configured scope."
+        },
+        {
           "description": "Enables the save_learning_practical_draft command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-save-learning-practical-draft",
@@ -5443,6 +5467,12 @@
           "type": "string",
           "const": "learning:deny-ensure-learning-lesson-note",
           "markdownDescription": "Denies the ensure_learning_lesson_note command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_all_learning_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-export-all-learning-packs",
+          "markdownDescription": "Denies the export_all_learning_packs command without any pre-configured scope."
         },
         {
           "description": "Denies the export_learning_pack command without any pre-configured scope.",
@@ -5737,6 +5767,12 @@
           "type": "string",
           "const": "learning:deny-save-learning-card-draft",
           "markdownDescription": "Denies the save_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_pack_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-pack-as",
+          "markdownDescription": "Denies the save_learning_pack_as command without any pre-configured scope."
         },
         {
           "description": "Denies the save_learning_practical_draft command without any pre-configured scope.",
@@ -6789,6 +6825,12 @@
           "markdownDescription": "Denies the rescan_vault command without any pre-configured scope."
         },
         {
+          "description": "Enables the capture_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-capture-web-page-snapshot",
+          "markdownDescription": "Enables the capture_web_page_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the extract_article command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-extract-article",
@@ -6801,16 +6843,34 @@
           "markdownDescription": "Enables the fetch_url_preview command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-get-web-page-snapshot",
+          "markdownDescription": "Enables the get_web_page_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the ingest_web_url command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-ingest-web-url",
           "markdownDescription": "Enables the ingest_web_url command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_web_page_snapshots command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-list-web-page-snapshots",
+          "markdownDescription": "Enables the list_web_page_snapshots command without any pre-configured scope."
+        },
+        {
           "description": "Enables the read_web_page command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-read-web-page",
           "markdownDescription": "Enables the read_web_page command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the capture_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-capture-web-page-snapshot",
+          "markdownDescription": "Denies the capture_web_page_snapshot command without any pre-configured scope."
         },
         {
           "description": "Denies the extract_article command without any pre-configured scope.",
@@ -6825,10 +6885,22 @@
           "markdownDescription": "Denies the fetch_url_preview command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_web_page_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-get-web-page-snapshot",
+          "markdownDescription": "Denies the get_web_page_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Denies the ingest_web_url command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-ingest-web-url",
           "markdownDescription": "Denies the ingest_web_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_web_page_snapshots command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-list-web-page-snapshots",
+          "markdownDescription": "Denies the list_web_page_snapshots command without any pre-configured scope."
         },
         {
           "description": "Denies the read_web_page command without any pre-configured scope.",

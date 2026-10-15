@@ -1,5 +1,5 @@
 //! Reference extraction retains document structure discarded by short chat-page reads.
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
 

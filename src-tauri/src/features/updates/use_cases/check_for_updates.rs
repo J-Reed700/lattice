@@ -20,9 +20,9 @@
 //! }
 //! ```
 
-use crate::application::ports::UpdateCheckerPort;
 use crate::features::updates::dto::UpdateInfoDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::UpdateCheckerPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct CheckForUpdatesUseCase {
@@ -59,8 +59,8 @@ impl CheckForUpdatesUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::UpdateInfoData;
     use async_trait::async_trait;
+    use lattice_core::application::ports::UpdateInfoData;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct MockUpdateCheckerPort {

@@ -1,6 +1,8 @@
 //! Challenge a batch of provisional approvals without combining their evidence.
 use super::*;
-use crate::application::services::claim_verification::{render_batch_evidence, LocatedClaim};
+use lattice_core::application::services::claim_verification::{
+    render_batch_evidence, LocatedClaim,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,7 +35,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
         .filter_map(|index| claims.get(*index).cloned())
         .collect::<Vec<_>>();
     let (prompt, _) = render_batch_evidence(&targets);
-    let system = format!("{SYSTEM}\n\nThis request contains several independent claims and a bank of shared source passages. For EACH claim, use only the passages in that claim's evidenceIds. Other claims and evidence allocated only to them are not evidence for this claim. Review each claim separately; do not infer that approval or a concern applies to the whole batch. Return JSON with checks: exactly one object for every supplied claim ID, containing id and queries. Keep queries empty only when that claim has no concrete unresolved concern. Do not omit any claim or invent an ID.");
+    let system = format!("{SYSTEM}\n\nThis request contains several independent claims and a bank of shared source passages. For EACH claim, use only the passages in that claim's evidenceIds. Other claims and evidence allocated only to them are not evidence for this claim. Review each claim separately; do not infer that approval or a concern applies to the whole batch. Plan for every supplied claim ID exactly once. Keep queries empty only when that claim has no concrete unresolved concern. Do not omit any claim or invent an ID.");
     let ids: Vec<_> = (0..targets.len())
         .map(|index| format!("claim-{index}"))
         .collect();
