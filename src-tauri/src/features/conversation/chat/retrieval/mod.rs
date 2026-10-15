@@ -29,7 +29,7 @@ mod followup_context;
 mod kb_retrieval;
 mod keyword;
 mod overlap;
-mod page_budget;
+pub(in crate::features::conversation::chat) mod page_budget;
 mod pipeline;
 mod policy;
 mod rerank;
@@ -345,7 +345,8 @@ async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
     search_flags: SearchFlags,
-    kb_search_limit: usize,
+    evidence_tokens: usize,
+    chars_per_token: f64,
     enable_reranking: bool,
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
@@ -355,7 +356,8 @@ async fn run_kb_retrieval(
         container,
         turn,
         search_flags,
-        kb_search_limit,
+        evidence_tokens,
+        chars_per_token,
         enable_reranking,
         semantic_threshold,
         tuning,
@@ -430,15 +432,28 @@ async fn build_hyde_context_window_for_conversation(
     build_hyde_context_window_for_conversation_impl(conv_service, conversation_id, question).await
 }
 
-fn derive_kb_search_limit(
-    tool_output_settings: &ToolOutputSettingsDto,
-    tuning: &RetrievalTuningSettingsDto,
+/// Passage tokens the chunker aims for (the embedding input policy's
+/// retrieval target). Used only when the library's passages cannot be
+/// measured, to size how deep a search reads.
+const ASSUMED_PASSAGE_TOKENS: usize = 480;
+
+/// How many passages a turn's search reads: as many as `evidence_tokens` can
+/// carry at what one of this library's passages measures, so a large window
+/// is handed enough to fill it and a small one is not handed a pile it must
+/// throw away. Rounded up: the prompt's best-first fill, not this count,
+/// decides what goes in.
+fn retrieval_depth(
+    evidence_tokens: usize,
+    passage_chars: Option<usize>,
+    chars_per_token: f64,
 ) -> usize {
-    let min_limit = tuning.kb_search_min_limit as usize;
-    let max_limit = tuning.kb_search_max_limit as usize;
-    (tool_output_settings.max_results as usize)
-        .max(min_limit)
-        .min(max_limit)
+    let passage_tokens = passage_chars
+        .map(|chars| {
+            lattice_core::application::ports::llm_port::tokens_for_chars(chars, chars_per_token)
+        })
+        .unwrap_or(ASSUMED_PASSAGE_TOKENS)
+        .max(1);
+    evidence_tokens.div_ceil(passage_tokens).max(1)
 }
 
 async fn persist_document_references(
@@ -630,15 +645,18 @@ pub(super) fn infer_category(path: &str) -> String {
     infer_category_impl(path)
 }
 
-pub(in crate::features::conversation::chat) use self::tool_format::fetched_page_text_room;
+pub(in crate::features::conversation::chat) use self::tool_format::{
+    document_page_room, fetched_page_text_room,
+};
 
 pub(super) fn format_tool_result(
     tool_name: &str,
     result: &crate::features::function_calling::domain::FunctionResult,
-    highlight_terms: &[String],
     settings: &ToolOutputSettingsDto,
+    allowance: usize,
+    page_offset: usize,
 ) -> String {
-    format_tool_result_impl(tool_name, result, highlight_terms, settings)
+    format_tool_result_impl(tool_name, result, settings, allowance, page_offset)
 }
 
 #[cfg(test)]

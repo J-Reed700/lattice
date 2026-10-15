@@ -28,12 +28,13 @@ pub(super) fn page_budget_chars(evidence: &EvidenceBudget) -> usize {
 /// only what it needs and the remainder is offered round again to the pages
 /// still wanting more, so a short page never strands budget a long one could
 /// use and one long page can never starve the others. No page is given more
-/// than `per_page_cap` or more than its own length.
-pub(super) fn allocate(lengths: &[usize], total: usize, per_page_cap: usize) -> Vec<usize> {
-    let wants: Vec<usize> = lengths
-        .iter()
-        .map(|length| (*length).min(per_page_cap))
-        .collect();
+/// than its own length; there is no per-page ceiling, so a budget with room
+/// carries a long page whole.
+pub(in crate::features::conversation::chat) fn allocate(
+    lengths: &[usize],
+    total: usize,
+) -> Vec<usize> {
+    let wants: Vec<usize> = lengths.to_vec();
     let mut given = vec![0usize; wants.len()];
     let mut remaining = total;
 
@@ -68,7 +69,7 @@ mod tests {
     #[test]
     fn a_large_context_carries_long_pages_whole() {
         let budget = page_budget_chars(&EvidenceBudget::new(98_000));
-        let given = allocate(&[21_000, 8_400], budget, 50_000);
+        let given = allocate(&[21_000, 8_400], budget);
         assert_eq!(given, vec![21_000, 8_400]);
     }
 
@@ -78,32 +79,42 @@ mod tests {
     fn a_small_context_is_given_less_than_the_old_fixed_allowance() {
         let budget = page_budget_chars(&EvidenceBudget::new(5_900));
         assert!(budget < 18_000, "got {budget}");
-        let given = allocate(&[21_000, 8_400, 12_000], budget, 50_000);
+        let given = allocate(&[21_000, 8_400, 12_000], budget);
         assert!(given.iter().sum::<usize>() <= budget);
     }
 
     #[test]
     fn what_a_short_page_does_not_need_goes_to_the_long_ones() {
-        let given = allocate(&[1_000, 40_000, 40_000], 30_000, 50_000);
+        let given = allocate(&[1_000, 40_000, 40_000], 30_000);
         assert_eq!(given, vec![1_000, 14_500, 14_500]);
     }
 
     #[test]
     fn one_long_page_cannot_starve_the_others() {
-        let given = allocate(&[50_000, 5_000, 5_000], 20_000, 50_000);
+        let given = allocate(&[50_000, 5_000, 5_000], 20_000);
         assert_eq!(given, vec![10_000, 5_000, 5_000]);
     }
 
+    /// There used to be a 50,000-character ceiling on any one page on top of
+    /// the budget. A budget with room now carries a long page whole.
     #[test]
-    fn no_page_is_given_more_than_the_per_page_cap() {
-        let given = allocate(&[40_000, 40_000], 100_000, 12_000);
-        assert_eq!(given, vec![12_000, 12_000]);
+    fn a_page_past_the_old_ceiling_is_carried_whole_when_the_budget_has_room() {
+        let given = allocate(&[180_000, 4_000], 200_000);
+        assert_eq!(given, vec![180_000, 4_000]);
+    }
+
+    /// Without room, the long page is clipped to its share, not dropped, and
+    /// the pipeline's prompt says how much of it is shown.
+    #[test]
+    fn a_page_past_the_budget_is_clipped_to_its_share() {
+        let given = allocate(&[180_000, 4_000], 40_000);
+        assert_eq!(given, vec![36_000, 4_000]);
     }
 
     #[test]
     fn the_total_is_never_exceeded() {
         for total in [0, 1, 7, 399, 1_000, 33_333] {
-            let given = allocate(&[9_000, 120, 45_000, 3_000], total, 50_000);
+            let given = allocate(&[9_000, 120, 45_000, 3_000], total);
             assert!(
                 given.iter().sum::<usize>() <= total,
                 "total {total} gave {given:?}"
@@ -113,8 +124,8 @@ mod tests {
 
     #[test]
     fn nothing_to_divide_gives_nothing() {
-        assert_eq!(allocate(&[5_000, 5_000], 0, 50_000), vec![0, 0]);
-        assert_eq!(allocate(&[], 10_000, 50_000), Vec::<usize>::new());
+        assert_eq!(allocate(&[5_000, 5_000], 0), vec![0, 0]);
+        assert_eq!(allocate(&[], 10_000), Vec::<usize>::new());
         assert_eq!(page_budget_chars(&EvidenceBudget::default()), 0);
     }
 }

@@ -26,8 +26,6 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       enableReranking: true,
       hybridSearchAlpha: 0.5,
       retrievalTuning: {
-        kbSearchMinLimit: 8,
-        kbSearchMaxLimit: 48,
         docShortlistCandidateMin: 16,
         docShortlistCandidateMax: 192,
         docShortlistDocMin: 4,
@@ -39,8 +37,6 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         wikiContextLimit: 5,
         webSearchMaxResults: 5,
         webSnippetMaxChars: 500,
-        webFetchPageCount: 3,
-        webPageMaxChars: 50000,
         webPageFetchTimeoutSecs: 12,
         deepResearchDepth: 3,
         deepResearchBranchQueries: 3,
@@ -95,9 +91,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       },
       verification: { enabled: false, temperature: 0, topP: 1, topK: 1 },
       toolOutput: {
-        maxChars: 2000,
         excerptChars: 220,
-        maxResults: 5,
         highlightTermsMax: 6,
         templates: {
           defaultTemplate: '',

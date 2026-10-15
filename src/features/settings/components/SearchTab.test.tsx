@@ -69,7 +69,7 @@ describe('SearchTab', () => {
     });
     fireEvent.click(advancedToggle);
 
-    const field = await screen.findByLabelText(/KB search min limit/i);
+    const field = await screen.findByLabelText(/Doc shortlist doc min/i);
     fireEvent.change(field, { target: { value: '12' } });
     fireEvent.blur(field);
 
@@ -79,7 +79,7 @@ describe('SearchTab', () => {
           category: 'search',
           updates: expect.objectContaining({
             retrievalTuning: expect.objectContaining({
-              kbSearchMinLimit: 12,
+              docShortlistDocMin: 12,
             }),
           }),
         })
@@ -167,7 +167,7 @@ describe('SearchTab', () => {
     });
     fireEvent.click(advancedToggle);
 
-    const minField = await screen.findByLabelText(/KB search min limit/i);
+    const minField = await screen.findByLabelText(/Doc shortlist doc min/i);
     fireEvent.change(minField, { target: { value: '120' } });
     fireEvent.blur(minField);
 
@@ -177,8 +177,8 @@ describe('SearchTab', () => {
           category: 'search',
           updates: expect.objectContaining({
             retrievalTuning: expect.objectContaining({
-              kbSearchMinLimit: 120,
-              kbSearchMaxLimit: 120,
+              docShortlistDocMin: 120,
+              docShortlistDocMax: 120,
             }),
           }),
         })

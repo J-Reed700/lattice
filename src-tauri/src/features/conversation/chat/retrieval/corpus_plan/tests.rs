@@ -167,6 +167,74 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     );
 }
 
+/// "Start at the beginning" used to read at most four opening passages of
+/// each document whatever the window. It now reads as deep as the search's
+/// budget-sized limit, round-robin in reading order, so a large window carries
+/// far more of the opening documents and the first chapter is never crowded
+/// out by long front matter.
+#[tokio::test]
+async fn reading_from_the_beginning_goes_as_deep_as_the_budget_round_robin() {
+    use crate::features::search::engine::{
+        text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
+    };
+    use lattice_core::application::ports::MockEmbeddingPort;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
+        INSERT INTO documents VALUES ('intro','Introduction','/intro',NULL),('ch1','Chapter 1','/ch1',NULL);")
+        .execute(&pool).await.unwrap();
+    for document in ["intro", "ch1"] {
+        for index in 0..10 {
+            sqlx::query(
+                "INSERT INTO text_chunks(id, document_id, content, chunk_index) VALUES (?, ?, 'opening text', ?)",
+            )
+            .bind(format!("{document}-{index}"))
+            .bind(document)
+            .bind(index)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    }
+    let repository = ConversationRepository::new(pool.clone());
+    let embedder = Arc::new(MockEmbeddingPort::new_degraded());
+    let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
+    let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
+    let scope = super::super::SpaceDocumentScope {
+        space_id: super::super::DEFAULT_SPACE_ID.into(),
+        document_ids: ["intro".to_owned(), "ch1".to_owned()].into(),
+    };
+    let plan = CorpusSearchPlan {
+        queries: vec!["start".into()],
+        opening_document_ids: vec!["intro".into(), "ch1".into()],
+        start_at_beginning: true,
+    };
+    let found = retrieve(
+        &repository,
+        &hybrid,
+        "start at the beginning",
+        &plan,
+        &scope,
+        12,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = found.results.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        ids.get(..6).unwrap(),
+        ["intro-0", "ch1-0", "intro-1", "ch1-1", "intro-2", "ch1-2"]
+    );
+    // Ten passages of each: past the old four, and everything these hold.
+    assert!(
+        ids.contains(&"intro-9") && ids.contains(&"ch1-9"),
+        "{ids:?}"
+    );
+}
+
 #[test]
 fn plan_cannot_invent_documents_or_escape_scope() {
     let catalog = vec![CorpusDocument {
@@ -218,6 +286,19 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
     assert_eq!(
         openings.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
         ["a0", "a1"]
+    );
+    // What one passage of the scope measures, for sizing how deep to read:
+    // "Second", "Introduction" and "First" average 8 characters.
+    assert_eq!(
+        repository.retrieval_mean_chunk_chars(&scope).await.unwrap(),
+        Some(8)
+    );
+    assert_eq!(
+        repository
+            .retrieval_mean_chunk_chars(&HashSet::new())
+            .await
+            .unwrap(),
+        None
     );
     assert!(repository
         .retrieval_catalog(&HashSet::new())

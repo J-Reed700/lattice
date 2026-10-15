@@ -29,10 +29,14 @@ pub struct RerankOptions {
 impl RerankOptions {
     /// The fused pool to retrieve when a search will be reranked and then cut
     /// to `limit`: wider, so the cross-encoder can promote a passage fusion
-    /// left just outside the cut, and bounded, because every candidate costs
-    /// the cross-encoder a forward pass.
+    /// left just outside the cut. The widening is bounded, because the
+    /// cross-encoder costs a forward pass a candidate; the pool is never
+    /// narrower than `limit` itself, which is what the caller can use.
     pub fn candidate_pool(limit: usize) -> usize {
-        limit.saturating_mul(POOL_MULTIPLIER).min(POOL_MAX)
+        limit
+            .saturating_mul(POOL_MULTIPLIER)
+            .min(POOL_MAX)
+            .max(limit)
     }
 }
 

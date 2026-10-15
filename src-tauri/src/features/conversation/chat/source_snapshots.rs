@@ -15,12 +15,6 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::warn;
 
-/// The most page text archived beside one citation.
-///
-/// A snapshot is not a prompt ingredient — the prompt keeps its short excerpt
-/// pointer — so the cap only stops a pathological page from becoming a blob
-/// dump. 64k chars is far past any real article.
-const SNAPSHOT_MAX_CHARS: usize = 64_000;
 const CITATION_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The page as the conversation archived it, or `None` when it never read it.
@@ -88,7 +82,12 @@ pub(super) async fn archive_page_for_url(
     citation_url: &str,
     page: &FetchUrlContentOutput,
 ) {
-    let Some((content, clipped)) = capped_snapshot_text(&page.content) else {
+    // The whole page. The archive is a prompt ingredient: later reads of the
+    // URL, recalled prior evidence and the grounding check all take their text
+    // from it, and each fits what it takes to its own budget. Cutting here
+    // would lose the tail for every one of them. The fetch's 5 MiB body bound
+    // is what keeps a pathological page from becoming a blob dump.
+    let Some(content) = snapshot_text(&page.content) else {
         return;
     };
     match container
@@ -98,7 +97,7 @@ pub(super) async fn archive_page_for_url(
             citation_url,
             page.title.clone(),
             content,
-            page.content_truncated || clipped,
+            page.content_truncated,
         )
         .await
     {
@@ -258,21 +257,11 @@ fn metadata_value_with_sources(raw: &str) -> Option<serde_json::Value> {
     Some(value)
 }
 
-/// The text worth archiving, capped, plus whether the cap cut anything.
-/// `None` for a page with no text worth keeping.
-fn capped_snapshot_text(content: &str) -> Option<(String, bool)> {
+/// The text worth archiving, whole. `None` for a page with no text worth
+/// keeping.
+fn snapshot_text(content: &str) -> Option<String> {
     let content = content.trim();
-    if content.is_empty() {
-        return None;
-    }
-    if content.chars().count() > SNAPSHOT_MAX_CHARS {
-        Some((
-            lattice_core::shared::text::safe_truncate(content, SNAPSHOT_MAX_CHARS),
-            true,
-        ))
-    } else {
-        Some((content.to_string(), false))
-    }
+    (!content.is_empty()).then(|| content.to_string())
 }
 
 #[cfg(test)]
@@ -280,17 +269,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_archive_keeps_the_whole_article_and_marks_only_a_genuine_cut() {
-        let (kept, clipped) = capped_snapshot_text("  an article body  ").unwrap();
-        assert_eq!(kept, "an article body");
-        assert!(!clipped);
+    fn the_archive_keeps_the_whole_page_however_long() {
+        assert_eq!(
+            snapshot_text("  an article body  ").as_deref(),
+            Some("an article body")
+        );
 
-        let long = "word ".repeat(SNAPSHOT_MAX_CHARS);
-        let (kept, clipped) = capped_snapshot_text(&long).unwrap();
-        assert!(kept.chars().count() <= SNAPSHOT_MAX_CHARS);
-        assert!(clipped);
+        // Far past the old 64,000-character cut: every word is kept, so a
+        // later read, a recalled source and the grounding check see the tail.
+        let long = format!("{}the closing sentence", "word ".repeat(100_000));
+        let kept = snapshot_text(&long).unwrap();
+        assert_eq!(kept.chars().count(), long.trim().chars().count());
+        assert!(kept.ends_with("the closing sentence"));
 
-        assert!(capped_snapshot_text("   ").is_none());
+        assert!(snapshot_text("   ").is_none());
     }
 
     #[test]

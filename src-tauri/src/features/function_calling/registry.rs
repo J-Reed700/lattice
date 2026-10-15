@@ -380,6 +380,11 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                 "url": {
                     "type": "string",
                     "description": "URL to fetch and extract content from"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Character to start reading from. A page longer than one result names the offset its next part starts at; pass it to read on.",
+                    "minimum": 0
                 }
             },
             "required": ["url"]

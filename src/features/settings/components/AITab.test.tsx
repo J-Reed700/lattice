@@ -50,9 +50,7 @@ const mockLlmSettings: LlmSettingsContextValue = {
       clarifyPromptTemplate: '',
     },
     toolOutput: {
-      maxChars: 50000,
       excerptChars: 500,
-      maxResults: 10,
       highlightTermsMax: 8,
       templates: {
         defaultTemplate: '',

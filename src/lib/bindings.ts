@@ -7368,10 +7368,6 @@ focusedDocuments?: number | null }
  */
 export type RetrievalTuningSettingsDto = {
 /**
- * Min and max KB candidate limits derived from tool output max_results
- */
-kbSearchMinLimit: number; kbSearchMaxLimit: number;
-/**
  * Min and max limits for document shortlist candidate collection
  */
 docShortlistCandidateMin: number; docShortlistCandidateMax: number;
@@ -7387,19 +7383,6 @@ shortlistGateMinCandidates: number; shortlistGateMinDocs: number;
  * External source retrieval limits and snippet shaping
  */
 wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number;
-/**
- * How many of the top web results are opened and read in full for the
- * prompt. Search engines return a headline and roughly one sentence; a
- * question about what a page actually says cannot be answered from that.
- * 0 disables page reading and falls back to snippets alone.
- */
-webFetchPageCount: number;
-/**
- * Ceiling on any one fetched page's text in the prompt. The room a page
- * actually gets is its share of the turn's page budget, which is derived
- * from the model's context window; this only caps that share.
- */
-webPageMaxChars: number;
 /**
  * Seconds any one page fetch may take before it is abandoned and the
  * result falls back to its snippet.
@@ -8210,17 +8193,11 @@ export type ToolLoopTimingMetrics = { totalMs: number; iterations: number; llmSt
  */
 export type ToolOutputSettingsDto = {
 /**
- * Maximum characters to include for a tool result in the LLM context
- */
-maxChars: number;
-/**
- * Excerpt length for document/tool content
+ * Length of the excerpt a source card shows for a document or tool
+ * result. Display only: what a tool result carries into the model's
+ * context is decided by the window (see the tool loop's allowance).
  */
 excerptChars: number;
-/**
- * Maximum search results to summarize from a tool call
- */
-maxResults: number;
 /**
  * Maximum highlight terms extracted from the user query
  */

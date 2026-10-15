@@ -9,7 +9,7 @@ use super::health::{
     PlannerHealth, PLANNER_PROMPT_FLOOR, PLANNER_PROMPT_TOKENS, PLANNER_STAND_DOWN,
 };
 use super::prompt::PLANNER_OUTPUT_TOKENS;
-use super::shortlist::{shortlist, SHORTLIST_CAP};
+use super::shortlist::shortlist;
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
@@ -185,13 +185,16 @@ async fn a_large_vault_is_shown_as_a_shortlist_inside_the_prompt_target() {
     for shown in ["Record 200", "Record 199", "Record 201", "Record 305"] {
         assert!(prompt.contains(shown), "{shown} missing from the shortlist");
     }
-    assert!(!prompt.contains("Record 000"), "{prompt}");
+    // There is no fixed row cap: the rest of the vault follows the hits and
+    // fills what the prompt target leaves, so the prompt is at the target
+    // rather than at a twenty-row ceiling below it.
+    assert!(used * 10 >= PLANNER_PROMPT_TOKENS * 8, "{used} tokens");
     // Documents are named by handles, never by their UUIDs.
     assert!(!prompt.contains("9c262a35"), "{prompt}");
     assert!(prompt.contains(r#""catalog_total":379"#), "{prompt}");
 }
 
-/// A model whose every text costs one token, so only the row cap can bind.
+/// A model whose every text costs one token, so the budget never binds.
 struct OneTokenStub;
 
 #[async_trait::async_trait]
@@ -218,7 +221,7 @@ impl LLMPort for OneTokenStub {
 }
 
 #[tokio::test]
-async fn the_shortlist_takes_hits_then_neighbours_and_is_capped() {
+async fn the_shortlist_takes_hits_then_neighbours_and_the_budget_alone_bounds_it() {
     let catalog = vault();
     let candidates: Vec<String> = (100..160).map(uuid).collect();
     let ranked = shortlist(&catalog, &candidates, "where is the spare key kept?");
@@ -226,7 +229,10 @@ async fn the_shortlist_takes_hits_then_neighbours_and_is_capped() {
     assert_eq!(ids.first().copied(), Some(uuid(100).as_str()));
     // The first hit brings the documents either side of it in its series.
     assert!(ids.iter().take(3).any(|id| *id == uuid(99)));
-    assert!(!ids.contains(&uuid(0).as_str()));
+    // The rest of the catalog follows the hits and their neighbours.
+    let position = |id: &str| ids.iter().position(|shown| *shown == id).unwrap();
+    assert!(position(&uuid(0)) > position(&uuid(159)));
+    assert_eq!(ids.len(), catalog.len());
 
     let parts = prompt::PromptParts {
         question: "where is the spare key kept?",
@@ -244,7 +250,9 @@ async fn the_shortlist_takes_hits_then_neighbours_and_is_capped() {
     )
     .await
     .unwrap();
-    assert_eq!(built.shown, SHORTLIST_CAP);
+    // The old cap showed twenty rows whatever the budget. A budget with room
+    // shows every document, so the planner can open any of them.
+    assert_eq!(built.shown, catalog.len());
 }
 
 #[test]
@@ -275,8 +283,11 @@ async fn the_plan_names_documents_by_handle_and_gets_their_real_ids_back() {
     )
     .await
     .unwrap();
-    // Handles are numbered in reading order: 41, 42, 43.
-    assert_eq!(plan.opening_document_ids, [uuid(42), uuid(41)]);
+    // Handles are numbered in reading order over every row shown. The hit
+    // and its neighbours (41, 42, 43) come first in the shortlist, and the
+    // rest of the vault fills what the budget leaves, so the vault's first
+    // documents are shown too and take the first handles.
+    assert_eq!(plan.opening_document_ids, [uuid(1), uuid(0)]);
 }
 
 /// A book split into files, with front matter, among unrelated documents.
@@ -342,11 +353,36 @@ async fn a_learning_request_sees_its_books_front_matter_and_opens_it_in_order() 
     }
 
     // The planner picks one chapter it was shown; validation still reads the
-    // whole book to find where it begins.
+    // whole book to find where it begins. Rows are handled in reading order
+    // over everything the budget shows, so the chapter's handle is read off
+    // the same prompt the planner gets.
+    let parts = prompt::PromptParts {
+        question,
+        history: "",
+        catalog_total: catalog.len(),
+        correction: None,
+        summaries: &HashMap::new(),
+    };
+    let built = prompt::build(
+        &UtilityStub::new(16_384, true),
+        &parts,
+        &ranked,
+        &catalog,
+        PLANNER_PROMPT_TOKENS,
+    )
+    .await
+    .unwrap();
+    let chapter = built
+        .handles
+        .iter()
+        .find(|(_, id)| id.as_str() == "book-10")
+        .map(|(handle, _)| handle.clone())
+        .expect("the hit is shown");
     let stub = UtilityStub::new(16_384, true).then(
         Duration::ZERO,
-        Ok(r#"{"queries":["examining manual introduction"],"opening_document_ids":["d1"],"start_at_beginning":true}"#
-            .into()),
+        Ok(format!(
+            r#"{{"queries":["examining manual introduction"],"opening_document_ids":["{chapter}"],"start_at_beginning":true}}"#
+        )),
     );
     let plan = plan(
         &stub,
@@ -533,17 +569,37 @@ async fn only_a_timeout_at_the_smallest_prompt_stands_the_planner_down_and_only_
     assert!(PlannerTurn::with_health(&health).unavailable().is_none());
 }
 
+/// The prompt follows the planner's measured speed: what it read in the time
+/// it took, scaled to half the timeout. There is no ceiling: a fast planner
+/// keeps earning room, at most a doubling an answer.
 #[test]
-fn a_quick_answer_earns_back_prompt_room_and_a_slow_one_keeps_it() {
+fn the_prompt_size_follows_the_measured_planner_speed() {
+    let health = PlannerHealth::new();
+    // 2,560 tokens in 2.5s on a 20s timeout: four times faster than the
+    // target needs, so the prompt doubles (the most one answer earns).
+    health.answered(PLANNER_TIMEOUT / 8, PLANNER_PROMPT_TOKENS);
+    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS * 2);
+    health.answered(PLANNER_TIMEOUT / 8, PLANNER_PROMPT_TOKENS * 2);
+    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS * 4);
+    // Past the old 2,560-token ceiling, and still settling on the measure:
+    // twice the target time halves it back toward what the planner managed.
+    let now = health.prompt_tokens();
+    health.answered(PLANNER_TIMEOUT, now);
+    assert_eq!(health.prompt_tokens(), now / 2);
+}
+
+/// An answer inside the target time never shrinks the prompt, however slow it
+/// was per token: the time may have gone to writing the plan.
+#[test]
+fn an_answer_in_time_keeps_its_room() {
     let health = PlannerHealth::new();
     health.timed_out(PLANNER_PROMPT_TOKENS);
     let shrunk = health.prompt_tokens();
-    health.answered(PLANNER_TIMEOUT * 3 / 4);
+    health.answered(PLANNER_TIMEOUT / 2, shrunk / 4);
     assert_eq!(health.prompt_tokens(), shrunk);
-    health.answered(Duration::from_secs(4));
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
-    health.answered(Duration::from_secs(1));
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
+    health.answered(PLANNER_TIMEOUT * 3 / 4, shrunk);
+    assert!(health.prompt_tokens() >= PLANNER_PROMPT_FLOOR);
+    assert!(health.prompt_tokens() < shrunk);
 }
 
 #[tokio::test]
@@ -589,6 +645,6 @@ async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     .await
     .unwrap_or_else(|_| fallback_with_catalog(question, &catalog));
     assert_eq!(planned.queries, [question]);
-    // A bad answer is still an answer in time.
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
+    // A bad answer is still an answer in time: it never shrinks the prompt.
+    assert!(health.prompt_tokens() >= PLANNER_PROMPT_TOKENS);
 }

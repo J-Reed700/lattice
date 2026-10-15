@@ -82,12 +82,17 @@ pub(in super::super) async fn retrieve(
         successful_branches += query_branches.answered;
         branches.extend(query_branches.branches);
     }
+    // As many opening passages of each document as the search reads in all:
+    // `limit` is sized to the turn's evidence budget, so a large window reads
+    // far into the opening documents and a small one only their first pages.
     let openings = repository
-        .retrieval_openings(&plan.opening_document_ids, &scope.document_ids, 4)
+        .retrieval_openings(&plan.opening_document_ids, &scope.document_ids, limit)
         .await?;
     let mut results = Vec::new();
-    // Round-robin opening chunks prevents one long front-matter document from
-    // exhausting the context before the first substantive chapter is read.
+    // Round-robin opening chunks, in reading order, prevents one long
+    // front-matter document from exhausting the context before the first
+    // substantive chapter is read. The prompt's best-first fill takes them in
+    // this order until the evidence budget is spent.
     let mut groups: HashMap<String, Vec<_>> = HashMap::new();
     for passage in openings {
         groups
@@ -95,7 +100,8 @@ pub(in super::super) async fn retrieve(
             .or_default()
             .push(passage);
     }
-    for offset in 0..4 {
+    let deepest = groups.values().map(Vec::len).max().unwrap_or(0);
+    for offset in 0..deepest {
         for id in &plan.opening_document_ids {
             if let Some(p) = groups.get(id).and_then(|passages| passages.get(offset)) {
                 results.push(passage_result(p.clone(), "document_opening"));
@@ -122,14 +128,7 @@ pub(in super::super) async fn retrieve(
     let opening_ids: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
     results.extend(
         hybrid
-            .fuse(
-                branches,
-                if plan.start_at_beginning {
-                    limit.min(8)
-                } else {
-                    limit
-                },
-            )
+            .fuse(branches, limit)
             .into_iter()
             .filter(|r| !opening_ids.contains(&r.id)),
     );

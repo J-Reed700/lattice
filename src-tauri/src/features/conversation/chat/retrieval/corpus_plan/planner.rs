@@ -197,7 +197,7 @@ async fn plan_with(
         }
         Ok(Ok(response)) => response.text,
     };
-    turn.health.answered(started.elapsed());
+    turn.health.answered(started.elapsed(), prompt.tokens);
     let response = response
         .trim()
         .trim_start_matches("```json")

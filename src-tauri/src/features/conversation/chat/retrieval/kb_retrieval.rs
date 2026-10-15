@@ -18,7 +18,10 @@ pub(super) async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
     search_flags: super::SearchFlags,
-    kb_search_limit: usize,
+    // The turn's evidence budget in tokens, and the answering model's
+    // characters per token: together, how deep the search reads.
+    evidence_tokens: usize,
+    chars_per_token: f64,
     enable_reranking: bool,
     _semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
@@ -129,6 +132,21 @@ pub(super) async fn run_kb_retrieval(
     }
 
     let repository = container.chat_records();
+    // How deep to read: as many passages as the evidence budget can carry, at
+    // what a passage of this library actually measures. The prompt's
+    // best-first fill decides what goes in; this only stops the search from
+    // handing it less than the budget could hold.
+    let passage_chars = match repository
+        .retrieval_mean_chunk_chars(&scope.document_ids)
+        .await
+    {
+        Ok(measured) => measured,
+        Err(error) => {
+            warn!(%error, "Could not measure passage length; assuming the chunker's target");
+            None
+        }
+    };
+    let kb_search_limit = super::retrieval_depth(evidence_tokens, passage_chars, chars_per_token);
     let summaries = summary_tier(container, validated_message, &scope).await;
     let planning_start = Instant::now();
     let plan_step = recorder.begin_guarded(
@@ -382,9 +400,7 @@ pub(super) async fn run_kb_retrieval(
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
     }
     timings.kb_sufficient = Some(verdict.sufficient);
-    search_response
-        .results
-        .truncate(kb_search_limit.max(if plan.start_at_beginning { 16 } else { 1 }));
+    search_response.results.truncate(kb_search_limit);
     if let Err(error) = super::corpus_plan::expand_evidence(
         repository.as_ref(),
         &mut search_response.results,

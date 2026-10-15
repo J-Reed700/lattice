@@ -15,15 +15,17 @@ use tokio::time::Instant;
 
 use super::PLANNER_TIMEOUT;
 
-/// The prompt, system prompt included, that the planner is sent by default.
-///
-/// Sized to answer inside [`PLANNER_TIMEOUT`] on the reference machine
-/// (Qwen3.5-9B Q4_K_M on Metal), which prefills about 300 tokens a second and
-/// writes about 14. A full plan of three queries and four document handles is
-/// about 100 tokens, seven seconds of writing; 2,560 prompt tokens are another
-/// nine seconds of prefill. That leaves four seconds for a slower prefill or a
-/// queue wait before the timeout.
+/// The prompt, system prompt included, the planner is sent before this machine
+/// has answered once: what the reference machine (Qwen3.5-9B Q4_K_M on Metal,
+/// about 300 prompt tokens a second) prefills in about nine seconds. From the
+/// first answer on, the size comes from the speed actually measured (see
+/// [`PlannerHealth::answered`]).
 pub(super) const PLANNER_PROMPT_TOKENS: usize = 2_560;
+
+/// The share of [`PLANNER_TIMEOUT`] a prompt is sized to take, measured end to
+/// end. The rest is room for a slower prefill, the plan's own writing, or a
+/// queue wait before the timeout.
+const PROMPT_SHARE_OF_TIMEOUT: f64 = 0.5;
 
 /// The smallest prompt a timeout shrinks the planner to: the system prompt,
 /// the request, a little conversation and a handful of catalog rows. A planner
@@ -83,16 +85,29 @@ impl PlannerHealth {
         until.checked_duration_since(Instant::now())
     }
 
-    /// An answer in time ends any stand-down. A comfortably quick one also
-    /// earns back prompt room, one doubling at a time; a slow one keeps the
-    /// size that worked, so the planner does not oscillate between a size that
-    /// times out and one that barely does not.
-    pub(super) fn answered(&self, elapsed: Duration) {
+    /// An answer in time ends any stand-down and measures the planner: a
+    /// prompt of `sent_tokens` answered in `elapsed`. The next prompt is what
+    /// that rate gets through in half of [`PLANNER_TIMEOUT`], so a fast
+    /// planner is shown more of the catalog and a slow one less, with no fixed
+    /// ceiling. Growth is at most a doubling per answer, so one quick reply to
+    /// a short prompt cannot jump the next past what the planner has shown it
+    /// can do; an answer inside the target share never shrinks the prompt,
+    /// since the time it took may be the plan's writing rather than the
+    /// prompt's reading.
+    pub(super) fn answered(&self, elapsed: Duration, sent_tokens: usize) {
         let mut state = self.state();
         state.stood_down_until = None;
-        if elapsed <= PLANNER_TIMEOUT / 2 {
-            state.prompt_tokens = (state.prompt_tokens * 2).min(PLANNER_PROMPT_TOKENS);
+        let target_time = PLANNER_TIMEOUT.as_secs_f64() * PROMPT_SHARE_OF_TIMEOUT;
+        let measured = if elapsed.is_zero() {
+            usize::MAX
+        } else {
+            (sent_tokens as f64 * target_time / elapsed.as_secs_f64()) as usize
+        };
+        let mut next = measured.min(state.prompt_tokens.saturating_mul(2));
+        if elapsed.as_secs_f64() <= target_time {
+            next = next.max(state.prompt_tokens);
         }
+        state.prompt_tokens = next.max(PLANNER_PROMPT_FLOOR);
     }
 
     /// A timeout halves the next attempt's prompt. Only a timeout at the floor

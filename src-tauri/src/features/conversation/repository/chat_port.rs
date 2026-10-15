@@ -25,6 +25,13 @@ impl ChatRecords for ConversationRepository {
         ConversationRepository::retrieval_catalog(self, allowed_ids).await
     }
 
+    async fn retrieval_mean_chunk_chars(
+        &self,
+        allowed_ids: &HashSet<String>,
+    ) -> Result<Option<usize>> {
+        ConversationRepository::retrieval_mean_chunk_chars(self, allowed_ids).await
+    }
+
     async fn retrieval_openings(
         &self,
         selected_ids: &[String],

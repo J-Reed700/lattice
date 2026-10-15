@@ -9,7 +9,7 @@
 //! with the whole window: the 2026-10-13 baseline sized a catalog on chars/4
 //! and 12 of 16 requests came back as larger than the window.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use tracing::warn;
@@ -20,7 +20,6 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::value_objects::source_context::SourceContext;
 use lattice_core::shared::error::{AppError, Result};
 
-use super::shortlist::SHORTLIST_CAP;
 use super::{CorrectionRequest, CORRECTION_INSTRUCTION, PLANNER_SYSTEM, SUMMARY_CATALOG_CHARS};
 
 /// What the planner may write back, enforced on the request and reserved out
@@ -32,19 +31,20 @@ pub(super) const PLANNER_OUTPUT_TOKENS: u32 = 384;
 /// messages, which the tokenizer is not asked to count.
 const TEMPLATE_FRAMING_TOKENS: usize = 32;
 
-/// Characters of each document's opening the planner is shown. Enough to tell
-/// an introduction from a change log or a chapter; the rest was most of the
-/// old catalog's cost.
+/// Characters of each document's opening a compact row shows. Enough to tell
+/// an introduction from a change log or a chapter. Rows are compact while the
+/// prompt budget binds, so it holds more documents; when every row fits, what
+/// the budget has left shows rows whole.
 const OPENING_CHARS: usize = 300;
 
-/// Extracted headings shown per document. The catalog query reads up to 24.
+/// Extracted headings a compact row shows; a whole row shows every heading
+/// the catalog read.
 const SECTIONS_SHOWN: usize = 8;
 
-/// The share of the prompt target the conversation excerpt may take, and its
-/// ceiling in tokens. Resolving a follow-up needs the last exchange, not the
-/// whole excerpt the HyDE context builder assembles.
+/// The share of the prompt target the conversation excerpt may take.
+/// Resolving a follow-up needs the last exchange, not the whole excerpt the
+/// HyDE context builder assembles; the share grows with the target.
 const HISTORY_SHARE_DIVISOR: usize = 5;
-const HISTORY_TOKENS: usize = 512;
 
 /// Re-selections after an exact count found the estimate read low.
 const RECOUNTS: usize = 2;
@@ -88,11 +88,17 @@ fn row<'a>(
     handle: String,
     group_handle: Option<String>,
     summaries: &HashMap<String, String>,
+    whole: bool,
 ) -> CatalogRow<'a> {
+    let (opening_chars, sections_shown, summary_chars) = if whole {
+        (usize::MAX, usize::MAX, usize::MAX)
+    } else {
+        (OPENING_CHARS, SECTIONS_SHOWN, SUMMARY_CATALOG_CHARS)
+    };
     CatalogRow {
         id: handle,
         name: &document.name,
-        opening: clipped(&document.opening, OPENING_CHARS),
+        opening: clipped(&document.opening, opening_chars),
         chapter_number: document.chapter_number,
         source_context: document.source_context.as_ref().map(|context| {
             let mut context = context.clone();
@@ -103,11 +109,11 @@ fn row<'a>(
         }),
         sections: document
             .sections
-            .get(..SECTIONS_SHOWN.min(document.sections.len()))
+            .get(..sections_shown.min(document.sections.len()))
             .unwrap_or_default(),
         summary: summaries
             .get(&document.id)
-            .map(|summary| clipped(summary, SUMMARY_CATALOG_CHARS)),
+            .map(|summary| clipped(summary, summary_chars)),
     }
 }
 
@@ -137,7 +143,7 @@ pub(super) struct PlannerPrompt {
 /// The newest part of the conversation excerpt that fits its share of the
 /// prompt target.
 pub(super) fn recent_history(llm: &dyn LLMPort, history: Option<&str>, target: usize) -> String {
-    let tokens = (target / HISTORY_SHARE_DIVISOR).min(HISTORY_TOKENS);
+    let tokens = target / HISTORY_SHARE_DIVISOR;
     let chars = chars_within_tokens(tokens, llm.chars_per_token());
     let history = history.unwrap_or("");
     let skip = history.chars().count().saturating_sub(chars);
@@ -151,6 +157,7 @@ fn render(
     parts: &PromptParts<'_>,
     shown: &[&CorpusDocument],
     catalog: &[CorpusDocument],
+    whole: &HashSet<&str>,
 ) -> Result<(String, HashMap<String, String>)> {
     let position: HashMap<&str, usize> = catalog
         .iter()
@@ -172,7 +179,13 @@ fn render(
                 .or_insert_with(|| format!("g{next}"))
                 .clone()
         });
-        rows.push(row(document, handle, group_handle, parts.summaries));
+        rows.push(row(
+            document,
+            handle,
+            group_handle,
+            parts.summaries,
+            whole.contains(document.id.as_str()),
+        ));
     }
     let mut payload = serde_json::json!({
         "request": parts.question, "recent_conversation": parts.history,
@@ -213,7 +226,7 @@ async fn count(llm: &dyn LLMPort, user: &str) -> (usize, bool) {
 }
 
 /// Rows from the front of `ranked` while their scaled cost fits `room`, and
-/// their unscaled estimate.
+/// their unscaled estimate. The budget alone decides how many.
 fn take_rows<'a>(
     ranked: &[&'a CorpusDocument],
     costs: &[usize],
@@ -223,9 +236,6 @@ fn take_rows<'a>(
     let mut spent = 0;
     let mut shown = Vec::new();
     for (document, cost) in ranked.iter().zip(costs) {
-        if shown.len() == SHORTLIST_CAP {
-            break;
-        }
         if (spent + cost) as f64 * scale > room {
             continue;
         }
@@ -256,39 +266,70 @@ pub(super) async fn build(
 
     // Estimated costs, with the widest handles a shortlist uses, so the real
     // render is never longer than what was budgeted for it.
-    let (empty, _) = render(parts, &[], catalog)?;
+    let compact = HashSet::new();
+    let (empty, _) = render(parts, &[], catalog, &compact)?;
     let base = llm.count_tokens(PLANNER_SYSTEM) + llm.count_tokens(&empty);
+    let row_cost = |document: &CorpusDocument, whole: bool| {
+        let group = document.source_context.as_ref().map(|_| "g99".to_string());
+        let json =
+            serde_json::to_string(&row(document, "d99".into(), group, parts.summaries, whole))
+                .unwrap_or_default();
+        // The comma between rows.
+        llm.count_tokens(&json) + 1
+    };
     let costs: Vec<usize> = ranked
         .iter()
-        .map(|document| {
-            let group = document.source_context.as_ref().map(|_| "g99".to_string());
-            let json = serde_json::to_string(&row(document, "d99".into(), group, parts.summaries))
-                .unwrap_or_default();
-            // The comma between rows.
-            llm.count_tokens(&json) + 1
-        })
+        .map(|document| row_cost(document, false))
         .collect();
 
     let mut scale = 1.0_f64;
     let mut attempt = 0;
-    let (user, handles, shown, tokens, exact) = loop {
+    let (mut user, mut handles, shown, mut tokens, mut exact, spent, shown_rows) = loop {
         let room = limit as f64 - base as f64 * scale;
         let (shown, spent) = take_rows(ranked, &costs, scale, room);
-        let (user, handles) = render(parts, &shown, catalog)?;
+        let (user, handles) = render(parts, &shown, catalog, &compact)?;
         let (tokens, exact) = count(llm, &user).await;
         if tokens <= limit || shown.is_empty() || attempt == RECOUNTS {
-            break (user, handles, shown.len(), tokens, exact);
+            break (user, handles, shown.len(), tokens, exact, spent, shown);
         }
         // The estimate read low on this text. Choose again at the measured
         // rate, and never at a lower rate than last time.
         scale = (tokens as f64 / (base + spent).max(1) as f64).max(scale * 1.1);
         attempt += 1;
     };
+    // Every document fit as a compact row and the budget has room left: show
+    // rows whole, best first, while it lasts, so nothing is clipped from a
+    // row the budget could have carried.
+    if shown == ranked.len() && tokens <= limit {
+        let mut extra = 0usize;
+        let mut whole: HashSet<&str> = HashSet::new();
+        for (document, compact_cost) in shown_rows.iter().zip(&costs) {
+            let growth = row_cost(document, true).saturating_sub(*compact_cost);
+            if growth == 0 {
+                continue;
+            }
+            if (base + spent + extra + growth) as f64 * scale > limit as f64 {
+                continue;
+            }
+            extra += growth;
+            whole.insert(document.id.as_str());
+        }
+        if !whole.is_empty() {
+            let (whole_user, whole_handles) = render(parts, &shown_rows, catalog, &whole)?;
+            let (whole_tokens, whole_exact) = count(llm, &whole_user).await;
+            if whole_tokens <= limit {
+                user = whole_user;
+                handles = whole_handles;
+                tokens = whole_tokens;
+                exact = whole_exact;
+            }
+        }
+    }
     if tokens > window(exact) {
         if shown > 0 {
             // Recounting could not bring the rows under the window; a plan from
             // the request alone is still better than none.
-            let (user, handles) = render(parts, &[], catalog)?;
+            let (user, handles) = render(parts, &[], catalog, &compact)?;
             let (tokens, exact) = count(llm, &user).await;
             if tokens <= window(exact) {
                 return Ok(PlannerPrompt {

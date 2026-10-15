@@ -89,18 +89,19 @@ fn one_page_cited_twice_is_kept_once() {
     assert_eq!(kept[0].excerpt.as_deref(), Some("first"));
 }
 
-/// A deep-research turn can cite dozens of pages. The prompt window that
-/// reads these takes ten, so one turn must not fill it on its own and push
-/// every earlier round of the conversation out.
+/// A deep-research turn can cite dozens of pages. Every one of them is kept:
+/// a fixed count here used to drop the ninth and later citations for good.
 #[test]
-fn one_turn_cannot_crowd_out_every_earlier_round() {
+fn every_cited_page_of_a_long_research_turn_is_kept() {
     let sources: Vec<SourceDto> = (0..40)
         .map(|i| web(&format!("https://example.com/{i}"), "Page", "text"))
         .collect();
 
+    let kept = cited_web_sources(&sources);
+    assert_eq!(kept.len(), 40);
     assert_eq!(
-        cited_web_sources(&sources).len(),
-        CITED_WEB_SOURCES_KEPT_PER_TURN
+        kept.last().map(|source| source.url.as_str()),
+        Some("https://example.com/39")
     );
 }
 

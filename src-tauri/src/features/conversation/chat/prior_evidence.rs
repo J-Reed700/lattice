@@ -11,12 +11,15 @@ use crate::features::search::engine::query_expansion::dictionaries::select_infor
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::Result;
-use lattice_core::shared::text::build_excerpt;
+use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 use super::retrieval::WEB_SOURCE_PREFIX;
 
-const MAX_SOURCES: usize = 8;
-const PASSAGE_CHARS: usize = 2400;
+/// Below this many characters a recalled passage is too short to carry a
+/// claim (the grounding check reads sources in windows of this size). It
+/// decides how many sources the budget can carry, not how long any one may
+/// be: a source the budget has room for is recalled whole.
+const MIN_RECALLED_PASSAGE_CHARS: usize = 1_200;
 
 /// Search the entire saved source history before applying a prompt budget.
 /// An old citation is not excluded merely because newer research followed it.
@@ -52,9 +55,8 @@ pub(super) async fn recall(
         }
     }
     let candidates = rank_sources(aggregate.messages(), &terms, allowed_documents, existing);
-    let mut recalled = Vec::new();
-    let mut used = 0;
-    for mut source in candidates.into_iter().take(MAX_SOURCES) {
+    let mut loaded = Vec::with_capacity(candidates.len());
+    for mut source in candidates {
         if source.document_id.starts_with(WEB_SOURCE_PREFIX) {
             let url = source.path.as_deref().unwrap_or(&source.file_path);
             if let Some(page) =
@@ -63,8 +65,16 @@ pub(super) async fn recall(
                 source.content = page.content;
             }
         }
-        source.content = build_excerpt(&source.content, &terms, PASSAGE_CHARS);
-        source.excerpt = Some(source.content.clone());
+        loaded.push(source);
+    }
+    let budget_chars = lattice_core::application::ports::llm_port::chars_within_tokens(
+        token_budget,
+        llm.chars_per_token(),
+    );
+    let mut recalled = Vec::new();
+    let mut used = 0;
+    for source in fit_to_budget(loaded, &terms, budget_chars) {
+        // The character shares err short; the count is the backend's own.
         let cost = llm.count_tokens(&render_source(&source));
         if used + cost > token_budget {
             continue;
@@ -73,6 +83,57 @@ pub(super) async fn recall(
         recalled.push(source);
     }
     Ok(recalled)
+}
+
+/// Every ranked source the budget can carry, best first, each given a fair
+/// share of `budget_chars`: a source shorter than its share is recalled whole
+/// and leaves the rest to the others, a longer one is cut to the stretch that
+/// best matches `terms` and marked as an excerpt. Sources are taken in rank
+/// order while every one taken still gets a useful share, so how many are
+/// recalled follows the budget rather than a fixed count.
+fn fit_to_budget(sources: Vec<SourceDto>, terms: &[String], budget_chars: usize) -> Vec<SourceDto> {
+    let lengths: Vec<usize> = sources
+        .iter()
+        .map(|source| source.content.trim().chars().count())
+        .collect();
+    let useful = |length: usize| length.clamp(1, MIN_RECALLED_PASSAGE_CHARS);
+    let mut taken = 0;
+    let mut shares = Vec::new();
+    for count in 1..=lengths.len() {
+        let Some(prefix) = lengths.get(..count) else {
+            break;
+        };
+        let trial = super::retrieval::page_budget::allocate(prefix, budget_chars);
+        let all_useful = trial
+            .iter()
+            .zip(prefix)
+            .all(|(share, length)| *share >= useful(*length));
+        if !all_useful {
+            break;
+        }
+        taken = count;
+        shares = trial;
+    }
+    sources
+        .into_iter()
+        .take(taken)
+        .zip(shares)
+        .map(|(mut source, share)| {
+            let content = source.content.trim();
+            if content.chars().count() > share {
+                // The excerpt rounds out to a sentence, which can run past
+                // the share; the share is what was budgeted, so it binds.
+                let room = share.saturating_sub(4);
+                let mut excerpt = safe_truncate(&build_excerpt(content, terms, room), room);
+                excerpt.push_str(" […]");
+                source.content = excerpt;
+            } else {
+                source.content = content.to_string();
+            }
+            source.excerpt = Some(source.content.clone());
+            source
+        })
+        .collect()
 }
 
 fn query_terms(question: &str) -> Vec<String> {
@@ -326,5 +387,51 @@ mod tests {
         let mut recalled = original.clone();
         recalled.chunk_id = format!("recalled:{}:{}", original.document_id, original.chunk_id);
         assert_eq!(source_key(&original), source_key(&recalled));
+    }
+
+    fn recalled(count: usize, body: &str) -> Vec<SourceDto> {
+        (0..count)
+            .map(|i| source(&format!("doc-{i}"), body))
+            .collect()
+    }
+
+    /// The old recall took eight sources and cut each to 2,400 characters
+    /// whatever the budget. With room, a long archived page comes back whole,
+    /// and the ninth source is not dropped.
+    #[test]
+    fn a_budget_with_room_recalls_every_source_whole() {
+        let page = format!("{}the closing finding", "Long page text. ".repeat(1_000));
+        let mut sources = vec![source("web:https://example.com/a", &page)];
+        sources.extend(recalled(11, &"A vault passage. ".repeat(100)));
+        let fitted = fit_to_budget(sources, &["finding".to_string()], 1_000_000);
+        assert_eq!(fitted.len(), 12);
+        assert!(fitted[0].content.ends_with("the closing finding"));
+        assert!(fitted.iter().all(|source| !source.content.ends_with("[…]")));
+    }
+
+    /// A tight budget shares itself out: a long source is cut to its share and
+    /// says so, and only as many sources are taken as can each be given a
+    /// passage worth citing.
+    #[test]
+    fn a_tight_budget_shares_out_excerpts_and_stops_where_shares_get_too_small() {
+        let page = "Long page text. ".repeat(1_000);
+        let mut sources = vec![source("web:https://example.com/a", &page)];
+        sources.extend(recalled(20, &"A vault passage. ".repeat(200)));
+        let budget = 6_000;
+        let fitted = fit_to_budget(sources, &[], budget);
+        assert_eq!(fitted.len(), budget / MIN_RECALLED_PASSAGE_CHARS);
+        assert!(
+            fitted[0].content.ends_with("[…]"),
+            "the long page is an excerpt"
+        );
+        let total: usize = fitted.iter().map(|s| s.content.chars().count()).sum();
+        assert!(total <= budget, "{total} characters in a {budget} budget");
+    }
+
+    #[test]
+    fn short_sources_are_never_cut() {
+        let fitted = fit_to_budget(recalled(3, "A short finding."), &[], 1_000);
+        assert_eq!(fitted.len(), 3);
+        assert!(fitted.iter().all(|s| s.content == "A short finding."));
     }
 }

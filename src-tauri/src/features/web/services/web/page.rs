@@ -1,8 +1,8 @@
 //! Reading one page: bounded download, charset decoding, parsing and the browser fallback.
 use super::address_guard::validate_url_resolved;
 use super::{
-    FetchUrlContentOutput, ReadPage, WebService, ARTICLE_SHARE_DENOMINATOR, HTML_PARSE_TIMEOUT,
-    MAX_FETCHED_PAGE_CHARS, MAX_PAGE_BODY_BYTES, RESPONSE_BODY_TIMEOUT, THIN_PAGE_CHARS,
+    FetchUrlContentOutput, PageRead, ReadPage, WebService, ARTICLE_SHARE_DENOMINATOR,
+    HTML_PARSE_TIMEOUT, MAX_PAGE_BODY_BYTES, RESPONSE_BODY_TIMEOUT, THIN_PAGE_CHARS,
 };
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage};
 use crate::features::web::services::{browser_reader, stealth};
@@ -16,21 +16,6 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 use url::Url;
-
-/// Shorten `content` to at most `max_chars`, reporting whether anything was cut.
-///
-/// Counted in characters, not bytes: slicing at a byte offset panics when a
-/// multi-byte character straddles it, which any long page in a non-Latin
-/// script — or one curly quote in the wrong place — will do.
-pub(super) fn cap_page_text(content: String, max_chars: usize) -> (String, bool) {
-    if content.chars().count() <= max_chars {
-        return (content, false);
-    }
-    (
-        lattice_core::shared::text::safe_truncate(&content, max_chars),
-        true,
-    )
-}
 
 /// Parse one bounded HTML document and derive both the title and readable
 /// body from the same tree.
@@ -170,17 +155,17 @@ impl WebService {
     /// address to re-resolve. Only the scheme is still checked, because a
     /// `file://` URL must not be readable by any path.
     pub async fn read_page(&self, url: &str) -> Result<ReadPage> {
-        self.read_page_bounded(url, MAX_FETCHED_PAGE_CHARS).await
+        self.read_page_as(url, PageRead::Chat).await
     }
 
-    pub(super) async fn read_page_bounded(&self, url: &str, max_chars: usize) -> Result<ReadPage> {
+    pub(super) async fn read_page_as(&self, url: &str, read: PageRead) -> Result<ReadPage> {
         debug!("Fetching URL: {}", url);
         parse_fetchable_url(url)?;
 
         let lookup_start = Instant::now();
         // Reference snapshots have their own durable storage. Never return a
         // short chat-cache entry as a complete book or overwrite that cache.
-        let cached = if max_chars == MAX_FETCHED_PAGE_CHARS {
+        let cached = if read == PageRead::Chat {
             self.page_cache.get(url).await
         } else {
             None
@@ -246,7 +231,7 @@ impl WebService {
                 status,
                 StatusCode::FORBIDDEN | StatusCode::SERVICE_UNAVAILABLE
             ) {
-                if let Some(page) = self.read_through_browser(url, start, max_chars).await {
+                if let Some(page) = self.read_through_browser(url, start, read).await {
                     return Ok(page);
                 }
             }
@@ -280,7 +265,7 @@ impl WebService {
             .map_err(|e| AppError::Network(format!("Failed to read response body: {e}")))?;
         let html = decode_response_text(html, content_type.as_deref());
 
-        let (title, content) = if max_chars == MAX_FETCHED_PAGE_CHARS {
+        let (title, content) = if read == PageRead::Chat {
             self.parse_page(html).await?
         } else {
             let extraction_url = final_url.clone();
@@ -294,7 +279,7 @@ impl WebService {
         // title and a menu. The browser runs the scripts; its text is kept
         // only when it is actually more.
         if content.trim().len() < THIN_PAGE_CHARS {
-            if let Some(page) = self.read_through_browser(url, start, max_chars).await {
+            if let Some(page) = self.read_through_browser(url, start, read).await {
                 if page.output.content.trim().len() > content.trim().len() {
                     return Ok(page);
                 }
@@ -302,14 +287,7 @@ impl WebService {
         }
 
         Ok(self
-            .keep_page(
-                url,
-                final_url,
-                title,
-                content,
-                content_type,
-                (start, max_chars),
-            )
+            .keep_page(url, final_url, title, content, content_type, (start, read))
             .await)
     }
 
@@ -319,11 +297,11 @@ impl WebService {
         &self,
         url: &str,
         start: Instant,
-        max_chars: usize,
+        read: PageRead,
     ) -> Option<ReadPage> {
         // Browser extraction is a bounded display read, not a complete reference
         // capture. Do not silently certify a script-rendered prefix as a book.
-        if max_chars != MAX_FETCHED_PAGE_CHARS {
+        if read != PageRead::Chat {
             return None;
         }
         let read = match self.browser.get() {
@@ -352,7 +330,7 @@ impl WebService {
                         page.title,
                         page.text,
                         Some("text/html".to_string()),
-                        (start, max_chars),
+                        (start, PageRead::Chat),
                     )
                     .await,
                 )
@@ -368,7 +346,7 @@ impl WebService {
         }
     }
 
-    /// Cap, count, cache and wrap a page's extracted text.
+    /// Count, cache and wrap a page's extracted text, all of it.
     pub(super) async fn keep_page(
         &self,
         url: &str,
@@ -376,13 +354,12 @@ impl WebService {
         title: Option<String>,
         content: String,
         content_type: Option<String>,
-        budget: (Instant, usize),
+        budget: (Instant, PageRead),
     ) -> ReadPage {
-        let (start, max_chars) = budget;
+        let (start, read) = budget;
         let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let (final_content, truncated) = cap_page_text(content, max_chars);
 
-        let word_count = final_content.split_whitespace().count();
+        let word_count = content.split_whitespace().count();
 
         info!(
             "URL fetched: {} words in {:.2}ms",
@@ -390,15 +367,15 @@ impl WebService {
         );
 
         let fetched_at = Utc::now();
-        if max_chars == MAX_FETCHED_PAGE_CHARS {
+        if read == PageRead::Chat {
             self.page_cache
                 .remember_page(
                     url,
                     &CachedPage {
                         final_url: final_url.clone(),
                         title: title.clone(),
-                        content: final_content.clone(),
-                        content_truncated: truncated,
+                        content: content.clone(),
+                        content_truncated: false,
                         word_count,
                         content_type: content_type.clone(),
                         fetched_at,
@@ -411,8 +388,8 @@ impl WebService {
             output: FetchUrlContentOutput {
                 url: final_url,
                 title,
-                content: final_content,
-                content_truncated: truncated,
+                content,
+                content_truncated: false,
                 word_count,
                 fetch_time_ms,
                 content_type,

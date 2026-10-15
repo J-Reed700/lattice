@@ -494,22 +494,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                 "no_context_prompt_template cannot be empty".to_string(),
             );
         }
-        if settings.llm.tool_output.max_chars == 0 {
-            result.add_error(
-                "llm",
-                "tool_output.max_chars must be greater than 0".to_string(),
-            );
-        }
         if settings.llm.tool_output.excerpt_chars == 0 {
             result.add_error(
                 "llm",
                 "tool_output.excerpt_chars must be greater than 0".to_string(),
-            );
-        }
-        if settings.llm.tool_output.max_results == 0 {
-            result.add_error(
-                "llm",
-                "tool_output.max_results must be greater than 0".to_string(),
             );
         }
         if settings

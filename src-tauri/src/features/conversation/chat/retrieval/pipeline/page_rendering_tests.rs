@@ -24,7 +24,24 @@ fn a_clipped_page_says_how_much_is_shown_and_how_to_get_the_rest() {
     let body = render_page_body(Some(&read(Some(12_000))));
     assert!(body.contains("first 12000 characters"), "{body}");
     assert!(body.contains("fetch_url_content"), "{body}");
+    assert!(body.contains("offset=12000"), "{body}");
     assert!(!body.contains("complete"), "{body}");
+}
+
+/// How many results are opened comes from the page budget, not a setting: a
+/// large window reads every result it was handed, a small one fewer.
+#[test]
+fn the_pages_read_follow_the_page_budget() {
+    assert_eq!(pages_the_budget_carries(0), 0);
+    assert_eq!(pages_the_budget_carries(MIN_USEFUL_PAGE_CHARS - 1), 0);
+    assert_eq!(pages_the_budget_carries(MIN_USEFUL_PAGE_CHARS * 2), 2);
+    let large = super::super::page_budget::page_budget_chars(
+        &lattice_core::application::services::context_assembler::EvidenceBudget::new(98_000),
+    );
+    assert!(
+        pages_the_budget_carries(large) >= 10,
+        "a 131k-class budget reads every result of a deep search"
+    );
 }
 
 /// The blocked page in the log was requested again a round later because

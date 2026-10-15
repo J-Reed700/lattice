@@ -24,8 +24,6 @@ export type TuningGroup = {
 };
 
 const CANDIDATE_FIELDS: NumericFieldConfig[] = [
-  { key: 'kbSearchMinLimit', label: 'KB search min limit', min: 1, max: 256, step: 1 },
-  { key: 'kbSearchMaxLimit', label: 'KB search max limit', min: 1, max: 512, step: 1 },
   {
     key: 'docShortlistCandidateMin',
     label: 'Doc shortlist candidate min',
@@ -188,13 +186,6 @@ export function normalizeTuningPairBounds(
   tuning: ApiRetrievalTuningSettings
 ): ApiRetrievalTuningSettings {
   const next = { ...tuning };
-
-  if (key === 'kbSearchMinLimit' && next.kbSearchMinLimit > next.kbSearchMaxLimit) {
-    next.kbSearchMaxLimit = next.kbSearchMinLimit;
-  }
-  if (key === 'kbSearchMaxLimit' && next.kbSearchMaxLimit < next.kbSearchMinLimit) {
-    next.kbSearchMinLimit = next.kbSearchMaxLimit;
-  }
 
   if (
     key === 'docShortlistCandidateMin' &&

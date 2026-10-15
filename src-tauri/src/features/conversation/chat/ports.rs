@@ -47,7 +47,14 @@ pub trait ChatRecords: ConversationMemoryPort + ConversationMemoryReadPort {
     ) -> Result<Option<(String, HashSet<String>)>>;
     async fn retrieval_catalog(&self, allowed_ids: &HashSet<String>)
         -> Result<Vec<CorpusDocument>>;
-    /// The opening passages of each selected document, within `allowed`.
+    /// The mean length, in characters, of the indexed passages within
+    /// `allowed`, or `None` when it has none.
+    async fn retrieval_mean_chunk_chars(
+        &self,
+        allowed_ids: &HashSet<String>,
+    ) -> Result<Option<usize>>;
+    /// The opening passages of each selected document, within `allowed`, up
+    /// to `chunks_per_document` of each in reading order.
     async fn retrieval_openings(
         &self,
         selected_ids: &[String],

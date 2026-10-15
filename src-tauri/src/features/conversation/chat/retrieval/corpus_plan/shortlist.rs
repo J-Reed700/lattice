@@ -22,11 +22,6 @@ use super::{
     LibrarySearchTrait, SearchResultDto,
 };
 
-/// Most catalog rows the planner is shown. The token budget usually binds
-/// first: at about 120 tokens a row, the default prompt holds 15 to 17 rows
-/// beside the system prompt and the request.
-pub(super) const SHORTLIST_CAP: usize = 20;
-
 /// Passages the candidate search reads. Fusion keeps at most four passages a
 /// document, so this reaches at least ten documents and usually twenty or more.
 const CANDIDATE_SEARCH_PASSAGES: usize = 40;
@@ -133,15 +128,17 @@ fn front_matter<'a>(members: &[&'a CorpusDocument]) -> Vec<&'a CorpusDocument> {
 }
 
 /// Catalog documents in the order the planner should be offered them, best
-/// first. The prompt takes rows from the front until its token budget or
-/// [`SHORTLIST_CAP`] runs out.
+/// first. The prompt takes rows from the front until its token budget runs
+/// out; the budget is what the planner can read in time (see `health`), so a
+/// fast planner is shown more of the catalog than a slow one.
 ///
 /// Each search hit brings its reading-order neighbours, the documents either
 /// side of it in its book or series, since a passage often continues into the
 /// next file. A request to learn or start at the beginning also brings the
-/// front matter of each book a hit belongs to. With no ranking at all the
-/// catalog keeps its own order, which is how the planner always saw it; a
-/// catalog small enough to show whole is shown whole, ranked rows first.
+/// front matter of each book a hit belongs to. The rest of the catalog follows
+/// in its own order, so any document the budget has room for can be opened.
+/// With no ranking at all the catalog keeps its own order, which is how the
+/// planner always saw it.
 pub(super) fn shortlist<'a>(
     catalog: &'a [CorpusDocument],
     candidates: &[String],
@@ -194,10 +191,8 @@ pub(super) fn shortlist<'a>(
             }
         }
     }
-    if catalog.len() <= SHORTLIST_CAP {
-        for document in catalog {
-            push(document, &mut ordered);
-        }
+    for document in catalog {
+        push(document, &mut ordered);
     }
     ordered
 }

@@ -42,6 +42,21 @@ impl FollowupDocument {
     }
 }
 
+/// Whether the document under discussion shares a term with the follow-up.
+///
+/// The whole text is searched: a follow-up about a later chapter is still about
+/// this document, and testing only an opening stretch dropped it whenever the
+/// part being discussed came after that stretch.
+fn document_mentions_an_anchor(file_name: &str, content: &str, anchors: &HashSet<String>) -> bool {
+    let haystack = format!("{file_name} {content}");
+    let haystack_terms: HashSet<String> = super::tokenize_overlap_terms(&haystack)
+        .into_iter()
+        .collect();
+    anchors
+        .iter()
+        .any(|term| haystack_terms.contains(term.as_str()))
+}
+
 pub(super) async fn build_followup_context(
     container: &dyn ChatRuntime,
     conv_service: &Arc<dyn ConversationServiceTrait>,
@@ -77,27 +92,16 @@ pub(super) async fn build_followup_context(
         return None;
     }
 
-    if !followup_anchor_terms.is_empty() {
-        let mut anchor_haystack = String::new();
-        anchor_haystack.push_str(document.file_name());
-        anchor_haystack.push(' ');
-        anchor_haystack.push_str(&safe_truncate(&content, 18_000));
-        let haystack_terms: HashSet<String> = super::tokenize_overlap_terms(&anchor_haystack)
-            .into_iter()
-            .collect();
-        let anchor_hits = followup_anchor_terms
-            .iter()
-            .filter(|term| haystack_terms.contains(term.as_str()))
-            .count();
-        if anchor_hits == 0 {
-            warn!(
-                conversation_id = conversation_id,
-                document_id = doc_id.as_str(),
-                anchor_terms = ?followup_anchor_terms,
-                "Skipping follow-up document reuse due to zero topical anchor overlap"
-            );
-            return None;
-        }
+    if !followup_anchor_terms.is_empty()
+        && !document_mentions_an_anchor(document.file_name(), &content, &followup_anchor_terms)
+    {
+        warn!(
+            conversation_id = conversation_id,
+            document_id = doc_id.as_str(),
+            anchor_terms = ?followup_anchor_terms,
+            "Skipping follow-up document reuse due to zero topical anchor overlap"
+        );
+        return None;
     }
 
     let trimmed_content = if token_budget == 0 {
@@ -329,5 +333,41 @@ mod followup_label_tests {
             rendered.starts_with("[2] Document: earlier.md\n"),
             "{rendered}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn anchors(text: &str) -> HashSet<String> {
+        super::super::tokenize_overlap_terms(text)
+            .into_iter()
+            .collect()
+    }
+
+    /// A follow-up about a part of the document far past its opening is still
+    /// about the document. The old test read only the first 18,000 characters.
+    #[test]
+    fn an_anchor_deep_in_a_long_document_keeps_it_in_the_conversation() {
+        let content = format!(
+            "{} The appendix covers photosynthesis in detail.",
+            "Filler about unrelated matters. ".repeat(2_000)
+        );
+        assert!(content.chars().count() > 50_000);
+        assert!(document_mentions_an_anchor(
+            "notes.pdf",
+            &content,
+            &anchors("photosynthesis")
+        ));
+    }
+
+    #[test]
+    fn a_document_sharing_no_term_with_the_follow_up_is_not_reused() {
+        assert!(!document_mentions_an_anchor(
+            "notes.pdf",
+            "A chapter about rivers and their deltas.",
+            &anchors("photosynthesis")
+        ));
     }
 }

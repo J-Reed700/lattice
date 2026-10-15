@@ -1,5 +1,5 @@
 //! Tests for page reading, search-result parsing and the private-address guard.
-use super::page::{cap_page_text, decode_response_text, read_bounded_body};
+use super::page::{decode_response_text, read_bounded_body};
 use super::*;
 use url::Url;
 
@@ -434,25 +434,37 @@ fn test_site_key_aliases_mirrors_without_collapsing_public_suffixes() {
     assert_eq!(SitePacer::site_key("not a url"), None);
 }
 
-/// The old cap was `content[..50000]`. This input puts a three-byte
-/// character across the byte offset the cap lands on, which panicked.
-#[test]
-fn capping_page_text_never_splits_a_character() {
-    let content = "€".repeat(10);
-    assert!(
-        !content.is_char_boundary(4),
-        "fixture must straddle the cut"
+/// A page read for a conversation used to be cut at 50,000 characters, and a
+/// later "fetch it again for the rest" returned the same prefix. The whole
+/// page is kept and cached; the prompt fits what it shows to its own budget.
+#[tokio::test]
+async fn a_chat_read_keeps_a_long_page_whole_and_caches_all_of_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = WebService::new(directory.path()).unwrap();
+    let text = format!(
+        "{}THE_LAST_PARAGRAPH",
+        "An article sentence. ".repeat(10_000)
     );
-    let (capped, truncated) = cap_page_text(content, 4);
-    assert_eq!(capped, "€€€€");
-    assert!(truncated);
-}
-
-#[test]
-fn page_text_within_the_cap_is_left_alone() {
-    let (capped, truncated) = cap_page_text("short page".to_string(), 50);
-    assert_eq!(capped, "short page");
-    assert!(!truncated);
+    assert!(text.chars().count() > 200_000);
+    let url = "https://example.org/long-article";
+    let page = service
+        .keep_page(
+            url,
+            url.into(),
+            Some("Long article".into()),
+            text.clone(),
+            Some("text/html".into()),
+            (Instant::now(), PageRead::Chat),
+        )
+        .await;
+    assert!(!page.output.content_truncated);
+    assert_eq!(page.output.content, text);
+    match service.page_cache.get(url).await {
+        Some(crate::features::web::services::page_cache::CachedFetch::Page(cached)) => {
+            assert!(cached.content.ends_with("THE_LAST_PARAGRAPH"));
+        }
+        _ => panic!("the chat read should be cached"),
+    }
 }
 
 #[tokio::test]
@@ -475,7 +487,7 @@ async fn reference_capture_retains_large_page_tail_without_using_chat_cache() {
             title,
             extracted,
             Some("text/html".into()),
-            (Instant::now(), MAX_REFERENCE_PAGE_CHARS),
+            (Instant::now(), PageRead::Reference),
         )
         .await;
     assert!(!page.output.content_truncated);

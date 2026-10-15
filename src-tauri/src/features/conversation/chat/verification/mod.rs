@@ -386,7 +386,10 @@ impl GroundingVerifier {
             if !lexical::needs_judge(claim) {
                 continue;
             }
-            match evidence_for(claim, sources) {
+            // Room comes from the judge call's own window, so a large judge
+            // reads whole pages and a small one reads them in parts.
+            let room = judge.evidence_room_chars(&claim.claim_text);
+            match evidence_for(claim, sources, room) {
                 Evidence::Found(evidence) => {
                     requests.push((index, claim.claim_text.as_str(), evidence));
                 }

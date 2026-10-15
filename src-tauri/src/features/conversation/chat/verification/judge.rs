@@ -22,7 +22,7 @@ use tracing::{debug, warn};
 
 use crate::features::qa::dto::SourceDto;
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
-use lattice_core::application::ports::llm_port::SamplingOverride;
+use lattice_core::application::ports::llm_port::{chars_within_tokens, SamplingOverride};
 #[cfg(test)]
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use lattice_core::application::ports::LLMPort;
@@ -30,16 +30,17 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::claim_verification::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs,
 };
-use lattice_core::application::services::claim_verification::{CheckPolicy, ClaimChecker};
+use lattice_core::application::services::claim_verification::{
+    CheckPolicy, ClaimChecker, ClaimVerdict, JudgeOutcome,
+};
 pub(super) use lattice_core::application::services::claim_verification::{
     ClaimEvidence, ClaimJudgment, MIN_VERDICT_CONFIDENCE,
 };
+use lattice_core::application::services::evidence_retrieval::{join_windows, scored_windows};
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
 use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
-#[cfg(test)]
-use super::ClaimVerdict;
 
 /// Wall-clock ceiling for all judging in one turn.
 ///
@@ -54,14 +55,6 @@ pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(90);
 /// the provider's output budget even though they are not shown in the verdict.
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 4096;
 
-/// Cited sources read per claim.
-const MAX_SOURCES_PER_CLAIM: usize = 3;
-/// Windows offered per cited source.
-const WINDOWS_PER_SOURCE: usize = 3;
-/// Ceiling on one claim's evidence. Three full windows fit; a fourth does not,
-/// so a claim citing three pages is shown the best stretch of each rather than
-/// three stretches of the first.
-pub(super) const MAX_EVIDENCE_CHARS: usize = 4_000;
 const MAX_QUOTE_CHARS: usize = 400;
 
 /// Between two windows of one page: the text in between was left out.
@@ -70,7 +63,10 @@ const WINDOW_SEPARATOR: &str = "\n[…]\n";
 /// Whether a claim has anything to be judged against.
 #[derive(Debug, Clone)]
 pub(super) enum Evidence {
-    Found(ClaimEvidence),
+    /// What the claim is judged against, in as many calls as it takes: each
+    /// part fits one judge call, best evidence first, and the claim is
+    /// supported when any part supports it.
+    Found(Vec<ClaimEvidence>),
     /// Every citation resolves, but no cited source has any text: the page was
     /// never archived or came back empty. Nothing was checked.
     NoText,
@@ -126,6 +122,23 @@ impl ClaimJudge {
         self.llm.model_name()
     }
 
+    /// Characters of source text one judge call about `claim` can carry: the
+    /// judge model's window less its prompt and answer, measured with its own
+    /// token count and erring short.
+    pub(super) fn evidence_room_chars(&self, claim: &str) -> usize {
+        let tokens = self.checker().evidence_room_tokens(claim);
+        chars_within_tokens(tokens, self.llm.chars_per_token())
+    }
+
+    fn checker(&self) -> ClaimChecker<'_> {
+        ClaimChecker::new(
+            self.llm.as_ref(),
+            self.sampling,
+            self.max_output_tokens,
+            CheckPolicy::Chat,
+        )
+    }
+
     /// Judge each `(claim index, claim text, evidence)`, keyed back by index.
     ///
     /// Every request gets an entry. Every claim is submitted at once against
@@ -136,7 +149,7 @@ impl ClaimJudge {
     /// its budget.
     pub(super) async fn judge_claims(
         &self,
-        requests: &[(usize, &str, ClaimEvidence)],
+        requests: &[(usize, &str, Vec<ClaimEvidence>)],
     ) -> HashMap<usize, ClaimJudgment> {
         let mut judgments = HashMap::new();
         if requests.is_empty() {
@@ -182,43 +195,99 @@ impl ClaimJudge {
         judgments
     }
 
+    /// Judge `claim` against each part of its evidence in turn, stopping at
+    /// the first that supports it: one cited source supporting a claim is
+    /// enough. A claim no part supports takes the strongest finding among them,
+    /// and one whose parts were not all reached is unchecked, not a finding,
+    /// since the part left over might have held the support.
     async fn judge_one(
         &self,
         claim: &str,
-        evidence: &ClaimEvidence,
+        parts: &[ClaimEvidence],
         deadline: Instant,
     ) -> ClaimJudgment {
-        ClaimChecker::new(
-            self.llm.as_ref(),
-            self.sampling,
-            self.max_output_tokens,
-            CheckPolicy::Chat,
-        )
-        .check(claim, evidence, deadline)
-        .await
+        let checker = self.checker();
+        let mut strongest: Option<JudgeOutcome> = None;
+        let mut unreached: Option<ClaimJudgment> = None;
+        for part in parts {
+            match checker.check(claim, part, deadline).await {
+                ClaimJudgment::Judged(outcome) => {
+                    if outcome.verdict == ClaimVerdict::Supported && confident(&outcome) {
+                        return ClaimJudgment::Judged(outcome);
+                    }
+                    strongest = Some(match strongest {
+                        Some(held) if finding_rank(&held) >= finding_rank(&outcome) => held,
+                        _ => outcome,
+                    });
+                }
+                ClaimJudgment::OutOfTime => return ClaimJudgment::OutOfTime,
+                failed => {
+                    unreached.get_or_insert(failed);
+                }
+            }
+        }
+        match (unreached, strongest) {
+            (Some(failed), _) => failed,
+            (None, Some(outcome)) => ClaimJudgment::Judged(outcome),
+            (None, None) => ClaimJudgment::Unusable,
+        }
     }
 }
 
-/// The evidence one claim is judged against: up to [`WINDOWS_PER_SOURCE`]
-/// windows of each cited source, the best of every source taken before the
-/// second-best of any, inside [`MAX_EVIDENCE_CHARS`].
+fn confident(outcome: &JudgeOutcome) -> bool {
+    outcome
+        .confidence
+        .is_none_or(|confidence| confidence >= MIN_VERDICT_CONFIDENCE)
+}
+
+/// How strong a finding is when no part supported a claim confidently: a
+/// hesitant support first, since the reader is then told the check was unsure
+/// rather than shown a negative it did not establish; then a contradiction,
+/// which a passage stated outright; then a missing fact. Ties go to the
+/// surer verdict.
+fn finding_rank(outcome: &JudgeOutcome) -> (u8, u32) {
+    let kind = match outcome.verdict {
+        ClaimVerdict::Supported => 3,
+        ClaimVerdict::Contradicted => 2,
+        _ => 1,
+    };
+    let sureness = outcome
+        .confidence
+        .map(|confidence| (confidence.clamp(0.0, 1.0) * 1_000.0) as u32)
+        .unwrap_or(1_000);
+    (kind, sureness)
+}
+
+/// The label line a cited source's text sits under in a judge prompt.
+fn source_label(citation_id: u32) -> String {
+    format!("[{citation_id}]\n")
+}
+
+/// Between two sources' blocks in one judge prompt.
+const BLOCK_SEPARATOR: &str = "\n\n";
+
+/// The evidence one claim is judged against, in parts that each fit `room`
+/// characters of a judge call.
+///
+/// Every cited source is read. When their whole texts fit one call, that call
+/// gets them whole. Otherwise each source is cut into its overlapping windows,
+/// those sharing the claim's vocabulary are ranked, and they are taken best of
+/// every source before second-best of any, filling one call and then the next
+/// until every such window has a place: support far into a long page is
+/// judged in a later call instead of being left out.
 ///
 /// Only the passages the claim cites. A sentence that cites nothing has no
 /// evidence; offering it whichever sources ranked first would make the judge
 /// rule on text the sentence never made a statement about.
-pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto]) -> Evidence {
+pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: usize) -> Evidence {
     if claim.citation_ids.is_empty() || claim.citation_ids.len() != claim.cited_source_indices.len()
     {
         return Evidence::NoCitation;
     }
 
-    // (citation number, windows best first) per cited source with any text.
-    let mut per_source: Vec<(u32, Vec<ScoredWindow>)> = Vec::new();
-    for &idx in claim
-        .cited_source_indices
-        .iter()
-        .take(MAX_SOURCES_PER_CLAIM)
-    {
+    // (citation number, text) per cited source with any text.
+    let mut cited: Vec<(u32, &str)> = Vec::new();
+    for &idx in &claim.cited_source_indices {
         let Some(source) = sources.get(idx) else {
             return Evidence::NoCitation;
         };
@@ -230,64 +299,138 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto]) -> Evide
         if body.trim().is_empty() {
             continue;
         }
-        let windows = best_windows(&claim.claim_text, body, WINDOWS_PER_SOURCE);
-        if windows.is_empty() {
-            continue;
-        }
         let citation_id = source
             .citation_id
             .unwrap_or_else(|| u32::try_from(idx + 1).unwrap_or(u32::MAX));
-        per_source.push((citation_id, windows));
+        cited.push((citation_id, body.trim()));
     }
+    if cited.is_empty() {
+        return Evidence::NoText;
+    }
+
+    let blocks: Vec<String> = cited
+        .iter()
+        .map(|(citation_id, body)| format!("{}{body}", source_label(*citation_id)))
+        .collect();
+    let whole_cost = blocks
+        .iter()
+        .map(|block| block.chars().count())
+        .sum::<usize>()
+        + BLOCK_SEPARATOR.len() * blocks.len().saturating_sub(1);
+    if whole_cost <= room {
+        let quote = cited
+            .iter()
+            .filter_map(|(_, body)| best_windows(&claim.claim_text, body, 1).into_iter().next())
+            .max_by_key(|window| window.score)
+            .and_then(|window| best_sentence(&claim.claim_text, &window.text))
+            .map(|sentence| truncate_chars(&sentence, MAX_QUOTE_CHARS));
+        return Evidence::Found(vec![ClaimEvidence {
+            text: blocks.join(BLOCK_SEPARATOR),
+            quote,
+        }]);
+    }
+
+    // (citation number, windows best first) per source with any window that
+    // shares the claim's vocabulary.
+    let per_source: Vec<(u32, Vec<ScoredWindow>)> = cited
+        .iter()
+        .map(|(citation_id, body)| {
+            let mut windows = scored_windows(&claim.claim_text, body);
+            let only_one = windows.len() == 1;
+            windows.retain(|window| only_one || window.score > 0);
+            // Stable: equal scores keep page order.
+            windows.sort_by_key(|window| std::cmp::Reverse(window.score));
+            (*citation_id, windows)
+        })
+        .filter(|(_, windows)| !windows.is_empty())
+        .collect();
     if per_source.is_empty() {
         return Evidence::NoText;
     }
 
-    let mut chosen: Vec<Vec<&ScoredWindow>> = vec![Vec::new(); per_source.len()];
-    let mut used = 0usize;
-    'ranks: for rank in 0..WINDOWS_PER_SOURCE {
+    let deepest = per_source
+        .iter()
+        .map(|(_, windows)| windows.len())
+        .max()
+        .unwrap_or(0);
+    let mut ranked: Vec<(usize, &ScoredWindow)> = Vec::new();
+    for rank in 0..deepest {
         for (slot, (_, windows)) in per_source.iter().enumerate() {
-            let Some(window) = windows.get(rank) else {
-                continue;
-            };
-            let cost = window.text.chars().count();
-            // The first window always goes in: a claim is never judged
-            // against nothing because one window was long.
-            if used > 0 && used + cost > MAX_EVIDENCE_CHARS {
-                break 'ranks;
-            }
-            used += cost;
-            if let Some(list) = chosen.get_mut(slot) {
-                list.push(window);
+            if let Some(window) = windows.get(rank) {
+                ranked.push((slot, window));
             }
         }
     }
 
+    let empty_part = || vec![Vec::<&ScoredWindow>::new(); per_source.len()];
+    let mut parts: Vec<Vec<Vec<&ScoredWindow>>> = Vec::new();
+    let mut current = empty_part();
+    let mut used = 0usize;
+    for (slot, window) in ranked {
+        let Some(citation_id) = per_source.get(slot).map(|(id, _)| *id) else {
+            continue;
+        };
+        let opens_block = current.get(slot).is_none_or(Vec::is_empty);
+        let framing = if opens_block {
+            source_label(citation_id).chars().count() + BLOCK_SEPARATOR.len()
+        } else {
+            WINDOW_SEPARATOR.chars().count()
+        };
+        let mut cost = window.text.chars().count() + framing;
+        // A part always takes at least one window: a claim is never judged
+        // against nothing because one window was long.
+        if used > 0 && used + cost > room {
+            parts.push(std::mem::replace(&mut current, empty_part()));
+            used = 0;
+            cost = window.text.chars().count()
+                + source_label(citation_id).chars().count()
+                + BLOCK_SEPARATOR.len();
+        }
+        if let Some(list) = current.get_mut(slot) {
+            list.push(window);
+        }
+        used += cost;
+    }
+    if used > 0 {
+        parts.push(current);
+    }
+
+    Evidence::Found(
+        parts
+            .into_iter()
+            .map(|part| render_part(&claim.claim_text, &per_source, part))
+            .collect(),
+    )
+}
+
+/// One judge call's evidence: each source's windows in reading order under
+/// its citation number, and the best window's closest sentence as the quote.
+fn render_part(
+    claim: &str,
+    per_source: &[(u32, Vec<ScoredWindow>)],
+    part: Vec<Vec<&ScoredWindow>>,
+) -> ClaimEvidence {
     let mut blocks = Vec::new();
-    for ((citation_id, _), mut windows) in per_source.iter().zip(chosen) {
+    for ((citation_id, _), windows) in per_source.iter().zip(&part) {
         if windows.is_empty() {
             continue;
         }
-        // Reading order, so a page's argument runs the way it was written.
-        windows.sort_by_key(|window| window.index);
-        let joined: Vec<&str> = windows.iter().map(|window| window.text.as_str()).collect();
         blocks.push(format!(
-            "[{citation_id}]\n{}",
-            joined.join(WINDOW_SEPARATOR)
+            "{}{}",
+            source_label(*citation_id),
+            join_windows(windows, WINDOW_SEPARATOR)
         ));
     }
-
-    let quote = per_source
+    let quote = part
         .iter()
-        .filter_map(|(_, windows)| windows.first())
+        .flatten()
         .max_by_key(|window| window.score)
-        .and_then(|window| best_sentence(&claim.claim_text, &window.text))
+        .and_then(|window| best_sentence(claim, &window.text))
         .map(|sentence| truncate_chars(&sentence, MAX_QUOTE_CHARS));
-
-    Evidence::Found(ClaimEvidence {
-        text: blocks.join("\n\n"),
+    ClaimEvidence {
+        text: blocks.join(BLOCK_SEPARATOR),
         quote,
-    })
+    }
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -301,348 +444,4 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
-mod tests {
-    use super::super::lexical::lexical_pass;
-    use super::super::test_support::source;
-    use super::*;
-    use lattice_core::application::ports::llm_port::CompletionResponse;
-
-    fn found(evidence: Evidence) -> ClaimEvidence {
-        match evidence {
-            Evidence::Found(evidence) => evidence,
-            other => panic!("expected evidence, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn logprobs_name_the_verdict_and_its_probability() {
-        let (verdict, p) = verdict_from_logprobs(&[
-            ("supported".into(), (0.7f32).ln()),
-            (" uns".into(), (0.2f32).ln()),
-            ("contr".into(), (0.05f32).ln()),
-            ("The".into(), (0.05f32).ln()),
-        ])
-        .unwrap();
-        assert_eq!(verdict, ClaimVerdict::Supported);
-        // Normalised over the three labels: 0.7 / 0.95.
-        assert!((p - 0.7 / 0.95).abs() < 1e-4, "{p}");
-
-        // Split spellings of one label add up.
-        let (verdict, _) = verdict_from_logprobs(&[
-            ("un".into(), (0.3f32).ln()),
-            ("uns".into(), (0.3f32).ln()),
-            ("supported".into(), (0.4f32).ln()),
-        ])
-        .unwrap();
-        assert_eq!(verdict, ClaimVerdict::Unsupported);
-    }
-
-    #[test]
-    fn a_reply_that_does_not_open_with_a_label_is_read_as_text() {
-        assert!(verdict_from_logprobs(&[
-            ("The".into(), (0.9f32).ln()),
-            ("supported".into(), (0.1f32).ln()),
-        ])
-        .is_none());
-        assert!(verdict_from_logprobs(&[("so".into(), -0.1)]).is_none());
-        assert!(verdict_from_logprobs(&[]).is_none());
-    }
-
-    #[test]
-    fn reply_words_parse_to_verdicts() {
-        assert_eq!(
-            parse_verdict_word("Supported."),
-            Some(ClaimVerdict::Supported)
-        );
-        assert_eq!(
-            parse_verdict_word("**contradicted**"),
-            Some(ClaimVerdict::Contradicted)
-        );
-        assert_eq!(
-            parse_verdict_word(" unsupported"),
-            Some(ClaimVerdict::Unsupported)
-        );
-        assert_eq!(
-            parse_verdict_word("Not supported"),
-            Some(ClaimVerdict::Unsupported)
-        );
-        assert_eq!(parse_verdict_word("I cannot tell."), None);
-        assert_eq!(parse_verdict_word(""), None);
-    }
-
-    #[test]
-    fn explanation_keeps_the_reason_and_only_accepts_an_exact_source_quote() {
-        let evidence = ClaimEvidence {
-            text:
-                "[1]\nThe source says the treatment reduced measured cold tolerance by 12 percent."
-                    .into(),
-            quote: Some(
-                "The source says the treatment reduced measured cold tolerance by 12 percent."
-                    .into(),
-            ),
-        };
-        let parsed = parse_judge_explanation(
-            "contradicted\nReason: The claim says improved; the source says reduced.\nSource quote: \"The source says the treatment reduced measured cold tolerance by 12 percent.\"",
-            &evidence,
-            ClaimVerdict::Contradicted,
-        );
-
-        assert_eq!(
-            parsed.reason.as_deref(),
-            Some("The claim says improved; the source says reduced.")
-        );
-        assert_eq!(parsed.quote, evidence.quote);
-
-        let rejected = parse_judge_explanation(
-            "contradicted\nReason: The claim says improved; the source says reduced.\nSource quote: The source says the treatment improved cold tolerance.",
-            &evidence,
-            ClaimVerdict::Contradicted,
-        );
-        assert_eq!(rejected.quote, None);
-    }
-
-    /// The case that kept failing: one page says "6-8 hours" around char
-    /// 10,000 and "south-facing" around char 11,900. A sentence joining the two
-    /// must be judged against both, not against whichever window scored best.
-    #[test]
-    fn a_claim_joining_two_far_apart_facts_is_shown_both() {
-        let filler = |topic: &str, chars: usize| {
-            let sentence = format!("Unrelated notes on {topic} and seasonal chores. ");
-            sentence.repeat(chars / sentence.len() + 1)
-        };
-        let page = format!(
-            "{}Tomatoes need 6-8 hours of direct sunlight each day. {}A south-facing bed gives tomatoes the most light. {}",
-            filler("compost", 10_144),
-            filler("trellis", 1_700),
-            filler("mulch", 3_000),
-        );
-        assert!(page.find("6-8 hours").unwrap() > 10_000);
-        assert!(page.find("south-facing").unwrap() > 11_800);
-
-        let sources = [source(&page)];
-        let claims = lexical_pass(
-            "Tomatoes need 6-8 hours of direct sunlight, so plant them in a south-facing bed [1].",
-            &sources,
-        );
-        let evidence = found(evidence_for(&claims[0], &sources));
-
-        assert!(
-            evidence.text.contains("6-8 hours of direct sunlight"),
-            "{}",
-            evidence.text
-        );
-        assert!(
-            evidence.text.contains("south-facing bed"),
-            "{}",
-            evidence.text
-        );
-        assert!(evidence.text.chars().count() <= MAX_EVIDENCE_CHARS + 16);
-        assert!(evidence.text.starts_with("[1]\n"));
-        assert!(evidence.quote.is_some());
-    }
-
-    #[test]
-    fn several_cited_pages_each_get_their_best_window_inside_the_cap() {
-        let page = |fact: &str| {
-            format!(
-                "{}{fact} {}",
-                "Background prose about gardens in general. ".repeat(60),
-                "Closing prose about harvest festivals. ".repeat(60),
-            )
-        };
-        let mut a = source(&page("Basil wilts below ten degrees."));
-        a.citation_id = Some(1);
-        let mut b = source(&page("Basil prefers well drained soil."));
-        b.citation_id = Some(2);
-        let mut c = source(&page("Basil flowers in late summer."));
-        c.citation_id = Some(3);
-        let sources = [a, b, c];
-        let claims = lexical_pass(
-            "Basil wilts below ten degrees, prefers well drained soil and flowers in late summer [1][2][3].",
-            &sources,
-        );
-        let evidence = found(evidence_for(&claims[0], &sources));
-        for fact in [
-            "wilts below ten",
-            "well drained soil",
-            "flowers in late summer",
-        ] {
-            assert!(evidence.text.contains(fact), "missing {fact}");
-        }
-        assert!(evidence.text.chars().count() <= MAX_EVIDENCE_CHARS + 32);
-    }
-
-    #[test]
-    fn a_claim_that_cites_nothing_is_offered_no_evidence() {
-        let sources = [
-            source("Sweet potato vines can be kept alive as a perennial indoors."),
-            source("The ideal initial planting depth for potatoes is 4 to 6 inches."),
-        ];
-        let claims = lexical_pass(
-            "So: fully buried at first, then buried deeper as the plant grows.",
-            &sources,
-        );
-        let claim = claims.first().expect("the uncited sentence is a claim");
-        assert!(claim.citation_ids.is_empty());
-        assert!(matches!(
-            evidence_for(claim, &sources),
-            Evidence::NoCitation
-        ));
-    }
-
-    #[test]
-    fn a_cited_page_with_no_text_is_not_evidence_of_anything() {
-        let sources = [source("")];
-        let claims = lexical_pass(
-            "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [1].",
-            &sources,
-        );
-        assert!(matches!(
-            evidence_for(&claims[0], &sources),
-            Evidence::NoText
-        ));
-    }
-
-    /// Records the request the judge sends and answers with fixed logprobs.
-    struct RecordingLlm {
-        seen: std::sync::Mutex<Vec<CompletionRequest>>,
-        logprobs: Option<Vec<(String, f32)>>,
-        reply: String,
-    }
-
-    impl RecordingLlm {
-        fn new(logprobs: Option<Vec<(String, f32)>>) -> Arc<Self> {
-            Arc::new(Self {
-                seen: std::sync::Mutex::new(Vec::new()),
-                logprobs,
-                reply: "supported".to_string(),
-            })
-        }
-
-        fn with_reply(mut self: Arc<Self>, reply: &str) -> Arc<Self> {
-            Arc::get_mut(&mut self)
-                .expect("recording mock is not shared before configuration")
-                .reply = reply.to_string();
-            self
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl LLMPort for RecordingLlm {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            self.seen.lock().unwrap().push(request.clone());
-            Ok(CompletionResponse {
-                text: self.reply.clone(),
-                first_token_logprobs: self.logprobs.clone(),
-                ..Default::default()
-            })
-        }
-
-        fn model_name(&self) -> &str {
-            "recording-judge"
-        }
-
-        fn max_context_tokens(&self) -> usize {
-            8192
-        }
-
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
-    fn one_request() -> (Vec<LexicalClaim>, [SourceDto; 1]) {
-        let sources = [source(
-            "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
-        )];
-        let claims = lexical_pass(
-            "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [1].",
-            &sources,
-        );
-        (claims, sources)
-    }
-
-    async fn judge_first(judge: &ClaimJudge) -> HashMap<usize, ClaimJudgment> {
-        let (claims, sources) = one_request();
-        let evidence = found(evidence_for(&claims[0], &sources));
-        judge
-            .judge_claims(&[(0, claims[0].claim_text.as_str(), evidence)])
-            .await
-    }
-
-    #[tokio::test]
-    async fn the_judge_starts_with_a_label_and_puts_document_first() {
-        let llm = RecordingLlm::new(None);
-        judge_first(&ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)).await;
-
-        let sent = llm.seen.lock().unwrap().clone();
-        assert_eq!(sent.len(), 1);
-        let request = &sent[0];
-        assert!(request.want_logprobs);
-        assert!(request.json_schema.is_none());
-        assert!(request.reasoning_effort.is_none());
-        assert!(!request.no_time_limit);
-        // A verdict is a classification. Sampling one from the chat model's
-        // distribution made the same claim against the same passage come back
-        // supported, unsupported and contradicted across repeats of one request;
-        // the explanation follows the first label without changing that signal.
-        let sampling = request.sampling.expect("the judge sets its own sampling");
-        assert_eq!(sampling.temperature, Some(0.0));
-        assert_eq!(sampling.top_k, Some(1));
-        assert_eq!(request.max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
-
-        let CompletionInput::Message { content, .. } = &request.input[1] else {
-            panic!("user message expected");
-        };
-        let document = content.find("4 to 6 inches of soil cover").unwrap();
-        let claim = content.find("Claim:").unwrap();
-        assert!(document < claim, "document first, claim last");
-    }
-
-    #[tokio::test]
-    async fn verification_settings_reach_the_request() {
-        let llm = RecordingLlm::new(None);
-        let judge = ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>).with_tuning(
-            &LLMVerificationSettingsDto {
-                enabled: true,
-                temperature: 0.4,
-                top_p: 0.8,
-                top_k: 20,
-            },
-        );
-        judge_first(&judge).await;
-
-        let sent = llm.seen.lock().unwrap().clone();
-        let sampling = sent[0].sampling.expect("the judge sets its own sampling");
-        assert_eq!(sampling.temperature, Some(0.4));
-        assert_eq!(sampling.top_p, Some(0.8));
-        assert_eq!(sampling.top_k, Some(20));
-        assert_eq!(sent[0].max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
-    }
-
-    #[tokio::test]
-    async fn the_verdict_carries_its_probability_and_a_quote_from_the_page() {
-        let llm = RecordingLlm::new(Some(vec![
-            ("contr".into(), (0.8f32).ln()),
-            ("supported".into(), (0.2f32).ln()),
-        ]))
-        .with_reply("contradicted\nReason: The claim says one thing; the source says another.");
-        let judgments = judge_first(&ClaimJudge::new(llm as Arc<dyn LLMPort>)).await;
-
-        let Some(ClaimJudgment::Judged(outcome)) = judgments.get(&0) else {
-            panic!("judged: {judgments:?}");
-        };
-        // The logprobs outrank the reply text, which said "supported".
-        assert_eq!(outcome.verdict, ClaimVerdict::Contradicted);
-        assert!((outcome.confidence.unwrap() - 0.8).abs() < 1e-4);
-        assert!(outcome
-            .quote
-            .as_deref()
-            .unwrap()
-            .contains("4 to 6 inches of soil cover"));
-    }
-}
+mod tests;

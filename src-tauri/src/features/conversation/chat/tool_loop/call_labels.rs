@@ -87,8 +87,19 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
         Recall::AlreadyWhole { word_count } => format!(
             "Not fetched again: {url} was already read in full this turn ({word_count} words) and its complete text is in your context above. There is nothing more on that page. Answer from it, or choose a different source.",
         ),
-        Recall::Remainder { text, shown_chars } => format!(
-            "Continuation of {url}. The first {shown_chars} characters are in your context above; this is the rest of the page, and with it you have the whole page:\n\n{text}",
+        Recall::Remainder {
+            text,
+            shown_chars,
+            next: None,
+        } => format!(
+            "Continuation of {url} from character {shown_chars}. This is the rest of the page; with the earlier part you have the whole page:\n\n{text}",
+        ),
+        Recall::Remainder {
+            text,
+            shown_chars,
+            next: Some(next),
+        } => format!(
+            "Continuation of {url}: characters {shown_chars} to {next}, as much as this result has room for. The page goes on: call fetch_url_content with this url and offset={next} for the next part.\n\n{text}",
         ),
     }
 }
@@ -138,15 +149,31 @@ mod tests {
     }
 
     #[test]
+    fn a_part_of_a_long_page_says_where_the_next_part_starts() {
+        let notice = recalled_page_notice(
+            "https://example.test/book",
+            &Recall::Remainder {
+                text: "chapter two".to_string(),
+                shown_chars: 12_000,
+                next: Some(24_000),
+            },
+        );
+        assert!(notice.contains("offset=24000"), "{notice}");
+        assert!(notice.ends_with("chapter two"), "{notice}");
+    }
+
+    #[test]
     fn the_rest_of_a_clipped_page_says_where_the_first_part_is() {
         let notice = recalled_page_notice(
             "https://example.test/recap",
             &Recall::Remainder {
                 text: "and then the flames came down.".to_string(),
                 shown_chars: 12_000,
+                next: None,
             },
         );
-        assert!(notice.contains("first 12000 characters"), "{notice}");
+        assert!(notice.contains("from character 12000"), "{notice}");
+        assert!(notice.contains("whole page"), "{notice}");
         assert!(
             notice.ends_with("and then the flames came down."),
             "{notice}"

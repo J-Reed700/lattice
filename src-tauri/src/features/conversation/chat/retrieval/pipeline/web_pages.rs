@@ -33,14 +33,11 @@ fn host_of(url: &str) -> String {
 }
 
 impl ExternalLookup<'_> {
-    /// How many readable pages this turn wants in its prompt.
+    /// How many readable pages this turn wants in its prompt: as many as the
+    /// page budget can give a share worth reading, so a large window reads
+    /// every result it was handed and a small one reads only what it can carry.
     fn pages_wanted(&self) -> usize {
-        let configured = self.tuning.web_fetch_page_count as usize;
-        if self.search_flags.deep_research_mode {
-            configured.saturating_mul(DEEP_RESEARCH_PAGE_MULTIPLIER)
-        } else {
-            configured
-        }
+        pages_the_budget_carries(self.page_budget_chars)
     }
 
     /// Read one page, or say why not.
@@ -212,11 +209,7 @@ impl ExternalLookup<'_> {
             .iter()
             .map(|(_, output)| output.content.trim().chars().count())
             .collect();
-        let budgets = super::super::page_budget::allocate(
-            &lengths,
-            self.page_budget_chars,
-            self.tuning.web_page_max_chars as usize,
-        );
+        let budgets = super::super::page_budget::allocate(&lengths, self.page_budget_chars);
 
         let mut carried = 0usize;
         let mut carried_whole = 0usize;

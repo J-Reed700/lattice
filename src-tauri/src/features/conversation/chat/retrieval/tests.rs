@@ -240,7 +240,9 @@ fn what_the_web_phase_read_reaches_the_outcome_the_tool_loop_starts_from() {
         Some("HTTP 403 Forbidden")
     );
     assert_eq!(
-        outcome.pages_read.recall("https://read.test/recap"),
+        outcome
+            .pages_read
+            .recall("https://read.test/recap", None, 100),
         Some(Recall::AlreadyWhole { word_count: 3 })
     );
 }
@@ -720,4 +722,22 @@ fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
     let web = plan(flags(false, true, false, false));
     assert!(web.should_search_kb);
     assert!(web.should_search_web);
+}
+
+/// KB retrieval used to clamp every turn to 16 passages, so a 128k window
+/// carried about as much of the vault as an 8k one. The depth now comes from
+/// the evidence budget and what a passage of the library measures.
+#[test]
+fn retrieval_depth_follows_the_evidence_budget() {
+    // 90k evidence tokens, 2,000-character passages at four characters a
+    // token: 500 tokens a passage, 180 passages.
+    assert_eq!(retrieval_depth(90_000, Some(2_000), 4.0), 180);
+    // A small window is not handed passages it would only throw away.
+    assert_eq!(retrieval_depth(3_000, Some(2_000), 4.0), 6);
+    // Rounded up, so the budget is filled rather than left short.
+    assert_eq!(retrieval_depth(3_001, Some(2_000), 4.0), 7);
+    // Always at least one.
+    assert_eq!(retrieval_depth(0, Some(2_000), 4.0), 1);
+    // A library that cannot be measured falls back to the chunker's target.
+    assert_eq!(retrieval_depth(4_800, None, 4.0), 10);
 }

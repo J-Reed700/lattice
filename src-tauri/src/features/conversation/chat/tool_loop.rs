@@ -656,22 +656,20 @@ fn chars_in_flight(input: &[lattice_core::application::ports::llm_port::Completi
 
 /// How many characters one tool result may take, given the model's window,
 /// what is already in it, and how many results this round has still to fit.
-fn tool_result_allowance(
-    window_chars: usize,
-    chars_in_flight: usize,
-    calls_left: usize,
-    configured_max: usize,
-) -> usize {
+///
+/// The window alone decides: there is no configured ceiling on top of it, so a
+/// large window carries a long result whole. A result longer than its share is
+/// shown in part and says how to read on (see `format_tool_result`).
+fn tool_result_allowance(window_chars: usize, chars_in_flight: usize, calls_left: usize) -> usize {
     let room = window_chars.saturating_sub(chars_in_flight);
     let share = room / calls_left.max(1);
     // The floor is only kept while the window can still take it. Past that, a
     // result is given its share of what is left and no more: overrunning the
     // window fails the next round outright, which is worse than a short result.
-    let floor = MIN_TOOL_RESULT_CHARS.min(configured_max);
-    if room < floor {
-        return share.min(configured_max);
+    if room < MIN_TOOL_RESULT_CHARS {
+        return share;
     }
-    share.clamp(floor, configured_max)
+    share.max(MIN_TOOL_RESULT_CHARS)
 }
 
 fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id: &str) {

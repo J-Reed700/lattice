@@ -21,8 +21,10 @@ use std::collections::BTreeMap;
 /// invents URLs grow the map without bound.
 const MAX_REMEMBERED_FAILURES: usize = 64;
 
-/// A page is at most the fetcher's own cap (tens of kilobytes), so this bounds
-/// a turn's memory at a couple of megabytes however many pages it reads.
+/// Pages held at once. A page is whole extracted text, bounded by the
+/// fetcher's decoded-body limit, so this bounds a turn's memory however many
+/// pages it reads. A page past it is not lost: it is in the conversation's
+/// archive, and a request for it reads it from there.
 const MAX_REMEMBERED_PAGES: usize = 32;
 
 /// How much of a page the model has been given so far.
@@ -40,8 +42,14 @@ pub(in crate::features::conversation::chat) enum Delivery {
 pub(in crate::features::conversation::chat) enum Recall {
     /// The model already has all of it. There is nothing to send.
     AlreadyWhole { word_count: usize },
-    /// The part the prompt had no room for.
-    Remainder { text: String, shown_chars: usize },
+    /// The next part of a page: `text` starts `shown_chars` characters in, as
+    /// much as the result's allowance holds. `next` is where the part after
+    /// it starts, when there is one.
+    Remainder {
+        text: String,
+        shown_chars: usize,
+        next: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,25 +112,49 @@ impl FetchMemory {
 
     /// Answer a repeat request for `url` from memory, if this turn read it.
     ///
-    /// Handing over a remainder marks the page whole, so a third request is
-    /// told there is nothing left rather than being sent the same text again.
-    pub(in crate::features::conversation::chat) fn recall(&mut self, url: &str) -> Option<Recall> {
+    /// A page the model has whole is never sent again. Otherwise the request
+    /// gets the next part, starting at `offset` when the model named one and
+    /// where the model's copy stops when it did not, and at most `room`
+    /// characters of it: a page longer than one result can hold is handed over
+    /// in parts, each saying where the next begins, so its tail is reachable
+    /// and no result outgrows the window. Once the last part is out the page is
+    /// marked whole.
+    pub(in crate::features::conversation::chat) fn recall(
+        &mut self,
+        url: &str,
+        offset: Option<usize>,
+        room: usize,
+    ) -> Option<Recall> {
         let page = self.pages.get_mut(&normalize(url))?;
-        match page.delivery {
-            Delivery::Whole => Some(Recall::AlreadyWhole {
-                word_count: page.text.split_whitespace().count(),
-            }),
-            Delivery::Clipped { shown_chars } => {
-                let text: String = page.text.chars().skip(shown_chars).collect();
-                page.delivery = Delivery::Whole;
-                if text.trim().is_empty() {
-                    return Some(Recall::AlreadyWhole {
-                        word_count: page.text.split_whitespace().count(),
-                    });
-                }
-                Some(Recall::Remainder { text, shown_chars })
-            }
+        let already_whole = |text: &str| Recall::AlreadyWhole {
+            word_count: text.split_whitespace().count(),
+        };
+        let start = match page.delivery {
+            Delivery::Whole => return Some(already_whole(&page.text)),
+            Delivery::Clipped { shown_chars } => offset.unwrap_or(shown_chars),
+        };
+        let total = page.text.chars().count();
+        let end = start.saturating_add(room.max(1)).min(total);
+        let text: String = page
+            .text
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect();
+        if text.trim().is_empty() {
+            page.delivery = Delivery::Whole;
+            return Some(already_whole(&page.text));
         }
+        let next = (end < total).then_some(end);
+        page.delivery = match next {
+            Some(next) => Delivery::Clipped { shown_chars: next },
+            None => Delivery::Whole,
+        };
+        Some(Recall::Remainder {
+            text,
+            shown_chars: start,
+            next,
+        })
     }
 
     /// Fold what another part of the turn learned into this record.
@@ -151,6 +183,17 @@ pub(in crate::features::conversation::chat) fn fetch_target(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|url| !url.is_empty())
+}
+
+/// The `offset` argument of a fetch call: the character a model reading a
+/// long page on wants the next part to start at.
+pub(in crate::features::conversation::chat) fn fetch_offset(
+    arguments: &serde_json::Value,
+) -> Option<usize> {
+    arguments
+        .get("offset")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|offset| usize::try_from(offset).ok())
 }
 
 fn normalize(url: &str) -> String {
@@ -263,9 +306,9 @@ mod tests {
             "one two three four",
             Delivery::Whole,
         );
-        assert_eq!(memory.recall("https://example.com/recap"), None);
+        assert_eq!(memory.recall("https://example.com/recap", None, 100), None);
         assert_eq!(
-            memory.recall("https://example.com/recap/"),
+            memory.recall("https://example.com/recap/", None, 100),
             Some(Recall::AlreadyWhole { word_count: 4 })
         );
     }
@@ -281,10 +324,11 @@ mod tests {
             Delivery::Clipped { shown_chars: 4 },
         );
         assert_eq!(
-            memory.recall("https://example.com/recap"),
+            memory.recall("https://example.com/recap", None, 100),
             Some(Recall::Remainder {
                 text: "456789".to_string(),
                 shown_chars: 4,
+                next: None,
             })
         );
     }
@@ -300,11 +344,11 @@ mod tests {
             Delivery::Clipped { shown_chars: 4 },
         );
         assert!(matches!(
-            memory.recall("https://example.com/recap"),
+            memory.recall("https://example.com/recap", None, 100),
             Some(Recall::Remainder { .. })
         ));
         assert!(matches!(
-            memory.recall("https://example.com/recap"),
+            memory.recall("https://example.com/recap", None, 100),
             Some(Recall::AlreadyWhole { .. })
         ));
     }
@@ -319,10 +363,11 @@ mod tests {
             Delivery::Clipped { shown_chars: 2 },
         );
         assert_eq!(
-            memory.recall("https://example.com/recap"),
+            memory.recall("https://example.com/recap", None, 100),
             Some(Recall::Remainder {
                 text: "llo wörld".to_string(),
                 shown_chars: 2,
+                next: None,
             })
         );
     }
@@ -337,15 +382,72 @@ mod tests {
             Delivery::Clipped { shown_chars: 4 },
         );
         assert!(matches!(
-            memory.recall("https://example.com/recap"),
+            memory.recall("https://example.com/recap", None, 100),
             Some(Recall::AlreadyWhole { .. })
         ));
+    }
+
+    /// A remainder longer than one result can hold arrives in parts, each
+    /// saying where the next starts, until the last character is out. A whole
+    /// remainder in one result could outgrow the model's window.
+    #[test]
+    fn a_long_remainder_is_handed_over_in_parts_that_fit_the_room() {
+        let text: String = ('a'..='z').cycle().take(100).collect();
+        let mut memory = FetchMemory::default();
+        memory.record_page(
+            "https://example.com/long",
+            &text,
+            Delivery::Clipped { shown_chars: 10 },
+        );
+        let mut received = text.chars().take(10).collect::<String>();
+        let mut parts = 0;
+        while let Some(Recall::Remainder {
+            text: part,
+            shown_chars,
+            next,
+        }) = memory.recall("https://example.com/long", None, 30)
+        {
+            assert_eq!(shown_chars, received.chars().count());
+            assert!(part.chars().count() <= 30);
+            received.push_str(&part);
+            parts += 1;
+            if next.is_none() {
+                break;
+            }
+            assert_eq!(next, Some(received.chars().count()));
+        }
+        assert_eq!(parts, 3);
+        assert_eq!(received, text);
+        assert!(matches!(
+            memory.recall("https://example.com/long", None, 30),
+            Some(Recall::AlreadyWhole { .. })
+        ));
+    }
+
+    /// The model may name where to read from, as the clipped-page notice tells
+    /// it to.
+    #[test]
+    fn a_named_offset_is_where_the_part_starts() {
+        let mut memory = FetchMemory::default();
+        memory.record_page(
+            "https://example.com/long",
+            "0123456789",
+            Delivery::Clipped { shown_chars: 2 },
+        );
+        assert_eq!(
+            memory.recall("https://example.com/long", Some(6), 2),
+            Some(Recall::Remainder {
+                text: "67".to_string(),
+                shown_chars: 6,
+                next: Some(8),
+            })
+        );
     }
 
     #[test]
     fn a_page_this_turn_never_read_is_not_recalled() {
         let mut memory = FetchMemory::default();
-        assert_eq!(memory.recall("https://example.com/never"), None);
+        assert_eq!(memory.recall("https://example.com/never", None, 100), None);
     }
 
     /// What the pipeline learned before the model ran must be what the tool
@@ -363,7 +465,7 @@ mod tests {
             tool_loop.previous_failure("https://blocked.test/a"),
             Some("HTTP 403 Forbidden")
         );
-        assert!(tool_loop.recall("https://read.test/b").is_some());
+        assert!(tool_loop.recall("https://read.test/b", None, 100).is_some());
     }
 
     #[test]

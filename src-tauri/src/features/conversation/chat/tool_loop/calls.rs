@@ -29,8 +29,8 @@ use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, ExplorerTurn, FetchUrlContentOutput, FunctionCall, FunctionResult,
 };
 use crate::features::conversation::chat::retrieval::{
-    assign_citation_ids, deduplicate_sources, fetched_page_text_room, format_tool_result,
-    merge_tool_sources, record_tool_document_references,
+    assign_citation_ids, deduplicate_sources, document_page_room, fetched_page_text_room,
+    format_tool_result, merge_tool_sources, record_tool_document_references,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
@@ -43,7 +43,7 @@ use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::http::url_identity::identity;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -124,6 +124,10 @@ pub(super) struct ToolCalls<'a> {
     pages_in_results: Vec<(String, String)>,
     /// Pages whose results were condensed into notes.
     condensed_pages: HashSet<String>,
+    /// The page size each document has been read at this turn, by document.
+    /// Kept so a page number names the same stretch of text on every call and
+    /// nothing falls between two pages when the allowance changes.
+    document_page_chars: HashMap<String, usize>,
 }
 
 /// A call, decided before anything runs.
@@ -225,6 +229,7 @@ impl<'a> ToolCalls<'a> {
             document_progress: DocumentProgress::new(sources),
             pages_in_results: Vec::new(),
             condensed_pages: HashSet::new(),
+            document_page_chars: HashMap::new(),
         }
     }
 
@@ -305,13 +310,13 @@ impl<'a> ToolCalls<'a> {
     ) -> Planned<'a> {
         timings.tool_call_count = timings.tool_call_count.saturating_add(1);
         // What is left of the window, shared between the calls this round
-        // still has to answer. The configured cap alone let one round of page
-        // fetches outgrow a small model's entire context.
+        // still has to answer. A fixed cap let one round of page fetches
+        // outgrow a small model's entire context, and cut every result on a
+        // large one; the window alone decides now.
         let allowance = tool_result_allowance(
             self.scope.window_chars,
             chars_in_flight(input) + self.scope.tool_schema_chars + reserved,
             calls_left,
-            self.scope.tool_output_settings.max_chars as usize,
         );
         let answered = |output: String| Planned::Answered {
             id: call.id.clone(),
@@ -371,7 +376,13 @@ impl<'a> ToolCalls<'a> {
             // request, no politeness delay, and nothing re-sent that the
             // model has.
             if let Some(recall) = (!condensed)
-                .then(|| self.fetch_memory.recall(url))
+                .then(|| {
+                    self.fetch_memory.recall(
+                        url,
+                        fetch_memory::fetch_offset(&call.arguments),
+                        fetched_page_text_room(allowance),
+                    )
+                })
                 .flatten()
             {
                 info!(
@@ -406,14 +417,57 @@ impl<'a> ToolCalls<'a> {
             resolved_function = tool,
             "Executing tool call from LLM"
         );
+        let arguments = if tool == "get_document" {
+            self.document_page_sized_to(&call.arguments, allowance)
+        } else {
+            call.arguments.clone()
+        };
         Planned::Run(Pending {
             id: call.id.clone(),
             name: call.name.clone(),
             tool: tool.to_string(),
-            arguments: call.arguments.clone(),
+            arguments,
             allowance,
             step,
         })
+    }
+
+    /// A `get_document` call whose page is sized to fit this call's
+    /// allowance, so the page the tool returns is shown whole and the next page
+    /// carries on where it ends: a long document is read in pages that fit the
+    /// window instead of each page being cut to an excerpt.
+    ///
+    /// A document keeps the smallest page size it has been read at this turn.
+    /// Shrinking only ever makes two pages overlap; growing would skip the text
+    /// between them.
+    fn document_page_sized_to(
+        &mut self,
+        arguments: &serde_json::Value,
+        allowance: usize,
+    ) -> serde_json::Value {
+        let mut arguments = arguments.clone();
+        let room = document_page_room(allowance).max(1);
+        let document_id = arguments
+            .get("document_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let asked = arguments
+            .get("max_content_length")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|asked| usize::try_from(asked).ok())
+            .unwrap_or(usize::MAX);
+        let earlier = self
+            .document_page_chars
+            .get(&document_id)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let size = asked.min(earlier).min(room).max(1);
+        self.document_page_chars.insert(document_id, size);
+        if let Some(object) = arguments.as_object_mut() {
+            object.insert("max_content_length".into(), serde_json::json!(size));
+        }
+        arguments
     }
 
     /// Run a batch's calls, at most [`MAX_CONCURRENT_CALLS`] at once, with
@@ -612,16 +666,8 @@ impl<'a> ToolCalls<'a> {
                 warn!(%error, "Failed to update retrieval trace after tool search");
             }
         }
-        let round_output_settings = ToolOutputSettingsDto {
-            max_chars: u32::try_from(allowance).unwrap_or(u32::MAX),
-            ..settings.clone()
-        };
-        let mut result_text = format_tool_result(
-            tool,
-            &result,
-            self.scope.highlight_terms,
-            &round_output_settings,
-        );
+        let page_offset = fetch_memory::fetch_offset(&arguments).unwrap_or(0);
+        let mut result_text = format_tool_result(tool, &result, settings, allowance, page_offset);
         for source in sources
             .iter()
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
@@ -666,12 +712,16 @@ impl<'a> ToolCalls<'a> {
                 .clone()
                 .and_then(|data| serde_json::from_value::<FetchUrlContentOutput>(data).ok());
             if let (Some(url), Some(page)) = (url, page) {
-                let room = fetched_page_text_room(allowance);
                 let text = page.content.trim();
-                let delivery = if text.chars().count() <= room {
+                // Where the part this result showed ends; a later request for
+                // the page carries on from there.
+                let shown_to = page_offset.saturating_add(fetched_page_text_room(allowance));
+                let delivery = if shown_to >= text.chars().count() {
                     Delivery::Whole
                 } else {
-                    Delivery::Clipped { shown_chars: room }
+                    Delivery::Clipped {
+                        shown_chars: shown_to,
+                    }
                 };
                 self.fetch_memory.record_page(url, text, delivery);
                 self.fetched.push(url.to_string());

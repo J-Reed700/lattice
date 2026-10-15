@@ -77,7 +77,32 @@ impl ConversationRepository {
         Ok(catalog)
     }
 
-    /// Ordered document openings for overview/learning requests. Both selected
+    /// The mean length, in characters, of the indexed passages of
+    /// `allowed_ids`: what one retrieved passage costs a prompt, measured on
+    /// this library rather than assumed. `None` when the scope has none.
+    pub async fn retrieval_mean_chunk_chars(
+        &self,
+        allowed_ids: &HashSet<String>,
+    ) -> Result<Option<usize>, AppError> {
+        if allowed_ids.is_empty() {
+            return Ok(None);
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT AVG(LENGTH(content)) FROM text_chunks WHERE document_id IN (",
+        );
+        let mut separated = query.separated(", ");
+        for id in allowed_ids {
+            separated.push_bind(id);
+        }
+        query.push(")");
+        let mean: Option<f64> = query.build_query_scalar().fetch_one(&self.pool).await?;
+        Ok(mean
+            .filter(|mean| mean.is_finite() && *mean >= 1.0)
+            .map(|mean| mean.ceil() as usize))
+    }
+
+    /// Ordered document openings for overview/learning requests, up to
+    /// `chunks_per_document` passages of each, in reading order. Both selected
     /// IDs and the hard space scope are checked before any content is read.
     pub async fn retrieval_openings(
         &self,
@@ -87,13 +112,13 @@ impl ConversationRepository {
     ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
         let mut passages = Vec::new();
         let mut seen = HashSet::new();
-        for id in selected_ids.iter().take(4) {
+        for id in selected_ids {
             if !allowed_ids.contains(id) || !seen.insert(id) {
                 continue;
             }
             let rows: Vec<PassageRow> = sqlx::query_as(
                 "SELECT c.id, d.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? ORDER BY c.chunk_index LIMIT ?",
-            ).bind(id).bind(chunks_per_document.min(8) as i64).fetch_all(&self.pool).await?;
+            ).bind(id).bind(i64::try_from(chunks_per_document).unwrap_or(i64::MAX)).fetch_all(&self.pool).await?;
             passages.extend(rows.into_iter().map(
                 |(id, document_id, name, path, content, chunk_index, section, page, from_ocr)| {
                     lattice_core::application::contracts::search::CorpusPassage {

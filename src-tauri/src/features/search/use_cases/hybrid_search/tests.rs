@@ -816,3 +816,11 @@ fn a_reranked_pool_is_three_times_the_cut_and_at_most_sixty_four() {
     assert_eq!(RerankOptions::candidate_pool(30), 64);
     assert_eq!(RerankOptions::candidate_pool(0), 0);
 }
+
+/// A cut sized to a large evidence budget is deeper than the widening bound.
+/// The pool must still hold the whole cut, or the search hands back fewer
+/// passages than the budget asked for.
+#[test]
+fn a_reranked_pool_is_never_narrower_than_the_cut() {
+    assert_eq!(RerankOptions::candidate_pool(200), 200);
+}

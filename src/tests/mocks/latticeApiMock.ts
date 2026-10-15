@@ -27,8 +27,6 @@ export function createVaultAPIMock() {
       enableReranking: false,
       hybridSearchAlpha: 0.5,
       retrievalTuning: {
-        kbSearchMinLimit: 16,
-        kbSearchMaxLimit: 48,
         docShortlistCandidateMin: 48,
         docShortlistCandidateMax: 192,
         docShortlistDocMin: 10,
@@ -95,9 +93,7 @@ export function createVaultAPIMock() {
         enabled: true,
       },
       toolOutput: {
-        maxChars: 50000,
         excerptChars: 4000,
-        maxResults: 5,
         highlightTermsMax: 8,
         templates: {
           defaultTemplate: 'Tool output:\n{json}',

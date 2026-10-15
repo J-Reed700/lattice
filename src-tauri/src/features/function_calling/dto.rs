@@ -419,6 +419,11 @@ pub struct ListDocumentsOutput {
 pub struct FetchUrlContentInput {
     /// URL to fetch and extract content from
     pub url: String,
+    /// Character the model wants the shown text to start at. The fetch always
+    /// returns the whole page; the chat formats the part from here on that
+    /// fits the result's room.
+    #[serde(default)]
+    pub offset: usize,
 }
 
 /// Input for wiki_search function.

@@ -240,14 +240,10 @@ fn default_verification_top_k() -> i32 {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolOutputSettingsDto {
-    /// Maximum characters to include for a tool result in the LLM context
-    pub max_chars: u32,
-
-    /// Excerpt length for document/tool content
+    /// Length of the excerpt a source card shows for a document or tool
+    /// result. Display only: what a tool result carries into the model's
+    /// context is decided by the window (see the tool loop's allowance).
     pub excerpt_chars: u32,
-
-    /// Maximum search results to summarize from a tool call
-    pub max_results: u32,
 
     /// Maximum highlight terms extracted from the user query
     pub highlight_terms_max: u32,
@@ -485,9 +481,7 @@ impl Default for LLMVerificationSettingsDto {
 impl Default for ToolOutputSettingsDto {
     fn default() -> Self {
         Self {
-            max_chars: 50000,
             excerpt_chars: 4000,
-            max_results: 12,
             highlight_terms_max: 8,
             templates: ToolOutputTemplatesDto::default(),
         }
