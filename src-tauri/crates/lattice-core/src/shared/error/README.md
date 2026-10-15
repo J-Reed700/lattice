@@ -53,7 +53,7 @@ commands still return `Result<T, AppError>` or `Result<T, String>`. Whatever a
 command returns is what `src/lib/bindings.ts` types on the frontend.
 
 ```rust
-use crate::shared::error::{AppError, Result, ResultExt};
+use lattice_core::shared::error::{AppError, Result, ResultExt};
 
 async fn load(path: &std::path::Path) -> Result<String> {
     let text = tokio::fs::read_to_string(path)
@@ -68,13 +68,14 @@ async fn load(path: &std::path::Path) -> Result<String> {
 
 ## Rules
 
-- No `unwrap`/`expect`/`panic!`/unchecked indexing in non-test code: the crate
-  denies those clippy lints (`Cargo.toml` `[lints.clippy]`).
+- No `unwrap`/`expect`/`panic!`/unchecked indexing in non-test code: the
+  workspace denies those clippy lints (`src-tauri/Cargo.toml`
+  `[workspace.lints.clippy]`).
 - Log the technical error with `tracing::error!`; return the user-facing one.
 
 ## Testing
 
 ```bash
 cd src-tauri
-cargo test --lib shared::error
+cargo test -p lattice-core shared::error
 ```

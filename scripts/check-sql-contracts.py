@@ -11,6 +11,8 @@ import sqlite3
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
+# The app and the core crate; core holds the job store's SQL.
+SOURCE_ROOTS = ('src-tauri/src', 'src-tauri/crates/lattice-core/src')
 
 def prepare(connection, sql):
     try:
@@ -24,11 +26,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args()
-    extracted = subprocess.run([
-        'cargo', 'run', '--quiet', '--locked', '--manifest-path',
-        'scripts/data-contract-check/Cargo.toml', '--', 'src-tauri/src'
-    ], cwd=ROOT, check=True, capture_output=True, text=True)
-    rows = json.loads(extracted.stdout)
+    rows = []
+    for source_root in SOURCE_ROOTS:
+        extracted = subprocess.run([
+            'cargo', 'run', '--quiet', '--locked', '--manifest-path',
+            'scripts/data-contract-check/Cargo.toml', '--', source_root
+        ], cwd=ROOT, check=True, capture_output=True, text=True)
+        rows.extend(json.loads(extracted.stdout))
     connection = sqlite3.connect(':memory:')
     migrations = sorted((ROOT / 'src-tauri/migrations').glob('*.sql'))
     for migration in migrations:

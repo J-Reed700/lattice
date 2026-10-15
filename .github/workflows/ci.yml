@@ -81,7 +81,7 @@ jobs:
 
       - name: cargo check
         working-directory: src-tauri
-        run: cargo check --all-targets
+        run: cargo check --workspace --all-targets
 
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
@@ -133,7 +133,7 @@ jobs:
 
       - name: All desktop Rust unit, command and integration tests
         working-directory: src-tauri
-        run: cargo test --locked --features bindings-export --lib --bins --tests --no-fail-fast
+        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
 
       - name: Execute C#, Rust, React and Python container exercises
         if: matrix.os == 'ubuntu-latest'
@@ -152,11 +152,11 @@ jobs:
             LATTICE_LAB_SMOKE_ENGINE=docker \
             cargo test --features bindings-export --lib features::learning::runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
-      # The crate defines additional safety lints in Cargo.toml. Existing
+      # The workspace defines additional safety lints in Cargo.toml. Existing
       # warnings are not promoted to errors yet.
       - name: cargo clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets
+        run: cargo clippy --workspace --all-targets
 
       - name: generated bindings are current
         working-directory: src-tauri

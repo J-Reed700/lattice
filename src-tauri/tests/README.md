@@ -48,9 +48,9 @@ cargo test --test learning_studio_evals -- --ignored --nocapture   # opt-in eval
 The eval targets need a model endpoint; their module docs list the
 `LATTICE_EVAL_*` and `LATTICE_LEARNING_EVAL_*` variables.
 
-CI (`.github/workflows/ci.yml`) compiles every target (`cargo check
---all-targets`, `cargo clippy --all-targets`) and runs
-`cargo test --locked --features bindings-export --lib --bins --tests --no-fail-fast`
+CI (`.github/workflows/ci.yml`) compiles every target in the workspace (`cargo check
+--workspace --all-targets`, `cargo clippy --workspace --all-targets`) and runs
+`cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast`
 on every platform in the Rust matrix, plus two opt-in learning-runtime container
 tests on Linux. A newly added integration target is automatically part of the
 gate. Explicitly ignored live-model and environment-dependent tests remain
