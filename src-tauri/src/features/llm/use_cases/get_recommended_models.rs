@@ -22,14 +22,14 @@
 //! let recommendations = use_case.execute(request).await?;
 //! ```
 
-use crate::application::ports::model_catalog::ModelCatalogPort;
 use crate::features::llm::dto::{
     GetRecommendationsRequestDto, ModelInfoDto, PerformanceTier, RecommendedModelDto,
     RecommendedModelsDto,
 };
 use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
 use crate::features::model_management::domain::ModelMetadata;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_catalog::ModelCatalogPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetRecommendedModelsUseCase {
@@ -197,8 +197,8 @@ impl GetRecommendedModelsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_catalog::MockModelCatalogPort;
-    use crate::application::ports::system_info::MockSystemInfoPort;
+    use lattice_core::application::ports::model_catalog::MockModelCatalogPort;
+    use lattice_core::application::ports::system_info::MockSystemInfoPort;
 
     fn create_use_case(
         system_info: MockSystemInfoPort,

@@ -45,23 +45,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .setup(|app| {
             // Tracing requires the Tokio runtime available inside this hook.
             setup::setup_tracing();
-            if let Ok(resources) = app.path().resource_dir() {
-                if let Err(error) =
-                    lattice::features::learning::python_runtime::configure_python_runtime(
-                        resources.join("resources/learning-python"),
-                    )
-                {
-                    tracing::warn!(%error, "Bundled Python runtime could not be configured");
-                }
-            }
 
             // Register before the webview can announce readiness. On macOS
             // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
             setup::renderer_shutdown::install(app.handle())?;
-
-            // Lets a page that refuses the HTTP client be read in a hidden
-            // window of the app's own browser engine.
-            lattice::features::web::services::browser_reader::install(app.handle().clone());
 
             // Register the sidecar registry before anything can spawn a
             // sidecar. The LLM factory looks this up via

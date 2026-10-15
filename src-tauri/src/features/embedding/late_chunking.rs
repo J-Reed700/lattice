@@ -17,7 +17,7 @@
 use std::ops::Range;
 
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// Marker mixed into `model_identity()` when late chunking is active. Vectors
 /// pooled from a shared forward pass are NOT interchangeable with chunk-first
@@ -237,7 +237,7 @@ mod tests {
     #![allow(clippy::single_range_in_vec_init)]
 
     use super::*;
-    use crate::application::ports::embedding_port::span_chunk_texts;
+    use lattice_core::application::ports::embedding_port::span_chunk_texts;
 
     /// Offsets for "PREFIX\n\nalpha beta gamma" style spans, hand-built so the
     /// mapping rules are exercised without a tokenizer or model weights.

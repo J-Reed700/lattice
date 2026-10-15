@@ -29,7 +29,7 @@
 
 use crate::features::function_calling::domain::ToolDefinition;
 use crate::features::function_calling::FunctionRegistryTrait;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

@@ -2,7 +2,7 @@
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

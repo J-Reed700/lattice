@@ -1,6 +1,6 @@
 //! The HTTP transfer: ranged requests, retries, resume, and the checksum check.
 use super::{DownloadResult, HttpDownloadEngine, ProgressCallback};
-use crate::domain::download::DownloadError;
+use lattice_core::domain::download::DownloadError;
 use reqwest::{header, Response, StatusCode};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

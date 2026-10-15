@@ -1,12 +1,12 @@
 //! Tests for reindexing: vector eviction, empty extractions and strategy changes.
 
 use super::*;
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
-use crate::domain::entities::Document;
 use crate::features::embedding::entity::Embedding;
-use crate::shared::types::ValidatedFilePath;
 use async_trait::async_trait;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
+use lattice_core::domain::entities::Document;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -66,7 +66,7 @@ impl VectorSearchPort for MockVectorSearch {
 
     fn publish_embeddings(
         &self,
-        entries: Vec<crate::application::ports::vector_search_port::VectorIndexEntry>,
+        entries: Vec<lattice_core::application::ports::vector_search_port::VectorIndexEntry>,
     ) -> Result<()> {
         self.batches.lock().unwrap().1 += 1;
         for entry in entries {
@@ -211,10 +211,10 @@ impl RepositoryPort<Document> for MockUowDocumentRepo {
 }
 
 #[async_trait]
-impl crate::application::ports::DocumentRepositoryPort for MockUowDocumentRepo {
+impl lattice_core::application::ports::DocumentRepositoryPort for MockUowDocumentRepo {
     async fn find_by_checksum(
         &self,
-        _checksum: &crate::domain::value_objects::Checksum,
+        _checksum: &lattice_core::domain::value_objects::Checksum,
     ) -> Result<Option<Document>> {
         Ok(None)
     }
@@ -296,10 +296,10 @@ impl EmbeddingRepositoryPort for MockUowEmbeddingRepo {
 struct MockUnitOfWork;
 
 #[async_trait]
-impl crate::application::ports::UnitOfWork for MockUnitOfWork {
+impl lattice_core::application::ports::UnitOfWork for MockUnitOfWork {
     fn chunk_repository(
         &self,
-    ) -> Result<Box<dyn crate::application::ports::ChunkRepositoryPort + Send + '_>> {
+    ) -> Result<Box<dyn lattice_core::application::ports::ChunkRepositoryPort + Send + '_>> {
         Err(AppError::InvalidState(
             "Chunk repository not used in test".to_string(),
         ))
@@ -307,7 +307,7 @@ impl crate::application::ports::UnitOfWork for MockUnitOfWork {
 
     fn document_repository(
         &self,
-    ) -> Result<Box<dyn crate::application::ports::DocumentRepositoryPort + Send + '_>> {
+    ) -> Result<Box<dyn lattice_core::application::ports::DocumentRepositoryPort + Send + '_>> {
         Ok(Box::new(MockUowDocumentRepo))
     }
 
@@ -317,7 +317,7 @@ impl crate::application::ports::UnitOfWork for MockUnitOfWork {
 
     fn search_repository(
         &self,
-    ) -> Result<Box<dyn crate::domain::repositories::SearchRepository + Send + '_>> {
+    ) -> Result<Box<dyn lattice_core::domain::repositories::SearchRepository + Send + '_>> {
         Err(AppError::InvalidState(
             "Search repository not used in test".to_string(),
         ))
@@ -325,7 +325,7 @@ impl crate::application::ports::UnitOfWork for MockUnitOfWork {
 
     fn system_repository(
         &self,
-    ) -> Result<Box<dyn crate::domain::repositories::SystemRepository + Send + '_>> {
+    ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>> {
         Err(AppError::InvalidState(
             "System repository not used in test".to_string(),
         ))
@@ -333,7 +333,8 @@ impl crate::application::ports::UnitOfWork for MockUnitOfWork {
 
     fn model_repository(
         &self,
-    ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelRepositoryPort + '_>> {
+    ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelRepositoryPort + '_>>
+    {
         Err(AppError::InvalidState(
             "Model repository not used in test".to_string(),
         ))
@@ -341,7 +342,7 @@ impl crate::application::ports::UnitOfWork for MockUnitOfWork {
 
     fn model_file_repository(
         &self,
-    ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort + '_>>
+    ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort + '_>>
     {
         Err(AppError::InvalidState(
             "Model file repository not used in test".to_string(),
@@ -361,7 +362,7 @@ struct MockUnitOfWorkFactory;
 
 #[async_trait]
 impl UnitOfWorkFactory for MockUnitOfWorkFactory {
-    async fn create(&self) -> Result<Box<dyn crate::application::ports::UnitOfWork + Send>> {
+    async fn create(&self) -> Result<Box<dyn lattice_core::application::ports::UnitOfWork + Send>> {
         Ok(Box::new(MockUnitOfWork))
     }
 }
@@ -439,14 +440,14 @@ fn create_test_aggregate() -> (Document, TempDir) {
     let validated_path = ValidatedFilePath::new(file_path).unwrap();
     let content = "Original content".to_string();
     let strategy = ChunkingStrategy::FixedSize { size: 10 };
-    let metadata = crate::domain::value_objects::FileMetadata::new(
+    let metadata = lattice_core::domain::value_objects::FileMetadata::new(
         "test.txt".to_string(),
         "text/plain".to_string(),
         content.len() as i64,
         chrono::Utc::now(),
     )
     .unwrap();
-    let checksum = crate::domain::value_objects::Checksum::new("a".repeat(64)).unwrap();
+    let checksum = lattice_core::domain::value_objects::Checksum::new("a".repeat(64)).unwrap();
 
     let document =
         Document::from_file(validated_path, metadata, checksum, content, strategy).unwrap();

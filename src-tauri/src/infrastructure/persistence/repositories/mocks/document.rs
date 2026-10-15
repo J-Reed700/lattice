@@ -6,10 +6,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 
-use crate::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
-use crate::domain::entities::Document;
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
+use lattice_core::domain::entities::Document;
+use lattice_core::shared::error::{AppError, Result};
 
 /*
 /// In-memory mock implementation of DocumentRepositoryTrait (LEGACY)
@@ -194,7 +194,7 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
 ///
 /// ```rust
 /// use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
-/// use crate::application::ports::{RepositoryPort, DocumentRepositoryPort};
+/// use lattice_core::application::ports::{RepositoryPort, DocumentRepositoryPort};
 ///
 /// let mock = Arc::new(MockDocumentRepository::new());
 /// let repo: Arc<dyn RepositoryPort<Document> + DocumentRepositoryPort> = mock;
@@ -327,8 +327,8 @@ impl DocumentRepositoryPort for MockDocumentRepository {
 
     async fn find_by_checksum(
         &self,
-        checksum: &crate::domain::value_objects::Checksum,
-    ) -> Result<Option<crate::domain::entities::Document>> {
+        checksum: &lattice_core::domain::value_objects::Checksum,
+    ) -> Result<Option<lattice_core::domain::entities::Document>> {
         let docs = self.documents.read();
         for doc in docs.values() {
             if doc.checksum().as_str() == checksum.as_str() {
@@ -394,12 +394,12 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
         _modified_at: &str,
         checksum: &str,
     ) -> Result<Document> {
-        use crate::shared::types::ValidatedFilePath;
+        use lattice_core::shared::types::ValidatedFilePath;
         use std::path::PathBuf;
 
         let validated_path = ValidatedFilePath::new(PathBuf::from(file_path))?;
         let checksum_vo =
-            crate::domain::value_objects::checksum::Checksum::new(checksum.to_string())?;
+            lattice_core::domain::value_objects::checksum::Checksum::new(checksum.to_string())?;
         let mut doc = Document::new(
             validated_path,
             file_name.to_string(),

@@ -5,7 +5,7 @@ use crate::features::conversation::dto::{
 };
 use crate::features::conversation::mapper::ConversationDtoMapper;
 use crate::features::conversation::ConversationServiceTrait;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Use case for creating a new conversation
@@ -56,12 +56,12 @@ impl CreateConversationUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Conversation;
     use crate::features::conversation::ConversationServiceTrait;
-    use crate::shared::error::AppError;
-    use crate::shared::types::ConversationId;
     use async_trait::async_trait;
     use chrono::Utc;
+    use lattice_core::domain::Conversation;
+    use lattice_core::shared::error::AppError;
+    use lattice_core::shared::types::ConversationId;
 
     struct MockConversationService {
         should_fail: bool,
@@ -89,7 +89,7 @@ mod tests {
             _: String,
             _: i64,
             _: Option<String>,
-        ) -> Result<crate::domain::conversation::ConversationMessage> {
+        ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
             panic!("Turn finalization is not part of create-conversation tests")
         }
         async fn create_conversation(
@@ -125,7 +125,7 @@ mod tests {
         async fn get_conversation(
             &self,
             _conversation_id: &str,
-        ) -> Result<Option<crate::domain::ConversationAggregate>> {
+        ) -> Result<Option<lattice_core::domain::ConversationAggregate>> {
             unimplemented!()
         }
 
@@ -154,7 +154,7 @@ mod tests {
             _conversation_id: &str,
             _content: String,
             _tokens: i64,
-        ) -> Result<crate::domain::conversation::ConversationMessage> {
+        ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
             unimplemented!()
         }
 
@@ -163,7 +163,7 @@ mod tests {
             _conversation_id: &str,
             _content: String,
             _tokens: i64,
-        ) -> Result<crate::domain::conversation::ConversationMessage> {
+        ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
             unimplemented!()
         }
 
@@ -191,18 +191,18 @@ mod tests {
             _content: String,
             _tokens: i64,
             _metadata: Option<String>,
-        ) -> Result<crate::domain::conversation::ConversationMessage> {
+        ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
             unimplemented!()
         }
 
         async fn add_message_with_status(
             &self,
             _conversation_id: &str,
-            _role: crate::domain::conversation::MessageRole,
+            _role: lattice_core::domain::conversation::MessageRole,
             _content: String,
             _tokens: i64,
             _status: String,
-        ) -> Result<crate::domain::conversation::ConversationMessage> {
+        ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
             unimplemented!()
         }
 

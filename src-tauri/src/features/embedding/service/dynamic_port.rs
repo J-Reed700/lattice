@@ -7,36 +7,41 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::ports::{EmbeddingPort, MockEmbeddingPort};
-use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+use lattice_core::application::ports::{EmbeddingPort, MockEmbeddingPort};
+use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
 pub struct DynamicEmbedding {
-    provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
 }
 
 impl DynamicEmbedding {
-    pub fn new(provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>) -> Self {
+    pub fn new(
+        provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    ) -> Self {
         Self { provider }
     }
 }
 
 #[async_trait]
 impl EmbeddingPort for DynamicEmbedding {
-    async fn embed_single(&self, text: &str) -> crate::shared::error::Result<Vec<f32>> {
+    async fn embed_single(&self, text: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_single(text).await,
             None => MockEmbeddingPort::new_degraded().embed_single(text).await,
         }
     }
 
-    async fn embed_query(&self, text: &str) -> crate::shared::error::Result<Vec<f32>> {
+    async fn embed_query(&self, text: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_query(text).await,
             None => MockEmbeddingPort::new_degraded().embed_single(text).await,
         }
     }
 
-    async fn embed_batch(&self, texts: &[String]) -> crate::shared::error::Result<Vec<Vec<f32>>> {
+    async fn embed_batch(
+        &self,
+        texts: &[String],
+    ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_batch(texts).await,
             None => MockEmbeddingPort::new_degraded().embed_batch(texts).await,
@@ -61,13 +66,13 @@ impl EmbeddingPort for DynamicEmbedding {
         &self,
         text: &str,
         prefix: &str,
-    ) -> crate::shared::error::Result<
-        Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>,
+    ) -> lattice_core::shared::error::Result<
+        Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
         self.provider
             .current_model()
             .ok_or_else(|| {
-                crate::shared::error::AppError::AiModelsNotInstalled(
+                lattice_core::shared::error::AppError::AiModelsNotInstalled(
                     "Load an embedding model before indexing".into(),
                 )
             })?
@@ -77,13 +82,13 @@ impl EmbeddingPort for DynamicEmbedding {
     fn window_parts(
         &self,
         text: &str,
-    ) -> crate::shared::error::Result<
-        Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>,
+    ) -> lattice_core::shared::error::Result<
+        Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
         self.provider
             .current_model()
             .ok_or_else(|| {
-                crate::shared::error::AppError::AiModelsNotInstalled(
+                lattice_core::shared::error::AppError::AiModelsNotInstalled(
                     "Load an embedding model before indexing".into(),
                 )
             })?
@@ -105,39 +110,48 @@ impl EmbeddingPort for DynamicEmbedding {
     async fn embed_sparse_batch(
         &self,
         texts: &[String],
-    ) -> crate::shared::error::Result<Vec<crate::domain::value_objects::SparseEmbedding>> {
+    ) -> lattice_core::shared::error::Result<
+        Vec<lattice_core::domain::value_objects::SparseEmbedding>,
+    > {
         match self.provider.current_model() {
             Some(inner) => inner.embed_sparse_batch(texts).await,
-            None => {
-                Err(crate::application::ports::embedding_port::sparse_not_supported("unavailable"))
-            }
+            None => Err(
+                lattice_core::application::ports::embedding_port::sparse_not_supported(
+                    "unavailable",
+                ),
+            ),
         }
     }
 
     async fn embed_batch_with_sparse(
         &self,
         texts: &[String],
-    ) -> crate::shared::error::Result<(
+    ) -> lattice_core::shared::error::Result<(
         Vec<Vec<f32>>,
-        Vec<crate::domain::value_objects::SparseEmbedding>,
+        Vec<lattice_core::domain::value_objects::SparseEmbedding>,
     )> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_batch_with_sparse(texts).await,
-            None => {
-                Err(crate::application::ports::embedding_port::sparse_not_supported("unavailable"))
-            }
+            None => Err(
+                lattice_core::application::ports::embedding_port::sparse_not_supported(
+                    "unavailable",
+                ),
+            ),
         }
     }
 
     async fn embed_sparse_query(
         &self,
         text: &str,
-    ) -> crate::shared::error::Result<crate::domain::value_objects::SparseEmbedding> {
+    ) -> lattice_core::shared::error::Result<lattice_core::domain::value_objects::SparseEmbedding>
+    {
         match self.provider.current_model() {
             Some(inner) => inner.embed_sparse_query(text).await,
-            None => {
-                Err(crate::application::ports::embedding_port::sparse_not_supported("unavailable"))
-            }
+            None => Err(
+                lattice_core::application::ports::embedding_port::sparse_not_supported(
+                    "unavailable",
+                ),
+            ),
         }
     }
 
@@ -145,11 +159,11 @@ impl EmbeddingPort for DynamicEmbedding {
         &self,
         span_text: &str,
         chunk_ranges: &[std::ops::Range<usize>],
-    ) -> crate::shared::error::Result<Vec<Vec<f32>>> {
+    ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_span_chunks(span_text, chunk_ranges).await,
             None => {
-                let texts = crate::application::ports::embedding_port::span_chunk_texts(
+                let texts = lattice_core::application::ports::embedding_port::span_chunk_texts(
                     span_text,
                     chunk_ranges,
                 )?;
@@ -158,7 +172,7 @@ impl EmbeddingPort for DynamicEmbedding {
         }
     }
 
-    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         match self.provider.current_model() {
             Some(inner) => inner.is_ready().await,
             None => Ok(false),

@@ -4,12 +4,12 @@
 use super::index::dto::FolderIndexStatusDto;
 use super::index::manager::{EmbedderSource, FolderIndexManager};
 use super::{dto::*, folders, fs, scope::Scope};
-use crate::{
+use crate::interfaces::di::Container;
+use async_trait::async_trait;
+use lattice_core::{
     application::ports::EmbeddingPort,
-    interfaces::di::Container,
     shared::{ipc::ApiError, AppError},
 };
-use async_trait::async_trait;
 use std::sync::Arc;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -25,7 +25,7 @@ const DEFAULT_SEARCH_RESULTS: u32 = 500;
 const MAX_SEARCH_RESULTS: u32 = 2_000;
 
 async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> crate::shared::Result<T> + Send + 'static,
+    work: impl FnOnce() -> lattice_core::shared::Result<T> + Send + 'static,
 ) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)
         .await

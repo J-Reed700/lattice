@@ -1,6 +1,6 @@
 //! Short performance tasks with private keys and evidence-bound placement advice.
 use crate::features::learning::{dto::*, plan_dto::*};
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

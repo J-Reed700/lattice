@@ -64,10 +64,6 @@ pub use modules::{
 };
 
 #[cfg(test)]
-use crate::application::ports::{
-    ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
-};
-#[cfg(test)]
 use crate::features::embedding::mocks::MockEmbeddingService;
 #[cfg(test)]
 use crate::features::embedding::EmbeddingServiceTrait;
@@ -87,6 +83,10 @@ use crate::infrastructure::persistence::repositories::mocks::{
 };
 #[cfg(test)]
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
+#[cfg(test)]
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
+};
 
 /// Mock dependency injection container for testing
 ///
@@ -143,7 +143,7 @@ impl MockAppContainer {
             tag_repo: Arc::new(MockTagRepository::new()),
             mention_repo: Arc::new(MockMentionRepository::new()),
             embedding_service: Arc::new(MockEmbeddingService::new(
-                crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM,
+                lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM,
             )),
             search_service: Arc::new(MockSearchService::new()),
         }
@@ -283,7 +283,7 @@ mod tests_basic {
 
         assert_eq!(doc.file_name(), "test.txt");
         assert_eq!(doc.mime_type(), "text/plain");
-        use crate::domain::entities::document::DocumentStatus;
+        use lattice_core::domain::entities::document::DocumentStatus;
         assert_eq!(doc.status(), DocumentStatus::Indexed);
 
         let found = container
@@ -388,7 +388,7 @@ mod tests_basic {
 
         assert_eq!(
             embedding.len(),
-            crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM
+            lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM
         );
 
         let _emb_id = container

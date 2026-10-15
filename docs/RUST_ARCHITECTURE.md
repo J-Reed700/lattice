@@ -2,11 +2,21 @@
 
 ## Dependency direction
 
+The core layers (`domain`, `application` and `shared`) are their own crate,
+`lattice-core` (lib `lattice_core`) at `src-tauri/crates/lattice-core`. It
+does not depend on Tauri or on the desktop crate, so the compiler rejects any
+core import of features, infrastructure or interfaces. The desktop crate
+(`lattice-desktop`, lib `lattice`) names core items as `lattice_core::…`.
+Test doubles that the desktop crate's tests use sit behind core's
+`test-support` feature, which only the desktop crate's dev-dependency enables.
+Shared dependency pins and lints live in the workspace manifest,
+`src-tauri/Cargo.toml`.
+
 The desktop application owns persistence and runtime ports under
-`src-tauri/src/application/ports`. Domain values do not own SQL drivers,
-transport adapters, or application orchestration. Composition remains in the
-DI modules; adapters implement ports in infrastructure or existing feature
-repository modules.
+`src-tauri/crates/lattice-core/src/application/ports`. Domain values do not
+own SQL drivers, transport adapters, or application orchestration. Composition
+remains in the DI modules; adapters implement ports in infrastructure or
+existing feature repository modules.
 
 The sync API follows the same direction: HTTP and PostgreSQL depend on the
 sync service/repository contracts. HTTP error rendering and SQL row decoding
@@ -115,10 +125,8 @@ belong to their respective adapters, not the sync contracts.
   drafts, selections, and visibility. ESLint keeps view files from value-importing
   `VaultAPI`, a feature client, the transport or a Tauri plugin; files that
   predate the rule sit in allowlists in `eslint.config.js` that can only shrink.
-- CI executes desktop library tests, real audit integration tests, frontend tests,
-  a renderer build, and browser smoke tests. The audit suite exercises a rejected
-  credential command without accessing the OS keychain, plus sink persistence,
-  concurrent delivery, bounded history, and logger enable/disable behavior.
+- CI executes desktop library tests, integration tests, frontend tests, a
+  renderer build, and browser smoke tests.
 
 ## Background work and error contracts
 
@@ -490,9 +498,9 @@ python3 scripts/check-tauri-command-inventory.py
 python3 scripts/check-sql-contracts.py
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
-cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+cargo test --manifest-path src-tauri/Cargo.toml -p lattice-core
+cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib
+cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets
 cargo run --manifest-path src-tauri/Cargo.toml --features bindings-export --bin export_bindings -- --check
 cargo test --manifest-path api-rust/Cargo.toml --lib
 cargo test --manifest-path api-rust/Cargo.toml --test sync_persistence -- --ignored

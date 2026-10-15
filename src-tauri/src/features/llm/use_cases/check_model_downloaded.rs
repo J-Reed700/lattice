@@ -22,9 +22,9 @@
 //! }
 //! ```
 
-use crate::application::ports::model_storage::ModelStoragePort;
 use crate::features::llm::dto::{CheckModelDownloadedRequestDto, CheckModelDownloadedResponseDto};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_storage::ModelStoragePort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct CheckModelDownloadedUseCase {
@@ -117,7 +117,7 @@ impl CheckModelDownloadedUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_storage::MockModelStoragePort;
+    use lattice_core::application::ports::model_storage::MockModelStoragePort;
 
     #[tokio::test]
     async fn test_model_exists_and_valid() {

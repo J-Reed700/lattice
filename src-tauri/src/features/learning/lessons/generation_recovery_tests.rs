@@ -6,7 +6,7 @@ use crate::features::learning::{
     lesson_drafts,
     plan_dto::LearningGenerationJobActionRequestDto,
 };
-use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
+use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
 
 /// Records an outage the way the runtime does after a failed attempt.
@@ -42,6 +42,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
         let pool = crate::features::learning::tests::pool().await.unwrap();
         let (repo, job) = repository_tests::queued_job(&pool).await;
         let worker = LessonGenerationWorker {
+            runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
             pool: pool.clone(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
@@ -223,8 +224,8 @@ impl LLMPort for OfflineModel {
     }
     async fn complete(
         &self,
-        _: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        _: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         Err(AppError::Network("fixture connection interrupted".into()))
     }
     fn model_name(&self) -> &str {
@@ -279,15 +280,17 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     for index in 1..100 {
         library
             .add(
-                &uuid::Uuid::new_v4().to_string(),
-                &uuid::Uuid::new_v4().to_string(),
-                &uuid::Uuid::new_v4().to_string(),
-                &job.program_id,
-                LearningSourceKind::Pasted,
-                "add_text",
-                "Fixture reference",
-                None,
-                LearningSourcePolicy::Fixed,
+                crate::features::learning::source_library::NewLearningSource {
+                    operation_id: &uuid::Uuid::new_v4().to_string(),
+                    source_id: &uuid::Uuid::new_v4().to_string(),
+                    version_id: &uuid::Uuid::new_v4().to_string(),
+                    program_id: &job.program_id,
+                    kind: LearningSourceKind::Pasted,
+                    operation_kind: "add_text",
+                    origin: "Fixture reference",
+                    requested_url: None,
+                    freshness: LearningSourcePolicy::Fixed,
+                },
                 CapturedLearningSource {
                     title: format!("Reference {index}"),
                     publisher: None,
@@ -359,15 +362,17 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         .await?;
     library
         .add(
-            &uuid::Uuid::new_v4().to_string(),
-            &source,
-            &version,
-            &job.program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "New evidence",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &uuid::Uuid::new_v4().to_string(),
+                source_id: &source,
+                version_id: &version,
+                program_id: &job.program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "New evidence",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "New evidence".into(),
                 publisher: None,

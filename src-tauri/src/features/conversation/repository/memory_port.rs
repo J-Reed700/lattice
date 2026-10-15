@@ -5,16 +5,16 @@
 //! fake while the SQL stays owned by the repository.
 
 use super::ConversationRepository;
-use crate::application::ports::conversation_memory::{
+use async_trait::async_trait;
+use lattice_core::application::ports::conversation_memory::{
     CommittedMemorySnapshot, ConversationMemoryPort, ConversationMemoryReadPort,
     MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions, RecallCandidates,
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     ConversationMemoryState, MemoryId, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan,
 };
-use crate::shared::error::Result;
-use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 
 #[async_trait]
 impl ConversationMemoryPort for ConversationRepository {
@@ -26,7 +26,7 @@ impl ConversationMemoryPort for ConversationRepository {
         &self,
         conversation_id: &str,
         query: &str,
-    ) -> Result<Option<crate::application::ports::conversation_memory::PreparedMemory>> {
+    ) -> Result<Option<lattice_core::application::ports::conversation_memory::PreparedMemory>> {
         self.prepare_knowledge(conversation_id, query)
             .await
             .map(Some)

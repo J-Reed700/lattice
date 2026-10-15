@@ -7,9 +7,9 @@ use crate::features::embedding::loading::EmbeddingLoader;
 use crate::features::embedding::runtime::ActiveEmbedding;
 use std::sync::Arc;
 
-use crate::application::ports::EmbeddingPort;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::Result;
 
 /// Embedding's registrar surface on `Container`.
 impl Container {

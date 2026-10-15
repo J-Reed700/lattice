@@ -1,8 +1,8 @@
 //! # Cache feature
 //!
 //! In-memory caches (LLM responses + search query results). Tauri
-//! commands operate on search's global `QUERY_CACHE` singleton directly —
-//! no DI, no use cases, no adapter.
+//! commands operate on search's query cache, which the container holds —
+//! no use cases, no adapter.
 //!
 //! ## Public surface
 //!

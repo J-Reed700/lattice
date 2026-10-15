@@ -1,13 +1,14 @@
 //! Resumable outline drafts. A saved draft is not an approval to teach its content.
+use crate::features::learning::outline_linking::{CitationReceipts, LinkLog};
+use crate::features::learning::outline_references::ReferencePlan;
 use crate::features::learning::{
     dto::*, outline_progress::OutlineProgress, repository::LearningRepository,
 };
-use crate::{
+use crate::features::web::traits::WebServiceTrait;
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
-use crate::features::learning::outline_linking::{LinkLog, CitationReceipts};
-use crate::features::learning::outline_references::ReferencePlan;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -188,7 +189,7 @@ pub(in crate::features::learning) struct OutlineDraft {
 /// later review can be told the assertion is verified rather than re-raise it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::features::learning) struct OutlineClaimReceipt {
-    pub verdict: crate::application::services::claim_verification::ClaimVerdict,
+    pub verdict: lattice_core::application::services::claim_verification::ClaimVerdict,
     pub reason: String,
     pub supporting_quote: Option<String>,
     pub checked_at: i64,
@@ -358,7 +359,7 @@ const NO_REFERENCES: &str = "No references could be gathered. Lessons need saved
 async fn gather_for_draft(
     repo: &LearningRepository,
     llm: &dyn LLMPort,
-    web: &dyn crate::features::web::traits::WebServiceTrait,
+    web: &dyn WebServiceTrait,
     program: &mut LearningProgramDto,
     draft: &mut OutlineDraft,
     sources: &mut Vec<LearningSourceDto>,
@@ -368,12 +369,20 @@ async fn gather_for_draft(
     let plan = match &draft.reference_plan {
         Some(plan) if plan.query_count() > 0 => plan.clone(),
         _ => {
-            let plan = crate::features::learning::outline_references::plan(llm, &draft.request, sources, progress).await?;
+            let plan = crate::features::learning::outline_references::plan(
+                llm,
+                &draft.request,
+                sources,
+                progress,
+            )
+            .await?;
             draft.reference_plan = Some(plan.clone());
             plan
         }
     };
-    let found = crate::features::learning::outline_references::gather(llm, web, &plan, sources, progress).await?;
+    let found =
+        crate::features::learning::outline_references::gather(llm, web, &plan, sources, progress)
+            .await?;
     let saved = found.sources.len();
     if saved == 0 {
         draft.review.note = format!("Reference gathering ran {} searches but saved no usable pages ({} searches or pages were unavailable).", found.searches, found.unavailable);
@@ -382,12 +391,17 @@ async fn gather_for_draft(
     }
     for (source, reference) in found.sources.iter().zip(&found.references) {
         draft.source_ids.push(source.id.clone());
-        sources.push(crate::features::learning::outline_references::authoring_copy(source, reference));
+        sources
+            .push(crate::features::learning::outline_references::authoring_copy(source, reference));
     }
     draft.review.references_gathered += saved as u32;
     draft.review.status = LearningOutlineReviewStatus::Unchecked;
-    draft.review.note = format!("{saved} reference pages saved from {} searches. Citations and the plan still need review.", found.searches);
-    repo.checkpoint_outline(program, draft, &found.sources, &found.references).await?;
+    draft.review.note = format!(
+        "{saved} reference pages saved from {} searches. Citations and the plan still need review.",
+        found.searches
+    );
+    repo.checkpoint_outline(program, draft, &found.sources, &found.references)
+        .await?;
     Ok(())
 }
 
@@ -397,7 +411,10 @@ pub(in crate::features::learning) fn location(path: &str) -> String {
         return "Course".into();
     };
     let mut parts = path.trim_start_matches("/modules/").split('/').skip(1);
-    let item = match (parts.next(), parts.next().and_then(|i| i.parse::<usize>().ok())) {
+    let item = match (
+        parts.next(),
+        parts.next().and_then(|i| i.parse::<usize>().ok()),
+    ) {
         (Some("summary"), _) => " · Summary".to_owned(),
         (Some("outcomes"), Some(index)) => format!(" · Outcome {}", index + 1),
         (Some("lessons"), Some(index)) => format!(" · Lesson {}", index + 1),
@@ -510,7 +527,9 @@ fn settle(draft: &mut OutlineDraft, sources: &[LearningSourceDto], references_mi
             sources.len()
         )
     } else {
-        format!("Findings saved; {linked}. Repair will use the remaining issues and source passages.")
+        format!(
+            "Findings saved; {linked}. Repair will use the remaining issues and source passages."
+        )
     };
 }
 
@@ -530,7 +549,7 @@ pub(in crate::features::learning) async fn finish(
     mut draft: OutlineDraft,
     mut sources: Vec<LearningSourceDto>,
     progress: &OutlineProgress,
-    web: Option<&dyn crate::features::web::traits::WebServiceTrait>,
+    web: Option<&dyn WebServiceTrait>,
     gather_if_empty: bool,
 ) -> Result<LearningProgramDto> {
     use crate::features::learning::outline_progress::OutlineStage;
@@ -618,7 +637,7 @@ pub(in crate::features::learning) async fn finish(
             .ok_or_else(|| AppError::InvalidInput("The saved draft is unavailable.".into()))?;
         // A failed or interrupted check can never inherit a previous approval.
         draft.review.status = LearningOutlineReviewStatus::Unchecked;
-        let safe = crate::shared::ipc::ApiError::from(error).message;
+        let safe = lattice_core::shared::ipc::ApiError::from(error).message;
         draft.review.note = format!(
             "Review or repair stopped: {safe} Completed work is saved. Use Repair to continue."
         );
@@ -634,7 +653,7 @@ pub(in crate::features::learning) async fn repair_saved(
     llm: &dyn LLMPort,
     request: &RepairLearningOutlineRequestDto,
     progress: &OutlineProgress,
-    web: Option<&dyn crate::features::web::traits::WebServiceTrait>,
+    web: Option<&dyn WebServiceTrait>,
 ) -> Result<LearningProgramDto> {
     let _run = drafts.acquire(&request.program_id)?;
     let program = repo.get(&request.program_id).await?;

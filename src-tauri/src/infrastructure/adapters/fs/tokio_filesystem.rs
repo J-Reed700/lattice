@@ -1,8 +1,8 @@
 //! Tokio-based filesystem adapter for domain file access.
 
-use crate::domain::ports::file_access::{DirectoryEntry, FileSystemAccess};
-use crate::shared::error::AppError;
 use async_trait::async_trait;
+use lattice_core::domain::ports::file_access::{DirectoryEntry, FileSystemAccess};
+use lattice_core::shared::error::AppError;
 use std::path::Path;
 
 #[derive(Debug, Default)]

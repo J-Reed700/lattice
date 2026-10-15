@@ -11,7 +11,7 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Beginning-of-document text read for the document summary, before grounded
 /// generation carries as much of it as fits the window and

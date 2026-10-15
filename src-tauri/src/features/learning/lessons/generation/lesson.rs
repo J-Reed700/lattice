@@ -7,19 +7,20 @@ use super::{
     source_index_schema, validate_answer_options, validate_source_snapshot_ids, validate_text,
     CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE, MAX_BODY, MAX_EXPLANATION, MAX_QUESTION,
 };
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::GroundedRequest;
 use crate::features::learning::dto::{
     LearningAnswerKey, LearningAssessmentKind, LearningBlockDto, LearningBlockKind,
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningQuestionDto,
     PreparedLearningLesson,
 };
+use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::ReferenceCollection;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -148,11 +149,12 @@ fn lesson_prompt(
 /// assessment kind; correct indexes and explanations remain internal keys.
 pub async fn prepare_lesson(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
 ) -> Result<PreparedLearningLesson> {
     let references = ReferenceCollection::lexical(&program.sources)?;
-    prepare_lesson_with_references(llm, program, lesson, &references).await
+    prepare_lesson_with_references(llm, runtimes, program, lesson, &references).await
 }
 
 /// The authoring request without its evidence: what must match for a saved
@@ -201,8 +203,10 @@ fn source_data(
         .collect()
 }
 
+/// `runtimes` runs the lesson's worked examples while it is verified.
 pub async fn prepare_lesson_with_references<'a>(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
     references: &ReferenceCollection<'a>,
@@ -389,6 +393,7 @@ pub async fn prepare_lesson_with_references<'a>(
     let (raw, report) =
         crate::features::learning::content_verification::verify_and_repair_with_references(
             llm,
+            runtimes,
             &prompt,
             &lesson_schema(sources.len()),
             raw,

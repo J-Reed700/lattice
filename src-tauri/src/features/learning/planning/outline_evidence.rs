@@ -1,6 +1,6 @@
 //! Select outline evidence from whole captured sources, not library previews.
 use crate::features::learning::reference_collection::ReferenceCollection;
-use crate::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde_json::{json, Value};
 
 pub(in crate::features::learning) fn lesson_queries(candidate: &Value) -> Vec<String> {
@@ -127,8 +127,8 @@ mod tests {
     impl LLMPort for TokenCounter {
         async fn complete(
             &self,
-            _: &crate::application::ports::llm_port::CompletionRequest,
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            _: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             unreachable!()
         }
         fn model_name(&self) -> &str {

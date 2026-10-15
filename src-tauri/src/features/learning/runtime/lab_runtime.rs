@@ -6,7 +6,7 @@
 //! The command builder is kept pure so every containment flag is covered by
 //! deterministic tests on every target, including hosts without Docker.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};

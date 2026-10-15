@@ -9,8 +9,8 @@ use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 
-use crate::application::ports::NoteIndexSink;
 use crate::features::settings::use_cases::GetSettingsUseCase;
+use lattice_core::application::ports::NoteIndexSink;
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
@@ -67,7 +67,8 @@ impl Drop for WriterLifetime {
 pub struct VaultWriterHandle {
     wake: Arc<Notify>,
     // Only handles own this guard; the worker holds a token clone. Dropping
-    // standalone containers therefore stops their worker without an app scope.
+    // standalone containers therefore stops their worker without closing the
+    // background scope.
     _lifetime: Arc<WriterLifetime>,
     /// Shared cell the worker reads on every error to decide whether
     /// to emit a `vault:write-error` Tauri event. Populated post-
@@ -83,7 +84,10 @@ pub struct VaultWriterHandle {
 }
 
 impl VaultWriterHandle {
-    pub async fn enqueue_backfill(&self, pool: &SqlitePool) -> crate::shared::error::Result<()> {
+    pub async fn enqueue_backfill(
+        &self,
+        pool: &SqlitePool,
+    ) -> lattice_core::shared::error::Result<()> {
         super::repository::enqueue_all(pool).await?;
         self.wake.notify_one();
         Ok(())
@@ -117,13 +121,14 @@ pub fn start_vault_writer(
     settings_uc: Arc<GetSettingsUseCase>,
     suppression: super::watcher::WriteSuppressionRegistry,
     pool: SqlitePool,
+    background: &lattice_core::shared::runtime::background::BackgroundTasks,
 ) -> VaultWriterHandle {
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
     let note_index_sink = Arc::new(std::sync::RwLock::new(None));
-    let cancel = crate::shared::runtime::background::cancellation_token().child_token();
+    let cancel = background.token().child_token();
     let lifetime = Arc::new(WriterLifetime(cancel.clone()));
-    crate::shared::runtime::background::spawn(run_worker(
+    background.spawn(run_worker(
         wake.clone(),
         settings_uc,
         app_handle.clone(),
@@ -231,7 +236,7 @@ async fn run_worker(
                                         Err(error) => Err(error),
                                     }
                                 }
-                                Err(crate::shared::error::AppError::NotFound(_)) => {
+                                Err(lattice_core::shared::error::AppError::NotFound(_)) => {
                                     let mirror_result: std::result::Result<(), String> = async {
                                         if !write.mirror_complete {
                                             match tokio::fs::remove_file(&target).await {
@@ -301,12 +306,12 @@ async fn settle_write(
     pool: &SqlitePool,
     write: &super::repository::PendingWrite,
     apply_result: std::result::Result<(), String>,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     match apply_result {
         Ok(()) => super::repository::acknowledge(pool, write).await,
         Err(error) => {
             super::repository::defer(pool, write).await?;
-            Err(crate::shared::error::AppError::InternalError(error))
+            Err(lattice_core::shared::error::AppError::InternalError(error))
         }
     }
 }

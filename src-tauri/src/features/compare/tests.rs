@@ -13,11 +13,11 @@ use super::di::CompareDeps;
 use super::parser::parse_compare_response;
 use super::retrieval::RetrievedChunk;
 use super::use_case::{assemble_cells, fill_row, map_quote_to_chunk};
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
 };
-use crate::application::ports::LLMPort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 fn columns() -> Vec<String> {
@@ -229,7 +229,7 @@ fn retrieval_deps(container: &crate::interfaces::di::Container) -> CompareDeps {
     CompareDeps {
         load_llm: super::di::LlmLoader::new(|| {
             Box::pin(async {
-                Err(crate::shared::error::AppError::InternalError(
+                Err(lattice_core::shared::error::AppError::InternalError(
                     "not used in retrieval tests".into(),
                 ))
             })

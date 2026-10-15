@@ -8,7 +8,7 @@ pub mod capabilities;
 pub mod gpu;
 pub mod platform;
 
-pub use backend_devices::{cached_backend_devices, detect_backend_devices, BackendDevice};
+pub use backend_devices::{BackendDevice, BackendDevices};
 pub use capabilities::{detect_capabilities, detect_capabilities_with_app, SystemCapabilities};
 pub use gpu::{detect_gpu, GPUInfo, GPUVendor};
 pub use platform::Platform;

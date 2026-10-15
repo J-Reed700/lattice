@@ -99,11 +99,9 @@ fn adopt_missing_assertions(
                 quote: quote.into(),
                 statement: missing.statement,
             };
-            if !slot
-                .claims
-                .iter()
-                .any(|existing| existing.quote == claim.quote && existing.statement == claim.statement)
-            {
+            if !slot.claims.iter().any(|existing| {
+                existing.quote == claim.quote && existing.statement == claim.statement
+            }) {
                 slot.claims.push(claim);
                 adopted += 1;
             }
@@ -197,7 +195,8 @@ mod tests {
                 UnitClaims {
                     index: 0,
                     claims: vec![Claim {
-                        quote: "The documented result follows. Explain why in your own words.".into(),
+                        quote: "The documented result follows. Explain why in your own words."
+                            .into(),
                         statement: "The documented result follows.".into(),
                     }],
                     non_factual_reason: String::new(),
@@ -242,9 +241,15 @@ mod tests {
         };
         assert!(valid_saved_coverage(&coverage, &content()));
         let adopted = adopt_missing_assertions(&mut inventory, &mut coverage, &content()).unwrap();
-        assert_eq!(adopted, 1, "duplicates and existing statements are not re-added");
+        assert_eq!(
+            adopted, 1,
+            "duplicates and existing statements are not re-added"
+        );
         assert_eq!(inventory.units[0].claims.len(), 2);
-        assert_eq!(inventory.units[0].claims[1].statement, "The result is documented.");
+        assert_eq!(
+            inventory.units[0].claims[1].statement,
+            "The result is documented."
+        );
         assert_eq!(
             inventory.units[0].claims[1].quote,
             "The documented result follows. Explain why in your own words."

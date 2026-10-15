@@ -1,9 +1,10 @@
 use super::*;
-use crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use std::sync::Arc;
 
 /// The input budget the context assembler plans for a model of this size.
 fn input_budget(context_tokens: usize) -> usize {
-    use crate::application::services::context_assembler::{
+    use lattice_core::application::services::context_assembler::{
         BudgetAllocation, BudgetRequest, ModelCapacity,
     };
     BudgetAllocation::plan(
@@ -141,7 +142,7 @@ fn a_window_with_room_keeps_the_floor() {
 /// round that ignored them handed out room the window did not have.
 #[test]
 fn tool_schemas_are_charged_against_a_small_window() {
-    let tools = vec![crate::application::ports::ToolDefinition {
+    let tools = vec![lattice_core::application::ports::ToolDefinition {
         name: "web_search".into(),
         description: "Search the web.".into(),
         parameters: serde_json::json!({"type":"object","properties":{

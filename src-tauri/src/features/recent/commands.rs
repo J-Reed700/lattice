@@ -50,9 +50,9 @@
 //! Pure delegation pattern with no rate limiting or audit logging. Commands delegate directly
 //! to database layer for simple CRUD operations on recent documents tracking table.
 
-use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::RecentDocumentsRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

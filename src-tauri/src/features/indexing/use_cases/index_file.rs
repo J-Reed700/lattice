@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::indexing::index_file::IndexFileUseCase;
-//! use lattice::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
+//! use lattice_core::application::use_cases::indexing::index_file::IndexFileUseCase;
+//! use lattice_core::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
 //!
 //! # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IndexFileRequestDto {
@@ -32,18 +32,18 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
-    BlobLease, ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort,
-    DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
-    SparseTermStorePort, VectorSearchPort,
-};
-use crate::domain::entities::Document;
-use crate::domain::value_objects::SparseEmbedding;
 use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::LibraryGc;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
+    BlobLease, ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort,
+    DocumentIndexObserver, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
+    FileStoragePort, SearchResultCachePort, SparseTermStorePort, VectorSearchPort,
+};
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::{AppError, Result};
 use tracing::instrument;
 
 mod prepare;
@@ -96,13 +96,14 @@ pub(crate) struct PublishedChunk {
 /// document and forces a full HNSW rebuild at the next start.
 pub(crate) async fn publish_chunks_to_live_index(
     search: Arc<dyn VectorSearchPort>,
+    query_cache: Option<&dyn SearchResultCachePort>,
     document_id: &str,
     chunks: Vec<PublishedChunk>,
 ) -> Result<()> {
     let entries: Vec<_> = chunks
         .into_iter()
         .map(
-            |chunk| crate::application::ports::vector_search_port::VectorIndexEntry {
+            |chunk| lattice_core::application::ports::vector_search_port::VectorIndexEntry {
                 id: format!("emb_{}", chunk.chunk_id),
                 embedding: chunk.embedding,
                 content: chunk.content,
@@ -115,7 +116,9 @@ pub(crate) async fn publish_chunks_to_live_index(
     tokio::task::spawn_blocking(move || search.publish_embeddings(entries)).await
         .map_err(|error| AppError::Other(format!("Search indexing task failed: {error}")))?
         .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))?;
-    crate::features::search::query_cache::invalidate_query_cache();
+    if let Some(cache) = query_cache {
+        cache.invalidate_corpus();
+    }
     Ok(())
 }
 
@@ -149,6 +152,11 @@ pub struct IndexFileUseCase {
     /// Learned sparse term postings, written alongside the dense vectors.
     /// `None` leaves indexing byte-for-byte as it was.
     sparse_term_store: Option<Arc<dyn SparseTermStorePort>>,
+    /// Search results cached against the corpus, dropped once a document
+    /// lands so a repeated query sees it.
+    query_cache: Option<Arc<dyn SearchResultCachePort>>,
+    /// Told when a document is committed; the summary tier queues it.
+    index_observer: Option<Arc<dyn DocumentIndexObserver>>,
 }
 
 impl IndexFileUseCase {
@@ -181,6 +189,8 @@ impl IndexFileUseCase {
             uow_factory,
             vector_search: None,
             sparse_term_store: None,
+            query_cache: None,
+            index_observer: None,
         }
     }
 
@@ -203,6 +213,26 @@ impl IndexFileUseCase {
     pub fn with_sparse_term_store(mut self, store: Arc<dyn SparseTermStorePort>) -> Self {
         self.sparse_term_store = Some(store);
         self
+    }
+
+    /// Invalidate `cache` whenever a document becomes searchable.
+    #[must_use]
+    pub fn with_query_cache(mut self, cache: Arc<dyn SearchResultCachePort>) -> Self {
+        self.query_cache = Some(cache);
+        self
+    }
+
+    /// Tell `observer` about every document this use case commits.
+    #[must_use]
+    pub fn with_index_observer(mut self, observer: Arc<dyn DocumentIndexObserver>) -> Self {
+        self.index_observer = Some(observer);
+        self
+    }
+
+    fn invalidate_query_cache(&self) {
+        if let Some(cache) = &self.query_cache {
+            cache.invalidate_corpus();
+        }
     }
 
     /// True when this indexing run should also produce sparse postings.
@@ -232,8 +262,8 @@ impl IndexFileUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::indexing::index_file::IndexFileUseCase;
-    /// # use lattice::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
+    /// # use lattice_core::application::use_cases::indexing::index_file::IndexFileUseCase;
+    /// # use lattice_core::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
     /// # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = IndexFileRequestDto {
     ///     path: "/docs/paper.pdf".to_string(),
@@ -395,10 +425,12 @@ impl IndexFileUseCase {
                 .map_err(|e| AppError::Other(format!("Search cleanup task failed: {e}")))??;
         }
         self.publish_document(&document, embeddings).await?;
-        crate::features::search::query_cache::invalidate_query_cache();
+        self.invalidate_query_cache();
         // Summaries are a background tier: this returns before the model is
         // even consulted, and does nothing at all while the tier is off.
-        crate::features::summaries::notify_document_indexed(&document_id).await;
+        if let Some(observer) = &self.index_observer {
+            observer.document_indexed(&document_id).await;
+        }
         Ok(document_id)
     }
 
@@ -442,7 +474,7 @@ impl IndexFileUseCase {
             .ok_or_else(|| AppError::NotFound(format!("Saved document {document_id} not found")))?;
         let embeddings = self.embedding_repo.find_by_document_id(document_id).await?;
         self.publish_document(&document, embeddings).await?;
-        crate::features::search::query_cache::invalidate_query_cache();
+        self.invalidate_query_cache();
         Ok(())
     }
 
@@ -476,7 +508,13 @@ impl IndexFileUseCase {
                 })
             })
             .collect();
-        publish_chunks_to_live_index(search, &document.id().to_string(), chunks?).await
+        publish_chunks_to_live_index(
+            search,
+            self.query_cache.as_deref(),
+            &document.id().to_string(),
+            chunks?,
+        )
+        .await
     }
 }
 

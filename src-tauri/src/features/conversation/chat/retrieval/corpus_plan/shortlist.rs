@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::warn;
 
-use crate::application::contracts::search::CorpusDocument;
+use lattice_core::application::contracts::search::CorpusDocument;
 
 use super::super::{select_informative_terms, tokenize_keyword_terms};
 use super::{

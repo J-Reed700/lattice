@@ -2,12 +2,12 @@
 //!
 //! Opens a file by document ID, looking up the file path first.
 
-use crate::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
-use crate::application::services::FileType;
 use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
 use crate::features::web::article_detector::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
+use lattice_core::application::services::FileType;
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -124,16 +124,16 @@ impl OpenFileByIdUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::file_system_port::FileSystemPort;
-    use crate::application::ports::{DocumentRepositoryPort, RepositoryPort};
-    use crate::domain::entities::Document;
+    use lattice_core::application::ports::file_system_port::FileSystemPort;
+    use lattice_core::application::ports::{DocumentRepositoryPort, RepositoryPort};
+    use lattice_core::domain::entities::Document;
     // The fake vault root has to be absolute *on the host*: `/lattice` has a
     // root but no prefix, so Windows does not treat it as absolute and
     // `validate_path` resolves it against the current directory, which then
     // falls outside the configured root and turns every success case into an
     // `InvalidInput`. `test_paths::abs` spells it per-platform instead.
-    use crate::shared::testing::paths::{abs, abs_str};
     use async_trait::async_trait;
+    use lattice_core::shared::testing::paths::{abs, abs_str};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -162,7 +162,7 @@ mod tests {
 
         async fn find_by_filter(
             &self,
-            _filter: &dyn crate::application::ports::repository_port::Filter,
+            _filter: &dyn lattice_core::application::ports::repository_port::Filter,
         ) -> Result<Vec<Document>> {
             unimplemented!()
         }
@@ -224,8 +224,8 @@ mod tests {
 
         async fn find_by_checksum(
             &self,
-            _checksum: &crate::domain::value_objects::Checksum,
-        ) -> Result<Option<crate::domain::entities::Document>> {
+            _checksum: &lattice_core::domain::value_objects::Checksum,
+        ) -> Result<Option<lattice_core::domain::entities::Document>> {
             Ok(None)
         }
 
@@ -240,7 +240,7 @@ mod tests {
         async fn find_all_paginated(
             &self,
             _limit: usize,
-        ) -> Result<Vec<crate::domain::entities::Document>> {
+        ) -> Result<Vec<lattice_core::domain::entities::Document>> {
             Ok(vec![])
         }
     }
@@ -341,8 +341,11 @@ mod tests {
                 .any(|p| p == &path.display().to_string())
         }
 
-        async fn metadata(&self, _path: &Path) -> Result<crate::application::ports::FileMetadata> {
-            Ok(crate::application::ports::FileMetadata {
+        async fn metadata(
+            &self,
+            _path: &Path,
+        ) -> Result<lattice_core::application::ports::FileMetadata> {
+            Ok(lattice_core::application::ports::FileMetadata {
                 size: 0,
                 modified_at: 0,
                 is_file: true,

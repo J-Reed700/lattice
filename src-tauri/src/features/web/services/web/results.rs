@@ -1,8 +1,8 @@
 //! Parsing search-result pages into canonical, deduplicated result URLs.
 use super::page::run_html_parser;
 use super::{WebSearchResult, WebService};
-use crate::shared::error::Result;
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
+use lattice_core::shared::error::Result;
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use url::{form_urlencoded, Url};

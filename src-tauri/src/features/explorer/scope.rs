@@ -5,7 +5,7 @@
 //! again, and anything that lands outside (a `..`, an absolute path, a symlink
 //! pointing out) is refused before a byte is read.
 
-use crate::shared::{AppError, Result};
+use lattice_core::shared::{AppError, Result};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone)]

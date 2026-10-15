@@ -7,8 +7,8 @@
 //!
 //! This is a CRITICAL SECURITY FIX - never store API keys in plaintext!
 
-use crate::shared::error::{AppError, Result};
 use keyring::Entry;
+use lattice_core::shared::error::{AppError, Result};
 use tracing::{error, info, warn};
 
 /// Service name for keyring entries
@@ -142,7 +142,7 @@ impl SecureStorage {
                 }
                 Err(e) => {
                     error!("Failed to retrieve API key '{}': {}", key_name, e);
-                    Err(e.into())
+                    Err(AppError::KeyringError(e.to_string()))
                 }
             }
         })
@@ -179,7 +179,7 @@ impl SecureStorage {
                 }
                 Err(e) => {
                     error!("Failed to delete API key '{}': {}", key_name, e);
-                    Err(e.into())
+                    Err(AppError::KeyringError(e.to_string()))
                 }
             }
         })

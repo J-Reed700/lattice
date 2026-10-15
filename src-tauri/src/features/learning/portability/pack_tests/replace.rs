@@ -11,7 +11,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 #[tokio::test]
 async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Result<()> {

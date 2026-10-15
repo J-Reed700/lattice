@@ -14,8 +14,8 @@
 //! - Progress calculation accuracy
 //! - Integration between DownloadSession and DownloadProgress
 //! - Event conversion in DownloadEventBridge
-use lattice::domain::download::{DownloadProgress, DownloadSession, DownloadState};
 use lattice::features::download::events::infra_events::DownloadEvent as TauriDownloadEvent;
+use lattice_core::domain::download::{DownloadProgress, DownloadSession, DownloadState};
 
 #[test]
 fn test_download_progress_snapshot_creation() {

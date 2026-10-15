@@ -6,7 +6,7 @@
 //! Callers look up and record inside their own transaction, so the ledger row
 //! commits or rolls back with the work it describes.
 use super::persistence::{db, decode, encode, now};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, Sqlite};
 

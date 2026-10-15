@@ -3,10 +3,8 @@
 //! Tauri commands for embedding generation and model management.
 //! Routes to interfaces/commands/domains/embeddings.rs implementations.
 
-use crate::{
-    features::embedding::commands::{self as embeddings, EmbeddingState},
-    shared::ipc::ApiError,
-};
+use crate::features::embedding::commands::{self as embeddings, EmbeddingState};
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

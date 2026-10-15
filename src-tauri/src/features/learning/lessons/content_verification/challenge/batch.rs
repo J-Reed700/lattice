@@ -1,6 +1,8 @@
 //! Challenge a batch of provisional approvals without combining their evidence.
 use super::*;
-use crate::application::services::claim_verification::{render_batch_evidence, LocatedClaim};
+use lattice_core::application::services::claim_verification::{
+    render_batch_evidence, LocatedClaim,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

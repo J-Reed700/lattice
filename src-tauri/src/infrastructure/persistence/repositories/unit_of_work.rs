@@ -35,16 +35,16 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::application::ports::{
+use lattice_core::application::ports::{
     unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
     UnitOfWork as UnitOfWorkTrait, UnitOfWorkFactory as UnitOfWorkFactoryTrait,
 };
-use crate::application::ports::{
+use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
-use crate::domain::repositories::{SearchRepository, SystemRepository};
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::domain::repositories::{SearchRepository, SystemRepository};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
@@ -213,7 +213,7 @@ impl UnitOfWorkFactoryTrait for SqliteUnitOfWorkFactory {
 #[cfg(test)]
 mod tests {
     use super::SqliteUnitOfWork;
-    use crate::application::ports::UnitOfWork as UnitOfWorkTrait;
+    use lattice_core::application::ports::UnitOfWork as UnitOfWorkTrait;
     use sqlx::SqlitePool;
 
     async fn transaction_with_pending_write() -> (SqlitePool, SqliteUnitOfWork) {

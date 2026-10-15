@@ -5,7 +5,7 @@ use super::chat::{
 };
 use crate::features::conversation::chat::ports::{ChatRuntime, ConversationBranches};
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
-use crate::shared::{error::AppError, ipc::ApiError};
+use lattice_core::shared::{error::AppError, ipc::ApiError};
 
 pub async fn create_conversation_tangent_impl(
     request: CreateTangentRequestDto,
@@ -50,7 +50,7 @@ pub async fn promote_conversation_tangent_impl(
 }
 
 fn to_message_dto(
-    message: &crate::domain::conversation::ConversationMessage,
+    message: &lattice_core::domain::conversation::ConversationMessage,
 ) -> crate::features::conversation::dto::MessageDto {
     crate::features::conversation::dto::MessageDto {
         id: message.id.to_string(),
@@ -263,7 +263,7 @@ async fn insert_failed_question(
     if let Err(persist_error) = branches
         .add_message_with_status(
             conversation_id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             content,
             0,
             metadata,
@@ -304,7 +304,7 @@ mod tests {
         // What the chat turn leaves behind when generation fails.
         repo.add_message_with_status(
             &id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             "why?",
             0,
             None,

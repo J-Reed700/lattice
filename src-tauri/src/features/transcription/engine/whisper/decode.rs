@@ -5,8 +5,8 @@ use candle_core::{IndexOp, Tensor, D};
 use candle_transformers::models::whisper::{self as whisper};
 
 use super::{DecodeResult, LoadedWhisper};
-use crate::application::ports::transcription_port::TranscriptSegment;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::transcription_port::TranscriptSegment;
+use lattice_core::shared::error::AppError;
 
 fn inference_error(e: candle_core::Error) -> AppError {
     AppError::Other(format!("whisper inference failed: {e}"))

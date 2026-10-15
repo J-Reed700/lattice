@@ -53,7 +53,7 @@ pub async fn create_learning_assessment_blueprint(
             .iter()
             .find(|s| s.versions.iter().any(|v| &v.id == version_id))
             .ok_or_else(|| {
-                ApiError::from(crate::shared::error::AppError::InvalidInput(
+                ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
                     "Assessment source is not part of this program.".into(),
                 ))
             })?;
@@ -181,7 +181,7 @@ pub async fn submit_learning_assessment_form(
             && item.ordered_values.is_empty()
     }) {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Save a response for every assessment item before submitting.".into(),
             ),
         ));

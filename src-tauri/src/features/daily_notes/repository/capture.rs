@@ -8,8 +8,8 @@ use crate::features::daily_notes::dto::{
     QuickCaptureResultDto, WorkspaceNoteDto,
 };
 use crate::features::qa::dto::SourceDto;
-use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use sqlx::{Sqlite, Transaction};
 
 impl DailyNotesRepository {

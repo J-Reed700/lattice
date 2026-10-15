@@ -64,13 +64,14 @@ async fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let capture = Arc::new(MockPageCapture::new());
     let events = Arc::new(RecordingEvents::default());
-    let jobs = crate::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
     let service = Arc::new(WebPageSnapshotService::new(
         pool.clone(),
         dir.path().join("web-snapshots"),
         capture.clone(),
         jobs,
         events.clone(),
+        Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
     ));
     service.register_job().await.unwrap();
     Fixture {
@@ -96,6 +97,23 @@ impl Fixture {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("the snapshot never settled");
+    }
+
+    /// The statuses of every changed event so far, once the last is `ready`.
+    async fn statuses_until_ready(&self) -> Vec<String> {
+        for _ in 0..500 {
+            let statuses: Vec<String> = self
+                .events
+                .named(CHANGED_EVENT)
+                .iter()
+                .map(|event| event["snapshot"]["status"].as_str().unwrap().to_string())
+                .collect();
+            if statuses.last().map(String::as_str) == Some("ready") {
+                return statuses;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the ready event never arrived");
     }
 
     async fn ready(&self) -> WebPageSnapshotDto {
@@ -142,12 +160,8 @@ async fn capture_goes_pending_then_ready_with_hash() {
     assert_eq!(ready.resource_count, 2);
     assert!(!f.root().join(format!("{}.html.part", ready.id)).exists());
 
-    let statuses: Vec<String> = f
-        .events
-        .named(CHANGED_EVENT)
-        .iter()
-        .map(|event| event["snapshot"]["status"].as_str().unwrap().to_string())
-        .collect();
+    // The row turns ready before the job announces it, so wait for the event.
+    let statuses = f.statuses_until_ready().await;
     assert_eq!(statuses.first().map(String::as_str), Some("pending"));
     assert_eq!(statuses.last().map(String::as_str), Some("ready"));
 }

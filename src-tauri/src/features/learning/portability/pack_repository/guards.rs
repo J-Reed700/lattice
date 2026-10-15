@@ -3,7 +3,7 @@
 //! a pack only imports into the same database schema that wrote it.
 use super::{db, invalid, validation::validate_program};
 use crate::features::learning::{dto::LearningProgramDto, repository::LearningRepository};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
 /// A pending or running lesson job for this course. Replacing the course

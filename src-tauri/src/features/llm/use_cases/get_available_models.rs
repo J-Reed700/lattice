@@ -19,9 +19,9 @@
 //! }
 //! ```
 
-use crate::application::ports::model_catalog::ModelCatalogPort;
 use crate::features::llm::dto::{AvailableModelsDto, ModelInfoDto};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_catalog::ModelCatalogPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetAvailableModelsUseCase {
@@ -68,7 +68,7 @@ impl GetAvailableModelsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_catalog::MockModelCatalogPort;
+    use lattice_core::application::ports::model_catalog::MockModelCatalogPort;
 
     #[tokio::test]
     async fn test_get_available_models_returns_all() {

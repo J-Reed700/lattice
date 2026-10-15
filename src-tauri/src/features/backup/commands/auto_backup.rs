@@ -1,7 +1,7 @@
 //! Start/stop the scheduled auto-backup job.
 
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use tauri::State;
 
 /// Enables automatic scheduled backups.

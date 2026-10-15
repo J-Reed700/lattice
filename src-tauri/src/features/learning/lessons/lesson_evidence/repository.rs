@@ -3,7 +3,7 @@ use crate::features::learning::{
     content_verification::LessonVerificationReport, dto::LearningLessonDto,
     repository::LearningRepository,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 #[derive(sqlx::FromRow)]

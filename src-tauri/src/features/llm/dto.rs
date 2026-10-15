@@ -194,7 +194,7 @@ pub struct DownloadModelRequestDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadModelResponseDto {
     /// Operation state indicating what happened
-    pub state: crate::domain::download::DownloadOperationState,
+    pub state: lattice_core::domain::download::DownloadOperationState,
     /// Local filesystem path to downloaded model (if available)
     pub path: Option<String>,
 }

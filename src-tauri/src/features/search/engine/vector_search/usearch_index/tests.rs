@@ -1,8 +1,8 @@
 //! Tests for the USearch vector index.
 use super::*;
-use crate::application::ports::vector_search_port::VectorIndexEntry;
-use crate::application::ports::VectorSearchPort;
 use crate::features::search::engine::vector_ops::cosine_similarity_simd;
+use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
+use lattice_core::application::ports::VectorSearchPort;
 use std::cmp::Ordering as CmpOrdering;
 use std::sync::atomic::Ordering;
 // The scalar reference, so these assertions do not simply repeat whatever

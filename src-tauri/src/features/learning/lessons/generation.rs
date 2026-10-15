@@ -4,14 +4,14 @@
 //! identifiers. Every evidence reference is checked against the acquired
 //! snapshot before output crosses into persistence.
 
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::GroundedRequest;
 use crate::features::learning::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
 pub(crate) use crate::features::learning::lessons::structured_call::{
     complete_json, complete_json_with_progress,
 };
 use crate::features::learning::model_call;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;

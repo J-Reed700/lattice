@@ -51,11 +51,18 @@ fn outline_citations_are_optional_but_exact_when_present() {
     let sources = [source()];
     let exact = "A process records each observation with a stable identifier.";
     assert!(optional_citation(&sources, None, "").unwrap().is_none());
-    assert!(optional_citation(&sources, Some(0), exact).unwrap().is_some());
+    assert!(optional_citation(&sources, Some(0), exact)
+        .unwrap()
+        .is_some());
     // A quote without a source, a source without a match, or any citation
     // when there are no sources is a fabrication.
     assert!(optional_citation(&sources, None, exact).is_err());
-    assert!(optional_citation(&sources, Some(0), "Words that appear nowhere in the saved text.").is_err());
+    assert!(optional_citation(
+        &sources,
+        Some(0),
+        "Words that appear nowhere in the saved text."
+    )
+    .is_err());
     assert!(optional_citation(&sources, Some(1), exact).is_err());
     assert!(optional_citation(&[], Some(0), exact).is_err());
     assert!(optional_citation(&[], None, "").unwrap().is_none());

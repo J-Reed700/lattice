@@ -8,15 +8,15 @@
 //! mock repository would assert that the code calls itself.
 
 use super::*;
-use crate::application::ports::conversation_memory::{
+use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::application::ports::conversation_memory::{
     MemoryCommitCandidate, MemoryCommitPreconditions, SourceReadLimits, SourceSpanRef,
     SummaryUpdate,
 };
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem, MemoryKind,
     MemoryReview, MemoryState, MemoryValidity, SourceRole,
 };
-use crate::features::conversation::repository::ConversationRepository;
 
 async fn write_test_vector(
     repository: &ConversationRepository,
@@ -24,7 +24,7 @@ async fn write_test_vector(
     vector_id: &str,
     message_id: &str,
     content: &str,
-) -> crate::shared::error::Result<u64> {
+) -> lattice_core::shared::error::Result<u64> {
     repository
         .persist_memory_vector(
             conversation_id,
@@ -1723,8 +1723,8 @@ async fn deleting_an_early_message_drops_the_summary_but_not_the_watermark() {
 /// summariser is told to leave out.
 #[tokio::test]
 async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
-    use crate::domain::conversation::memory::{redact_suppressed, SuppressedSpan};
     use crate::features::conversation::knowledge_dto::KnowledgeRequestDto;
+    use lattice_core::domain::conversation::memory::{redact_suppressed, SuppressedSpan};
 
     let pool = create_test_pool().await;
     setup_schema(&pool).await;

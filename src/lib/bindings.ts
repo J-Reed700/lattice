@@ -1404,7 +1404,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks via excessive searches
  * - **Input Validation**: Sanitizes query to prevent injection attacks
- * - **Audit Logging (CWE-778)**: Logs all searches with result count and cache status
  * - **Access Tracking**: Records document access asynchronously for usage analytics
  *
  * # Search Modes
@@ -1431,7 +1430,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * 7. Enrich results with document metadata and snippets
  * 8. Store results in cache for future requests
  * 9. Track document access asynchronously
- * 10. Log audit event with query and result count
  */
 async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
@@ -1479,7 +1477,6 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query
- * - **Audit Logging (CWE-778)**: Logs searches with result count
  *
  * # Performance
  *
@@ -1563,7 +1560,6 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * # Security
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
- * - **Audit Logging (CWE-778)**: Logs similarity searches with chunk ID
  *
  * # Algorithm
  *
@@ -1591,8 +1587,7 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * 6. Filter out source chunk
  * 7. Take top `limit` results
  * 8. Enrich with metadata
- * 9. Log audit event with "similar:{chunk_id}" query
- * 10. Return similar documents
+ * 9. Return similar documents
  */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1672,7 +1667,6 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
- * - **Audit Logging (CWE-778)**: Logs searches with result count
  *
  * # Recency Scoring
  *
@@ -1710,8 +1704,7 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * 6. Run the library search orchestrator
  * 7. Enrich results with metadata
  * 8. Boost recently updated documents
- * 9. Log audit event
- * 10. Return time-boosted results
+ * 9. Return time-boosted results
  */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1744,7 +1737,6 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
  *
  * - Rate limiting applied once for the batch
  * - Each query validated individually
- * - Audit logged as batch operation
  *
  * ## Example
  *
@@ -2382,6 +2374,18 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The newest lines of the backend's log file, oldest first. `limit` defaults
+ * to 300 and is capped at 1000; no log file yet gives an empty list.
+ */
+async getBackendLogs(limit: number | null) : Promise<Result<BackendLogEntry[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|get_backend_logs", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAllTagsWithCounts() : Promise<Result<TagWithCountDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:tags|get_all_tags_with_counts") };
@@ -2557,7 +2561,7 @@ async clearCache() : Promise<Result<null, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton statistics
+ * Reads the statistics of the app's query cache, which the container holds
  */
 async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
     try {
@@ -2631,7 +2635,7 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton metrics
+ * Reads the metrics of the app's query cache, which the container holds
  */
 async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
     try {
@@ -2698,7 +2702,7 @@ async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton
+ * Clears the app's query cache, which the container holds
  */
 async clearSearchCache() : Promise<Result<null, AppError>> {
     try {
@@ -3965,7 +3969,7 @@ export type AdoptLearningSourceVersionRequestDto = { operationId: string; progra
  * # Examples
  *
  * ```rust
- * # use lattice::shared::ipc::{ApiError, ErrorCode};
+ * # use lattice_core::shared::ipc::{ApiError, ErrorCode};
  * let error = ApiError {
  * code: ErrorCode::NotFound,
  * message: "Document not found".to_string(),
@@ -4176,8 +4180,8 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::DomainError;
  * let domain_err = DomainError::EntityNotFound {
  * entity_type: "Document".to_string(),
  * identifier: "doc-123".to_string(),
@@ -4193,7 +4197,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::InvalidConfig {
  * details: "Missing required field 'api_key'".to_string(),
  * };
@@ -4208,7 +4212,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::ServiceNotAvailable {
  * service: "EmbeddingService".to_string(),
  * reason: "Model not loaded".to_string(),
@@ -4224,7 +4228,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::QueueFull {
  * queue_name: "indexing_queue".to_string(),
  * };
@@ -4239,7 +4243,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::SerializationFailed {
  * context: "DocumentDTO".to_string(),
  * reason: "Invalid UTF-8 in field 'content'".to_string(),
@@ -4254,7 +4258,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::DeserializationFailed {
  * context: "SearchRequest".to_string(),
  * reason: "Missing required field 'query'".to_string(),
@@ -4269,7 +4273,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::JsonError {
  * message: "Expected comma".to_string(),
  * line: 42,
@@ -4286,7 +4290,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::ParsingError {
  * context: "CSV file".to_string(),
  * reason: "Unexpected end of file".to_string(),
@@ -4301,7 +4305,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::UseCaseFailed {
  * use_case: "IndexDocumentUseCase".to_string(),
  * reason: "Embedding generation timed out".to_string(),
@@ -4316,7 +4320,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::MappingError {
  * context: "Document -> DocumentDTO".to_string(),
  * reason: "Missing required field".to_string(),
@@ -4396,6 +4400,12 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
+/**
+ * One line of the backend's file log. Lines that do not match the log format
+ * carry only `message` (the raw line) and an `Unknown` level.
+ */
+export type BackendLogEntry = { timestamp: string | null; level: BackendLogLevel; target: string | null; message: string }
+export type BackendLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "unknown"
 export type BacklinksResultDto = { documentIds: string[] }
 export type BackupInfoDto = { path: string; name: string; createdAt: string; version: string; fileCount: number; size: number }
 /**
@@ -4427,7 +4437,7 @@ compressBackups: boolean }
  *
  * # Example
  * ```rust
- * use lattice::application::dtos::batch_dto::BatchImportOptionsDto;
+ * use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
  *
  * let options = BatchImportOptionsDto {
  * extract_article: Some(true),
@@ -5260,7 +5270,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::EntityNotFound {
  * entity_type: "Document".to_string(),
  * identifier: "doc-123".to_string(),
@@ -5276,7 +5286,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::InvalidState {
  * details: "Document is archived and cannot be modified".to_string(),
  * };
@@ -5290,7 +5300,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ValidationFailed {
  * field: "email".to_string(),
  * reason: "Invalid email format".to_string(),
@@ -5306,7 +5316,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * # use std::path::PathBuf;
  * let error = DomainError::UnsupportedFileType {
  * path: PathBuf::from("/path/to/file.xyz"),
@@ -5322,7 +5332,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * # use std::path::PathBuf;
  * let error = DomainError::FileTooLarge {
  * path: PathBuf::from("/path/to/huge.pdf"),
@@ -5340,7 +5350,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ConcurrentModification {
  * resource: "Document doc-123".to_string(),
  * details: "Version mismatch: expected v2, found v3".to_string(),
@@ -5356,7 +5366,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ConstraintViolation {
  * constraint: "A document must have at least one chunk".to_string(),
  * };
@@ -5436,7 +5446,7 @@ export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: 
  * # Examples
  *
  * ```rust
- * # use lattice::shared::ipc::ErrorCode;
+ * # use lattice_core::shared::ipc::ErrorCode;
  * let code = ErrorCode::NotFound;
  * let json = serde_json::to_string(&code).unwrap();
  * assert_eq!(json, "\"NOT_FOUND\"");
@@ -8009,7 +8019,7 @@ jobId: string }
  *
  * # Example
  * ```rust,no_run
- * use lattice::application::dtos::batch_dto::{
+ * use lattice_core::application::dtos::batch_dto::{
  * StartBatchUrlImportRequestDto, BatchImportOptionsDto
  * };
  *

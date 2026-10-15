@@ -12,7 +12,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     service,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde_json::{json, Value};
 
 fn changed_module(candidate: &Value, index: usize, objective: &str) -> Value {
@@ -45,14 +45,27 @@ async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again()
     let llm = model(vec![
         initial.clone(),
         issue(0),
-        changed_module(&initial, 0, "Compare the groups with an observable measurement."),
+        changed_module(
+            &initial,
+            0,
+            "Compare the groups with an observable measurement.",
+        ),
         clean(),
-        changed_module(&initial, 0, "Compare the groups with one stated, observable measurement."),
+        changed_module(
+            &initial,
+            0,
+            "Compare the groups with one stated, observable measurement.",
+        ),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert!(review.issues.is_empty());
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
@@ -70,7 +83,11 @@ async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
     let llm = model(vec![
         initial.clone(),
         issue(0),
-        changed_module(&initial, 0, "Compare the groups with an observable measurement."),
+        changed_module(
+            &initial,
+            0,
+            "Compare the groups with an observable measurement.",
+        ),
         verdicts(
             &[("finding-1", "resolved")],
             vec![plan_finding(
@@ -83,7 +100,12 @@ async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
     // The unchanged module is not re-litigated: its finding is dropped.
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert!(review.issues.is_empty());
     let prompts = llm.prompts.lock().unwrap();
     let schema_paths = |prompt: &str| -> Vec<String> {
@@ -263,7 +285,12 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert!(review.issues.is_empty());
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     Ok(())
@@ -321,7 +348,12 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     )
     .await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
     assert!(review.issues.is_empty());
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 6);

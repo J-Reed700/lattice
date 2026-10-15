@@ -11,7 +11,7 @@
 //! # Example
 //! ```rust,no_run
 //! use lattice::infrastructure::services::function_executor::FunctionExecutor;
-//! use lattice::domain::function_call::FunctionCall;
+//! use lattice_core::domain::function_call::FunctionCall;
 //! use serde_json::json;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,10 +38,6 @@ mod web_tools;
 #[cfg(test)]
 mod tests;
 
-use crate::application::ports::{
-    ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
-    RecentDocumentsRepositoryPort,
-};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
@@ -50,9 +46,13 @@ use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::WebServiceTrait;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use jsonschema::JSONSchema;
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
+    RecentDocumentsRepositoryPort,
+};
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -134,6 +134,14 @@ pub struct FunctionExecutorServices {
 impl FunctionExecutor {
     /// Create a new function executor with no custom tools
     pub fn new(services: FunctionExecutorServices) -> Self {
+        Self::new_with_custom_tools(services, HashMap::new())
+    }
+
+    /// Create a function executor that also runs the user's custom tools, by name.
+    pub fn new_with_custom_tools(
+        services: FunctionExecutorServices,
+        custom_tools: HashMap<String, CustomToolSettingsDto>,
+    ) -> Self {
         let FunctionExecutorServices {
             registry,
             embedding_service,
@@ -148,39 +156,6 @@ impl FunctionExecutor {
             file_storage,
             web_service,
         } = services;
-        Self::new_with_custom_tools(
-            registry,
-            embedding_service,
-            search_service,
-            bm25_service,
-            hybrid_search,
-            document_repository,
-            chunk_repository,
-            tag_service,
-            favorites_repository,
-            recent_documents_repository,
-            file_storage,
-            web_service,
-            HashMap::new(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_custom_tools(
-        registry: Arc<dyn FunctionRegistryTrait>,
-        embedding_service: Arc<dyn EmbeddingServiceTrait>,
-        search_service: Arc<dyn SearchServiceTrait>,
-        bm25_service: Arc<dyn BM25SearchTrait>,
-        hybrid_search: Arc<HybridSearchUseCase>,
-        document_repository: Arc<dyn DocumentRepository>,
-        chunk_repository: Arc<dyn ChunkRepositoryPort>,
-        tag_service: Arc<dyn TagServiceTrait>,
-        favorites_repository: Arc<dyn FavoritesRepositoryPort>,
-        recent_documents_repository: Arc<dyn RecentDocumentsRepositoryPort>,
-        file_storage: Arc<dyn FileStoragePort>,
-        web_service: Arc<dyn WebServiceTrait>,
-        custom_tools: HashMap<String, CustomToolSettingsDto>,
-    ) -> Self {
         Self {
             registry,
             embedding_service,

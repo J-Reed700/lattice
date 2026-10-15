@@ -218,6 +218,7 @@
     "health:allow-get-system-stats",
     "health:allow-get-version",
     "health:allow-initialize-database",
+    "health:allow-get-backend-logs",
     "cache:allow-clear-cache",
     "cache:allow-get-cache-stats",
     "cache:allow-get-cache-metrics",

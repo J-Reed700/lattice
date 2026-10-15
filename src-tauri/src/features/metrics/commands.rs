@@ -30,7 +30,7 @@
 
 use crate::features::metrics::dto::MetricsSnapshotDto;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 /// Retrieves comprehensive snapshot of all application metrics

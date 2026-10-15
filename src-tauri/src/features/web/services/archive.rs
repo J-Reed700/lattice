@@ -63,8 +63,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::domain::ports::article_archive::ArticleArchive;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::{AppError, Result};
 
 mod content;
 mod naming;
@@ -232,7 +232,7 @@ impl WebArchiveService {
     /// # Errors
     /// - `AppError::InvalidState` if home directory cannot be determined
     pub fn default_root() -> Result<PathBuf> {
-        crate::shared::fs::roots::web_archive_root()
+        lattice_core::shared::fs::roots::web_archive_root()
     }
 
     /// Create a service rooted at an explicit directory.

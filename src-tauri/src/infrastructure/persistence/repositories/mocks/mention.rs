@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use parking_lot::RwLock;
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::Mention;
 
@@ -42,14 +42,14 @@ impl Default for MockMentionRepository {
 }
 
 #[async_trait]
-impl crate::application::ports::MentionRepositoryPort for MockMentionRepository {
+impl lattice_core::application::ports::MentionRepositoryPort for MockMentionRepository {
     async fn create_mention(
         &self,
         name: &str,
         mention_type: &str,
         metadata: Option<&str>,
-    ) -> Result<crate::application::ports::MentionData, AppError> {
-        use crate::shared::types::{ChunkId, DocumentId};
+    ) -> Result<lattice_core::application::ports::MentionData, AppError> {
+        use lattice_core::shared::types::{ChunkId, DocumentId};
         use uuid::Uuid;
 
         // For the mock, we need to create a simplified representation
@@ -61,7 +61,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 
         if let Some(existing_id) = self.name_index.read().get(name).cloned() {
             if let Some(_mention) = self.mentions.read().get(&existing_id) {
-                return Ok(crate::application::ports::MentionData {
+                return Ok(lattice_core::application::ports::MentionData {
                     id: existing_id,
                     name: name.to_string(),
                     mention_type: mention_type.to_string(),
@@ -85,7 +85,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
             .write()
             .insert(name.to_string(), id_str.clone());
 
-        Ok(crate::application::ports::MentionData {
+        Ok(lattice_core::application::ports::MentionData {
             id: id_str,
             name: name.to_string(),
             mention_type: mention_type.to_string(),
@@ -97,11 +97,11 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
     async fn find_mention_by_name(
         &self,
         name: &str,
-    ) -> Result<Option<crate::application::ports::MentionData>, AppError> {
+    ) -> Result<Option<lattice_core::application::ports::MentionData>, AppError> {
         let name_index = self.name_index.read();
         if let Some(id) = name_index.get(name) {
             if let Some(mention) = self.mentions.read().get(id).cloned() {
-                return Ok(Some(crate::application::ports::MentionData {
+                return Ok(Some(lattice_core::application::ports::MentionData {
                     id: id.clone(),
                     name: mention.text().to_string(),
                     mention_type: mention.mention_type().to_string(),
@@ -117,7 +117,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         &self,
         query: &str,
         limit: i64,
-    ) -> Result<Vec<crate::application::ports::MentionData>, AppError> {
+    ) -> Result<Vec<lattice_core::application::ports::MentionData>, AppError> {
         let mentions = self.mentions.read();
         let name_index = self.name_index.read();
 
@@ -127,10 +127,10 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
             id_to_name.insert(id.clone(), name.clone());
         }
 
-        let mut results: Vec<crate::application::ports::MentionData> = mentions
+        let mut results: Vec<lattice_core::application::ports::MentionData> = mentions
             .iter()
             .filter(|(_, m)| m.text().contains(query))
-            .map(|(id, m)| crate::application::ports::MentionData {
+            .map(|(id, m)| lattice_core::application::ports::MentionData {
                 id: id.clone(),
                 name: id_to_name
                     .get(id)
@@ -149,7 +149,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
     async fn get_mentions_by_type(
         &self,
         mention_type: &str,
-    ) -> Result<Vec<crate::application::ports::MentionData>, AppError> {
+    ) -> Result<Vec<lattice_core::application::ports::MentionData>, AppError> {
         let mentions = self.mentions.read();
         let name_index = self.name_index.read();
 
@@ -159,10 +159,10 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
             id_to_name.insert(id.clone(), name.clone());
         }
 
-        let mut results: Vec<crate::application::ports::MentionData> = mentions
+        let mut results: Vec<lattice_core::application::ports::MentionData> = mentions
             .iter()
             .filter(|(_, m)| m.mention_type().to_string() == mention_type)
-            .map(|(id, m)| crate::application::ports::MentionData {
+            .map(|(id, m)| lattice_core::application::ports::MentionData {
                 id: id.clone(),
                 name: id_to_name
                     .get(id)
@@ -180,7 +180,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
     async fn get_mentions_for_document(
         &self,
         _document_id: &str,
-    ) -> Result<Vec<crate::application::ports::MentionWithContextData>, AppError> {
+    ) -> Result<Vec<lattice_core::application::ports::MentionWithContextData>, AppError> {
         Ok(vec![])
     }
 
@@ -197,7 +197,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         &self,
         _document_id: &str,
         _text: &str,
-    ) -> Result<Vec<crate::application::ports::MentionWithContextData>, AppError> {
+    ) -> Result<Vec<lattice_core::application::ports::MentionWithContextData>, AppError> {
         Ok(vec![])
     }
 
@@ -206,7 +206,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         id: &str,
         mention_type: Option<&str>,
         metadata: Option<&str>,
-    ) -> Result<crate::application::ports::MentionData, AppError> {
+    ) -> Result<lattice_core::application::ports::MentionData, AppError> {
         let mentions = self.mentions.read();
         let mention = mentions
             .get(id)
@@ -224,7 +224,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         let new_type = mention_type.unwrap_or(&current_type);
         let created_at = mention.created_at().to_rfc3339();
 
-        Ok(crate::application::ports::MentionData {
+        Ok(lattice_core::application::ports::MentionData {
             id: id.to_string(),
             name,
             mention_type: new_type.to_string(),

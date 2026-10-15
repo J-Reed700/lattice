@@ -4,20 +4,20 @@
 //! web client or a concrete search use case, so a stage can be driven by fakes.
 pub(crate) use super::dto::ExplorerFocusDto;
 pub(crate) use super::ExplorerTurn;
-use crate::application::contracts::search::{CorpusDocument, CorpusPassage};
-use crate::application::ports::conversation_memory::{
-    ConversationMemoryPort, ConversationMemoryReadPort,
-};
-use crate::application::ports::llm_port::OptionalLlmLoader;
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto;
 pub(crate) use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, ToolDefinition,
 };
-pub(crate) use crate::features::function_calling::dto::FetchUrlContentOutput;
 pub(crate) use crate::features::settings::dto::SettingsDto;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
+pub(crate) use lattice_core::application::contracts::web::FetchUrlContentOutput;
+use lattice_core::application::ports::conversation_memory::{
+    ConversationMemoryPort, ConversationMemoryReadPort,
+};
+use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -119,20 +119,22 @@ pub trait ChatStorage: Send + Sync {
     fn conversation_service(
         &self,
     ) -> Arc<dyn crate::features::conversation::ConversationServiceTrait>;
-    fn conversation_history(&self) -> Arc<dyn crate::application::ports::ConversationHistoryPort>;
+    fn conversation_history(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::ConversationHistoryPort>;
     fn conversation_context(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_context::ConversationContextPort>;
+    ) -> Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>;
     fn document_scope(
         &self,
-    ) -> Arc<dyn crate::application::ports::document_scope::DocumentScopePort>;
-    fn document_repository(&self) -> Arc<dyn crate::application::ports::DocumentRepository>;
-    fn chunk_repository(&self) -> Arc<dyn crate::application::ports::ChunkRepositoryPort>;
+    ) -> Arc<dyn lattice_core::application::ports::document_scope::DocumentScopePort>;
+    fn document_repository(&self) -> Arc<dyn lattice_core::application::ports::DocumentRepository>;
+    fn chunk_repository(&self) -> Arc<dyn lattice_core::application::ports::ChunkRepositoryPort>;
     fn chat_records(&self) -> Arc<dyn ChatRecords>;
     /// The memory ledger: what each conversation has already established.
     fn conversation_memory(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>;
+    ) -> Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>;
     /// Ask for a frozen copy of a cited page (the Page view): saves its row and
     /// queues its capture job, nothing more. Failures are logged, never
     /// returned. Test runtimes keep this no-op.
@@ -190,11 +192,11 @@ pub trait ConversationBranches: Send + Sync {
     async fn find_by_id(
         &self,
         id: &str,
-    ) -> Result<Option<crate::domain::conversation::Conversation>>;
+    ) -> Result<Option<lattice_core::domain::conversation::Conversation>>;
     /// The conversation as the client sees it.
     async fn project_conversation(
         &self,
-        conversation: &crate::domain::conversation::Conversation,
+        conversation: &lattice_core::domain::conversation::Conversation,
     ) -> Result<crate::features::conversation::dto::ConversationDto>;
     /// Drop everything after `message_id` (or inclusive of it).
     async fn truncate_after(
@@ -207,7 +209,7 @@ pub trait ConversationBranches: Send + Sync {
     async fn get_messages(
         &self,
         conversation_id: &str,
-    ) -> Result<Vec<crate::domain::conversation::ConversationMessage>>;
+    ) -> Result<Vec<lattice_core::domain::conversation::ConversationMessage>>;
     /// A branch of the conversation, up to an optional message.
     async fn fork(
         &self,
@@ -226,12 +228,12 @@ pub trait ConversationBranches: Send + Sync {
     async fn add_message_with_status(
         &self,
         conversation_id: &str,
-        role: crate::domain::conversation::MessageRole,
+        role: lattice_core::domain::conversation::MessageRole,
         content: &str,
         tokens: i64,
         metadata: Option<&str>,
         status: &str,
-    ) -> Result<crate::domain::conversation::ConversationMessage>;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 }
 
 /// The reads and writes the corpus-derived chat-starter workflow needs: the
@@ -324,6 +326,9 @@ pub trait ChatRetrieval: Send + Sync {
     async fn summary_search(
         &self,
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>>;
+    /// How much prompt the corpus planner can take in time, learned across
+    /// every turn this runtime runs — and never shared with a test's runtime.
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
 }
 
 #[async_trait]
@@ -347,18 +352,22 @@ pub trait ChatPolicy: Send + Sync {
     /// The rate limit a user-initiated delete spends.
     async fn check_delete_rate_limit(&self, name: &str) -> Result<()>;
     /// Remove a conversation and everything it owns — its in-flight turn, its
-    /// attachments, its messages — with an audit line, without spending the
-    /// user delete's rate limit.
+    /// attachments, its messages — without spending the user delete's rate
+    /// limit.
     async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()>;
 }
 
 /// Where work that outlives a request runs: a deep research turn is a job.
 pub trait ChatJobs: Send + Sync {
-    fn jobs(&self) -> Arc<crate::shared::runtime::jobs::JobRuntime>;
+    fn jobs(&self) -> Arc<lattice_core::shared::runtime::jobs::JobRuntime>;
     /// The process-wide map of commands waiting on their research turns, so
     /// the job that runs a turn answers the command that sent it — and a test
     /// process never answers the app's commands.
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters>;
+    /// The app's background scope: work a turn leaves running after it
+    /// answers — memory indexing, consolidation, the grounding check — runs
+    /// in it, so shutdown stops and joins it.
+    fn background(&self) -> Arc<lattice_core::shared::runtime::background::BackgroundTasks>;
 }
 
 /// The stop button: the process-wide registry of in-flight turns, so a stop

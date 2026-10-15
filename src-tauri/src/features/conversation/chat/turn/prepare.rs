@@ -1,10 +1,10 @@
 //! Stage 1: everything the turn establishes before it decides what to read.
 use super::budget::TurnBudget;
 use super::*;
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::DocumentReference;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::DocumentReference;
 use tokio_util::sync::CancellationToken;
 
 /// The turn as it stands once the conversation is open and its history read.
@@ -39,6 +39,20 @@ pub(super) struct PreparedTurn {
 }
 
 impl PreparedTurn {
+    /// The turn as retrieval, the tool loop and persistence read it.
+    pub(super) fn chat_turn(&self) -> ChatTurn<'_> {
+        ChatTurn {
+            conv_service: &self.conv_service,
+            conversation_id: &self.conv_id,
+            request_id: &self.turn_id,
+            message: &self.message,
+            llm: &self.llm,
+            highlight_terms: &self.highlight_terms,
+            focus: &self.focus,
+            recorder: &self.recorder,
+        }
+    }
+
     pub(super) fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
         self._guard.turn_token()
     }
@@ -57,7 +71,6 @@ pub(super) fn cancelled() -> AppError {
 }
 
 /// `parent` is the stop of the job running the turn, if one is.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,

@@ -21,7 +21,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     source_library::LearningSourceLibraryRepository,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection, SqlitePool};

@@ -62,10 +62,10 @@ fn model(id: &str) -> OcrModel {
 }
 
 fn server(launcher: &Arc<FakeLauncher>, idle_ttl: Duration) -> OcrServer {
-    OcrServer::build(
+    OcrServer::with_idle_ttl(
         Arc::clone(launcher) as Arc<dyn ServerLauncher>,
         idle_ttl,
-        Some(CancellationToken::new()),
+        Arc::default(),
     )
 }
 
@@ -165,11 +165,11 @@ async fn a_different_model_gets_a_fresh_server() {
 #[tokio::test]
 async fn shutdown_kills_the_process_even_under_a_page() {
     let launcher = Arc::new(FakeLauncher::default());
-    let shutdown = CancellationToken::new();
-    let server = Arc::new(OcrServer::build(
+    let background = Arc::new(BackgroundTasks::default());
+    let server = Arc::new(OcrServer::with_idle_ttl(
         Arc::clone(&launcher) as Arc<dyn ServerLauncher>,
         Duration::from_secs(60),
-        Some(shutdown.clone()),
+        Arc::clone(&background),
     ));
     let page = {
         let server = Arc::clone(&server);
@@ -186,7 +186,7 @@ async fn shutdown_kills_the_process_even_under_a_page() {
         tokio::task::yield_now().await;
     }
 
-    shutdown.cancel();
+    background.close();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert!(launcher.process(0).killed.load(Ordering::SeqCst));

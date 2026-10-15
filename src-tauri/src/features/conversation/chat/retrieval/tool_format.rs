@@ -1,10 +1,11 @@
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{
-    CustomQueryToolOutput, FetchUrlContentOutput, GetDocumentOutput, SemanticSearchOutput,
-    WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
+    CustomQueryToolOutput, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput,
+    WikiSummaryOutput,
 };
 use crate::features::settings::dto::ToolOutputSettingsDto;
-use crate::shared::text::{build_excerpt, safe_truncate};
+use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
+use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 pub(super) fn format_tool_result(
     tool_name: &str,

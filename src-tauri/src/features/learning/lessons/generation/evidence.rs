@@ -9,8 +9,6 @@
 //! one topic, and a topic an unusable judgement leaves out is uncovered.
 
 use super::{complete_json, parse_json};
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::GroundedRequest;
 use crate::features::learning::content_verification::digest;
 use crate::features::learning::content_verification::research::research_topics;
 use crate::features::learning::dto::{LearningLessonDto, LearningProgramDto, LearningSourceDto};
@@ -22,7 +20,9 @@ use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::{
     ReferenceCollection, ReferencePassage, PASSAGE_CHARS,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};

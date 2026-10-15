@@ -4,7 +4,7 @@
 //! selectors additionally let the UI reconnect a learner note or tutor quote to
 //! a later adopted representation without pretending an ambiguous match is exact.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 const MAX_EXACT_CHARS: usize = 2_000;

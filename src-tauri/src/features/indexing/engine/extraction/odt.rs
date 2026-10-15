@@ -3,13 +3,18 @@
 use super::archive_budget::{run_archive_work, ArchiveBudget};
 use super::markup::{attr, decode_entities, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
+use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
 
 /// Extract content from ODT files.
-pub async fn extract_odt(path: &Path, max_file_size: u64) -> Result<ExtractedContent> {
+pub async fn extract_odt(
+    path: &Path,
+    max_file_size: u64,
+    workers: &ExtractionWorkers,
+) -> Result<ExtractedContent> {
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| IndexingError::Io {
@@ -27,7 +32,10 @@ pub async fn extract_odt(path: &Path, max_file_size: u64) -> Result<ExtractedCon
     }
 
     let path_clone = path.to_path_buf();
-    let text = run_archive_work(path.to_path_buf(), move || extract_odt_sync(&path_clone)).await?;
+    let text = run_archive_work(workers, path.to_path_buf(), move || {
+        extract_odt_sync(&path_clone)
+    })
+    .await?;
 
     let metadata = ContentMetadata {
         page_count: None,

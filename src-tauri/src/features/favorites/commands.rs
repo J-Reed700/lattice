@@ -1,7 +1,7 @@
 //! Favorites/Bookmarks Management Commands
 //!
 //! Thin command controllers for managing user's favorite documents following modern patterns.
-//! Provides persistent document bookmarking with idempotent operations, audit logging,
+//! Provides persistent document bookmarking with idempotent operations,
 //! and efficient enum-based dispatch pattern.
 //!
 //! # Commands (5 total)
@@ -16,7 +16,6 @@
 //!
 //! - **Persistent Storage**: SQLite-backed favorites table
 //! - **Idempotent Operations**: Safe to add/remove multiple times
-//! - **Audit Logging (CWE-778)**: All add/remove operations logged
 //! - **Metadata Enrichment**: Favorites include document name, path, type, timestamp
 //! - **Order Preservation**: Favorites ordered by most recently added
 //!
@@ -36,10 +35,9 @@
 //! Commands delegate directly to SQLite with internal helper functions for
 //! idempotent operations and data enrichment via document JOIN queries.
 
-use crate::application::ports::FavoritesRepositoryPort;
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::FavoritesRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -126,7 +124,6 @@ pub enum FavoriteResponse {
 ///
 /// # Security
 ///
-/// **Audit Logging (CWE-778)**: Add/Remove operations logged via internal functions
 ///
 /// # Use Cases
 ///
@@ -168,11 +165,10 @@ pub async fn favorite_operation(
     }
 }
 
-/// Add a document to favorites with idempotent behavior and audit logging
+/// Add a document to favorites with idempotent behavior
 ///
 /// Adds the specified document to the user's favorites list. Operation is idempotent - calling
 /// multiple times has no effect beyond the first call. Verifies document exists before adding.
-/// All add operations are audit logged for compliance.
 ///
 /// # Arguments
 ///
@@ -227,7 +223,6 @@ pub async fn favorite_operation(
 /// 1. Verify document exists in database
 /// 2. Check if already favorited (skip if true)
 /// 3. Insert favorite record with UUID and timestamp
-/// 4. Log audit event (success or failure)
 ///
 /// # Idempotency
 ///
@@ -236,7 +231,6 @@ pub async fn favorite_operation(
 ///
 /// # Security
 ///
-/// **Audit Logging (CWE-778)**: All add operations logged with:
 /// - Action: `FavoriteAdded`
 /// - Resource ID: `favorite:{document_id}`
 /// - Metadata: document_id, operation name
@@ -257,7 +251,7 @@ pub async fn favorite_operation(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `add_favorite_internal` helper with audit logging wrapper
+/// Thin controller delegating to `add_favorite_internal` helper
 pub async fn add_favorite(
     document_id: String,
     container: State<'_, Container>,
@@ -270,35 +264,6 @@ pub async fn add_favorite_impl(container: &Container, document_id: String) -> Re
     let repository = container.favorites_repository();
     let result = add_favorite_internal(&document_id, repository.as_ref()).await;
 
-    // Audit logging (CWE-778 mitigation)
-    let audit_logger = get_audit_logger();
-    match &result {
-        Ok(_) => {
-            let event = AuditEvent::new(AuditAction::FavoriteAdded, AuditResult::success())
-                .with_resource_id(format!("favorite:{}", document_id))
-                .with_metadata("document_id", &document_id)
-                .with_metadata("operation", "add_favorite");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::FavoriteAdded,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(format!("favorite:{}", document_id))
-            .with_metadata("document_id", &document_id)
-            .with_metadata("operation", "add_favorite")
-            .with_metadata("error", e.to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
-
     result.map_err(|e| AppError::Other(format!("Failed to add favorite: {}", e)))
 }
 
@@ -310,11 +275,11 @@ async fn add_favorite_internal(
     Ok(())
 }
 
-/// Remove a document from favorites with idempotent behavior and audit logging
+/// Remove a document from favorites with idempotent behavior
 ///
 /// Removes the specified document from the user's favorites list. Operation is idempotent -
 /// calling multiple times has no effect beyond the first call. Safe to call even if document
-/// was never favorited. All remove operations are audit logged for compliance.
+/// was never favorited.
 ///
 /// # Arguments
 ///
@@ -382,7 +347,6 @@ async fn add_favorite_internal(
 /// 1. Execute DELETE query for document_id
 /// 2. Check rows affected (0 = not favorited, >0 = removed)
 /// 3. Return success regardless of initial state
-/// 4. Log audit event (success or failure)
 ///
 /// # Idempotency
 ///
@@ -391,7 +355,6 @@ async fn add_favorite_internal(
 ///
 /// # Security
 ///
-/// **Audit Logging (CWE-778)**: All remove operations logged with:
 /// - Action: `FavoriteRemoved`
 /// - Resource ID: `favorite:{document_id}`
 /// - Metadata: document_id, operation name
@@ -412,7 +375,7 @@ async fn add_favorite_internal(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `remove_favorite_internal` helper with audit logging wrapper
+/// Thin controller delegating to `remove_favorite_internal` helper
 pub async fn remove_favorite(
     document_id: String,
     container: State<'_, Container>,
@@ -427,35 +390,6 @@ pub async fn remove_favorite_impl(
 ) -> Result<(), AppError> {
     let repository = container.favorites_repository();
     let result = remove_favorite_internal(&document_id, repository.as_ref()).await;
-
-    // Audit logging (CWE-778 mitigation)
-    let audit_logger = get_audit_logger();
-    match &result {
-        Ok(_) => {
-            let event = AuditEvent::new(AuditAction::FavoriteRemoved, AuditResult::success())
-                .with_resource_id(format!("favorite:{}", document_id))
-                .with_metadata("document_id", &document_id)
-                .with_metadata("operation", "remove_favorite");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::FavoriteRemoved,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(format!("favorite:{}", document_id))
-            .with_metadata("document_id", &document_id)
-            .with_metadata("operation", "remove_favorite")
-            .with_metadata("error", e.to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result.map_err(|e| AppError::Other(format!("Failed to remove favorite: {}", e)))
 }
@@ -739,6 +673,5 @@ async fn is_favorite_internal(
 
 #[cfg(test)]
 mod tests {
-
     // Tests would go here - integration tests with test database
 }

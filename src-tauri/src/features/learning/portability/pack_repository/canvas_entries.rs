@@ -14,8 +14,8 @@ use crate::features::learning::{
         DecodedLearningPack, LearningPackEntry, LearningPackEntryKind,
     },
 };
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{BTreeMap, HashMap};

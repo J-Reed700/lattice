@@ -1,7 +1,7 @@
 //! Jobs plugin: what is pending or running, for any job kinds.
 
 use crate::interfaces::di::Container;
-use crate::shared::{ipc::ApiError, runtime::jobs::JobDto};
+use lattice_core::shared::{ipc::ApiError, runtime::jobs::JobDto};
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

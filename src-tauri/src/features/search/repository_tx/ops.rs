@@ -1,8 +1,8 @@
-use crate::domain::repositories::search_repository::SearchResult;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use crate::shared::error::AppError;
+use lattice_core::domain::repositories::search_repository::SearchResult;
+use lattice_core::shared::error::AppError;
 use sqlx::{Connection, Row, SqliteConnection};
 use tracing::{debug, error};
 

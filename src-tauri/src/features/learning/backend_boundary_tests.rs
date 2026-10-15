@@ -9,7 +9,7 @@ use super::{
         LearningLabLimits,
     },
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 fn id(seed: u128) -> String {
     uuid::Uuid::from_u128(seed).to_string()

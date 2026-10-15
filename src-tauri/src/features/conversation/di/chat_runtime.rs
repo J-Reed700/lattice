@@ -1,13 +1,12 @@
 //! Adapts desktop composition to the explicit chat workflow contracts.
-use crate::application::ports::llm_port::OptionalLlmLoader;
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::conversation::chat::ports::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -37,23 +36,26 @@ impl ChatStorage for Container {
     ) -> Arc<dyn crate::features::conversation::ConversationServiceTrait> {
         Container::conversation_service(self)
     }
-    fn conversation_history(&self) -> Arc<dyn crate::application::ports::ConversationHistoryPort> {
+    fn conversation_history(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::ConversationHistoryPort> {
         Container::conversation_history(self)
     }
     fn conversation_context(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
+    ) -> Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>
+    {
         Container::conversation_context(self)
     }
     fn document_scope(
         &self,
-    ) -> Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
+    ) -> Arc<dyn lattice_core::application::ports::document_scope::DocumentScopePort> {
         Container::document_scope(self)
     }
-    fn document_repository(&self) -> Arc<dyn crate::application::ports::DocumentRepository> {
+    fn document_repository(&self) -> Arc<dyn lattice_core::application::ports::DocumentRepository> {
         Container::document_repository(self)
     }
-    fn chunk_repository(&self) -> Arc<dyn crate::application::ports::ChunkRepositoryPort> {
+    fn chunk_repository(&self) -> Arc<dyn lattice_core::application::ports::ChunkRepositoryPort> {
         Container::chunk_repository(self)
     }
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
@@ -71,7 +73,8 @@ impl ChatStorage for Container {
     }
     fn conversation_memory(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+    ) -> Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>
+    {
         Container::conversation_memory(self)
     }
     fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots> {
@@ -151,6 +154,9 @@ impl ChatRetrieval for Container {
             .await
             .map(|search| search as Arc<dyn crate::features::summaries::search::SummarySearchPort>)
     }
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        Arc::clone(self.ai.planner_health())
+    }
 }
 
 #[async_trait]
@@ -165,7 +171,7 @@ impl ChatPolicy for Container {
             .check_rate_limit(message)
             .await
             .map_err(|error| {
-                crate::shared::error::AppError::RateLimitExceeded(error.to_string())
+                lattice_core::shared::error::AppError::RateLimitExceeded(error.to_string())
             })?;
         self.security_context()
             .input_validator()
@@ -194,7 +200,7 @@ impl ChatPolicy for Container {
             .check_rate_limit(name)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
+                lattice_core::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
             })
     }
     async fn check_delete_rate_limit(&self, name: &str) -> Result<()> {
@@ -204,7 +210,7 @@ impl ChatPolicy for Container {
             .check_rate_limit(name)
             .await
             .map_err(|e| {
-                crate::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
+                lattice_core::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
             })
     }
     async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()> {
@@ -227,14 +233,6 @@ impl ChatPolicy for Container {
         // Its snapshot rows went with it (cascade); their files go now.
         self.web_page_snapshots()
             .sweep_in_background("conversation deleted");
-
-        let audit_logger = get_audit_logger();
-        let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-            .with_resource_id(conversation_id)
-            .with_metadata("operation", "delete_conversation");
-        if let Err(e) = audit_logger.log(event).await {
-            warn!("Failed to write audit log: {}", e);
-        }
 
         Ok(())
     }
@@ -276,11 +274,14 @@ async fn delete_conversation_attachments(container: &Container, conversation_id:
 }
 
 impl ChatJobs for Container {
-    fn jobs(&self) -> Arc<crate::shared::runtime::jobs::JobRuntime> {
+    fn jobs(&self) -> Arc<lattice_core::shared::runtime::jobs::JobRuntime> {
         Arc::clone(Container::jobs(self))
     }
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
         Arc::clone(&self.research_waiters)
+    }
+    fn background(&self) -> Arc<lattice_core::shared::runtime::background::BackgroundTasks> {
+        Arc::clone(self.core.background())
     }
 }
 

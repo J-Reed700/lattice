@@ -165,7 +165,7 @@ impl ExplorerTurn {
         &self,
         call: FunctionCall,
         max_chars: usize,
-    ) -> crate::shared::Result<FunctionResult> {
+    ) -> lattice_core::shared::Result<FunctionResult> {
         if call.name != TOOL_SEARCH_FOLDER {
             return tools::execute(&self.scope, call, max_chars).await;
         }

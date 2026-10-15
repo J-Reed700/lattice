@@ -2,9 +2,9 @@
 //! or as whole aggregates with their chunks and tags.
 
 use super::parts::{fetch_chunks_for_document, fetch_tags_for_document};
-use crate::domain::entities::Document as DocumentEntity;
 use crate::infrastructure::persistence::mappers::{DocumentMapper, DocumentModel};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::entities::Document as DocumentEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
 pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<DocumentEntity>> {
@@ -130,7 +130,7 @@ pub async fn find_by_path_pattern(
 
 pub async fn find_by_checksum(
     conn: &mut SqliteConnection,
-    checksum: &crate::domain::value_objects::Checksum,
+    checksum: &lattice_core::domain::value_objects::Checksum,
 ) -> Result<Option<DocumentEntity>> {
     let db_model = sqlx::query_as::<_, DocumentModel>(
         r#"
@@ -286,9 +286,9 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>
 
 pub async fn find_by_filter(
     conn: &mut SqliteConnection,
-    filter: &crate::application::ports::DocumentFilter,
+    filter: &lattice_core::application::ports::DocumentFilter,
 ) -> Result<Vec<DocumentEntity>> {
-    use crate::application::ports::Filter;
+    use lattice_core::application::ports::Filter;
     filter.validate()?;
     let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE 1=1");
     if let Some(pattern) = &filter.path_pattern {

@@ -8,7 +8,7 @@ mod python;
 use super::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
 use super::lab_runtime::LearningLabExecutionResult;
 use super::python_runtime::{self, PythonBundle};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 

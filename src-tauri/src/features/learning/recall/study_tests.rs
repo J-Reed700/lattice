@@ -339,10 +339,8 @@ async fn passages_stay_within_selected_documents_and_focus() -> anyhow::Result<(
 #[tokio::test]
 async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() -> anyhow::Result<()>
 {
-    use crate::{
-        application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
-        features::llm::llama_cpp::LlamaCppLlm,
-    };
+    use crate::features::llm::llama_cpp::LlamaCppLlm;
+    use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
     use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
     let dir = tempfile::tempdir()?;
     let db = DatabaseConnection::new(dir.path().join("biology.db")).await?;

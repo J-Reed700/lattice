@@ -31,7 +31,7 @@ New embedding consumers should import from `crate::features::embedding` directly
   `embeddings` Tauri plugin (`features/embedding/plugin.rs`).
 
 Fresh installs select their embedding model through `default_embedding_model`
-in `src-tauri/src/domain/models/embedding_defaults.rs`: machines with an
+in `src-tauri/crates/lattice-core/src/domain/models/embedding_defaults.rs`: machines with an
 available GPU backend get `Qwen/Qwen3-Embedding-0.6B` (1024 dimensions), while
 CPU-only machines use `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions).
 The MiniLM constants remain the fallback when no loaded model can report its

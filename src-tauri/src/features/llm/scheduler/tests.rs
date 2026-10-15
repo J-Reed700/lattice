@@ -1,9 +1,9 @@
 use super::*;
-use crate::application::ports::llm_port::{
+use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
 };
-use crate::application::ports::LLMPort;
-use async_trait::async_trait;
+use lattice_core::application::ports::LLMPort;
 use parking_lot::Mutex as SyncMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -347,7 +347,8 @@ async fn backends_without_slots_send_no_slot() {
 /// requests at once. The scheduler is that bound now.
 #[tokio::test]
 async fn an_ollama_backend_runs_no_more_than_its_configured_concurrency() {
-    let scheduler = registry::ollama_scheduler("http://ollama.test:11434", 2);
+    let schedulers = registry::SchedulerRegistry::default();
+    let scheduler = schedulers.ollama("http://ollama.test:11434", 2);
     let first = scheduler
         .admit(ask(InferencePriority::Interactive, 1), None)
         .await
@@ -364,7 +365,7 @@ async fn an_ollama_backend_runs_no_more_than_its_configured_concurrency() {
     assert!(third.is_err(), "a third request waits for a slot");
     drop((first, second));
 
-    let same = registry::ollama_scheduler("http://ollama.test:11434", 2);
+    let same = schedulers.ollama("http://ollama.test:11434", 2);
     assert!(
         Arc::ptr_eq(&scheduler, &same),
         "every role on one endpoint queues in one place"
@@ -474,7 +475,7 @@ impl LLMPort for GatedModel {
     async fn complete(
         &self,
         request: &CompletionRequest,
-    ) -> crate::shared::error::Result<CompletionResponse> {
+    ) -> lattice_core::shared::error::Result<CompletionResponse> {
         self.started.fetch_add(1, Ordering::SeqCst);
         self.seen.lock().push(request.clone());
         let _released = self.gate.acquire().await.unwrap();
@@ -491,7 +492,7 @@ impl LLMPort for GatedModel {
     fn max_context_tokens(&self) -> usize {
         8_192
     }
-    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
     }
 }

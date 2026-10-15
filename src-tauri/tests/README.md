@@ -19,7 +19,7 @@ not a claim that each target is comprehensive):
 | Indexing and extraction | `indexing_output_test`, `extractor_integration_test`, `test_metadata_extraction_integration`, `test_embedding_persistence_integration`, `article_extraction_demo` |
 | Downloads | `download_manager_tests`, `download_progress_tests`, `download_redirect_test`, `download_engine_validation_test`, `test_download_helpers` |
 | Commands and plugins | `plugins_tests` (includes `tests/plugins/`) |
-| Security and audit | `security_audit_logging_test`, `security_rate_limiting_test`, `native_keyring_backend_test`, `audit_events_test` |
+| Security | `security_rate_limiting_test`, `native_keyring_backend_test` |
 | Lifecycle | `background_lifecycle_test`, `shutdown_tests`, `panic_hook_test`, `sidecar_guard_test` |
 | Repositories and services | `tag_repository_test` |
 | LLM | `inference_unit_tests` (includes `tests/inference_helpers/`) |
@@ -48,9 +48,9 @@ cargo test --test learning_studio_evals -- --ignored --nocapture   # opt-in eval
 The eval targets need a model endpoint; their module docs list the
 `LATTICE_EVAL_*` and `LATTICE_LEARNING_EVAL_*` variables.
 
-CI (`.github/workflows/ci.yml`) compiles every target (`cargo check
---all-targets`, `cargo clippy --all-targets`) and runs
-`cargo test --locked --features bindings-export --lib --bins --tests --no-fail-fast`
+CI (`.github/workflows/ci.yml`) compiles every target in the workspace (`cargo check
+--workspace --all-targets`, `cargo clippy --workspace --all-targets`) and runs
+`cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast`
 on every platform in the Rust matrix, plus two opt-in learning-runtime container
 tests on Linux. A newly added integration target is automatically part of the
 gate. Explicitly ignored live-model and environment-dependent tests remain

@@ -7,7 +7,7 @@ use super::{
     LearningCurriculumModule, LearningCurriculumOperation, LearningCurriculumRevision,
     LearningCurriculumRevisionRequest, LearningCurriculumRevisionResult,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 fn immutable(lesson: &LearningCurriculumLesson) -> bool {
     lesson.state == LearningCurriculumLessonState::Completed || lesson.assessment_started

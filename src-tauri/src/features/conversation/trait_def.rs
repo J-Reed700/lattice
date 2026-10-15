@@ -2,8 +2,8 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 
 #[async_trait]
 pub trait ConversationServiceTrait: Send + Sync {
@@ -16,7 +16,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         content: String,
         tokens: i64,
         metadata: Option<String>,
-    ) -> Result<crate::domain::conversation::ConversationMessage>;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
     /// Create a new conversation
     ///
     /// # Arguments
@@ -44,7 +44,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         title: String,
         model_name: String,
         system_prompt: Option<String>,
-    ) -> Result<crate::domain::conversation::Conversation>;
+    ) -> Result<lattice_core::domain::conversation::Conversation>;
 
     /// Get a conversation by ID with all messages and context
     ///
@@ -60,7 +60,7 @@ pub trait ConversationServiceTrait: Send + Sync {
     async fn get_conversation(
         &self,
         id: &str,
-    ) -> Result<Option<crate::domain::conversation::ConversationAggregate>>;
+    ) -> Result<Option<lattice_core::domain::conversation::ConversationAggregate>>;
 
     /// List conversations ordered by most recently updated
     ///
@@ -83,7 +83,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         &self,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> Result<Vec<crate::domain::conversation::Conversation>>;
+    ) -> Result<Vec<lattice_core::domain::conversation::Conversation>>;
 
     /// Delete a conversation and all its messages
     ///
@@ -141,7 +141,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         conversation_id: &str,
         content: String,
         tokens: i64,
-    ) -> Result<crate::domain::conversation::ConversationMessage>;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 
     /// Add an assistant message to the conversation
     ///
@@ -162,7 +162,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         conversation_id: &str,
         content: String,
         tokens: i64,
-    ) -> Result<crate::domain::conversation::ConversationMessage>;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 
     /// Add an assistant message with metadata to the conversation
     ///
@@ -185,7 +185,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         content: String,
         tokens: i64,
         metadata: Option<String>,
-    ) -> Result<crate::domain::conversation::ConversationMessage>;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 
     /// Prune conversation history to fit within token limit
     ///
@@ -261,11 +261,11 @@ pub trait ConversationServiceTrait: Send + Sync {
     async fn add_message_with_status(
         &self,
         conversation_id: &str,
-        role: crate::domain::conversation::MessageRole,
+        role: lattice_core::domain::conversation::MessageRole,
         content: String,
         tokens: i64,
         status: String,
-    ) -> Result<crate::domain::conversation::ConversationMessage>;
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 
     /// Add a message with a specific status and a metadata payload.
     ///
@@ -275,12 +275,12 @@ pub trait ConversationServiceTrait: Send + Sync {
     async fn add_message_with_metadata(
         &self,
         conversation_id: &str,
-        role: crate::domain::conversation::MessageRole,
+        role: lattice_core::domain::conversation::MessageRole,
         content: String,
         tokens: i64,
         status: String,
         metadata: Option<String>,
-    ) -> Result<crate::domain::conversation::ConversationMessage> {
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
         let _ = metadata;
         self.add_message_with_status(conversation_id, role, content, tokens, status)
             .await

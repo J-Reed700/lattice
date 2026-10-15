@@ -1,5 +1,5 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -299,7 +299,9 @@ impl Decoder {
             ))
         }
     }
-    pub fn into_response(self) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+    pub fn into_response(
+        self,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         self.finish()?;
         let mut message = serde_json::Map::from_iter([
             ("role".into(), json!("assistant")),
@@ -318,7 +320,7 @@ impl Decoder {
         let public_logprobs = self
             .first_logprobs
             .as_ref()
-            .and_then(crate::application::ports::llm_port::first_token_logprobs);
+            .and_then(lattice_core::application::ports::llm_port::first_token_logprobs);
         let mut response = super::parse_completion(json!({
             "choices": [{
                 "message": message,

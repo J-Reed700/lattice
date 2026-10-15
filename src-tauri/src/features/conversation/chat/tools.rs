@@ -88,11 +88,11 @@ pub(super) fn optional_builtin_tool_allowed(
 
 pub(super) fn build_llm_tool_definitions(
     container: &dyn ChatRetrieval,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     custom_tools: &[CustomToolSettingsDto],
     allow_url_fetch: bool,
-) -> Vec<crate::application::ports::ToolDefinition> {
+) -> Vec<lattice_core::application::ports::ToolDefinition> {
     if !llm.supports_tool_calling() {
         return Vec::new();
     }
@@ -108,7 +108,7 @@ pub(super) fn build_llm_tool_definitions(
 
     let registry = container.tools();
     let domain_tools = registry.list_tools();
-    let mut definitions: Vec<crate::application::ports::ToolDefinition> = domain_tools
+    let mut definitions: Vec<lattice_core::application::ports::ToolDefinition> = domain_tools
         .iter()
         .filter(|tool| {
             let tool_name = tool.name.as_str();
@@ -133,7 +133,7 @@ pub(super) fn build_llm_tool_definitions(
                 .as_ref()
                 .is_none_or(|allowlist| allowlist.contains(tool_name))
         })
-        .map(|t| crate::application::ports::ToolDefinition {
+        .map(|t| lattice_core::application::ports::ToolDefinition {
             name: t.name.clone(),
             description: t.description.clone(),
             parameters: t.input_schema.clone(),
@@ -152,7 +152,7 @@ pub(super) fn build_llm_tool_definitions(
                     .as_ref()
                     .is_none_or(|allowlist| allowlist.contains(&tool.name))
             })
-            .map(|tool| crate::application::ports::ToolDefinition {
+            .map(|tool| lattice_core::application::ports::ToolDefinition {
                 name: tool.name.clone(),
                 description: tool.description.clone(),
                 parameters: serde_json::json!({

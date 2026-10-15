@@ -1,8 +1,7 @@
 //! Imports from third-party knowledge tools (Obsidian, Notion, Roam).
 
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::shared::error::AppError;
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Imports documents from an Obsidian lattice
@@ -92,7 +91,6 @@ use std::path::PathBuf;
 /// # Security
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal
-/// - **Audit Logging (CWE-778)**: All import operations logged to audit trail
 /// - **No Rate Limiting**: One-time bulk import (rate limiting would be counterproductive)
 ///
 /// # Use Cases
@@ -126,7 +124,6 @@ use std::path::PathBuf;
 /// 3. Recursive directory traversal
 /// 4. Markdown file parsing and indexing
 /// 5. Link and tag extraction
-/// 6. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -137,15 +134,10 @@ use std::path::PathBuf;
 /// 5. Parse YAML front matter and extract metadata
 /// 6. Preserve wiki links and tags
 /// 7. Index each file with embeddings
-/// 8. Log audit event (success/failure with count)
-/// 9. Return imported file count
+/// 8. Return imported file count
 pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError> {
-    let audit_logger = get_audit_logger();
-
     let validated_path = ValidatedFilePath::new(PathBuf::from(&vault_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid lattice path: {}", e)))?;
-
-    let vault_path_str = validated_path.as_path().to_string_lossy().to_string();
 
     // repository-barrier-allow: import validates the user-selected vault resource.
     // Check existence asynchronously
@@ -157,34 +149,6 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
         ))),
         Err(e) => Err(AppError::Other(format!("Failed to access lattice: {}", e))),
     };
-
-    // Audit the outcome
-    match &result {
-        Ok(count) => {
-            let event = AuditEvent::new(AuditAction::DataImported, AuditResult::success())
-                .with_resource_id(&vault_path_str)
-                .with_metadata("operation", "import_obsidian")
-                .with_metadata("source", "obsidian")
-                .with_metadata("files_imported", count.to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::DataImported,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&vault_path_str)
-            .with_metadata("operation", "import_obsidian")
-            .with_metadata("source", "obsidian");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result
 }
@@ -297,7 +261,6 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 /// # Security
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal
-/// - **Audit Logging (CWE-778)**: All import operations logged to audit trail
 /// - **No Rate Limiting**: One-time bulk import (rate limiting would be counterproductive)
 /// - **ZIP Extraction**: Safe ZIP extraction (prevents zip bomb attacks)
 ///
@@ -346,7 +309,6 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 /// 6. HTML/Markdown parsing and metadata extraction
 /// 7. Link conversion (Notion → Lattice)
 /// 8. Indexing with embeddings
-/// 9. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -359,15 +321,10 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 /// 7. Convert Notion links to Lattice links
 /// 8. Index each page with embeddings
 /// 9. Import CSV databases
-/// 10. Log audit event (success/failure with count)
-/// 11. Return imported page count
+/// 10. Return imported page count
 pub async fn import_notion_export(export_path: String) -> Result<usize, AppError> {
-    let audit_logger = get_audit_logger();
-
     let validated_path = ValidatedFilePath::new(PathBuf::from(&export_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid export path: {}", e)))?;
-
-    let export_path_str = validated_path.as_path().to_string_lossy().to_string();
 
     // repository-barrier-allow: import validates the user-selected export resource.
     // Check existence asynchronously
@@ -379,34 +336,6 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
         ))),
         Err(e) => Err(AppError::Other(format!("Failed to access export: {}", e))),
     };
-
-    // Audit the outcome
-    match &result {
-        Ok(count) => {
-            let event = AuditEvent::new(AuditAction::DataImported, AuditResult::success())
-                .with_resource_id(&export_path_str)
-                .with_metadata("operation", "import_notion")
-                .with_metadata("source", "notion")
-                .with_metadata("files_imported", count.to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::DataImported,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&export_path_str)
-            .with_metadata("operation", "import_notion")
-            .with_metadata("source", "notion");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result
 }
@@ -518,7 +447,6 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 /// # Security
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal
-/// - **Audit Logging (CWE-778)**: All import operations logged to audit trail
 /// - **No Rate Limiting**: One-time bulk import (rate limiting would be counterproductive)
 /// - **JSON Parsing**: Safe JSON parsing (prevents malicious JSON attacks)
 ///
@@ -571,7 +499,6 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 /// 6. Link and reference extraction
 /// 7. Attribute conversion to metadata
 /// 8. Indexing with embeddings
-/// 9. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -586,15 +513,10 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 ///    - Extract #tags and attributes
 ///    - Preserve daily note metadata
 /// 6. Index each page with embeddings
-/// 7. Log audit event (success/failure with count)
-/// 8. Return imported page count
+/// 7. Return imported page count
 pub async fn import_roam_json(json_path: String) -> Result<usize, AppError> {
-    let audit_logger = get_audit_logger();
-
     let validated_path = ValidatedFilePath::new(PathBuf::from(&json_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid export path: {}", e)))?;
-
-    let json_path_str = validated_path.as_path().to_string_lossy().to_string();
 
     // repository-barrier-allow: import validates the user-selected JSON resource.
     // Check existence asynchronously
@@ -606,34 +528,6 @@ pub async fn import_roam_json(json_path: String) -> Result<usize, AppError> {
         ))),
         Err(e) => Err(AppError::Other(format!("Failed to access export: {}", e))),
     };
-
-    // Audit the outcome
-    match &result {
-        Ok(count) => {
-            let event = AuditEvent::new(AuditAction::DataImported, AuditResult::success())
-                .with_resource_id(&json_path_str)
-                .with_metadata("operation", "import_roam")
-                .with_metadata("source", "roam")
-                .with_metadata("files_imported", count.to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::DataImported,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&json_path_str)
-            .with_metadata("operation", "import_roam")
-            .with_metadata("source", "roam");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result
 }

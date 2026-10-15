@@ -8,9 +8,9 @@
 //! - Cache statistics
 //! - Error tracking
 
-use crate::application::ports::metrics_port::{MetricsPort, MetricsSnapshotData};
 use crate::infrastructure::observability::metrics::Metrics;
 use async_trait::async_trait;
+use lattice_core::application::ports::metrics_port::{MetricsPort, MetricsSnapshotData};
 
 /// Metrics adapter wrapping the Metrics service
 #[derive(Clone)]

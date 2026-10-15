@@ -134,6 +134,7 @@ export const COMMAND_PLUGINS = {
   get_active_models: 'model',
   get_all_recommended_models: 'model',
   get_all_tags_with_counts: 'tags',
+  get_backend_logs: 'health',
   get_backlinks_for_mention: 'mention',
   get_batch_history: 'batch',
   get_batch_status: 'batch',

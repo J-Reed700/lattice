@@ -2,7 +2,9 @@
 //! call stays in one step, and how a saved draft resumes.
 #![allow(clippy::indexing_slicing)]
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use std::sync::Mutex;
 
 const SYSTEM: &str = "Teach one idea to a beginner.";
@@ -225,7 +227,7 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
         dto::AcceptLearningProgramRequestDto, plan_dto::StartLearningGenerationJobRequestDto,
         repository::LearningRepository,
     };
-    use crate::shared::runtime::jobs::JobStore;
+    use lattice_core::shared::runtime::jobs::JobStore;
     let pool = crate::features::learning::tests::pool().await?;
     let programs = LearningRepository::new(pool.clone());
     let program = crate::features::learning::tests::fixture();

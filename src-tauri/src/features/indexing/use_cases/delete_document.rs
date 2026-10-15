@@ -30,13 +30,14 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
-    ContentAddressedStoragePort, DocumentRepositoryPort, VectorSearchPort,
-};
-use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::indexing::LibraryGc;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
+    ContentAddressedStoragePort, DocumentIndexObserver, DocumentRepositoryPort,
+    SearchResultCachePort, VectorSearchPort,
+};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Request to delete a document.
@@ -82,6 +83,11 @@ pub struct DeleteDocumentUseCase {
     library: Arc<dyn ContentAddressedStoragePort>,
     library_gc: Arc<LibraryGc>,
     web_archive: Arc<dyn ArticleArchive>,
+    /// Search results cached against the corpus, dropped once a document
+    /// goes so a repeated query stops finding it.
+    query_cache: Option<Arc<dyn SearchResultCachePort>>,
+    /// Told before a document's rows go; the summary tier drops its vectors.
+    index_observer: Option<Arc<dyn DocumentIndexObserver>>,
 }
 
 impl DeleteDocumentUseCase {
@@ -110,7 +116,23 @@ impl DeleteDocumentUseCase {
             library,
             library_gc,
             web_archive,
+            query_cache: None,
+            index_observer: None,
         }
+    }
+
+    /// Invalidate `cache` whenever a document is deleted.
+    #[must_use]
+    pub fn with_query_cache(mut self, cache: Arc<dyn SearchResultCachePort>) -> Self {
+        self.query_cache = Some(cache);
+        self
+    }
+
+    /// Tell `observer` about every document this use case deletes.
+    #[must_use]
+    pub fn with_index_observer(mut self, observer: Arc<dyn DocumentIndexObserver>) -> Self {
+        self.index_observer = Some(observer);
+        self
     }
 
     /// Execute document deletion.
@@ -156,7 +178,9 @@ impl DeleteDocumentUseCase {
 
         // Drop summary vectors before the rows go so the summary index never
         // keeps a dead entry (rows themselves cascade on delete).
-        crate::features::summaries::trigger::notify_document_deleted(&document_id).await;
+        if let Some(observer) = &self.index_observer {
+            observer.document_deleted(&document_id).await;
+        }
 
         // 2. Chunks and the document row in one transaction.
         let mut uow = self.uow_factory.create().await?;
@@ -217,7 +241,9 @@ impl DeleteDocumentUseCase {
         // The corpus changed, so cached search results are now wrong —
         // without this, a deleted document keeps appearing in repeated
         // searches for up to the cache TTL.
-        crate::features::search::query_cache::invalidate_query_cache();
+        if let Some(cache) = &self.query_cache {
+            cache.invalidate_corpus();
+        }
 
         Ok(DeleteDocumentResponseDto {
             status: "deleted".to_string(),
@@ -283,12 +309,12 @@ impl DeleteDocumentUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::contracts::web::CleanArticle;
     use crate::features::search::dto::SearchResultPortDto;
     use crate::features::web::mocks::MockWebArchiveService;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
     use crate::infrastructure::storage::ContentAddressedStorage;
+    use lattice_core::application::contracts::web::CleanArticle;
     use parking_lot::Mutex;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;

@@ -4,8 +4,8 @@
 //!
 //! This mapper handles conversion between conversation domain models and their DTO representations.
 
-use crate::domain::{Conversation, ConversationAggregate};
 use crate::features::conversation::dto::{CompactionRecordDto, ConversationDto};
+use lattice_core::domain::{Conversation, ConversationAggregate};
 
 /// Mapper for conversation-related conversions.
 pub struct ConversationDtoMapper;
@@ -69,8 +69,8 @@ impl ConversationDtoMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::types::ConversationId;
     use chrono::Utc;
+    use lattice_core::shared::types::ConversationId;
 
     #[test]
     fn test_conversation_to_dto() {

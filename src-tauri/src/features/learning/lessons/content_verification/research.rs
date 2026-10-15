@@ -1,14 +1,14 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps, or
 //! when no saved reference covers a lesson topic before it is written.
 use super::*;
-use crate::application::contracts::web::WebSearchResult;
-#[cfg(test)]
-use crate::application::contracts::web::WebSearchInput;
 use crate::features::learning::references::web_research;
+use crate::features::web::WebServiceTrait;
+#[cfg(test)]
+use lattice_core::application::contracts::web::WebSearchInput;
+use lattice_core::application::contracts::web::WebSearchResult;
+use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use web_research::within_search_scope;
-use crate::features::web::WebServiceTrait;
-use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 #[path = "research_tests.rs"]
@@ -287,7 +287,8 @@ async fn research<'a>(
             crate::features::learning::lesson_progress::stage(
                 "Saving an additional reference for lesson verification",
             );
-            let captured = match web_research::capture(context.web.as_ref(), &result, &query).await {
+            let captured = match web_research::capture(context.web.as_ref(), &result, &query).await
+            {
                 Ok(Some(captured)) => captured,
                 Ok(None) => continue,
                 Err(error) => {
@@ -307,15 +308,17 @@ async fn research<'a>(
             let hash = digest(&captured.text);
             library
                 .add(
-                    &uuid::Uuid::new_v4().to_string(),
-                    &uuid::Uuid::new_v4().to_string(),
-                    &version_id,
-                    &context.program_id,
-                    crate::features::learning::dto::LearningSourceKind::Web,
-                    "add_web",
-                    &result.url,
-                    Some(&result.url),
-                    crate::features::learning::dto::LearningSourcePolicy::Fixed,
+                    crate::features::learning::source_library::NewLearningSource {
+                        operation_id: &uuid::Uuid::new_v4().to_string(),
+                        source_id: &uuid::Uuid::new_v4().to_string(),
+                        version_id: &version_id,
+                        program_id: &context.program_id,
+                        kind: crate::features::learning::dto::LearningSourceKind::Web,
+                        operation_kind: "add_web",
+                        origin: &result.url,
+                        requested_url: Some(&result.url),
+                        freshness: crate::features::learning::dto::LearningSourcePolicy::Fixed,
+                    },
                     captured,
                     hash,
                 )

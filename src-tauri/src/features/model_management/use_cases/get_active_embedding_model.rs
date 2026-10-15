@@ -2,9 +2,9 @@
 //!
 //! Gets the currently active embedding model.
 
-use crate::domain::models::downloaded::DownloadedModel;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::Result;
+use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::shared::error::Result;
 
 /// Use case for getting the active embedding model
 pub struct GetActiveEmbeddingModelUseCase {

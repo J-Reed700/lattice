@@ -7,8 +7,8 @@ use crate::features::conversation::dto::{
 use crate::features::conversation::message_bookmark_dto::*;
 use crate::features::conversation::space_dto::*;
 use crate::features::conversation::workspace_dto::*;
-use crate::shared::error::AppError;
 use chrono::Utc;
+use lattice_core::shared::error::AppError;
 use serde_json::Value;
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::collections::HashSet;

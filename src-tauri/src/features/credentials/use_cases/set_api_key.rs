@@ -8,7 +8,6 @@
 //! # Security
 //! - Stores credentials in OS keyring (Keychain on macOS, Credential Manager on Windows)
 //! - Never logs or exposes API keys in plain text
-//! - Audit logs credential operations (without key values)
 //!
 //! # Example
 //! ```rust,no_run
@@ -16,9 +15,9 @@
 //! use_case.execute("anthropic".into(), "sk-ant-...".into()).await?;
 //! ```
 
-use crate::application::ports::CredentialsPort;
 use crate::features::credentials::dto::CredentialOperationResultDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::CredentialsPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct SetApiKeyUseCase {

@@ -26,11 +26,11 @@ use crate::features::learning::{
     persistence::{db, hash, now},
     portability_dto::*,
 };
-use crate::shared::error::{AppError, Result};
 use entries::ImportScope;
 pub use files::DestinationPicker;
 use files::{chosen_file, managed_path, next_free_path, read_untrusted};
 pub(crate) use files::{pack_file_name, PACK_EXTENSION};
+use lattice_core::shared::error::{AppError, Result};
 use records::{pack_operation, replay, PendingPreview};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};

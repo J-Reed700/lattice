@@ -1,9 +1,10 @@
 use super::{
-    curriculum::LearningGenerationJob, dto::*, plan_dto::*, portability_dto::*, practical_dto::*,
-    repository::LearningRepository, service,
+    curriculum::LearningGenerationJob, dto::*, embedded_runtime::BuiltinRuntimes, plan_dto::*,
+    portability_dto::*, practical_dto::*, repository::LearningRepository, service,
 };
 use crate::features::web::traits::WebServiceTrait;
-use crate::{interfaces::di::Container, shared::ipc::ApiError};
+use crate::interfaces::di::Container;
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,
@@ -58,15 +59,32 @@ pub use practical::*;
 mod study;
 pub use study::*;
 
+/// The Python bundle shipped in the app's resources, verified once at startup.
+/// A missing or damaged bundle leaves Python labs reporting it unavailable.
+fn bundled_python<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<super::python_runtime::PythonRuntime> {
+    let resources = app.path().resource_dir().ok()?;
+    super::python_runtime::PythonRuntime::verify(resources.join("resources/learning-python"))
+        .inspect_err(|error| {
+            tracing::warn!(%error, "Bundled Python runtime could not be configured");
+        })
+        .ok()
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
             let container = app.state::<Container>().inner().clone();
+            // One set of built-in runtimes for every lab this app runs: the
+            // practical commands and lesson verification share its guest slots.
+            let runtimes = BuiltinRuntimes::new(bundled_python(app));
+            app.manage(runtimes.clone());
             // Registration settles lesson jobs the last process left running,
             // then starts delivering saved work.
             tauri::async_runtime::block_on(container.jobs().register(
                 super::curriculum_repository::LESSON_PREPARATION,
-                std::sync::Arc::new(generation_worker(&container)),
+                std::sync::Arc::new(generation_worker(&container, runtimes)),
                 super::curriculum_repository::lesson_job_config(),
             ))?;
             let practical = super::practical_repository::LearningPracticalRepository::new(

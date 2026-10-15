@@ -45,7 +45,7 @@
 //! via RepositoryPort trait. No rate limiting or audit logging needed for read operations.
 
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result, ResultExt};
+use lattice_core::shared::error::{AppError, Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

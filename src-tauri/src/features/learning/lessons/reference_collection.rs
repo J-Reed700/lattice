@@ -5,10 +5,10 @@
 //! documents. Web pages and pasted text have no library copy, so they are
 //! ranked by keyword alone. Every hit is mapped back onto the snapshot's
 //! bytes, so evidence is always an exact substring of what was captured.
-use crate::application::ports::{LibraryChunk, LibraryPassagesPort};
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{LibraryChunk, LibraryPassagesPort};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -430,7 +430,10 @@ impl<'a> ReferenceCollection<'a> {
 
     /// A bounded structural view is supplied alongside passages, so the writer
     /// can see which books/sections exist without treating it as factual evidence.
-    pub fn catalog(&self, llm: &dyn crate::application::ports::LLMPort) -> serde_json::Value {
+    pub fn catalog(
+        &self,
+        llm: &dyn lattice_core::application::ports::LLMPort,
+    ) -> serde_json::Value {
         let budget = llm.max_context_tokens() / 16;
         let mut entries = Vec::new();
         let mut used = 64;

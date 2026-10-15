@@ -257,6 +257,7 @@ fn main() {
                     "get_system_stats",
                     "get_version",
                     "initialize_database",
+                    "get_backend_logs",
                 ]),
             )
             .plugin(

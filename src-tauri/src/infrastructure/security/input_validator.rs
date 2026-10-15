@@ -1,4 +1,4 @@
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 /// Upper bound on a chat message, in characters: room for a long pasted article.
@@ -558,7 +558,7 @@ impl InputValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::testing::paths as test_paths;
+    use lattice_core::shared::testing::paths as test_paths;
 
     #[test]
     fn test_search_query_validation() {

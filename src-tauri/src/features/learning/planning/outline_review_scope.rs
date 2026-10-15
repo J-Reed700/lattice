@@ -1,6 +1,6 @@
 //! Reuse completed semantic checks only while their inputs still match.
 use crate::features::learning::outline_draft::OutlineDraft;
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -172,12 +172,18 @@ impl ReviewScope {
 /// outcome and each lesson.
 pub(in crate::features::learning) fn module_paths(candidate: &Value, index: usize) -> Vec<String> {
     let prefix = format!("/modules/{index}");
-    let Some(module) = candidate.get("modules").and_then(|modules| modules.get(index)) else {
+    let Some(module) = candidate
+        .get("modules")
+        .and_then(|modules| modules.get(index))
+    else {
         return vec![];
     };
     let mut paths = vec![prefix.clone(), format!("{prefix}/summary")];
     for name in ["outcomes", "lessons"] {
-        let count = module.get(name).and_then(Value::as_array).map_or(0, Vec::len);
+        let count = module
+            .get(name)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         paths.extend((0..count).map(|i| format!("{prefix}/{name}/{i}")));
     }
     paths

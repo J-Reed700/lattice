@@ -7,7 +7,7 @@ use crate::features::compare::di::{CompareDeps, LlmLoader};
 use crate::features::compare::dto::{CompareDocumentsRequestDto, CompareTableDto};
 use crate::features::compare::scoped_search::HybridScopedSearch;
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,

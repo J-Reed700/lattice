@@ -12,7 +12,7 @@ use tracing::info;
 use super::{
     LoadedWhisper, ResolvedModel, BUNDLED_MEL_FILTERS_80, MEL_FILTER_WIDTH, SUPPORTED_MEL_BINS,
 };
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 fn read_json_config(dir: &Path, model_id: &str) -> Result<Config, AppError> {
     let path = dir.join("config.json");

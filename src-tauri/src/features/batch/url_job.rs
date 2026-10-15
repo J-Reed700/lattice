@@ -4,11 +4,11 @@ use super::items::BatchItem;
 use super::worker::{ItemImporter, ItemResult};
 use crate::features::web::dto::IngestWebUrlRequestDto;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
-use crate::shared::{
+use async_trait::async_trait;
+use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::JobContext,
 };
-use async_trait::async_trait;
 use std::sync::Arc;
 
 pub(crate) struct UrlImporter {

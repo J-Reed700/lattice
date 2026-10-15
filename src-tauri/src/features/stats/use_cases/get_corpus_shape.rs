@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::features::stats::corpus_shape_repository::{CorpusShape, CorpusShapeRepositoryPort};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 pub struct GetCorpusShapeUseCase {
     repo: Arc<dyn CorpusShapeRepositoryPort>,

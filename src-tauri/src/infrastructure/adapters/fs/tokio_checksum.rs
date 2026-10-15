@@ -2,8 +2,8 @@
 //!
 //! Implements file checksum calculations using the Tokio async runtime.
 
-use crate::domain::ports::file_access::ChecksumService;
-use crate::shared::error::AppError;
+use lattice_core::domain::ports::file_access::ChecksumService;
+use lattice_core::shared::error::AppError;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use tokio::io::AsyncReadExt;

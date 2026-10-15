@@ -1,5 +1,5 @@
 //! Small persistence helpers every Learning repository shares.
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 

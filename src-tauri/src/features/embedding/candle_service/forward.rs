@@ -5,12 +5,12 @@ use tokenizers::Tokenizer;
 // Tensor indexing helper trait (candle uses an extension-trait pattern for `i`).
 use candle_core::IndexOp;
 
-use crate::domain::value_objects::SparseEmbedding;
 use crate::features::embedding::qwen3_encoder::Qwen3Encoder;
 use crate::features::embedding::sparse_head::SparseHead;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
-use crate::shared::runtime::with_autorelease_pool;
+use lattice_core::domain::value_objects::SparseEmbedding;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::runtime::with_autorelease_pool;
 
 use super::{LoadError, ModelVariant, PoolingStrategy};
 

@@ -286,7 +286,7 @@ pub struct CompactionRecordDto {
 
 impl CompactionRecordDto {
     /// Build a DTO from the domain record.
-    pub fn from_record(record: &crate::domain::conversation::CompactionRecord) -> Self {
+    pub fn from_record(record: &lattice_core::domain::conversation::CompactionRecord) -> Self {
         Self {
             id: record.id.clone(),
             conversation_id: record.conversation_id.to_string(),

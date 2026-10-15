@@ -20,8 +20,8 @@ use crate::features::learning::{
     },
     portability_dto::LearningPackConflictKind,
 };
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 use sqlx::SqliteConnection;
 use std::collections::{BTreeMap, HashMap};
 

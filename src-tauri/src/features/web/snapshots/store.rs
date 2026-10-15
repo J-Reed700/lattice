@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Suffix of a finished snapshot file.
 pub const HTML_SUFFIX: &str = ".html";
@@ -46,7 +46,7 @@ impl SnapshotStore {
 
     /// `~/.lattice/web-snapshots`, beside `web-archive`.
     pub fn default_root() -> Result<PathBuf> {
-        crate::shared::fs::roots::web_snapshots_root()
+        lattice_core::shared::fs::roots::web_snapshots_root()
     }
 
     pub fn root(&self) -> &Path {

@@ -29,8 +29,8 @@
 //! ```
 
 use crate::features::initialization::dto::InitializeDatabaseResponseDto;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 

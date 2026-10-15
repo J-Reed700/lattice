@@ -2,8 +2,8 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 
 #[async_trait]
 pub trait EmbeddingServiceTrait: Send + Sync {
@@ -21,7 +21,7 @@ pub trait EmbeddingServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+    /// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     /// let embedding = service.embed_single("hello world").await?;
     /// assert_eq!(embedding.len(), DEFAULT_EMBEDDING_DIM);
     /// ```
@@ -34,12 +34,12 @@ pub trait EmbeddingServiceTrait: Send + Sync {
         &self,
         text: &str,
         _prefix: &str,
-    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+    ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>> {
         Ok(if text.is_empty() {
             vec![]
         } else {
             vec![
-                crate::application::ports::embedding_port::EmbeddingTextChunk {
+                lattice_core::application::ports::embedding_port::EmbeddingTextChunk {
                     text: text.into(),
                     start: 0,
                     end: text.len(),
@@ -82,11 +82,11 @@ pub trait EmbeddingServiceTrait: Send + Sync {
     /// Vector of embeddings in the same order as input chunks
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::domain::value_objects::ContextualizedChunk],
+        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>>;
 
     /// True when this service can also produce learned sparse term weights.
-    /// Mirrors [`crate::application::ports::EmbeddingPort::supports_sparse`].
+    /// Mirrors [`lattice_core::application::ports::EmbeddingPort::supports_sparse`].
     fn supports_sparse(&self) -> bool {
         false
     }
@@ -97,8 +97,12 @@ pub trait EmbeddingServiceTrait: Send + Sync {
     async fn embed_sparse_batch(
         &self,
         _texts: &[String],
-    ) -> Result<Vec<crate::domain::value_objects::SparseEmbedding>> {
-        Err(crate::application::ports::embedding_port::sparse_not_supported(&self.model_identity()))
+    ) -> Result<Vec<lattice_core::domain::value_objects::SparseEmbedding>> {
+        Err(
+            lattice_core::application::ports::embedding_port::sparse_not_supported(
+                &self.model_identity(),
+            ),
+        )
     }
 
     /// Dense vectors and learned sparse term weights for the same batch.
@@ -108,7 +112,7 @@ pub trait EmbeddingServiceTrait: Send + Sync {
         texts: &[String],
     ) -> Result<(
         Vec<Vec<f32>>,
-        Vec<crate::domain::value_objects::SparseEmbedding>,
+        Vec<lattice_core::domain::value_objects::SparseEmbedding>,
     )> {
         let dense = self.embed_batch(texts).await?;
         let sparse = self.embed_sparse_batch(texts).await?;
@@ -119,11 +123,11 @@ pub trait EmbeddingServiceTrait: Send + Sync {
     async fn embed_sparse_query(
         &self,
         text: &str,
-    ) -> Result<crate::domain::value_objects::SparseEmbedding> {
+    ) -> Result<lattice_core::domain::value_objects::SparseEmbedding> {
         let mut batch = self.embed_sparse_batch(&[text.to_owned()]).await?;
         batch
             .pop()
-            .ok_or_else(|| crate::shared::error::AppError::EmbeddingFailed {
+            .ok_or_else(|| lattice_core::shared::error::AppError::EmbeddingFailed {
                 reason: "Sparse forward pass returned no embeddings".into(),
             })
     }
@@ -146,9 +150,11 @@ pub trait EmbeddingServiceTrait: Send + Sync {
         span_text: &str,
         chunk_ranges: &[std::ops::Range<usize>],
     ) -> Result<Vec<Vec<f32>>> {
-        use crate::domain::value_objects::ContextualizedChunk;
-        let texts =
-            crate::application::ports::embedding_port::span_chunk_texts(span_text, chunk_ranges)?;
+        use lattice_core::domain::value_objects::ContextualizedChunk;
+        let texts = lattice_core::application::ports::embedding_port::span_chunk_texts(
+            span_text,
+            chunk_ranges,
+        )?;
         let prefix = chunk_ranges
             .first()
             .and_then(|range| span_text.get(..range.start))

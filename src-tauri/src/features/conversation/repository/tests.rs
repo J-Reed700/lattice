@@ -91,7 +91,9 @@ async fn seed_message(
     .bind(tokens)
     .bind(created_at)
     .bind(sequence)
-    .bind(crate::domain::conversation::memory::compute_digest(content))
+    .bind(lattice_core::domain::conversation::memory::compute_digest(
+        content,
+    ))
     .execute(pool)
     .await
     .unwrap();

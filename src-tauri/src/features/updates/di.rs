@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::UpdateCheckerPort;
 use crate::features::updates::adapter::UpdateCheckerAdapter;
 use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::UpdateCheckerPort;
 
 #[derive(Clone)]
 pub struct UpdatesDi {

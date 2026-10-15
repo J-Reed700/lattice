@@ -13,7 +13,7 @@ mod tests {
 
     #[test]
     fn test_error_response_serialization() {
-        use crate::shared::error::AppError;
+        use lattice_core::shared::error::AppError;
 
         let error = AppError::InvalidInput("Test error".to_string());
         let error_str = error.to_string();
@@ -23,7 +23,7 @@ mod tests {
 
     #[test]
     fn test_not_found_error() {
-        use crate::shared::error::AppError;
+        use lattice_core::shared::error::AppError;
 
         let error = AppError::NotFound("Document not found".to_string());
         assert!(error.to_string().contains("not found"));
@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn test_database_error() {
-        use crate::shared::error::AppError;
+        use lattice_core::shared::error::AppError;
 
         let error = AppError::Database("Query failed".to_string());
         assert!(error.to_string().contains("Query failed"));

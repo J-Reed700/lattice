@@ -5,12 +5,12 @@ use super::{
     reconciliation_poll_delay, RECONCILIATION_ACTIVE_POLL, RECONCILIATION_BATCH_SIZE,
     RECONCILIATION_IDLE_POLL,
 };
-use crate::domain::download::DownloadSession;
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::manager::{
     DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use lattice_core::domain::download::DownloadSession;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,13 +28,13 @@ impl crate::features::download::engine::DownloadEngine for GatedEngine {
         options: crate::features::download::engine::DownloadOptions,
     ) -> Result<
         crate::features::download::engine::DownloadResult,
-        crate::domain::download::DownloadError,
+        lattice_core::domain::download::DownloadError,
     > {
         if options.url == self.first_url {
             self.first_started.notify_one();
             self.release_first.notified().await;
             if self.first_fails {
-                return Err(crate::domain::download::DownloadError::NetworkError(
+                return Err(lattice_core::domain::download::DownloadError::NetworkError(
                     "test failure".into(),
                 ));
             }
@@ -50,14 +50,14 @@ impl crate::features::download::engine::DownloadEngine for GatedEngine {
     async fn get_file_size(
         &self,
         url: &str,
-    ) -> Result<(Option<u64>, String), crate::domain::download::DownloadError> {
+    ) -> Result<(Option<u64>, String), lattice_core::domain::download::DownloadError> {
         Ok((Some(1000), url.to_string()))
     }
 
     async fn supports_resume(
         &self,
         _url: &str,
-    ) -> Result<bool, crate::domain::download::DownloadError> {
+    ) -> Result<bool, lattice_core::domain::download::DownloadError> {
         Ok(true)
     }
 }
@@ -107,6 +107,7 @@ async fn terminal_failure_and_completion_each_promote_the_next_queued_download()
             repository.clone(),
             engine.clone(),
             dir.path().to_path_buf(),
+            Arc::default(),
         )
         .with_max_concurrent(1);
         let mut events = manager.subscribe_to_events().write().await.take().unwrap();
@@ -162,7 +163,7 @@ async fn terminal_failure_and_completion_each_promote_the_next_queued_download()
                     .await
                     .unwrap()
                     .is_some_and(|session| {
-                        session.state() != &crate::domain::download::DownloadState::Pending
+                        session.state() != &lattice_core::domain::download::DownloadState::Pending
                     })
                 {
                     break;

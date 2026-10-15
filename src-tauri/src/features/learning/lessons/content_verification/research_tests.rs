@@ -5,13 +5,15 @@
     clippy::panic
 )]
 use super::*;
-use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult};
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::learning::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::features::{
     learning::{lessons::course_generation_tests::ScriptedModel, repository::LearningRepository},
     web::mocks::MockWebService,
 };
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
+};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
 pub(in crate::features::learning) const CAPTURE: &str =
     "Random assignment reduces confounding in comparisons between treatment groups.";
@@ -534,6 +536,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     };
     let candidate = json!({"blocks":[{"kind":"explanation","body":original},{"kind":"explanation","body":CAPTURE},{"kind":"explanation","body":SECOND_CAPTURE}],"questions":[]});
     let references = ReferenceCollection::lexical(&sources)?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let (_, report) = run(
         pool,
         program.summary.id,
@@ -544,6 +547,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
         })),
         super::super::verify_and_repair_with_references(
             &llm,
+            &runtimes,
             "{}",
             &json!({"type":"object"}),
             candidate.to_string(),

@@ -12,7 +12,7 @@
 //!
 //! Validation. Every rule about whether a quote is real, whether a source
 //! belongs to this conversation, and what a transition may do lives in
-//! [`crate::domain::conversation::memory`], and the atomic write lives behind
+//! [`lattice_core::domain::conversation::memory`], and the atomic write lives behind
 //! [`ConversationMemoryPort`]. This module calls them; it never re-decides them.
 //!
 //! ## The shape of a run
@@ -52,13 +52,15 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
+use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{MemoryCommit, MemorySnapshot, MemoryValidationError};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
+    MemoryCommit, MemorySnapshot, MemoryValidationError,
+};
+use lattice_core::shared::error::AppError;
 
 // ---------------------------------------------------------------------------
 // Limits (§7.5). Named so tests assert the contract rather than a literal.

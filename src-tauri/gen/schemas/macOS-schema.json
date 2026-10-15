@@ -4587,6 +4587,12 @@
           "markdownDescription": "Denies the list_available_functions command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_backend_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:allow-get-backend-logs",
+          "markdownDescription": "Enables the get_backend_logs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_system_stats command without any pre-configured scope.",
           "type": "string",
           "const": "health:allow-get-system-stats",
@@ -4609,6 +4615,12 @@
           "type": "string",
           "const": "health:allow-initialize-database",
           "markdownDescription": "Enables the initialize_database command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_backend_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:deny-get-backend-logs",
+          "markdownDescription": "Denies the get_backend_logs command without any pre-configured scope."
         },
         {
           "description": "Denies the get_system_stats command without any pre-configured scope.",

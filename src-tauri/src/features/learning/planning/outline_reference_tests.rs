@@ -1,8 +1,5 @@
 //! Reference planning and gathering before drafting; the References finding.
 //! Fixtures here are shared with the review-scope tests.
-use crate::application::contracts::web::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-};
 use crate::features::learning::{
     dto::*,
     lessons::course_generation_tests::{outline, request, ScriptedModel},
@@ -17,7 +14,10 @@ use crate::features::learning::{
     service,
 };
 use crate::features::web::{mocks::MockWebService, traits::WebServiceTrait};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -289,7 +289,8 @@ async fn the_plan_guard_drops_queries_that_copy_the_goal_and_fails_only_when_non
     request.goal = GOAL.into();
     let progress = OutlineProgress::default();
     // One copied query is dropped; the public one survives.
-    let llm = model(vec![plan_output(&[
+    let llm =
+        model(vec![plan_output(&[
         (
             "Randomized comparison",
             &[
@@ -331,7 +332,10 @@ async fn the_plan_guard_drops_queries_that_copy_the_goal_and_fails_only_when_non
     let llm = model(vec![empty]);
     let plan = outline_references::plan(&llm, &request, &[original_source()], &progress).await?;
     assert_eq!(plan.query_count(), 0);
-    assert_eq!(plan.subtopic_titles(), vec!["Randomized comparison".to_owned()]);
+    assert_eq!(
+        plan.subtopic_titles(),
+        vec!["Randomized comparison".to_owned()]
+    );
     Ok(())
 }
 
@@ -387,14 +391,9 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     // subtopic 2 sees one (c). Both selections approve everything.
     let llm = model(vec![select_all(3), select_all(1)]);
     let existing = vec![original_source()];
-    let found = outline_references::gather(
-        &llm,
-        &web,
-        &plan,
-        &existing,
-        &OutlineProgress::default(),
-    )
-    .await?;
+    let found =
+        outline_references::gather(&llm, &web, &plan, &existing, &OutlineProgress::default())
+            .await?;
     assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
     assert_eq!(found.searches, 3);
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
@@ -490,11 +489,13 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert!(!prompts[2].contains("most plan items need no citation"));
     // Linking offers only the saved page's own prose: the preface and appendix
     // lines are page furniture, never candidates. The outcome is in the note.
-    assert!(linking_prompts(&llm)
-        .iter()
-        .all(|prompt| !prompt.contains("Preface and publishing information") && !prompt.contains("Appendix material")));
-    assert!(review.note.contains("of 24 outline items linked to references"));
-    let stages = stages.lock().unwrap();
+    assert!(linking_prompts(&llm).iter().all(|prompt| !prompt
+        .contains("Preface and publishing information")
+        && !prompt.contains("Appendix material")));
+    assert!(review
+        .note
+        .contains("of 24 outline items linked to references"));
+    let stages = stages.lock().unwrap().clone();
     let position = |stage: OutlineStage| stages.iter().position(|s| *s == stage).unwrap();
     assert!(position(OutlineStage::GatheringReferences) < position(OutlineStage::Drafting));
     assert!(position(OutlineStage::Drafting) < position(OutlineStage::CheckingCitations));
@@ -613,7 +614,10 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
     assert!(prompts[0].contains("never copy the learner's goal"));
     let draft = payload(&prompts[2]);
     assert_eq!(draft["sourceCatalog"]["totalSources"], 2);
-    assert_eq!(repo.verification_sources(&program.summary.id).await?.len(), 2);
+    assert_eq!(
+        repo.verification_sources(&program.summary.id).await?.len(),
+        2
+    );
     Ok(())
 }
 
@@ -639,7 +643,8 @@ async fn offline_topic_drafts_still_pass_without_a_references_finding() -> Resul
 }
 
 #[tokio::test]
-async fn typography_only_mismatches_are_restored_before_the_author_citation_is_offered() -> Result<()> {
+async fn typography_only_mismatches_are_restored_before_the_author_citation_is_offered(
+) -> Result<()> {
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let exact = "The cell’s response changes when experimental conditions differ.";
     let mut source = original_source();
@@ -651,7 +656,11 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
         0,
         &exact.replace('’', "'"),
     );
-    let llm = model(vec![initial, links(&[("/modules/0/summary", exact)]), clean()]);
+    let llm = model(vec![
+        initial,
+        links(&[("/modules/0/summary", exact)]),
+        clean(),
+    ]);
     let sources = vec![source];
     let drafts = DraftRunRegistry::new();
     let program = service::generate_with_references(
@@ -672,10 +681,21 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
     // The chooser is offered the source's own typography, never the author's.
     let offered = linking_prompts(&llm);
     assert!(!offered.is_empty());
-    assert!(offered.iter().all(|p| !payload(p)["passages"].to_string().contains("cell's")));
-    assert!(offered.iter().any(|p| payload(p)["passages"].to_string().contains("cell’s")));
+    assert!(offered
+        .iter()
+        .all(|p| !payload(p)["passages"].to_string().contains("cell's")));
+    assert!(offered
+        .iter()
+        .any(|p| payload(p)["passages"].to_string().contains("cell’s")));
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], exact);
-    assert_eq!(saved.citation_receipts.values().filter(|r| r.covers).count(), 1);
+    assert_eq!(
+        saved
+            .citation_receipts
+            .values()
+            .filter(|r| r.covers)
+            .count(),
+        1
+    );
     Ok(())
 }

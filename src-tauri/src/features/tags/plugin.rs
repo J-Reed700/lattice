@@ -7,7 +7,7 @@ use crate::features::tags::dto::{
     ApplyTagsRequestDto, GenerateTagsRequestDto, RemoveTagRequestDto, TagDto, TagWithCountDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

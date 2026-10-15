@@ -5,7 +5,7 @@
 //! exposed repeat, and grades only formats with application-owned keys. Open
 //! responses enter a separate provisional rubric path.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 

@@ -16,11 +16,11 @@ use super::{
     get_or_create_conversation_id, tool_loop, validate_and_guard_chat_request, ChatEventSink,
     ChatResponse,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::{
+use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{
     JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, NewJob, RecoveryPolicy,
 };
-use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};

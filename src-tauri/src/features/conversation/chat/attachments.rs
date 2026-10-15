@@ -26,12 +26,12 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use crate::application::ports::LLMPort;
-use crate::domain::entities::document::Document;
 use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
-use crate::shared::text::{build_excerpt, safe_truncate};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::entities::document::Document;
+use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 use super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::retrieval::infer_category;
@@ -201,7 +201,6 @@ arrived and could not be read — do not claim no file was attached.\n",
 /// even share of what is left, so the first attachment cannot starve the last.
 /// Unused budget rolls forward: two short files and one long one leave the long
 /// one nearly everything.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn build_turn_attachments(
     container: &dyn ChatStorage,
     conv_service: &Arc<dyn ConversationServiceTrait>,

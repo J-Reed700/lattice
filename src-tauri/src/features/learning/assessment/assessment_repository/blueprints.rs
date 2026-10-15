@@ -6,7 +6,7 @@ use super::{
 use crate::features::learning::assessment_engine as engine;
 use crate::features::learning::dto::*;
 use crate::features::learning::persistence::{self, db, now};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 
 impl LearningAssessmentRepository {

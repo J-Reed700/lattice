@@ -1,9 +1,9 @@
 //! Summaries feature dependency injection.
 //!
 //! The tier is opt-in and off by default, so nothing here is built until
-//! [`register`] is called with `enabled: true`. Until then the only cost is an
-//! atomic read in `trigger::notify_document_indexed` and a `None` from
-//! [`Container::summary_search`].
+//! [`register`] is called with `enabled: true`. Until then the only cost is a
+//! read of an empty slot in [`SummaryTrigger::notify_document_indexed`] and a
+//! `None` from [`Container::summary_search`].
 //!
 //! ## Index files
 //!
@@ -14,52 +14,66 @@
 //! the summary tier turns itself off until the documents are re-summarized,
 //! which is the honest state rather than a stale one.
 //!
-//! One `USearchVectorIndex` per path is shared process-wide, so the generator
-//! writing a summary and the chat turn reading it are looking at the same
-//! in-memory HNSW graph rather than two snapshots of one file.
+//! One `USearchVectorIndex` per path is shared app-wide through
+//! [`SummaryTier`], so the generator writing a summary and the chat turn
+//! reading it are looking at the same in-memory HNSW graph rather than two
+//! snapshots of one file.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::search::engine::vector_search::USearchVectorIndex;
 use crate::features::summaries::repository::{SqliteSummaryRepository, SummaryRepositoryPort};
 use crate::features::summaries::runtime::SummaryRuntimePort;
 use crate::features::summaries::search::SummarySearch;
 use crate::features::summaries::source::SqliteSummarySource;
-use crate::features::summaries::trigger;
+use crate::features::summaries::trigger::SummaryTrigger;
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Summary index file for one embedding identity.
 pub fn summary_index_path(data_dir: &Path, identity: &str) -> PathBuf {
     data_dir.join(format!("summaries-{}.usearch", identity.replace(':', "-")))
 }
 
-type IndexCache = Mutex<HashMap<PathBuf, Weak<USearchVectorIndex>>>;
-
-fn index_cache() -> &'static IndexCache {
-    static CACHE: OnceLock<IndexCache> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+/// The summary tier's state for one app, owned by the container: the trigger
+/// indexing reports to, and the summary indexes open in memory.
+#[derive(Default)]
+pub struct SummaryTier {
+    trigger: Arc<SummaryTrigger>,
+    indexes: Mutex<HashMap<PathBuf, Weak<USearchVectorIndex>>>,
 }
 
-/// The one summary index for `path`, opened on first use.
-fn shared_index(path: PathBuf, dimension: usize) -> Result<Arc<dyn VectorSearchPort>> {
-    let mut cache = index_cache()
-        .lock()
-        .map_err(|_| AppError::InternalError("summary index cache poisoned".into()))?;
-    cache.retain(|_, index| index.strong_count() > 0);
-    if let Some(index) = cache.get(&path).and_then(Weak::upgrade) {
-        return Ok(index as Arc<dyn VectorSearchPort>);
+impl SummaryTier {
+    pub fn new() -> Self {
+        Self::default()
     }
-    let index = Arc::new(USearchVectorIndex::open_or_create(dimension, path.clone())?);
-    cache.insert(path, Arc::downgrade(&index));
-    Ok(index as Arc<dyn VectorSearchPort>)
+
+    /// What every indexer tells about the documents it commits and deletes.
+    pub fn trigger(&self) -> &Arc<SummaryTrigger> {
+        &self.trigger
+    }
+
+    /// The one summary index for `path`, opened on first use.
+    fn shared_index(&self, path: PathBuf, dimension: usize) -> Result<Arc<dyn VectorSearchPort>> {
+        let mut cache = self
+            .indexes
+            .lock()
+            .map_err(|_| AppError::InternalError("summary index cache poisoned".into()))?;
+        cache.retain(|_, index| index.strong_count() > 0);
+        if let Some(index) = cache.get(&path).and_then(Weak::upgrade) {
+            return Ok(index as Arc<dyn VectorSearchPort>);
+        }
+        let index = Arc::new(USearchVectorIndex::open_or_create(dimension, path.clone())?);
+        cache.insert(path, Arc::downgrade(&index));
+        Ok(index as Arc<dyn VectorSearchPort>)
+    }
 }
 
 /// Resolves the utility model and embedder through the container in Tauri
@@ -87,15 +101,19 @@ impl SummaryRuntimePort for StateRuntime {
 /// `enabled: false` (the default) it clears any previously installed hook and
 /// returns; nothing is read, opened, or generated.
 pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
-    if !enabled {
-        trigger::clear_post_index_hook();
-        return Ok(());
-    }
     let Some(container) = tauri::Manager::try_state::<Container>(&app) else {
+        if !enabled {
+            return Ok(());
+        }
         return Err(AppError::InvalidState(
             "Summary tier registered before the container reached Tauri state".into(),
         ));
     };
+    let tier = container.summary_tier();
+    if !enabled {
+        tier.trigger().clear_post_index_hook();
+        return Ok(());
+    }
     let Some(identity) = container.search.embedding_identity().map(str::to_owned) else {
         tracing::info!("Summary tier idle: no active embedding model to key its index by");
         return Ok(());
@@ -109,11 +127,11 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
     if pruned > 0 {
         tracing::info!(pruned, "Dropped summaries from a previous embedding model");
     }
-    let index = shared_index(
+    let index = tier.shared_index(
         summary_index_path(container.core.data_dir(), &identity),
         container.search.vector_search().dimension(),
     )?;
-    trigger::register_post_index_hook(
+    tier.trigger().register_post_index_hook(
         Arc::new(GenerateDocumentSummariesUseCase::new(
             true,
             identity.clone(),
@@ -123,6 +141,7 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
             Arc::new(StateRuntime { app: app.clone() }),
         )),
         container.db_pool().clone(),
+        container.core.background(),
     );
     tracing::info!(%identity, "Summary tier enabled");
     Ok(())
@@ -130,6 +149,12 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
 
 /// Summaries' registrar surface on `Container`.
 impl Container {
+    /// The summary tier's trigger and open indexes: one per app, shared by
+    /// the indexers that report to it and the turns that search it.
+    pub fn summary_tier(&self) -> &Arc<SummaryTier> {
+        &self.summary_tier
+    }
+
     /// The summary retrieval tier, or `None` when it has nothing to offer.
     ///
     /// `None` is the default and the common case: no active embedding model,
@@ -147,12 +172,14 @@ impl Container {
                 return None;
             }
         }
-        let index = shared_index(
-            summary_index_path(self.core.data_dir(), &identity),
-            self.search.vector_search().dimension(),
-        )
-        .map_err(|error| tracing::warn!(%error, "Could not open the summary index"))
-        .ok()?;
+        let index = self
+            .summary_tier()
+            .shared_index(
+                summary_index_path(self.core.data_dir(), &identity),
+                self.search.vector_search().dimension(),
+            )
+            .map_err(|error| tracing::warn!(%error, "Could not open the summary index"))
+            .ok()?;
         let embedder = self
             .get_or_load_embedding()
             .await

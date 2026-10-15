@@ -3,8 +3,8 @@
 //! titles, never overwrite another pack unless the OS save dialog asked, and
 //! nothing lands inside the app's own data directory.
 use super::{invalid, io_error};
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 use std::path::{Path, PathBuf};
 
 pub(crate) const PACK_EXTENSION: &str = "lattice-learning";

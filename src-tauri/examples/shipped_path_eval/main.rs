@@ -33,7 +33,7 @@ mod record;
 
 use lattice::features::conversation::chat::headless::run_headless_turn;
 use lattice::features::conversation::chat::{ChatEventSink, ChatResponse, ChatStreamEventDto};
-use lattice::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

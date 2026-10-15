@@ -3,8 +3,8 @@
 //! so a section whose failed claims and evidence do not fit the model is
 //! repaired in several requests, in sequence.
 use super::*;
-use crate::application::services::grounded_generation::GroundedRequest;
 use crate::features::learning::lessons::text_edits;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
 use std::collections::{BTreeSet, VecDeque};
 
 fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
@@ -559,15 +559,15 @@ mod tests {
     impl LLMPort for SmallWindow {
         async fn complete(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             let (system, user) =
                 crate::features::learning::lessons::structured_call::task_messages(request);
             let mut requests = self.requests.lock().unwrap();
             let marker = format!("[{}]", requests.len());
             requests.push((system.to_owned(), user.to_owned()));
             Ok(
-                crate::application::ports::llm_port::CompletionResponse::from_text(
+                lattice_core::application::ports::llm_port::CompletionResponse::from_text(
                     json!({"edits":[{"path":"/blocks/0/body","before":marker,"after":marker.replace('[', "(").replace(']', ")")}]})
                         .to_string(),
                 ),
