@@ -41,7 +41,7 @@ pub(in crate::features::learning) const REMOVE: &str =
 pub(in crate::features::learning) const PLAN_FIX: &str =
     "Fix the plan defect described; do not add or change citations.";
 pub(in crate::features::learning) const PLAN_SMALLEST: &str =
-    "Apply the smallest edit that removes the defect, even if that means dropping the item.";
+    "This is the last attempt and the previous rewording did not remove the defect. Rewrite the text at this finding's path so the reason no longer applies: delete or replace every phrase the reason objects to instead of rewording it. If a sentence cannot be fixed, remove it; if the item cannot be fixed, drop it.";
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(in crate::features::learning) struct RepairOutcome {

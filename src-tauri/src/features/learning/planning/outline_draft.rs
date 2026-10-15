@@ -104,6 +104,14 @@ impl ModuleBudgets {
 }
 
 impl LearningOutlineIssueDto {
+    /// Whether this finding keeps the course from being accepted. A plan
+    /// finding that automatic repair could not settle within its attempts is
+    /// an editorial suggestion from the same model: it stays visible but does
+    /// not block. Factual and missing-reference findings always block.
+    pub(in crate::features::learning) fn blocks_acceptance(&self) -> bool {
+        !(self.kind == LearningOutlineIssueKind::Plan && self.exhausted)
+    }
+
     /// Whether repair may still act on this finding in this operation. A
     /// factual finding's first attempt is research, which needs no rewrite
     /// budget; everything after that is a rewrite.
@@ -443,6 +451,25 @@ fn remaining_note(draft: &OutlineDraft) -> String {
     )
 }
 
+/// The note shown when only advisory plan suggestions remain.
+fn advisory_note(draft: &OutlineDraft, sources: &[LearningSourceDto]) -> String {
+    let suggestions: Vec<_> = draft
+        .open_findings()
+        .map(|issue| format!("{}: {}", location(&issue.path), issue.message))
+        .collect();
+    format!(
+        "Outline checks passed. {} references saved; {} of {} outline items linked to references. {} plan {} could not be settled automatically and {} listed below; {} not block the course. Accept it, or use Repair to try again. Lesson content is checked separately when prepared. {}",
+        sources.len(),
+        draft.review.citations_verified,
+        crate::features::learning::outline_linking::item_count(&draft.candidate),
+        suggestions.len(),
+        if suggestions.len() == 1 { "suggestion" } else { "suggestions" },
+        if suggestions.len() == 1 { "is" } else { "are" },
+        if suggestions.len() == 1 { "it does" } else { "they do" },
+        suggestions.join(" ")
+    )
+}
+
 /// Write the status and note that follow a completed review pass.
 fn settle(draft: &mut OutlineDraft, sources: &[LearningSourceDto], references_missing: bool) {
     let open = draft.open_findings().count();
@@ -460,7 +487,12 @@ fn settle(draft: &mut OutlineDraft, sources: &[LearningSourceDto], references_mi
             searched: vec![],
         });
     }
-    draft.review.status = if draft.review.issues.is_empty() {
+    draft.review.status = if !draft
+        .review
+        .issues
+        .iter()
+        .any(LearningOutlineIssueDto::blocks_acceptance)
+    {
         LearningOutlineReviewStatus::Passed
     } else {
         LearningOutlineReviewStatus::NeedsRepair
@@ -557,7 +589,11 @@ pub(in crate::features::learning) async fn finish(
                 break;
             }
             if draft.open_findings().all(|issue| issue.exhausted) {
-                draft.review.note = remaining_note(&draft);
+                draft.review.note = if draft.review.status == LearningOutlineReviewStatus::Passed {
+                    advisory_note(&draft, &sources)
+                } else {
+                    remaining_note(&draft)
+                };
                 repo.checkpoint_outline(&mut program, &mut draft, &[], &[]).await?;
                 break;
             }

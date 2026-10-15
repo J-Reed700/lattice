@@ -241,13 +241,14 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
     )
     .await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair, "{}", review.note);
+    // Out of rewrites, the summary finding is advice that does not block.
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed, "{}", review.note);
     assert_eq!(review.repair_passes, 3);
     assert_eq!(review.issues.len(), 1);
     assert_eq!(review.issues[0].id, "finding-4");
     assert_eq!(review.issues[0].attempts, 0);
     assert!(review.issues[0].exhausted);
-    assert!(review.note.starts_with("1 finding remain"));
+    assert!(review.note.starts_with("Outline checks passed."));
     assert!(review.note.contains("Module 1 · Summary:"));
     assert_eq!(llm.prompts.lock().unwrap().len(), 8);
     Ok(())

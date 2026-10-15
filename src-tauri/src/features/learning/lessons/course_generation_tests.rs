@@ -1538,22 +1538,24 @@ async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_
     )
     .await?;
     let review = saved.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair);
+    // A plan finding automatic repair could not settle is advice, not a block.
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
     assert_eq!(review.repair_passes, 2);
     assert_eq!(review.issues.len(), 1);
     assert_eq!(review.issues[0].id, "finding-1");
     assert_eq!(review.issues[0].attempts, 2);
     assert!(review.issues[0].exhausted);
     assert_eq!(review.issues[0].claim, "Measure the group difference with a stated outcome.");
-    assert!(review.note.starts_with("1 finding remain"));
+    assert!(review.note.starts_with("Outline checks passed."));
+    assert!(review.note.contains("1 plan suggestion could not be settled automatically"));
     assert!(review.note.contains("Module 1 · Lesson 1: The outcome is named but still not observable."));
-    assert!(review.note.contains("Use Repair to try again"));
+    assert!(review.note.contains("use Repair to try again"));
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
-    // The second rewrite carries the smallest-edit instruction; the second
+    // The second rewrite carries the last-attempt instruction; the second
     // review was told how many attempts the finding had used.
-    assert!(prompts[4].contains("smallest edit that removes the defect"));
-    assert!(!prompts[2].contains("smallest edit that removes the defect"));
+    assert!(prompts[4].contains("This is the last attempt"));
+    assert!(!prompts[2].contains("This is the last attempt"));
     let second_review: serde_json::Value =
         serde_json::from_str(prompts[3].rsplit("\n\n").next().unwrap())?;
     assert_eq!(second_review["openFindings"][0]["attempts"], 1);
