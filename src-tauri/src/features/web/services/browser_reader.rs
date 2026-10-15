@@ -40,7 +40,7 @@ use tracing::{debug, info, warn};
 use url::{Host, Url};
 
 use super::web::is_blocked_ip;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::net::IpAddr;
 
 /// The reserved address the page reports back through. `.invalid` can never

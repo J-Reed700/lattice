@@ -1,7 +1,7 @@
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::domain::qa::hyde::{QueryType, SearchStrategy};
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::domain::qa::hyde::{QueryType, SearchStrategy};
 
 /// Mock LLM for testing
 struct MockLLM {

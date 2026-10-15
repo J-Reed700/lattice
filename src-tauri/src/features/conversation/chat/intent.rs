@@ -1,7 +1,7 @@
-use crate::application::ports::llm_port::{CompletionRequest, InferencePriority};
-use crate::application::ports::LLMPort;
-use crate::application::services::completion_input::from_context;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::completion_input::from_context;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -217,8 +217,8 @@ fn extract_json_object(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use async_trait::async_trait;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
     struct MockLLM {
         response: String,
@@ -237,7 +237,7 @@ mod tests {
         async fn complete(
             &self,
             request: &CompletionRequest,
-        ) -> crate::shared::error::Result<CompletionResponse> {
+        ) -> lattice_core::shared::error::Result<CompletionResponse> {
             Ok(CompletionResponse::from_text(
                 self.respond(request.user_text()).await?,
             ))
@@ -254,12 +254,12 @@ mod tests {
             text.split_whitespace().count()
         }
 
-        async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
             Ok(true)
         }
     }
     impl MockLLM {
-        async fn respond(&self, _prompt: &str) -> crate::shared::error::Result<String> {
+        async fn respond(&self, _prompt: &str) -> lattice_core::shared::error::Result<String> {
             Ok(self.response.clone())
         }
     }
@@ -352,7 +352,7 @@ mod tests {
         async fn complete(
             &self,
             request: &CompletionRequest,
-        ) -> crate::shared::error::Result<CompletionResponse> {
+        ) -> lattice_core::shared::error::Result<CompletionResponse> {
             self.sent.lock().unwrap().push(request.clone());
             Ok(CompletionResponse::from_text(
                 r#"{"confidence":0.9,"isFollowup":false,"needsKnowledgeBase":true,"needsWeb":false}"#,
@@ -367,7 +367,7 @@ mod tests {
         fn count_tokens(&self, text: &str) -> usize {
             text.split_whitespace().count()
         }
-        async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
             Ok(true)
         }
     }

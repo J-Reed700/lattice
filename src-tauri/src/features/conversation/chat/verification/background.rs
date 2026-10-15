@@ -14,15 +14,15 @@ use std::time::Instant;
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::application::contracts::settings::LLMVerificationSettingsDto;
-use crate::application::ports::llm_port::OptionalLlmLoader;
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::trait_def::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
+use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::LLMPort;
 #[cfg(test)]
-use crate::shared::error::Result;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 use super::super::source_snapshots;
 use super::super::turn_record::{TurnRecordDto, TurnStepKind, TurnStepState};

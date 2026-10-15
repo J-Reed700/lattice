@@ -18,7 +18,7 @@
 //! ```rust,no_run
 //! use lattice::services::ConversationService;
 //! use std::sync::Arc;
-//! use lattice::application::ports::conversation_repository::ConversationRepositoryPort;
+//! use lattice_core::application::ports::conversation_repository::ConversationRepositoryPort;
 //!
 //! # async fn example(repository: Arc<dyn ConversationRepositoryPort>) -> Result<(), Box<dyn std::error::Error>> {
 //! let service = ConversationService::new(repository);
@@ -41,11 +41,11 @@
 //! # }
 //! ```
 
-use crate::application::ports::conversation_repository::ConversationRepositoryPort;
-use crate::domain::conversation::{
+use lattice_core::application::ports::conversation_repository::ConversationRepositoryPort;
+use lattice_core::domain::conversation::{
     Conversation, ConversationAggregate, ConversationMessage, MessageRole,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// Service for conversation management
@@ -677,7 +677,7 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
 }
 
 #[async_trait::async_trait]
-impl crate::application::ports::ConversationHistoryPort for ConversationService {
+impl lattice_core::application::ports::ConversationHistoryPort for ConversationService {
     async fn get_conversation(&self, id: &str) -> Result<Option<ConversationAggregate>> {
         self.get_conversation(id).await
     }

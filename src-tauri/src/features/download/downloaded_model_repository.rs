@@ -2,9 +2,9 @@
 //!
 //! Manages persistence of downloaded model records in SQLite.
 
-use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-use crate::shared::error::{AppError, Result};
 use chrono::Utc;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
 use tracing::{debug, error, info};

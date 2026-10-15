@@ -21,9 +21,9 @@ use std::sync::Arc;
 
 use tracing::{debug, info};
 
-use crate::application::contracts::settings::LLMVerificationSettingsDto;
-use crate::application::ports::LLMPort;
 use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
+use lattice_core::application::ports::LLMPort;
 
 mod background;
 #[cfg(test)]
@@ -37,18 +37,7 @@ pub(super) use self::background::{pending_metadata, BackgroundVerification};
 use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;
 
-use crate::application::services::claim_verification::ClaimVerdict;
-
-impl ClaimVerdict {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Supported => "supported",
-            Self::Contradicted => "contradicted",
-            Self::Unsupported => "unsupported",
-            Self::Unverified => "unverified",
-        }
-    }
-}
+use lattice_core::application::services::claim_verification::ClaimVerdict;
 
 /// Why a claim was left unverified, so the UI can say which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

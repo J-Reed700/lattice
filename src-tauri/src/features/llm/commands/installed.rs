@@ -6,7 +6,7 @@ use tauri::{Manager, State};
 
 use crate::features::llm::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// Checks if a specific LLM model is already downloaded
 ///

@@ -1,7 +1,7 @@
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::ports::LLMPort;
-use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::settings::dto::RouterSettingsDto;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::completion_input::{complete_text, TextCall};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};

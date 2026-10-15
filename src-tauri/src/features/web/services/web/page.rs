@@ -6,9 +6,9 @@ use super::{
 };
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage};
 use crate::features::web::services::{browser_reader, stealth};
-use crate::shared::error::{AppError, Result};
 use chrono::Utc;
 use encoding_rs::{Encoding, UTF_8};
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::StatusCode;
 use scraper::{Html, Selector};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub(super) fn cap_page_text(content: String, max_chars: usize) -> (String, bool)
         return (content, false);
     }
     (
-        crate::shared::text::safe_truncate(&content, max_chars),
+        lattice_core::shared::text::safe_truncate(&content, max_chars),
         true,
     )
 }

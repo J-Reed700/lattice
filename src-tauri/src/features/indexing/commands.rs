@@ -4,8 +4,6 @@
 //! These commands apply cross-cutting concerns (rate limiting, validation)
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
-use crate::application::ports::document_scope::DocumentScopePort;
-use crate::application::ports::EmbeddingPort;
 use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
@@ -16,8 +14,10 @@ use crate::features::indexing::note_index_sink::{
 };
 use crate::infrastructure::security::FileAccessConfig;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result as AppResult};
-use crate::shared::ipc::{ApiResult, ErrorCode};
+use lattice_core::application::ports::document_scope::DocumentScopePort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::{AppError, Result as AppResult};
+use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 use std::sync::Arc;
 
 /// The readiness gate every indexing path applies before it embeds anything:

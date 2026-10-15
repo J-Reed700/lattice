@@ -16,7 +16,6 @@
 //! cross-cutting core accessors (DB pool/connection, security context,
 //! file-access config, and the data-dir-derived paths).
 
-use crate::application::ports::{LLMPort, SettingsSideEffectsPort};
 use crate::features::embedding::runtime::EmbeddingRuntime;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
@@ -28,7 +27,8 @@ use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryT
 use crate::features::web::services::web::WebService;
 use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{LLMPort, SettingsSideEffectsPort};
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -120,7 +120,7 @@ pub struct Container {
 
     /// Durable background jobs. Features register a handler per kind during
     /// plugin setup; shutdown closes and drains it before the database closes.
-    pub(crate) jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
+    pub(crate) jobs: Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
 
     /// Frozen copies of cited web pages; its captures run on `jobs`.
     pub(crate) web_page_snapshots: Arc<crate::features::web::snapshots::WebPageSnapshotService>,
@@ -201,7 +201,7 @@ impl Container {
         llm_endpoint: &str,
         llm_model: &str,
         data_dir: PathBuf,
-        background: Arc<crate::shared::runtime::background::BackgroundTasks>,
+        background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
     ) -> Result<Self> {
         // These are populated asynchronously when models load
         let embedding_runtime = Arc::new(EmbeddingRuntime::new());
@@ -374,7 +374,7 @@ impl Container {
                 vault_writer: vault_writer.clone(),
             });
 
-        let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+        let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
@@ -472,7 +472,8 @@ impl Container {
         let events = handle.clone();
         self.jobs.observe(move |job| {
             use tauri::Emitter;
-            if let Err(error) = events.emit(crate::shared::runtime::jobs::STATUS_EVENT, job) {
+            if let Err(error) = events.emit(lattice_core::shared::runtime::jobs::STATUS_EVENT, job)
+            {
                 tracing::debug!(%error, "Could not publish a job status to the window");
             }
         });

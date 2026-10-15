@@ -29,16 +29,16 @@
 //! assert_eq!(result.links.len(), 2);
 //! ```
 
-use crate::application::ports::RepositoryPort;
-use crate::domain::entities::Document;
 use crate::features::extraction::dto::{
     DocumentRefDto, ExtractAndResolveRequestDto, ExtractAndResolveResponseDto,
     ParseWikilinksRequestDto, ParseWikilinksResponseDto, ResolveWikilinkRequestDto,
     ResolveWikilinkResponseDto, ResolvedLinkDto,
 };
 use crate::features::extraction::use_cases::{ParseWikilinksUseCase, ResolveWikilinkUseCase};
-use crate::shared::error::AppError;
 use async_trait::async_trait;
+use lattice_core::application::ports::RepositoryPort;
+use lattice_core::domain::entities::Document;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 #[async_trait]
@@ -274,7 +274,7 @@ mod tests {
 
         async fn find_by_filter(
             &self,
-            _filter: &dyn crate::application::ports::Filter,
+            _filter: &dyn lattice_core::application::ports::Filter,
         ) -> Result<Vec<Document>, AppError> {
             unimplemented!()
         }
@@ -309,9 +309,9 @@ mod tests {
     }
 
     fn create_test_document_aggregate(_id: &str, path: &str, _title: Option<&str>) -> Document {
-        use crate::domain::value_objects::{Checksum, ChunkingStrategy, FileMetadata};
-        use crate::shared::types::ValidatedFilePath;
         use chrono::Utc;
+        use lattice_core::domain::value_objects::{Checksum, ChunkingStrategy, FileMetadata};
+        use lattice_core::shared::types::ValidatedFilePath;
         use std::path::PathBuf;
 
         let validated_path = ValidatedFilePath::new(PathBuf::from(path)).unwrap_or_else(|_| {

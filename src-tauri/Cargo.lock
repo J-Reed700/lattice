@@ -4605,6 +4605,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "lattice-core"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytemuck",
+ "chrono",
+ "derive_more 1.0.0",
+ "dirs 5.0.1",
+ "futures",
+ "hex",
+ "mockall",
+ "objc",
+ "once_cell",
+ "parking_lot",
+ "proptest",
+ "rand 0.8.6",
+ "regex",
+ "reqwest 0.12.28",
+ "rust-stemmers",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "specta",
+ "sqlx",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "lattice-desktop"
 version = "1.0.0"
 dependencies = [
@@ -4615,14 +4651,12 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bip39",
- "bytemuck",
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "chacha20poly1305",
  "chrono",
  "criterion",
- "derive_more 1.0.0",
  "dirs 5.0.1",
  "docx-rs",
  "ego-tree",
@@ -4639,6 +4673,7 @@ dependencies = [
  "insta",
  "jsonschema",
  "keyring",
+ "lattice-core",
  "lazy-regex",
  "lol_html",
  "lopdf",

@@ -43,12 +43,12 @@
 //! # }
 //! ```
 
-use crate::application::contracts::web::CleanArticle;
 use crate::features::web::services::stealth;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::{AppError, Result};
 use lazy_regex::regex;
 use readability_js::Readability;
 use reqwest::Client;
@@ -493,7 +493,7 @@ impl ArticleExtractorService {
             text.to_string()
         } else {
             // Find last space before 200 chars
-            let truncated = &text[..crate::shared::text::floor_char_boundary(text, 200)];
+            let truncated = &text[..lattice_core::shared::text::floor_char_boundary(text, 200)];
             if let Some(last_space) = truncated.rfind(' ') {
                 format!("{}...", &text[..last_space])
             } else {

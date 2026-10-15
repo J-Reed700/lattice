@@ -16,8 +16,8 @@
 //! // Use key for API calls
 //! ```
 
-use crate::application::ports::CredentialsPort;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::CredentialsPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetApiKeyUseCase {

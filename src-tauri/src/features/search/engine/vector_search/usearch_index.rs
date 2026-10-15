@@ -20,8 +20,8 @@
 use super::compression::{VectorIndexCompression, VectorQuantization};
 use super::manifest::IndexConfig;
 use super::rescore_store::RescoreVectorStore;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

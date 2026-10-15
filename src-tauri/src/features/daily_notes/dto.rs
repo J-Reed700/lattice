@@ -1,6 +1,6 @@
 use super::repository::WorkspaceNoteRecord;
 use crate::features::qa::dto::SourceDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

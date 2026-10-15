@@ -1,5 +1,5 @@
 //! Per-request outline progress and cancellation. Draft text never crosses IPC.
-use crate::shared::{
+use lattice_core::shared::{
     error::{AppError, Result},
     ipc::{ApiError, ErrorCode},
 };

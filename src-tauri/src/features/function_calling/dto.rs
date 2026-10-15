@@ -12,8 +12,8 @@
 //! - **Stable**: Versioned schemas for breaking changes
 //! - **Validated**: Strong typing with serde
 
-use crate::application::contracts::web::default_max_results;
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::web::default_max_results;
 use serde::{Deserialize, Serialize};
 
 /// Input for semantic_search function.

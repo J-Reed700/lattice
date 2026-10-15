@@ -11,7 +11,7 @@ use chrono::{Duration, Utc};
 use sqlx::{Row, SqlitePool};
 
 use crate::features::stats::type_label::type_label;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// How far back "recently grown" looks.
 pub const GROWTH_WINDOW_DAYS: i64 = 7;

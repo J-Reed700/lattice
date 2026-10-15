@@ -22,7 +22,7 @@ impl ConversationRepository {
     pub async fn retrieval_catalog(
         &self,
         allowed_ids: &HashSet<String>,
-    ) -> Result<Vec<crate::application::contracts::search::CorpusDocument>, AppError> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::CorpusDocument>, AppError> {
         if allowed_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -42,9 +42,9 @@ impl ConversationRepository {
         for (id, name, opening, source_context) in rows {
             let sections: Vec<String> = sqlx::query_scalar("SELECT section FROM text_chunks WHERE document_id = ? AND section IS NOT NULL GROUP BY section ORDER BY MIN(chunk_index) LIMIT 24")
                 .bind(&id).fetch_all(&self.pool).await?;
-            catalog.push(crate::application::contracts::search::CorpusDocument {
+            catalog.push(lattice_core::application::contracts::search::CorpusDocument {
                 chapter_number:
-                    crate::application::contracts::search::CorpusDocument::opening_chapter_number(
+                    lattice_core::application::contracts::search::CorpusDocument::opening_chapter_number(
                         &opening,
                     ),
                 id,
@@ -58,7 +58,7 @@ impl ConversationRepository {
             });
         }
         catalog.sort_by(|a, b| {
-            let key = |d: &crate::application::contracts::search::CorpusDocument| {
+            let key = |d: &lattice_core::application::contracts::search::CorpusDocument| {
                 (
                     d.source_context
                         .as_ref()
@@ -84,7 +84,7 @@ impl ConversationRepository {
         selected_ids: &[String],
         allowed_ids: &HashSet<String>,
         chunks_per_document: usize,
-    ) -> Result<Vec<crate::application::contracts::search::CorpusPassage>, AppError> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
         let mut passages = Vec::new();
         let mut seen = HashSet::new();
         for id in selected_ids.iter().take(4) {
@@ -96,7 +96,7 @@ impl ConversationRepository {
             ).bind(id).bind(chunks_per_document.min(8) as i64).fetch_all(&self.pool).await?;
             passages.extend(rows.into_iter().map(
                 |(id, document_id, name, path, content, chunk_index, section, page, from_ocr)| {
-                    crate::application::contracts::search::CorpusPassage {
+                    lattice_core::application::contracts::search::CorpusPassage {
                         id,
                         document_id,
                         name,
@@ -117,8 +117,8 @@ impl ConversationRepository {
         &self,
         identifiers: &[String],
         allowed: &HashSet<String>,
-    ) -> Result<Vec<crate::application::contracts::search::CorpusPassage>, AppError> {
-        use crate::domain::value_objects::section_identifier::SectionIdentifier;
+    ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
+        use lattice_core::domain::value_objects::section_identifier::SectionIdentifier;
         let mut seen_identifiers = HashSet::new();
         let identifiers: Vec<_> = identifiers
             .iter()
@@ -170,7 +170,7 @@ impl ConversationRepository {
                     .filter(|row| seen.insert(row.0.clone()))
                     .map(
                         |(id, document_id, name, path, content, index, section, page, from_ocr)| {
-                            crate::application::contracts::search::CorpusPassage {
+                            lattice_core::application::contracts::search::CorpusPassage {
                                 id,
                                 document_id,
                                 name,
@@ -194,7 +194,7 @@ impl ConversationRepository {
         &self,
         chunk_id: &str,
         allowed: &HashSet<String>,
-    ) -> Result<Vec<crate::application::contracts::search::CorpusPassage>, AppError> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
         let anchor: Option<(String, i64, Option<String>)> = sqlx::query_as(
             "SELECT document_id, chunk_index, section FROM text_chunks WHERE id = ?",
         )
@@ -212,7 +212,7 @@ impl ConversationRepository {
         Ok(rows
             .into_iter()
             .map(|(id, name, path, content, index, page, from_ocr)| {
-                crate::application::contracts::search::CorpusPassage {
+                lattice_core::application::contracts::search::CorpusPassage {
                     id,
                     document_id: doc.clone(),
                     name,

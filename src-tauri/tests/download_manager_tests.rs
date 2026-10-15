@@ -12,10 +12,11 @@ use lattice::features::download::download_repository::mock::MockDownloadReposito
 #[cfg(feature = "test-utils")]
 use lattice::features::download::engine::mock::MockDownloadEngine;
 #[cfg(feature = "test-utils")]
-use lattice::{
-    domain::download::{Checksum, ChecksumAlgorithm, DownloadState},
-    features::download::manager::{DownloadManager, DownloadManagerService, DownloadRequest},
+use lattice::features::download::manager::{
+    DownloadManager, DownloadManagerService, DownloadRequest,
 };
+#[cfg(feature = "test-utils")]
+use lattice_core::domain::download::{Checksum, ChecksumAlgorithm, DownloadState};
 #[cfg(feature = "test-utils")]
 use std::{path::PathBuf, sync::Arc};
 #[cfg(feature = "test-utils")]

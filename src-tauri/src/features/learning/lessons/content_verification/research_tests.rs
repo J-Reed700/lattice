@@ -5,13 +5,15 @@
     clippy::panic
 )]
 use super::*;
-use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult};
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::learning::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::features::{
     learning::{lessons::course_generation_tests::ScriptedModel, repository::LearningRepository},
     web::mocks::MockWebService,
 };
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
+};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
 const CAPTURE: &str =
     "Random assignment reduces confounding in comparisons between treatment groups.";

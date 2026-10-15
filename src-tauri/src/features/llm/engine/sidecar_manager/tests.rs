@@ -993,7 +993,7 @@ fn drain_harness() -> DrainHarness {
     let signals = Arc::new(StartupSignals::default());
     let child = Arc::new(SyncMutex::new(None));
     let ready = spawn_event_drain(
-        &crate::shared::runtime::background::BackgroundTasks::default(),
+        &lattice_core::shared::runtime::background::BackgroundTasks::default(),
         rx,
         DEAD_ENDPOINT.to_string(),
         child,

@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Creates a new tag with name, color, and description
 ///

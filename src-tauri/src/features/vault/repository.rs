@@ -1,6 +1,6 @@
 //! Durable, coalesced vault write intentions. Bodies remain in the notes table.
 use crate::features::daily_notes::repository::NoteTimestampRecord;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 #[derive(sqlx::FromRow)]

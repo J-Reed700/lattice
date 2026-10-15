@@ -3,12 +3,12 @@ use super::{
     clip_to_bytes, HistoryToolScope, ADJACENT_TURNS, DEFAULT_RESPONSE_BYTES, MAX_CANDIDATES,
     MAX_CONTEXT_TOKENS, MAX_EXACT_TERMS, MAX_PASSAGE_GROUPS, MIN_RESPONSE_BYTES,
 };
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryReadPort, RecallCandidate, SourceReadLimits,
 };
-use crate::application::services::context_assembler::{RecallDiagnostics, SelectedPassage};
-use crate::domain::conversation::memory::SourceMessage;
-use crate::shared::error::Result;
+use lattice_core::application::services::context_assembler::{RecallDiagnostics, SelectedPassage};
+use lattice_core::domain::conversation::memory::SourceMessage;
+use lattice_core::shared::error::Result;
 
 // ---------------------------------------------------------------------------
 // Automatic per-turn retrieval

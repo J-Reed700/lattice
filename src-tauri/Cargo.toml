@@ -5,11 +5,60 @@ edition = "2021"
 license = "MIT"
 default-run = "lattice-desktop"
 
-[lints.rust]
+[workspace]
+members = ["crates/lattice-core"]
+# A path dependency inside the root would otherwise join the workspace.
+exclude = ["vendor/readability-js"]
+
+# One pin and one feature set for every crate the core and the app share, so
+# a core-only build resolves the same features as the app.
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+bytemuck = "1.14"
+chrono = { version = "0.4", features = ["serde"] }
+derive_more = { version = "1.0", features = ["from", "into", "display", "deref"] }
+dirs = "5.0"
+futures = "0.3"
+hex = "0.4"
+mockall = "0.13"
+objc = "0.2"
+once_cell = "1.19"
+parking_lot = "0.12"
+proptest = "1.5"
+rand = "0.8"
+regex = "1.10"
+# rustls, not the default native-tls: on macOS native-tls is Secure Transport,
+# which cannot negotiate TLS 1.3 or HTTP/2. Sites that require TLS 1.3 failed
+# with "bad protocol version" before a request was sent, and every page came
+# back over HTTP/1.1, unlike any browser. Native roots keep user-installed CAs.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "charset", "macos-system-configuration", "stream", "json", "cookies", "gzip", "deflate", "brotli"] }
+rust-stemmers = "1.2"
+serde = { version = "1.0", features = ["derive"] }
+# preserve_order: a JSON schema's properties reach the grammar in the order
+# they are written, so a model writes `prompt` before `correctIndex` and a
+# finding before its verdict, not alphabetically.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+sha2 = "0.10"
+specta = { version = "=2.0.0-rc.20", features = ["derive", "serde", "chrono", "uuid", "serde_json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
+tempfile = "3.8"
+thiserror = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+# CancellationToken for graceful shutdown signaling. Sagas race their
+# `recv()` against the token so app-wide shutdown can preempt a pending
+# event-bus poll instead of waiting for RecvError::Closed.
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+url = "2.5"
+urlencoding = "2.1.3"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+[workspace.lints.rust]
 # Public APIs are not fully documented yet.
 missing_docs = "allow"
 
-[lints.clippy]
+[workspace.lints.clippy]
 # Error handling - prevent panics in production
 unwrap_used = "deny"
 expect_used = "deny"
@@ -21,6 +70,9 @@ indexing_slicing = "deny"      # Deny array indexing without bounds check
 
 # Code quality
 missing_errors_doc = "allow"
+
+[lints]
+workspace = true
 
 [lib]
 name = "lattice"
@@ -46,6 +98,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 
 [dependencies]
+lattice-core = { path = "crates/lattice-core" }
 tauri = { version = "=2.11.1", features = ["protocol-asset"] }
 tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }
 tauri-plugin-shell = "2.0"
@@ -55,19 +108,16 @@ tauri-plugin-dialog = "2.6.0"
 tauri-plugin-single-instance = "2"
 
 # Type-safe IPC code generation
-specta = { version = "=2.0.0-rc.20", features = ["derive", "serde", "chrono", "uuid", "serde_json"] }
+specta = { workspace = true }
 specta-typescript = "0.0.7"
 tauri-specta = { version = "2.0.0-rc.14", features = ["derive", "typescript"] }
 
-serde = { version = "1.0", features = ["derive"] }
-# preserve_order: a JSON schema's properties reach the grammar in the order
-# they are written, so a model writes `prompt` before `correctIndex` and a
-# finding before its verdict, not alphabetically.
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 semver = "1.0"
 jsonschema = { version = "0.17", default-features = false }
-tokio = { version = "1.35", features = ["full"] }
-tempfile = "3.8"
+tokio = { workspace = true }
+tempfile = { workspace = true }
 notify = "6.1"
 # Sibling of `notify` (same maintainers) that handles the editor-temp-file-
 # swap insanity natively. Without it we'd hand-roll a sweep loop that
@@ -75,9 +125,9 @@ notify = "6.1"
 # sequences. The debouncer batches into clean DebouncedEvent groups
 # keyed per-path with backend-tracked metadata.
 notify-debouncer-full = "0.3"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
-uuid = { version = "1.6", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
 # The reranker and embeddings both use Candle; the chat LLM runs in the
 # bundled llama-server sidecar.
 # (cross-encoder/ms-marco-MiniLM-L-6-v2). Embeddings already use Candle
@@ -93,22 +143,17 @@ chrono = { version = "0.4", features = ["serde"] }
 # run pretrained tokenizers for inference.
 tokenizers = { version = "0.15", default-features = false, features = ["progressbar", "onig"] }
 ndarray = "0.16.1"
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 rayon = "1.10"
 memmap2 = "0.9.11"
 usearch = "2.23"
-bytemuck = "1.14"
 lru = "0.18.2"
-sha2 = "0.10"
-futures = "0.3"
+sha2 = { workspace = true }
+futures = { workspace = true }
 async-stream = "0.3"
-# rustls, not the default native-tls: on macOS native-tls is Secure Transport,
-# which cannot negotiate TLS 1.3 or HTTP/2. Sites that require TLS 1.3 failed
-# with "bad protocol version" before a request was sent, and every page came
-# back over HTTP/1.1, unlike any browser. Native roots keep user-installed CAs.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "charset", "macos-system-configuration", "stream", "json", "cookies", "gzip", "deflate", "brotli"] }
-hex = "0.4"
+reqwest = { workspace = true }
+hex = { workspace = true }
 # Learner execution: restricted JavaScript and CPython/WASI guests, behind the
 # `learning-labs` feature. Native compiler projects use the optional container
 # provider.
@@ -120,31 +165,28 @@ docx-rs = "0.4"
 encoding_rs = "0.8"
 zip = "0.6"
 unicode-segmentation = "1.10"
-urlencoding = "2.1.3"  # URL decoding for path validation (CWE-22)
-dirs = "5.0"
+urlencoding = { workspace = true }  # URL decoding for path validation (CWE-22)
+dirs = { workspace = true }
 opener = "0.7"
 md5 = "0.7"
 # Native persistent stores must be explicitly enabled; keyring otherwise uses a mock.
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 infer = "0.15"
-tracing = "0.1"
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
 opentelemetry = "0.32"
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.33"
-once_cell = "1.19"
-regex = "1.10"
+once_cell = { workspace = true }
+regex = { workspace = true }
 lazy-regex = "3"
-rust-stemmers = "1.2"
-async-trait = "0.1"
+rust-stemmers = { workspace = true }
+async-trait = { workspace = true }
 ollama-rs = "0.2"
 tokio-stream = "0.1"
-# CancellationToken for graceful shutdown signaling. Sagas race their
-# `recv()` against the token so app-wide shutdown can preempt a pending
-# event-bus poll instead of waiting for RecvError::Closed.
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-util = { workspace = true }
 # fastembed removed: see ORT note above.
 # Candle — pure-Rust ML framework for embedding model inference.
 # CPU baseline here; the `metal` feature is enabled in the macOS-only
@@ -158,16 +200,15 @@ candle-nn = "=0.10.2"
 candle-transformers = "=0.10.2"
 safetensors = "0.4"
 # Rust modernization dependencies
-derive_more = { version = "1.0", features = ["from", "into", "display", "deref"] }
-parking_lot = "0.12"
+parking_lot = { workspace = true }
 fs4 = "0.8"
-rand = "0.8"
+rand = { workspace = true }
 fsrs = "=6.6.2"
 
 # LLM and web ingestion dependencies
 sysinfo = "0.30"
 scraper = "0.18"
-url = "2.5"
+url = { workspace = true }
 html5ever = "0.26"
 ego-tree = "0.6"
 select = "0.6"
@@ -218,9 +259,8 @@ candle-nn = { version = "=0.10.2", features = ["metal"] }
 candle-transformers = { version = "=0.10.2", features = ["metal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# Drains the Objective-C objects Candle's Metal dispatches autorelease
-# (see shared/runtime/autorelease.rs). Already in the tree through `metal`.
-objc = "0.2"
+# Installs the renderer shutdown hook (infrastructure/setup/renderer_shutdown_macos.rs).
+objc = { workspace = true }
 # OCR page rendering (features/ocr/render). CoreGraphics rasterizes every PDF
 # image codec a scan can use (CCITT, JBIG2, JPX), which no pure-Rust crate in
 # the tree does; both bindings and `png` were already in Cargo.lock.
@@ -246,16 +286,17 @@ windows = { version = "0.52", features = [
 winreg = "0.52"
 
 [dev-dependencies]
+lattice-core = { path = "crates/lattice-core", features = ["test-support"] }
 criterion = { version = "0.5", features = ["html_reports"] }
-proptest = "1.5"
+proptest = { workspace = true }
 insta = { version = "1.45", features = ["json", "redactions"] }
-mockall = "0.13"
-rand = "0.8"
-futures = "0.3"
+mockall = { workspace = true }
+rand = { workspace = true }
+futures = { workspace = true }
 mockito = "1.0"
 wiremock = "0.6"
 hound = "=3.5.1"   # generates WAV fixtures for the audio-decode unit tests
-tokio = { version = "1.35", features = ["full", "test-util"] }   # paused clocks for the stream-timeout tests
+tokio = { workspace = true, features = ["test-util"] }   # paused clocks for the stream-timeout tests
 
 
 [features]

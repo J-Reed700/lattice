@@ -18,7 +18,7 @@
 //! asks for pages it found textless (`ExtractedContent::needs_ocr`), so a
 //! library without scans never starts the process.
 //!
-//! [`OcrPort`]: crate::application::ports::OcrPort
+//! [`OcrPort`]: lattice_core::application::ports::OcrPort
 
 pub mod client;
 pub mod di;

@@ -356,10 +356,10 @@ pub(in crate::features::learning) async fn live_mapping_fixture(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::features::learning::content_verification::tests::{
         fixture_completion, fixture_prompts,
     };
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
     struct FidelityModel(&'static str);
     #[async_trait::async_trait]

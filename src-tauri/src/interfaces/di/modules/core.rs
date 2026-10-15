@@ -2,7 +2,7 @@
 //! background scope and credentials.
 
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use crate::features::credentials::use_cases::{
 };
 
 // Application Ports
-use crate::application::ports::CredentialsPort;
+use lattice_core::application::ports::CredentialsPort;
 
 /// Core shared infrastructure used by all modules
 ///
@@ -44,7 +44,7 @@ impl CoreModule {
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         data_dir: PathBuf,
         background: Arc<BackgroundTasks>,
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         let security_context = Arc::new(SecurityContext::new());
 
         // Imported documents live outside data_dir. Create their root before
@@ -55,7 +55,7 @@ impl CoreModule {
         tokio::fs::create_dir_all(&library_root)
             .await
             .map_err(|error| {
-                crate::shared::error::AppError::FileStorage(format!(
+                lattice_core::shared::error::AppError::FileStorage(format!(
                     "Failed to create library directory: {error}"
                 ))
             })?;

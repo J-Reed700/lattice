@@ -33,9 +33,9 @@ use super::manifest::{
     read_manifest, read_source_stamp, write_manifest, IndexManifest, ManifestMismatch,
 };
 use super::usearch_index::USearchVectorIndex;
-use crate::application::ports::VectorSearchPort;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::application::ports::VectorSearchPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 
 /// How often the flusher looks at the index.
 const FLUSH_TICK: Duration = Duration::from_secs(5);

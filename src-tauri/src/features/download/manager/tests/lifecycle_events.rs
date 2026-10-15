@@ -1,13 +1,13 @@
 //! Event-channel backpressure must not wedge transfer lifecycle operations.
 
 use super::{temp_file, temp_root};
-use crate::domain::download::{DownloadSession, DownloadState};
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::{
     DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use lattice_core::domain::download::{DownloadSession, DownloadState};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 

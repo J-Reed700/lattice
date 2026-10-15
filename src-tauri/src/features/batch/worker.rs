@@ -2,11 +2,11 @@
 //! item's outcome saved before the next starts. The runtime owns delivery,
 //! cancellation and recovery; a stopped import resumes from its pending items.
 use super::items::{BatchItem, BatchItems, ItemState};
-use crate::shared::{
+use async_trait::async_trait;
+use lattice_core::shared::{
     error::Result,
     runtime::jobs::{JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, RecoveryPolicy},
 };
-use async_trait::async_trait;
 use std::sync::Arc;
 
 /// What importing one item came to.
@@ -147,7 +147,7 @@ impl<I: ItemImporter> JobHandler for BatchImportJob<I> {
 /// Registers both import kinds with the runtime, settling imports the last
 /// process left running.
 pub(super) async fn register(
-    jobs: &Arc<crate::shared::runtime::jobs::JobRuntime>,
+    jobs: &Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
     items: &BatchItems,
     files: super::file_job::FileImporter,
     urls: super::url_job::UrlImporter,

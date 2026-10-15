@@ -3,10 +3,8 @@
 //! Tauri commands for HuggingFace token management.
 //! Routes to interfaces/commands/domains/hf_settings.rs implementations.
 
-use crate::{
-    features::huggingface::commands::{self as hf_settings, HfTokenStatus},
-    shared::ipc::ApiError,
-};
+use crate::features::huggingface::commands::{self as hf_settings, HfTokenStatus};
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime,

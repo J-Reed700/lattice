@@ -12,7 +12,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::indexing::reindex_document::ReindexDocumentUseCase;
+//! use lattice_core::application::use_cases::indexing::reindex_document::ReindexDocumentUseCase;
 //!
 //! # async fn example(use_case: ReindexDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute("doc-123".to_string()).await?;
@@ -23,17 +23,17 @@
 
 use std::sync::Arc;
 
-use crate::application::factories::FileMetadataFactory;
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
-    EmbeddingPort, FileStoragePort, RepositoryPort, SearchResultCachePort, VectorSearchPort,
-};
-use crate::domain::entities::Document;
-use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::IndexFileResponseDto;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::factories::FileMetadataFactory;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
+    EmbeddingPort, FileStoragePort, RepositoryPort, SearchResultCachePort, VectorSearchPort,
+};
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Reindex document use case.
 ///
@@ -54,7 +54,7 @@ use crate::shared::error::{AppError, Result};
 /// - `EmbeddingRepositoryPort`: Persists chunk embeddings
 pub struct ReindexDocumentUseCase {
     file_storage: Arc<dyn FileStoragePort>,
-    content_extractor: Option<Arc<dyn crate::application::ports::ContentExtractionPort>>,
+    content_extractor: Option<Arc<dyn lattice_core::application::ports::ContentExtractionPort>>,
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
@@ -71,7 +71,7 @@ pub struct ReindexDocumentUseCase {
     /// which cascades the old postings away; without rewriting them the
     /// document would silently drop out of the sparse branch until it was
     /// imported again.
-    sparse_term_store: Option<Arc<dyn crate::application::ports::SparseTermStorePort>>,
+    sparse_term_store: Option<Arc<dyn lattice_core::application::ports::SparseTermStorePort>>,
     /// Search results cached against the corpus, dropped once the rebuilt
     /// chunks are live.
     query_cache: Option<Arc<dyn SearchResultCachePort>>,
@@ -82,7 +82,7 @@ impl ReindexDocumentUseCase {
     #[must_use]
     pub fn with_sparse_term_store(
         mut self,
-        store: Arc<dyn crate::application::ports::SparseTermStorePort>,
+        store: Arc<dyn lattice_core::application::ports::SparseTermStorePort>,
     ) -> Self {
         self.sparse_term_store = Some(store);
         self
@@ -90,7 +90,7 @@ impl ReindexDocumentUseCase {
 
     pub fn with_content_extractor(
         mut self,
-        extractor: Arc<dyn crate::application::ports::ContentExtractionPort>,
+        extractor: Arc<dyn lattice_core::application::ports::ContentExtractionPort>,
     ) -> Self {
         self.content_extractor = Some(extractor);
         self
@@ -369,7 +369,7 @@ impl ReindexDocumentUseCase {
         // once `document_repo.save` has replaced this document's chunk rows.
         if let Some(store) = self.sparse_term_store.as_ref() {
             if sparse_terms.len() == document.chunks().len() {
-                let entries: Vec<crate::application::ports::ChunkSparseTerms> = document
+                let entries: Vec<lattice_core::application::ports::ChunkSparseTerms> = document
                     .chunks()
                     .iter()
                     .zip(sparse_terms.iter())
@@ -401,7 +401,7 @@ impl ReindexDocumentUseCase {
             .iter()
             .zip(embeddings)
             .map(|(chunk, embedding)| {
-                crate::application::ports::vector_search_port::VectorIndexEntry {
+                lattice_core::application::ports::vector_search_port::VectorIndexEntry {
                     id: crate::features::embedding::encoding::vector_key(chunk.id().as_str()),
                     embedding,
                     content: chunk.content().to_owned(),

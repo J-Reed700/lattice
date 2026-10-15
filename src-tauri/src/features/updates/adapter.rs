@@ -13,10 +13,10 @@
 //! - Falls back to manual version checking if updater is not configured
 //! - Respects update configuration in tauri.conf.json
 
-use crate::application::ports::update_checker_port::{UpdateCheckerPort, UpdateInfoData};
-use crate::shared::error::{AppError, Result};
-use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
+use lattice_core::application::ports::update_checker_port::{UpdateCheckerPort, UpdateInfoData};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::reqwest_client_builder;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};

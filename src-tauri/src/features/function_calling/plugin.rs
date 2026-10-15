@@ -5,7 +5,7 @@
 use crate::features::function_calling::commands as function_calling_commands;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats};
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

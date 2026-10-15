@@ -3,12 +3,14 @@
 //! answer can point at.
 
 use super::ToolOutputSettingsDto;
-use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult};
 use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::ports::FunctionResult;
 use crate::features::conversation::chat::retrieval::build_web_source_citations;
 use crate::features::function_calling::dto::{WikiSearchOutput, WikiSummaryOutput};
-use crate::shared::text::{build_excerpt, safe_truncate};
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
+};
+use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 /// Preview length for a page the model fetched itself, matching the preview a
 /// vault passage gets.

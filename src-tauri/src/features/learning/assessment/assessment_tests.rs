@@ -6,7 +6,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,

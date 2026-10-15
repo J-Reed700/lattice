@@ -48,11 +48,11 @@ async fn a_cached_utility_failure_is_an_error_not_a_successful_no_op() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-model.gguf");
     std::fs::write(&path, b"model fixture").unwrap();
-    let active = crate::domain::DownloadedModel::new(
+    let active = lattice_core::domain::DownloadedModel::new(
         "test-id".into(),
         "Test utility".into(),
         "test-model".into(),
-        crate::domain::models::downloaded::ModelLocation::LocalFile { path: path.clone() },
+        lattice_core::domain::models::downloaded::ModelLocation::LocalFile { path: path.clone() },
         13,
         "GGUF".into(),
         None,
@@ -106,7 +106,7 @@ fn unusable_sidecar_is_not_reported_as_a_model_failure() {
 #[tokio::test]
 async fn auto_and_explicit_llamacpp_use_their_connection_despite_stale_ollama_and_local_selections()
 {
-    use crate::application::{
+    use lattice_core::application::{
         contracts::settings::{LLMProvider, LlamaCppSettingsDto},
         ports::llm_port::{CompletionInput, CompletionRequest},
     };
@@ -200,7 +200,7 @@ async fn utility_role_follows_the_chat_provider_policy_on_a_shared_host() {
     // One llama.cpp server is configured both as the llama.cpp connection
     // and as the "Ollama" URL. Under Auto the utility role must speak the
     // protocol chat speaks; llama.cpp serves none of Ollama's routes.
-    use crate::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
+    use lattice_core::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -257,7 +257,7 @@ async fn utility_role_follows_the_chat_provider_policy_on_a_shared_host() {
 
 #[tokio::test]
 async fn utility_role_uses_ollama_only_when_ollama_is_the_provider() {
-    use crate::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
+    use lattice_core::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -318,7 +318,7 @@ async fn missing_ollama_configuration_fails_before_network_access() {
         LlmRuntime::default(),
     );
     let settings = LLMSettingsDto {
-        provider: crate::application::contracts::settings::LLMProvider::Ollama,
+        provider: lattice_core::application::contracts::settings::LLMProvider::Ollama,
         ollama_url: String::new(),
         ..Default::default()
     };

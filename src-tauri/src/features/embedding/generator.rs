@@ -15,11 +15,11 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::domain::models::embedding_defaults::{
+use crate::features::embedding::candle_service::CandleEmbeddingService;
+use lattice_core::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
 };
-use crate::features::embedding::candle_service::CandleEmbeddingService;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Embedding model configuration. Kept as an enum for API compatibility
 /// with the previous fastembed-backed generator; today we don't pre-bind to
@@ -118,7 +118,7 @@ impl EmbeddingGenerator {
         })?;
         let text = text.to_string();
         rt.block_on(async move {
-            <CandleEmbeddingService as crate::application::ports::EmbeddingPort>::embed_single(
+            <CandleEmbeddingService as lattice_core::application::ports::EmbeddingPort>::embed_single(
                 &svc, &text,
             )
             .await
@@ -132,7 +132,7 @@ impl EmbeddingGenerator {
         })?;
         let texts = texts.to_vec();
         rt.block_on(async move {
-            <CandleEmbeddingService as crate::application::ports::EmbeddingPort>::embed_batch(
+            <CandleEmbeddingService as lattice_core::application::ports::EmbeddingPort>::embed_batch(
                 &svc, &texts,
             )
             .await

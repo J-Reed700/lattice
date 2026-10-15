@@ -6,7 +6,7 @@ use crate::features::learning::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
     reference_collection::ReferenceCollection, repository::LearningRepository,
 };
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

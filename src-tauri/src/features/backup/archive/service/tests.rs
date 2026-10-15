@@ -92,8 +92,8 @@ fn passphrase_length_is_enforced_and_blank_means_none() {
 }
 // -- end to end --------------------------------------------------------
 
-use crate::application::ports::settings_port::MockSettingsRepository;
-use crate::application::ports::SettingsRepositoryPort;
+use lattice_core::application::ports::settings_port::MockSettingsRepository;
+use lattice_core::application::ports::SettingsRepositoryPort;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 

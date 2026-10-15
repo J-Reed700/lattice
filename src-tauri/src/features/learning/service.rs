@@ -1,6 +1,6 @@
 //! Learning command orchestration and boundary validation.
 use super::{dto::*, outline_draft::DraftRunRegistry, repository::LearningRepository};
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

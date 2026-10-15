@@ -23,8 +23,8 @@ use crate::features::search::dto::{
     SearchResponseDto, SearchResultDto,
 };
 use crate::interfaces::di::container::Container;
-use crate::shared::error::AppError;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::ipc::ApiError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

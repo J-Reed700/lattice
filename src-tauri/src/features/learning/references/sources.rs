@@ -1,13 +1,13 @@
 //! Acquire immutable, bounded source snapshots for Learning Studio.
 
-use crate::application::ports::LibraryPassagesPort;
 use crate::features::learning::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
 use crate::features::learning::dto::{
     LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
 };
 use crate::features::web::traits::WebServiceTrait;
 use crate::infrastructure::security::RateLimiter;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LibraryPassagesPort;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -207,7 +207,7 @@ pub async fn acquire(
 pub(in crate::features::learning) async fn ensure_before_use_sources(
     deps: &SourceDeps,
     program_id: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     let repo = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
         deps.pool.clone(),
     );
@@ -216,7 +216,7 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
         s.kind == LearningSourceKind::Web && s.freshness_policy == LearningSourcePolicy::BeforeUse
     }) {
         if source.pending_version_id.is_some() {
-            return Err(crate::shared::error::AppError::InvalidInput(format!("A newer version of '{}' is available. Adopt it or change the freshness policy before preparing a lesson.",source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("this source"))));
+            return Err(lattice_core::shared::error::AppError::InvalidInput(format!("A newer version of '{}' is available. Adopt it or change the freshness policy before preparing a lesson.",source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("this source"))));
         }
         let operation_id = uuid::Uuid::new_v4().to_string();
         let request = RefreshLearningSourceRequestDto {
@@ -229,16 +229,20 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
             deps.web_ingest
                 .check_rate_limit("learning_source_before_use")
                 .await
-                .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
+                .map_err(|e| {
+                    lattice_core::shared::error::AppError::RateLimitExceeded(e.to_string())
+                })?;
             let url = source.requested_url.as_deref().ok_or_else(|| {
-                crate::shared::error::AppError::Database("Web source has no requested URL".into())
+                lattice_core::shared::error::AppError::Database(
+                    "Web source has no requested URL".into(),
+                )
             })?;
             let article = deps
                 .web
                 .fetch_reference_content(url)
                 .await
-                .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;
-            Ok::<_, crate::shared::error::AppError>(
+                .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+            Ok::<_, lattice_core::shared::error::AppError>(
                 crate::features::learning::source_library::CapturedLearningSource {
                     title: article.title.unwrap_or_else(|| url.into()),
                     publisher: None,
@@ -269,7 +273,7 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
                 crate::features::learning::source_library::LearningSourceLibraryRepository::before_use_allows(status)?
             }
             None => {
-                return Err(crate::shared::error::AppError::ServiceNotAvailable(format!(
+                return Err(lattice_core::shared::error::AppError::ServiceNotAvailable(format!(
                     "Could not verify the before-use source '{}'. Retry after the source is reachable.",
                     source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("web source")
                 )))

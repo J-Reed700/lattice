@@ -1,11 +1,11 @@
-use crate::application::ports::unit_of_work::ModelFileRepositoryPort;
-use crate::application::ports::UnitOfWorkFactory;
-use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-use crate::domain::value_objects::model_status::FileStatus;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::events::model_download_events::*;
 use crate::infrastructure::events::event_bus::EventBus;
 use chrono::Utc;
+use lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::domain::value_objects::model_status::FileStatus;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -22,8 +22,8 @@ pub struct DownloadSaga {
 
 impl DownloadSaga {
     fn select_primary_model_file(
-        files: &[crate::domain::entities::model_file::ModelFile],
-    ) -> Option<&crate::domain::entities::model_file::ModelFile> {
+        files: &[lattice_core::domain::entities::model_file::ModelFile],
+    ) -> Option<&lattice_core::domain::entities::model_file::ModelFile> {
         files
             .iter()
             .find(|file| file.file_name == "model.onnx" || file.file_name.ends_with("/model.onnx"))
@@ -43,7 +43,7 @@ impl DownloadSaga {
     }
 
     fn model_location_for_download(
-        primary: &crate::domain::entities::model_file::ModelFile,
+        primary: &lattice_core::domain::entities::model_file::ModelFile,
     ) -> Option<ModelLocation> {
         let path = PathBuf::from(&primary.file_path);
         if primary.file_name == "config.json" {
@@ -282,7 +282,7 @@ impl DownloadSaga {
                 model.architecture.clone(),
                 model.metadata.clone(),
                 |identifier| {
-                    crate::domain::models::catalog_cache::ModelCatalogCache::instance()
+                    lattice_core::domain::models::catalog_cache::ModelCatalogCache::instance()
                         .lookup(identifier)
                 },
             )

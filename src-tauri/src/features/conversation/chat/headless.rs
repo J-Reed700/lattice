@@ -15,7 +15,7 @@
 use super::ports::ChatRuntime;
 use super::turn::run_turn;
 use super::{ChatEventSink, ChatResponse, ToolPreferences};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// Run one turn exactly as `chat_with_conversation` does, streaming every
 /// event — answer text, steps, the finished grounding check — to `events`.

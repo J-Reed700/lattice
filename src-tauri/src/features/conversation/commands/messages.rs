@@ -1,9 +1,9 @@
 //! Reading a conversation's messages.
 
-use crate::domain::ConversationMessage;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::interfaces::di::container::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::ConversationMessage;
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 /// Retrieves all messages for a conversation

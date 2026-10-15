@@ -5,8 +5,8 @@
     clippy::panic
 )]
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::shared::runtime::jobs::JobStore;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::runtime::jobs::JobStore;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -162,7 +162,7 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
     let shared_claim_check = request.input.iter().any(|item| {
         matches!(
             item,
-            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+            lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
                 if role == "system" && content.contains("Check the supplied claims independently.")
         )
     });
@@ -170,7 +170,10 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
         return;
     }
     for item in &request.input {
-        if let crate::application::ports::llm_port::CompletionInput::Message { content, .. } = item
+        if let lattice_core::application::ports::llm_port::CompletionInput::Message {
+            content,
+            ..
+        } = item
         {
             for demand in [
                 "Return only JSON",
@@ -1982,7 +1985,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         assert!(prompts[1].contains(SOURCE));
         assert!(prompts[1].contains("Correct the response format"));
     }
-    use crate::application::services::claim_verification::parse_verdict_word;
+    use lattice_core::application::services::claim_verification::parse_verdict_word;
     assert_eq!(
         parse_verdict_word("Label: unsupported\nReason: Missing source."),
         Some(ClaimVerdict::Unsupported)

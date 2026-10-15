@@ -1,6 +1,6 @@
 //! Persistence for derived vectors over conversation messages.
 use super::ConversationRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
     /// Store an embedding only while its source message still matches the

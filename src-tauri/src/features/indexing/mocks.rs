@@ -250,7 +250,7 @@ impl IndexStorageTrait for MockIndexStorage {
     async fn chunk_ids_in_order(
         &self,
         _document_id: &str,
-    ) -> crate::shared::error::Result<Vec<String>> {
+    ) -> lattice_core::shared::error::Result<Vec<String>> {
         Ok(Vec::new())
     }
 
@@ -258,7 +258,7 @@ impl IndexStorageTrait for MockIndexStorage {
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::domain::value_objects::ContextualizedChunk>,
+        chunks: Vec<lattice_core::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> crate::features::indexing::engine::error::Result<String> {
         let doc_id = uuid::Uuid::new_v4().to_string();
@@ -310,7 +310,7 @@ impl IndexStorageTrait for MockIndexStorage {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-        chunks: Vec<crate::domain::value_objects::ContextualizedChunk>,
+        chunks: Vec<lattice_core::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> crate::features::indexing::engine::error::Result<String> {
         let path_str = path.to_string_lossy().to_string();

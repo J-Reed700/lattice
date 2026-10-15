@@ -14,7 +14,7 @@ use crate::features::learning::{
         LearningPracticalActivityKind, LearningSimulationSessionDto, LearningSimulationSpeaker,
     },
 };
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

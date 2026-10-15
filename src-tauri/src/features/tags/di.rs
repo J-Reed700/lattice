@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::LoadedChatModelPort;
 use crate::features::tags::service::TagService;
 use crate::features::tags::service_impl::TagServiceImpl;
 use crate::features::tags::trait_def::TagServiceTrait;
@@ -21,6 +20,7 @@ use crate::features::tags::use_cases::{
     UpdateTagUseCase,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::LoadedChatModelPort;
 
 #[derive(Clone)]
 pub struct TagsDi {

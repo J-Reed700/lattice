@@ -54,7 +54,7 @@ pub async fn add_learning_web_source(
                 .check_rate_limit("learning_source_fetch")
                 .await
                 .map_err(|error| {
-                    crate::shared::error::AppError::RateLimitExceeded(error.to_string())
+                    lattice_core::shared::error::AppError::RateLimitExceeded(error.to_string())
                 })?;
             web.fetch_reference_content(&url).await
         },
@@ -77,7 +77,7 @@ pub async fn add_learning_document_source(
     )
     .map_err(ApiError::from)?;
     uuid::Uuid::parse_str(&request.document_id).map_err(|_| {
-        ApiError::from(crate::shared::error::AppError::InvalidInput(
+        ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
             "Invalid document ID".into(),
         ))
     })?;
@@ -207,7 +207,7 @@ pub async fn refresh_learning_source(
         .map_err(ApiError::from)?;
     if revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Source changed; reload and retry.".into(),
             ),
         ));
@@ -219,13 +219,13 @@ pub async fn refresh_learning_source(
             .web_ingest
             .check_rate_limit("learning_source_refresh")
             .await
-            .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
         let article = container
             .web_service()
             .fetch_reference_content(&url)
             .await
-            .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;
-        Ok::<_, crate::shared::error::AppError>(
+            .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+        Ok::<_, lattice_core::shared::error::AppError>(
             crate::features::learning::source_library::CapturedLearningSource {
                 title: article.title.unwrap_or_else(|| url.clone()),
                 publisher: None,

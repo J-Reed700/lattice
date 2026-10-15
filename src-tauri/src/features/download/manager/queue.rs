@@ -1,7 +1,7 @@
 //! Queue draining: promote pending downloads while concurrency slots are free.
 
 use super::state::DownloadManagerService;
-use crate::domain::download::DownloadError;
+use lattice_core::domain::download::DownloadError;
 use tracing::{debug, error};
 
 impl DownloadManagerService {

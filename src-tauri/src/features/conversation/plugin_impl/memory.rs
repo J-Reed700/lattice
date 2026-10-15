@@ -4,7 +4,7 @@ use crate::features::conversation::dto::{
     CompactConversationRequestDto, CompactConversationResponseDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 
 /// Read the bounded-memory ledger for a conversation, for the details view.
 ///
@@ -19,7 +19,7 @@ pub async fn get_conversation_memory_impl(
     let conversation_id = request.conversation_id.trim();
     if conversation_id.is_empty() {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Conversation ID is required to read memory".to_string(),
             ),
         ));
@@ -67,7 +67,7 @@ pub async fn compact_conversation_impl(
     let conversation_id = request.conversation_id.trim();
     if conversation_id.is_empty() {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Conversation ID is required to compact".to_string(),
             ),
         ));
@@ -83,7 +83,7 @@ pub async fn compact_conversation_impl(
     .await
     .map_err(ApiError::from)?
     .ok_or_else(|| {
-        ApiError::from(crate::shared::error::AppError::ServiceNotAvailable(
+        ApiError::from(lattice_core::shared::error::AppError::ServiceNotAvailable(
             "No model is available to compact this conversation".to_string(),
         ))
     })?;
@@ -113,7 +113,7 @@ fn compaction_response(
 
     if outcome.status == CompactionStatus::NothingToCompact {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Nothing to compact: this conversation has no older messages that are not \
                  already covered."
                     .to_string(),
@@ -123,13 +123,13 @@ fn compaction_response(
 
     let summary_text = outcome.summary.clone().unwrap_or_default();
     let summary_tokens = outcome.summary_tokens.max(1) as i64;
-    let record = crate::domain::conversation::CompactionRecord {
+    let record = lattice_core::domain::conversation::CompactionRecord {
         id: uuid::Uuid::new_v4().to_string(),
-        conversation_id: crate::shared::types::ConversationId::from_string(
+        conversation_id: lattice_core::shared::types::ConversationId::from_string(
             conversation_id.to_string(),
         )
         .map_err(|error| {
-            ApiError::from(crate::shared::error::AppError::InvalidInput(
+            ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
                 error.to_string(),
             ))
         })?,

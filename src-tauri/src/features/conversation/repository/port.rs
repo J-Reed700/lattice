@@ -1,13 +1,13 @@
 //! `ConversationRepositoryPort` adapter over the inherent methods.
 
 use super::ConversationRepository;
-use crate::domain::conversation::{
+use lattice_core::domain::conversation::{
     Conversation, ConversationAggregate, ConversationMessage, MessageRole,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 #[async_trait::async_trait]
-impl crate::application::ports::conversation_repository::ConversationRepositoryPort
+impl lattice_core::application::ports::conversation_repository::ConversationRepositoryPort
     for ConversationRepository
 {
     async fn fail_pending_turn(&self, user_message_id: &str) -> Result<()> {
@@ -126,9 +126,9 @@ impl crate::application::ports::conversation_repository::ConversationRepositoryP
         if let Some((key, _)) = fields.iter().find(|(key, _)| {
             key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         }) {
-            return Err(crate::shared::error::AppError::InvalidInput(format!(
-                "Invalid metadata key: {key}"
-            )));
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
+                format!("Invalid metadata key: {key}"),
+            ));
         }
         let pairs = vec!["?, json(?)"; fields.len()].join(", ");
         let sql = format!(
@@ -140,7 +140,7 @@ impl crate::application::ports::conversation_repository::ConversationRepositoryP
         }
         let result = query.bind(message_id).execute(&self.pool).await?;
         if result.rows_affected() == 0 {
-            return Err(crate::shared::error::AppError::NotFound(format!(
+            return Err(lattice_core::shared::error::AppError::NotFound(format!(
                 "Message not found: {message_id}"
             )));
         }

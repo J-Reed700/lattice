@@ -1,9 +1,9 @@
-use crate::application::ports::unit_of_work::ModelRepositoryPort;
-use crate::domain::entities::model::Model;
-use crate::domain::entities::model_file::ModelFile;
-use crate::domain::value_objects::model_status::ModelStatus;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::unit_of_work::ModelRepositoryPort;
+use lattice_core::domain::entities::model::Model;
+use lattice_core::domain::entities::model_file::ModelFile;
+use lattice_core::domain::value_objects::model_status::ModelStatus;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use tracing::{debug, error};
 

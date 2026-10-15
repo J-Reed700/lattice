@@ -19,8 +19,8 @@ use std::time::Duration;
 use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::backup::adapter::roll_back_database;
+use lattice_core::application::ports::SettingsRepositoryPort;
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -28,7 +28,7 @@ use super::format::{self, ArchiveError, STREAM_NONCE_LEN};
 use super::key_store::MasterKeyStore;
 use super::placeholder::{self, FileAvailability};
 use super::snapshot::{self, ExtractedPayload, ProgressEvent};
-use crate::domain::conversation::memory::MEMORY_SCHEMA_VERSION;
+use lattice_core::domain::conversation::memory::MEMORY_SCHEMA_VERSION;
 
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 
@@ -36,7 +36,7 @@ mod merge;
 use merge::{copy_missing_tree, copy_new_files, place_vault};
 
 /// Marker file the app checks at startup to know derived vectors are gone.
-pub const REEMBED_MARKER: &str = crate::shared::constants::REEMBED_MARKER_FILE;
+pub const REEMBED_MARKER: &str = lattice_core::shared::constants::REEMBED_MARKER_FILE;
 
 /// How long to let a sync client fetch an evicted archive before giving up
 /// and telling the user to download it themselves. Generous on purpose: a

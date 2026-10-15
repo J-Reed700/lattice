@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::application::ports::llm_port::ThinkingPolicy;
 use crate::features::llm::engine::gguf_metadata;
+use lattice_core::application::ports::llm_port::ThinkingPolicy;
 
 /// The thinking policy a local model file needs.
 ///

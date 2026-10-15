@@ -2,8 +2,8 @@
 //! retaining the exact native completion—including opaque replay state—in the
 //! returned response.
 use super::{field, parse_completion, set_field, CompletionResponse, LLMProvider};
-use crate::shared::error::{AppError, Result};
 use futures::{Stream, StreamExt};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -375,7 +375,7 @@ fn append(block: &mut Value, delta: &Value, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::CompletionInput;
+    use lattice_core::application::ports::llm_port::CompletionInput;
     use std::sync::Mutex;
 
     /// What the response replays, as the provider's own JSON.

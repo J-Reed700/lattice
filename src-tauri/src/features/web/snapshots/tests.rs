@@ -64,14 +64,14 @@ async fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let capture = Arc::new(MockPageCapture::new());
     let events = Arc::new(RecordingEvents::default());
-    let jobs = crate::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
     let service = Arc::new(WebPageSnapshotService::new(
         pool.clone(),
         dir.path().join("web-snapshots"),
         capture.clone(),
         jobs,
         events.clone(),
-        Arc::new(crate::shared::runtime::background::BackgroundTasks::default()),
+        Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
     ));
     service.register_job().await.unwrap();
     Fixture {

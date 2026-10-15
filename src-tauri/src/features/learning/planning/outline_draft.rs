@@ -2,7 +2,7 @@
 use crate::features::learning::{
     dto::*, outline_progress::OutlineProgress, repository::LearningRepository,
 };
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -283,7 +283,7 @@ pub(in crate::features::learning) async fn finish(
             .ok_or_else(|| AppError::InvalidInput("The saved draft is unavailable.".into()))?;
         // A failed or interrupted check can never inherit a previous approval.
         draft.review.status = LearningOutlineReviewStatus::Unchecked;
-        let safe = crate::shared::ipc::ApiError::from(error).message;
+        let safe = lattice_core::shared::ipc::ApiError::from(error).message;
         draft.review.note = format!(
             "Review or repair stopped: {safe} Completed work is saved. Use Repair to continue."
         );

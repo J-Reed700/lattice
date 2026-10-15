@@ -4,13 +4,13 @@ use chrono::Utc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::domain::download::DownloadOperationState;
-use crate::domain::entities::model::Model;
-use crate::domain::entities::model_file::ModelFile;
-use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use crate::features::llm::dto::DownloadModelResponseDto;
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
-use crate::shared::error::AppError;
+use lattice_core::domain::download::DownloadOperationState;
+use lattice_core::domain::entities::model::Model;
+use lattice_core::domain::entities::model_file::ModelFile;
+use lattice_core::domain::value_objects::model_status::{FileStatus, ModelStatus};
+use lattice_core::shared::error::AppError;
 
 use super::{DownloadModelUseCase, DownloadRequest};
 

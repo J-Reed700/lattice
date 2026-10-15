@@ -7,9 +7,9 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::{ArticleMetadata, WebArchiveService};
-use crate::application::contracts::web::CleanArticle;
 use crate::features::web::WebArchiveServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::{AppError, Result};
 
 #[async_trait]
 impl WebArchiveServiceTrait for WebArchiveService {

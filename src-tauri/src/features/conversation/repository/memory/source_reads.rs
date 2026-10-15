@@ -2,13 +2,13 @@
 
 use super::super::ConversationRepository;
 use super::{SourceMessageRow, SOURCE_COLUMNS};
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     EvidencePurpose, EvidenceSpan, SourceMessage, SourceRole, SuppressedSpan,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
     /// Original messages in `(after_sequence, through_sequence]`, oldest first.

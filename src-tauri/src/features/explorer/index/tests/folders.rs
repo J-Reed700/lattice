@@ -3,10 +3,10 @@
 //! and removal with and without the folder's threads.
 
 use super::*;
-use crate::domain::conversation::MessageRole;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::explorer::{folders, repository};
-use crate::shared::AppError;
+use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::AppError;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 

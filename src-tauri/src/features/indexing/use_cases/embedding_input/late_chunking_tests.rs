@@ -1,7 +1,7 @@
 use super::*;
-use crate::application::ports::embedding_port::EmbeddingTextChunk;
-use crate::domain::value_objects::{ChunkingStrategy, FileMetadata};
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
+use lattice_core::domain::value_objects::{ChunkingStrategy, FileMetadata};
+use lattice_core::shared::types::ValidatedFilePath;
 use std::sync::Mutex;
 
 /// Splits at a fixed byte width and records every text handed to the model,
@@ -86,7 +86,7 @@ fn document_named(text: &str, name: &str, mime: &str) -> Document {
     )
     .unwrap();
     let checksum =
-        crate::application::factories::ChecksumFactory::from_bytes(text.as_bytes()).unwrap();
+        lattice_core::application::factories::ChecksumFactory::from_bytes(text.as_bytes()).unwrap();
     Document::from_file(
         path,
         metadata,

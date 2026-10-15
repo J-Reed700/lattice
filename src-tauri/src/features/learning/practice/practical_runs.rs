@@ -5,7 +5,7 @@ use crate::features::learning::{
     practical_dto::*,
     practical_repository::{LearningPracticalRepository, PreparedExecution, RunCleanup},
 };
-use crate::shared::{
+use lattice_core::shared::{
     error::{AppError, Result},
     runtime::background::BackgroundTasks,
 };

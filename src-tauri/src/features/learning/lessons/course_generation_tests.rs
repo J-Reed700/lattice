@@ -4,8 +4,8 @@ use crate::features::learning::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
 };
-use crate::shared::runtime::jobs::{JobContext, JobStore};
-use crate::{
+use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
+use lattice_core::{
     application::ports::llm_port::{CompletionRequest, CompletionResponse},
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -966,7 +966,7 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
 
 #[tokio::test]
 async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output() -> Result<()> {
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     struct StreamingModel;
     #[async_trait::async_trait]
     impl LLMPort for StreamingModel {
@@ -1033,9 +1033,9 @@ struct DelayedOutlineModel {
 impl LLMPort for DelayedOutlineModel {
     async fn complete(
         &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
         // A prose step keeps its reservation rather than taking the window;
         // the delays and scripted replies belong to the structured answers.
         if crate::features::learning::lessons::structured_call::is_draft_request(request) {
@@ -1583,8 +1583,8 @@ async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<
 #[tokio::test]
 async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_captures(
 ) -> Result<()> {
-    use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     use crate::features::web::mocks::MockWebService;
+    use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
@@ -1677,13 +1677,11 @@ async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_
 #[tokio::test]
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and LATTICE_OUTLINE_REQUEST"]
 async fn live_outline_generation_and_save() -> Result<()> {
-    use crate::{
-        application::contracts::settings::LLMSettingsDto,
-        features::{
-            llm::llama_cpp::LlamaCppLlm,
-            web::{services::web::WebService, WebServiceTrait},
-        },
+    use crate::features::{
+        llm::llama_cpp::LlamaCppLlm,
+        web::{services::web::WebService, WebServiceTrait},
     };
+    use lattice_core::application::contracts::settings::LLMSettingsDto;
     let settings_path = std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap();
     let request_path = std::env::var("LATTICE_OUTLINE_REQUEST").unwrap();
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(settings_path)?)?;
@@ -1706,16 +1704,16 @@ async fn live_outline_generation_and_save() -> Result<()> {
     impl LLMPort for ObservedModel {
         async fn complete(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             self.inner.complete(request).await
         }
 
         async fn complete_with_progress(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
             on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let replayed = call == 0 && self.replay_draft.is_some();
             let response = if let Some(draft) = self.replay_draft.as_ref().filter(|_| call == 0) {
@@ -1723,7 +1721,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     "Replaying a previously recorded draft; this step makes no model request."
                 );
                 on_text(draft.clone())?;
-                crate::application::ports::llm_port::CompletionResponse {
+                lattice_core::application::ports::llm_port::CompletionResponse {
                     text: draft.clone(),
                     finish_reason: "stop".into(),
                     ..Default::default()

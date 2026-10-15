@@ -11,7 +11,8 @@
 //! Only production code counts: the walk follows `mod` declarations from the
 //! crate roots and skips `#[cfg(test)]` modules and items, so test files are
 //! never read. File length is the exception: it reads every `.rs` file below
-//! the root and skips test-only files by name.
+//! the root and skips test-only files by name. The app and core source roots
+//! are walked separately and their findings counted together.
 use proc_macro2::{Spacing, TokenStream, TokenTree};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -54,6 +55,10 @@ const RAW_SPAWNS: [&[&str]; 4] = [
 const SPAWN_MARKER: &str = "raw-spawn:";
 const SUPERVISOR: &str = "shared/runtime/";
 const CONTAINER_TARGET: &str = "interfaces::di";
+/// The app's library crate, as its binaries name it.
+const APP_LIBRARY: &str = "lattice";
+/// The core crate. Its paths are another crate's, outside the app's layers.
+const CORE_LIBRARY: &str = "lattice_core";
 
 const STATE_MARKER: &str = "global-state:";
 /// Macros that declare statics the parser cannot see into. `task_local!` is
@@ -324,13 +329,22 @@ fn path_attribute(attrs: &[Attribute]) -> Option<String> {
     })
 }
 
-pub fn findings(root: &Path) -> Result<Vec<Finding>, Error> {
-    let (files, modules) = production_files(root)?;
-    let mut found: Vec<Finding> = files
-        .iter()
-        .flat_map(|file| file_findings(file, &modules))
-        .collect();
-    found.extend(length_findings(root)?);
+/// Findings below every source root. A root named twice, as the app root is
+/// while it still holds core, counts once.
+pub fn findings(roots: &[&Path]) -> Result<Vec<Finding>, Error> {
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+    for root in roots {
+        let canonical = root
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", root.display()))?;
+        if !seen.insert(canonical) {
+            continue;
+        }
+        let (files, modules) = production_files(root)?;
+        found.extend(files.iter().flat_map(|file| file_findings(file, &modules)));
+        found.extend(length_findings(root)?);
+    }
     Ok(found)
 }
 
@@ -658,8 +672,11 @@ impl Collector<'_> {
     /// local items and anything the file's own scope would have to decide.
     fn resolve(&self, segments: &[String], leading_colon: bool) -> Option<Vec<String>> {
         let (first, rest) = segments.split_first()?;
-        if first == "lattice_desktop" {
+        if first == APP_LIBRARY {
             return Some(rest.to_vec());
+        }
+        if first == CORE_LIBRARY {
+            return None;
         }
         if leading_colon || !self.library {
             return None;
@@ -1126,12 +1143,12 @@ fn summary(counts: &Counts) -> String {
 }
 
 pub fn check(
-    root: &Path,
+    roots: &[&Path],
     baseline_path: &Path,
     write: bool,
     failures: &mut usize,
 ) -> Result<(), Error> {
-    let found = findings(root)?;
+    let found = findings(roots)?;
     let mut current = counts(&found);
     current.extend(cycle_counts(&current));
     if write {
@@ -1899,9 +1916,9 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         let baseline = root.join("baseline.txt");
 
         let mut failures = 0;
-        check(&root, &baseline, true, &mut failures).unwrap();
+        check(&[&root], &baseline, true, &mut failures).unwrap();
         let written = fs::read_to_string(&baseline).unwrap();
-        check(&root, &baseline, false, &mut failures).unwrap();
+        check(&[&root], &baseline, false, &mut failures).unwrap();
         let clean = failures;
 
         // A baseline that records the edges but not the cycle they form.
@@ -1911,13 +1928,91 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             .map(|line| format!("{line}\n"))
             .collect();
         fs::write(&baseline, without_cycles).unwrap();
-        check(&root, &baseline, false, &mut failures).unwrap();
+        check(&[&root], &baseline, false, &mut failures).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert!(written.contains("feature-cycle features::a features::b 2\n"));
         assert!(written.contains("feature-cycle features::b features::a 2\n"));
         assert_eq!(clean, 0);
         assert_eq!(failures, 2);
+    }
+
+    #[test]
+    fn findings_cover_the_app_and_core_roots_and_count_a_shared_root_once() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "lattice-ratchet-roots-{}-{unique}",
+            std::process::id()
+        ));
+        let app = scratch.join("app");
+        let core = scratch.join("core");
+        for directory in ["features/a", "features/b"] {
+            fs::create_dir_all(app.join(directory)).unwrap();
+        }
+        fs::create_dir_all(core.join("shared")).unwrap();
+        fs::write(app.join("lib.rs"), "pub mod features;").unwrap();
+        fs::write(app.join("features/mod.rs"), "pub mod a; pub mod b;").unwrap();
+        fs::write(
+            app.join("features/a/mod.rs"),
+            "pub fn run() { crate::features::b::run(); }",
+        )
+        .unwrap();
+        fs::write(app.join("features/b/mod.rs"), "pub fn run() {}").unwrap();
+        fs::write(core.join("lib.rs"), "pub mod shared;").unwrap();
+        fs::write(
+            core.join("shared/mod.rs"),
+            "static APP: OnceLock<u32> = OnceLock::new();",
+        )
+        .unwrap();
+
+        let both = counts(&findings(&[&app, &core]).unwrap());
+        let shared_root = counts(&findings(&[&app, &app]).unwrap());
+        fs::remove_dir_all(&scratch).unwrap();
+
+        assert_eq!(
+            both,
+            Counts::from([
+                (key(FEATURE_EDGE, "features::a", "features::b"), 1),
+                (key(GLOBAL_STATE, "shared/mod.rs", "APP"), 1),
+            ])
+        );
+        assert_eq!(
+            shared_root,
+            Counts::from([(key(FEATURE_EDGE, "features::a", "features::b"), 1)])
+        );
+    }
+
+    #[test]
+    fn binaries_name_the_app_library_and_core_paths_belong_to_another_crate() {
+        let mut binary = source(
+            "bin/tool.rs",
+            &[],
+            r#"
+            use lattice::interfaces::di::Container;
+            use lattice_core::interfaces::di::Wired;
+            use lattice_desktop::interfaces::di::Stale;
+            fn main() { lattice_core::Container::build(); }
+        "#,
+        );
+        binary.library = false;
+        assert_eq!(
+            counted(&binary, &HashSet::new()),
+            vec![row(CONTAINER_IMPORT, "bin/tool.rs", CONTAINER_TARGET, 1)]
+        );
+
+        let feature = source(
+            "features/a/mod.rs",
+            &["features", "a"],
+            "fn run() { lattice_core::features::b::run(); crate::features::b::run(); }",
+        );
+        let known = modules(&[&["features", "a", "lattice_core"]]);
+        assert_eq!(
+            counted(&feature, &known),
+            vec![row(FEATURE_EDGE, "features::a", "features::b", 1)]
+        );
     }
 
     #[test]

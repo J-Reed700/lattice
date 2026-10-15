@@ -30,10 +30,10 @@ pub use dto::{
 pub use gc::{SweepReport, WebSnapshotGc};
 
 use crate::features::web::traits::page_snapshot::PageCapturePort;
-use crate::shared::error::{AppError, Result};
-use crate::shared::http::normalize_web_source_url;
-use crate::shared::runtime::background::BackgroundTasks;
-use crate::shared::runtime::jobs::{JobRuntime, NewJob};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::normalize_web_source_url;
+use lattice_core::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::jobs::{JobRuntime, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
 use store::SnapshotStore;
 

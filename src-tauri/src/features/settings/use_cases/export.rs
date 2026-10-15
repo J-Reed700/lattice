@@ -1,8 +1,8 @@
 //! Export Settings Use Case
 
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::settings::dto::{ExportSettingsRequestDto, ExportSettingsResponseDto};
-use crate::shared::error::Result;
+use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::error::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -81,7 +81,7 @@ impl ExportSettingsUseCase {
     /// Returns error if path is empty or parent directory doesn't exist
     fn validate_export_path(&self, path: &str) -> Result<()> {
         if path.is_empty() {
-            return Err(crate::shared::error::AppError::InvalidInput(
+            return Err(lattice_core::shared::error::AppError::InvalidInput(
                 "Export path cannot be empty".to_string(),
             ));
         }
@@ -91,10 +91,9 @@ impl ExportSettingsUseCase {
         if let Some(parent) = path_buf.parent() {
             // repository-barrier-allow: export targets a user-selected filesystem resource.
             if !parent.exists() {
-                return Err(crate::shared::error::AppError::InvalidInput(format!(
-                    "Parent directory does not exist: {}",
-                    parent.display()
-                )));
+                return Err(lattice_core::shared::error::AppError::InvalidInput(
+                    format!("Parent directory does not exist: {}", parent.display()),
+                ));
             }
         }
 
@@ -105,7 +104,7 @@ impl ExportSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockSettingsRepository;
+    use lattice_core::application::ports::MockSettingsRepository;
 
     fn temp_path(file_name: &str) -> PathBuf {
         std::env::temp_dir().join(file_name)

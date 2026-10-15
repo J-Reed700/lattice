@@ -1,6 +1,6 @@
 //! Shutdown must join final database writes after cancelling background work.
 #![allow(clippy::unwrap_used)]
-use lattice::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::time::Duration;
 

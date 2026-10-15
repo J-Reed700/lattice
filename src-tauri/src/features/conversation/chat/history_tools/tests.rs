@@ -10,8 +10,8 @@
 
 use super::recall::{build_recall_query, exact_identifiers};
 use super::*;
-use crate::domain::conversation::memory::{compute_digest, SourceRole};
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::domain::conversation::memory::{compute_digest, SourceRole};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 

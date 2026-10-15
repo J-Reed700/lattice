@@ -18,7 +18,7 @@ use super::ports::{ArchivedWebPage, LinkedConversationArchive};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::qa::dto::{SourceChunkExcerptDto, SourceDto, WebSnapshotDto};
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 fn source(citation_id: u32, document_id: &str) -> SourceDto {
     SourceDto {
@@ -114,7 +114,7 @@ impl LinkedConversationArchive for RepositoryArchive<'_> {
         &self,
         conversation_id: &str,
         url: &str,
-    ) -> crate::shared::error::Result<Option<ArchivedWebPage>> {
+    ) -> lattice_core::shared::error::Result<Option<ArchivedWebPage>> {
         let snapshot = self
             .0
             .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())

@@ -9,8 +9,8 @@ use super::{
     WEEK_SYNTHESIS_MAX_NOTES, WEEK_SYNTHESIS_MAX_REFERENCES, WEEK_SYNTHESIS_PAGE_TITLE_PREFIX,
     WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT,
 };
-use crate::shared::error::Result;
 use chrono::Utc;
+use lattice_core::shared::error::Result;
 
 pub(super) fn is_within_week(
     updated_at: chrono::DateTime<Utc>,
@@ -28,10 +28,10 @@ pub(super) fn is_week_synthesis_page(title: &str) -> bool {
 pub(super) fn sort_entries_by_recency(entries: &mut [JournalSynthesisEntry]) {
     entries.sort_by(|left, right| {
         let left_time =
-            crate::shared::persistence::timestamps::parse_db_timestamp(&left.updated_at)
+            lattice_core::shared::persistence::timestamps::parse_db_timestamp(&left.updated_at)
                 .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
         let right_time =
-            crate::shared::persistence::timestamps::parse_db_timestamp(&right.updated_at)
+            lattice_core::shared::persistence::timestamps::parse_db_timestamp(&right.updated_at)
                 .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
         right_time.cmp(&left_time)
     });
@@ -72,7 +72,7 @@ pub(super) async fn select_week_entries(
         entries.push(JournalSynthesisEntry {
             conversation_id: conversation_id.clone(),
             title: candidate.title,
-            updated_at: crate::shared::persistence::timestamps::format_db_timestamp(
+            updated_at: lattice_core::shared::persistence::timestamps::format_db_timestamp(
                 candidate.updated_at,
             ),
             message_count: messages.len(),
@@ -85,7 +85,7 @@ pub(super) async fn select_week_entries(
     }
 
     // (b) Saved passages — our own table, always written canonically.
-    let cutoff = crate::shared::persistence::timestamps::format_db_timestamp(
+    let cutoff = lattice_core::shared::persistence::timestamps::format_db_timestamp(
         now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS),
     );
     let references = runtime

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::features::learning::persistence::{db, hash, now};
 use crate::features::learning::practical_dto::*;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
 impl LearningPracticalRepository {

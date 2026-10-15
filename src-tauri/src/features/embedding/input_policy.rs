@@ -1,6 +1,6 @@
 //! One tokenization policy for indexing and inference. Never silently truncates input.
-use crate::application::ports::embedding_port::EmbeddingTextChunk;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
+use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
 use tokenizers::Tokenizer;
 

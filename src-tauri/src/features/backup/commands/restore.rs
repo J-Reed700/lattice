@@ -1,9 +1,9 @@
 //! `restore_backup`: replaces the live database with a stored snapshot.
 
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::fs::confinement::confine_to_root;
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::fs::confinement::confine_to_root;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Restores database from a backup file

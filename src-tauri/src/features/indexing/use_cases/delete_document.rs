@@ -30,14 +30,14 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{
+use crate::features::indexing::LibraryGc;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{
     ContentAddressedStoragePort, DocumentIndexObserver, DocumentRepositoryPort,
     SearchResultCachePort, VectorSearchPort,
 };
-use crate::domain::ports::article_archive::ArticleArchive;
-use crate::features::indexing::LibraryGc;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Request to delete a document.
@@ -309,12 +309,12 @@ impl DeleteDocumentUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::contracts::web::CleanArticle;
     use crate::features::search::dto::SearchResultPortDto;
     use crate::features::web::mocks::MockWebArchiveService;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
     use crate::infrastructure::storage::ContentAddressedStorage;
+    use lattice_core::application::contracts::web::CleanArticle;
     use parking_lot::Mutex;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;

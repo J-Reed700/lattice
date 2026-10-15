@@ -25,8 +25,6 @@ use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::search::engine::vector_search::USearchVectorIndex;
 use crate::features::summaries::repository::{SqliteSummaryRepository, SummaryRepositoryPort};
 use crate::features::summaries::runtime::SummaryRuntimePort;
@@ -35,7 +33,9 @@ use crate::features::summaries::source::SqliteSummarySource;
 use crate::features::summaries::trigger::SummaryTrigger;
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Summary index file for one embedding identity.
 pub fn summary_index_path(data_dir: &Path, identity: &str) -> PathBuf {

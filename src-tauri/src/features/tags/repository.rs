@@ -13,11 +13,11 @@
 //!
 //! - DB models are now internal and NOT exported
 
-use crate::application::ports::{Filter, RepositoryPort};
 use crate::features::tags::entity::Tag as TagEntity;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::TagName;
+use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::TagName;
 use sqlx::{Row, SqlitePool};
 
 mod document_tags;
@@ -332,7 +332,7 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if deletion fails
     pub async fn delete(&self, id: &str) -> Result<()> {
-        use crate::application::ports::RepositoryPort;
+        use lattice_core::application::ports::RepositoryPort;
         RepositoryPort::delete(self, id).await
     }
 }

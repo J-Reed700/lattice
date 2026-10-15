@@ -1,14 +1,14 @@
 //! Opens local, Ollama, and explicit cloud models; fallback policy belongs to the application.
 use std::sync::Arc;
 
-use crate::application::contracts::settings::LLMSettingsDto;
-use crate::application::ports::LLMPort;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::engine::factory::LocalServerOptions;
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
 use crate::features::llm::scheduler::SchedulerRegistry;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::settings::LLMSettingsDto;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 
 /// A bundled llama-server that cannot execute is an install problem, not a
 /// model problem. It must not be reported as a corrupt model (a failed chat
@@ -141,18 +141,20 @@ impl ModelLoader {
     }
 
     pub(crate) async fn load(&self, settings: &LLMSettingsDto) -> Result<Arc<dyn LLMPort>> {
-        if settings.provider == crate::application::contracts::settings::LLMProvider::Llamacpp {
+        if settings.provider
+            == lattice_core::application::contracts::settings::LLMProvider::Llamacpp
+        {
             return Ok(crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?
                 .schedule(&self.runtime.schedulers)
                 .await);
         }
         if matches!(
             settings.provider,
-            crate::application::contracts::settings::LLMProvider::Openai
-                | crate::application::contracts::settings::LLMProvider::Anthropic
+            lattice_core::application::contracts::settings::LLMProvider::Openai
+                | lattice_core::application::contracts::settings::LLMProvider::Anthropic
         ) {
             let name = if settings.provider
-                == crate::application::contracts::settings::LLMProvider::Openai
+                == lattice_core::application::contracts::settings::LLMProvider::Openai
             {
                 "openai"
             } else {
@@ -171,7 +173,7 @@ impl ModelLoader {
                 .schedule(&self.runtime.schedulers));
         }
         let config = Self::generation_config_from_settings(settings);
-        crate::application::services::model_selection::select_model(
+        lattice_core::application::services::model_selection::select_model(
             settings.provider,
             || {
                 self.try_load_active_model(
@@ -202,7 +204,7 @@ impl ModelLoader {
 
     pub(crate) async fn load_router_llm(
         &self,
-        settings: &crate::application::contracts::settings::LLMSettingsDto,
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
         model_name: &str,
     ) -> Result<Arc<dyn LLMPort>> {
         let router_settings = &settings.router;
@@ -226,33 +228,33 @@ impl ModelLoader {
 
         // 2) If no local router exists, use the explicitly configured provider.
         let loaded = match settings.provider {
-            crate::application::contracts::settings::LLMProvider::Llamacpp => {
+            lattice_core::application::contracts::settings::LLMProvider::Llamacpp => {
                 let mut router = settings.clone();
                 router.llama_cpp.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
                 router.temperature = router_settings.temperature;
                 return self.load(&router).await;
             }
-            crate::application::contracts::settings::LLMProvider::Openai
-            | crate::application::contracts::settings::LLMProvider::Anthropic => {
+            lattice_core::application::contracts::settings::LLMProvider::Openai
+            | lattice_core::application::contracts::settings::LLMProvider::Anthropic => {
                 let mut router = settings.clone();
                 router.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
                 router.temperature = router_settings.temperature;
                 return self.load(&router).await;
             }
-            crate::application::contracts::settings::LLMProvider::Local => {
+            lattice_core::application::contracts::settings::LLMProvider::Local => {
                 return Err(AppError::AiModelsNotInstalled(format!(
                     "Router model '{}' is not downloaded. Download it in Settings → Model Catalog.",
                     model_name
                 )));
             }
-            crate::application::contracts::settings::LLMProvider::Auto => {
+            lattice_core::application::contracts::settings::LLMProvider::Auto => {
                 let mut router = settings.clone();
                 router.llama_cpp.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
                 router.temperature = router_settings.temperature;
-                crate::application::services::model_selection::select_model(
+                lattice_core::application::services::model_selection::select_model(
                     settings.provider,
                     || async { Ok(None) }, // Local router lookup already ran above.
                     || async {
@@ -264,7 +266,7 @@ impl ModelLoader {
                     || self.try_load_ollama_with_model(settings, model_name, generation_config),
                 ).await?
             }
-            crate::application::contracts::settings::LLMProvider::Ollama => {
+            lattice_core::application::contracts::settings::LLMProvider::Ollama => {
                 self.try_load_ollama_with_model(settings, model_name, generation_config)
                     .await
                     .map_err(|e| {
@@ -335,7 +337,7 @@ impl ModelLoader {
 
     pub(crate) async fn load_utility_local(
         &self,
-        active: &crate::domain::DownloadedModel,
+        active: &lattice_core::domain::DownloadedModel,
         generation_config: crate::features::llm::engine::GenerationConfig,
         server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
@@ -439,7 +441,7 @@ impl ModelLoader {
         model: &str,
         generation_config: crate::features::llm::engine::GenerationConfig,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
-        use crate::application::contracts::settings::LLMProvider;
+        use lattice_core::application::contracts::settings::LLMProvider;
 
         let mut utility = settings.clone();
         utility.model = model.to_owned();

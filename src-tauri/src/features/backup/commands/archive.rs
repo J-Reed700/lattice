@@ -11,8 +11,8 @@ use crate::features::backup::archive::format::ArchiveError;
 use crate::features::backup::archive::restore::RestoreOutcome;
 use crate::features::backup::dto::{archive_outcome, ArchiveRunDto, RestoreArchiveResultDto};
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::ipc::{ApiError, ErrorCode};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::ipc::{ApiError, ErrorCode};
 
 /// Write one archive now.
 ///

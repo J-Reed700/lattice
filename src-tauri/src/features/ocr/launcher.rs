@@ -17,7 +17,7 @@ use tracing::warn;
 
 use super::model::OcrModel;
 use super::server::{RunningServer, ServerLauncher, ServerProcess};
-use crate::application::ports::OcrError;
+use lattice_core::application::ports::OcrError;
 
 /// Installed name of the bundled server (tauri `externalBin`, triple
 /// stripped), and of the CPU-only build bundled on Windows and Linux.

@@ -2,13 +2,13 @@
 //! its concurrency slot back, and a late progress tick must not resurrect a
 //! terminal session.
 
-use crate::domain::download::DownloadState;
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::{
     DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use lattice_core::domain::download::DownloadState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;

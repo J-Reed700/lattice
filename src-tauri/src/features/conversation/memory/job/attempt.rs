@@ -1,10 +1,10 @@
 //! The body of one compaction attempt.
 use tracing::info;
 
-use crate::application::ports::conversation_memory::{
+use lattice_core::application::ports::conversation_memory::{
     MemoryCommitCandidate, MemoryCommitPreconditions, SummaryUpdate,
 };
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     apply_patch, drop_forgotten_additions, MemoryCommit, MemoryKind, MemoryValidationError,
     SemanticVerdict, SourceMessage,
 };
@@ -104,7 +104,7 @@ impl CompactionJob {
             window
                 .iter()
                 .rposition(|m| {
-                    m.role == crate::domain::conversation::memory::SourceRole::Assistant
+                    m.role == lattice_core::domain::conversation::memory::SourceRole::Assistant
                         && m.status == "completed"
                 })
                 .map(|index| index + 1)

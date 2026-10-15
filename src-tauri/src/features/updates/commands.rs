@@ -29,7 +29,7 @@
 
 use crate::features::updates::dto::{UpdateInfoDto, VersionInfoDto};
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 /// Checks for available application updates

@@ -21,7 +21,7 @@ use crate::features::conversation::space_dto::{
     ListConversationsExplorerQueryDto, SetConversationStateRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 
 pub use super::branching::{
     create_conversation_tangent_impl, fork_conversation_impl, list_conversation_tangents_impl,

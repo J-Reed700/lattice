@@ -5,11 +5,11 @@
 //! signal that running transfer tasks listen on.
 
 use super::types::DownloadEvent;
-use crate::domain::download::DownloadSession;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::DownloadEngine;
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::domain::download::DownloadSession;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;

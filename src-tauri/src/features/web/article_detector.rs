@@ -18,7 +18,7 @@
 //!     └── metadata.json    # Title, URL, site_name
 //! ```
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -128,7 +128,7 @@ impl WebArticleDetector {
     /// use std::path::Path;
     /// use lattice::features::web::article_detector::WebArticleDetector;
     ///
-    /// # async fn example() -> Result<(), lattice::shared::error::error::AppError> {
+    /// # async fn example() -> Result<(), lattice_core::shared::error::error::AppError> {
     /// let article_path = Path::new("web-archives/my-article/article.md");
     /// let title = WebArticleDetector::get_title(article_path).await?;
     /// println!("Article title: {}", title);

@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::model::OcrModel;
-use crate::application::ports::OcrError;
-use crate::shared::runtime::background::BackgroundTasks;
+use lattice_core::application::ports::OcrError;
+use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// How long the server stays up after its last page. Reloading costs a second
 /// or two; keeping 2 GB resident between unrelated imports costs more.

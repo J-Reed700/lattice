@@ -10,8 +10,8 @@
 use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
-use crate::shared::Result;
 use chrono::{DateTime, SecondsFormat, Utc};
+use lattice_core::shared::Result;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -132,7 +132,7 @@ pub async fn set_settings(
 ) -> Result<u64> {
     let instructions = instructions.trim();
     if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-        return Err(crate::shared::AppError::InvalidInput(format!(
+        return Err(lattice_core::shared::AppError::InvalidInput(format!(
             "Folder instructions are limited to {MAX_INSTRUCTIONS_CHARS} characters."
         )));
     }
@@ -141,7 +141,7 @@ pub async fn set_settings(
         (!space_id.is_empty() && space_id != repository::GENERAL_SPACE_ID).then_some(space_id);
     if let Some(space) = own_space {
         if !repository::space_is_open(pool, space).await? {
-            return Err(crate::shared::AppError::NotFound(format!(
+            return Err(lattice_core::shared::AppError::NotFound(format!(
                 "Space not found or archived: {space}"
             )));
         }
@@ -186,7 +186,7 @@ pub async fn remember_thread(pool: &SqlitePool, root: &str, conversation_id: &st
         .as_deref()
         != Some(root)
     {
-        return Err(crate::shared::AppError::InvalidInput(format!(
+        return Err(lattice_core::shared::AppError::InvalidInput(format!(
             "Conversation {conversation_id} is not a thread of {root}"
         )));
     }

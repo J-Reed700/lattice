@@ -16,7 +16,7 @@ use crate::features::transcription::use_cases::{
 };
 use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Transcribes an audio file on-device and returns timestamped segments.
 ///

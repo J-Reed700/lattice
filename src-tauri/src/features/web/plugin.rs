@@ -3,9 +3,8 @@
 //! Web ingestion plugin for web content commands.
 
 use crate::features::web::snapshots::{commands as snapshots, WebPageSnapshotDto};
-use crate::{
-    features::web::commands as web_ingest, interfaces::di::Container, shared::ipc::ApiError,
-};
+use crate::{features::web::commands as web_ingest, interfaces::di::Container};
+use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,
@@ -29,7 +28,7 @@ pub async fn ingest_web_url(
 pub async fn fetch_url_preview(
     url: String,
     container: State<'_, Container>,
-) -> Result<crate::application::contracts::web::UrlPreview, ApiError> {
+) -> Result<lattice_core::application::contracts::web::UrlPreview, ApiError> {
     web_ingest::fetch_url_preview(url, container)
         .await
         .map_err(ApiError::from)
@@ -40,7 +39,7 @@ pub async fn fetch_url_preview(
 pub async fn extract_article(
     url: String,
     container: State<'_, Container>,
-) -> Result<crate::application::contracts::web::CleanArticle, ApiError> {
+) -> Result<lattice_core::application::contracts::web::CleanArticle, ApiError> {
     web_ingest::extract_article(url, container)
         .await
         .map_err(ApiError::from)

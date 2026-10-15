@@ -12,12 +12,12 @@ use super::commands as conversation;
 use super::dto::CreateConversationRequestDto;
 use super::workspace_dto::*;
 use crate::features::qa::dto::SourceDto;
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::{
+use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{
     JobContext, JobDto, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobRuntime, JobStatus,
     NewJob, RecoveryPolicy,
 };
-use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

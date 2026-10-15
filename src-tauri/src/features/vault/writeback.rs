@@ -9,8 +9,8 @@ use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 
-use crate::application::ports::NoteIndexSink;
 use crate::features::settings::use_cases::GetSettingsUseCase;
+use lattice_core::application::ports::NoteIndexSink;
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
@@ -84,7 +84,10 @@ pub struct VaultWriterHandle {
 }
 
 impl VaultWriterHandle {
-    pub async fn enqueue_backfill(&self, pool: &SqlitePool) -> crate::shared::error::Result<()> {
+    pub async fn enqueue_backfill(
+        &self,
+        pool: &SqlitePool,
+    ) -> lattice_core::shared::error::Result<()> {
         super::repository::enqueue_all(pool).await?;
         self.wake.notify_one();
         Ok(())
@@ -118,7 +121,7 @@ pub fn start_vault_writer(
     settings_uc: Arc<GetSettingsUseCase>,
     suppression: super::watcher::WriteSuppressionRegistry,
     pool: SqlitePool,
-    background: &crate::shared::runtime::background::BackgroundTasks,
+    background: &lattice_core::shared::runtime::background::BackgroundTasks,
 ) -> VaultWriterHandle {
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
@@ -233,7 +236,7 @@ async fn run_worker(
                                         Err(error) => Err(error),
                                     }
                                 }
-                                Err(crate::shared::error::AppError::NotFound(_)) => {
+                                Err(lattice_core::shared::error::AppError::NotFound(_)) => {
                                     let mirror_result: std::result::Result<(), String> = async {
                                         if !write.mirror_complete {
                                             match tokio::fs::remove_file(&target).await {
@@ -303,12 +306,12 @@ async fn settle_write(
     pool: &SqlitePool,
     write: &super::repository::PendingWrite,
     apply_result: std::result::Result<(), String>,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     match apply_result {
         Ok(()) => super::repository::acknowledge(pool, write).await,
         Err(error) => {
             super::repository::defer(pool, write).await?;
-            Err(crate::shared::error::AppError::InternalError(error))
+            Err(lattice_core::shared::error::AppError::InternalError(error))
         }
     }
 }

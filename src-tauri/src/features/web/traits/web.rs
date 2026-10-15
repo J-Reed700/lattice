@@ -2,9 +2,11 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchInput, WebSearchOutput};
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchInput, WebSearchOutput,
+};
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// Result of web URL ingestion operation

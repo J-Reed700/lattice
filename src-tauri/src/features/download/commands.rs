@@ -1,10 +1,10 @@
-use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use crate::infrastructure::security::RateLimiter;
-use crate::shared::error::{AppError, Result};
-use crate::shared::fs::confinement::confine_to_root;
-use crate::shared::ValidatedFilePath;
+use lattice_core::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::fs::confinement::confine_to_root;
+use lattice_core::shared::ValidatedFilePath;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;

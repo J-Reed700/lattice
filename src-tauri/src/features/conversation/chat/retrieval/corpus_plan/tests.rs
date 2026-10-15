@@ -1,8 +1,10 @@
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::use_cases::HybridSearchUseCase;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -78,10 +80,10 @@ async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverag
 
 #[tokio::test]
 async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models() {
-    use crate::application::ports::MockEmbeddingPort;
     use crate::features::search::engine::{
         text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
     };
+    use lattice_core::application::ports::MockEmbeddingPort;
     let pool = section_fixture().await;
     let repository = ConversationRepository::new(pool.clone());
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
@@ -120,10 +122,10 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
 /// so never found an attachment in a named space; only vector search could.
 #[tokio::test]
 async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
-    use crate::application::ports::MockEmbeddingPort;
     use crate::features::search::engine::{
         text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
     };
+    use lattice_core::application::ports::MockEmbeddingPort;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -290,11 +292,11 @@ fn beginning_uses_explicit_chapter_sequence_not_filename_or_upload_order() {
 #[tokio::test]
 #[ignore = "requires LATTICE_RETRIEVAL_DB, LATTICE_LLAMACPP_SETTINGS and LATTICE_RETRIEVAL_REPORT"]
 async fn live_corpus_retrieval_and_answer() {
-    use crate::application::ports::EmbeddingPort;
     use crate::features::embedding::candle_service::CandleEmbeddingService;
     use crate::features::llm::llama_cpp::LlamaCppLlm;
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::features::search::engine::vector_search::USearchVectorIndex;
+    use lattice_core::application::ports::EmbeddingPort;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
@@ -384,7 +386,7 @@ async fn live_corpus_retrieval_and_answer() {
         &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
     )
     .unwrap();
-    let config: crate::application::contracts::settings::LLMSettingsDto =
+    let config: lattice_core::application::contracts::settings::LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
     let llm = LlamaCppLlm::new(&config).unwrap();
     let started = Instant::now();
@@ -521,7 +523,7 @@ async fn live_corpus_retrieval_and_answer() {
         Ok(())
     };
     let request = CompletionRequest {
-        input: crate::application::services::completion_input::from_context(
+        input: lattice_core::application::services::completion_input::from_context(
             &prompts.system_prompt,
             &[],
             &prompt,
@@ -581,7 +583,9 @@ async fn live_corpus_retrieval_and_answer() {
 
 #[test]
 fn explicit_book_order_keeps_editions_separate_and_reaches_the_first_chapter() {
-    use crate::domain::value_objects::source_context::{SourceContext, SourceGroup, StructureMode};
+    use lattice_core::domain::value_objects::source_context::{
+        SourceContext, SourceGroup, StructureMode,
+    };
     let group = SourceGroup {
         id: "book-a".into(),
         title: "Manual".into(),

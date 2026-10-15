@@ -3,8 +3,8 @@ use crate::features::search::BM25SearchTrait;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 use tracing::warn;

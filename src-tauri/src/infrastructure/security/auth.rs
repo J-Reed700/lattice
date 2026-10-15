@@ -1,4 +1,4 @@
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sha2::{Digest, Sha256};
 
 /// SECURITY: Basic authentication for single-user desktop app

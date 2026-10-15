@@ -15,13 +15,13 @@ use parking_lot::Mutex as SyncMutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
-use crate::application::ports::conversation_memory::ConversationMemoryPort;
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{
+use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemoryItem, MemorySnapshot, MemoryState, SourceMessage, SuppressedSpan,
     SuppressionsByMessage,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 use super::segment::SourceSegment;
 use super::{

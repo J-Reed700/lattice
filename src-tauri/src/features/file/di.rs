@@ -5,10 +5,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{
-    ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
-    FileSystemPort,
-};
 use crate::features::file::repository::{
     CitingConversationsRepositoryPort, SqliteCitingConversationsRepository,
 };
@@ -20,6 +16,10 @@ use crate::features::file::use_cases::{
 use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::security::FileAccessConfig;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::{
+    ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
+    FileSystemPort,
+};
 
 #[derive(Clone)]
 pub struct FileDi {
@@ -133,7 +133,7 @@ impl Container {
 
     pub fn file_library(
         &self,
-    ) -> Arc<dyn crate::application::ports::file_library::FileLibraryPort> {
+    ) -> Arc<dyn lattice_core::application::ports::file_library::FileLibraryPort> {
         Arc::clone(self.file_ops.library())
     }
 }

@@ -1,7 +1,7 @@
 //! Bounded strict-JSON prompts for the grounded practice tutor and grader.
 use crate::features::learning::dto::*;
 use crate::features::learning::model_call;
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

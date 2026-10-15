@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 use super::embedded_runtime::BuiltinLabExecutionSpec;
 use super::lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus};
 use super::python_runtime::PythonBundle;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// The argument that makes this executable a lab runner instead of the app.
 pub const LAB_RUNNER_ARG: &str = "--lattice-lab-runner";

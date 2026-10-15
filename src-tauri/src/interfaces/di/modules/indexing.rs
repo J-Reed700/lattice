@@ -14,7 +14,7 @@ use crate::features::indexing::use_cases::{
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
 
 // Application Ports
-use crate::application::ports::{
+use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FileStoragePort, VectorSearchPort,
 };
 
@@ -36,7 +36,7 @@ pub struct IndexingModule {
     /// that model is downloaded it answers `NotConfigured` like `NoopOcr`:
     /// scanned pages stay in `ExtractedContent::needs_ocr` and the rest of
     /// every document is still indexed.
-    ocr: Arc<dyn crate::application::ports::OcrPort>,
+    ocr: Arc<dyn lattice_core::application::ports::OcrPort>,
 }
 
 impl IndexingModule {
@@ -44,10 +44,10 @@ impl IndexingModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
-        model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+        model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,
         shared: crate::features::indexing::di::IndexingShared,
-    ) -> crate::shared::error::Result<Self> {
+    ) -> lattice_core::shared::error::Result<Self> {
         let model_dir = core.data_dir().join("models");
         // Web first: deletion routes archived articles back through the very
         // archive service that wrote them, so indexing needs that instance.
@@ -100,12 +100,14 @@ impl IndexingModule {
     }
 
     /// On-device speech-to-text, shared with the content-extraction adapter.
-    pub fn transcription_port(&self) -> &Arc<dyn crate::application::ports::TranscriptionPort> {
+    pub fn transcription_port(
+        &self,
+    ) -> &Arc<dyn lattice_core::application::ports::TranscriptionPort> {
         &self.indexing.transcription
     }
 
     /// Page OCR for scanned PDFs, the same port the indexer's extractor uses.
-    pub fn ocr_port(&self) -> &Arc<dyn crate::application::ports::OcrPort> {
+    pub fn ocr_port(&self) -> &Arc<dyn lattice_core::application::ports::OcrPort> {
         &self.ocr
     }
 
@@ -160,7 +162,7 @@ impl IndexingModule {
     }
 
     /// Opens the transactions that commit an imported document whole.
-    pub fn uow_factory(&self) -> &Arc<dyn crate::application::ports::UnitOfWorkFactory> {
+    pub fn uow_factory(&self) -> &Arc<dyn lattice_core::application::ports::UnitOfWorkFactory> {
         &self.indexing.uow_factory
     }
 }

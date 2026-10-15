@@ -4,10 +4,10 @@ use crate::features::file::dto::{
     ShowInFolderRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use tauri::State;
 
-pub use crate::application::contracts::file_library::{IndexedFolder, IndexingActivity};
+pub use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 
 /// Core implementation - Opens a file in the system's default application or returns internal rendering info
 ///

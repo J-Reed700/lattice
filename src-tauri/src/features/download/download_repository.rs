@@ -1,9 +1,9 @@
-use crate::domain::download::{
-    Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
-};
 use crate::infrastructure::persistence::database::connection::DatabaseConnection;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use lattice_core::domain::download::{
+    Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
+};
 use sqlx::FromRow;
 use std::sync::Arc;
 

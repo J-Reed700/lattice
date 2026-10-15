@@ -10,7 +10,7 @@
 //!
 //! These models enforce business rules (e.g., valid tool names, parameter schemas).
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

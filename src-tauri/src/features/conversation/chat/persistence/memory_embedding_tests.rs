@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::ports::{embedding_port::EmbeddingTextChunk, EmbeddingPort};
+use lattice_core::application::ports::{embedding_port::EmbeddingTextChunk, EmbeddingPort};
 
 struct LimitedEmbedder;
 

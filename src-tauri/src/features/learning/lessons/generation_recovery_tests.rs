@@ -6,7 +6,7 @@ use crate::features::learning::{
     lesson_drafts,
     plan_dto::LearningGenerationJobActionRequestDto,
 };
-use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
+use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
 
 /// Records an outage the way the runtime does after a failed attempt.
@@ -224,8 +224,8 @@ impl LLMPort for OfflineModel {
     }
     async fn complete(
         &self,
-        _: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        _: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         Err(AppError::Network("fixture connection interrupted".into()))
     }
     fn model_name(&self) -> &str {

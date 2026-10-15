@@ -1,9 +1,9 @@
 //! A document's chunks and tags: reading them, and replacing them in batches.
 
-use crate::domain::entities::chunk::Chunk;
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::TagId;
+use lattice_core::domain::entities::chunk::Chunk;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::TagId;
 use sqlx::{QueryBuilder, SqliteConnection};
 use std::time::Instant;
 use tracing::{info, instrument};

@@ -6,10 +6,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 
-use crate::application::ports::{ChunkRepositoryPort, RepositoryPort};
-use crate::domain::entities::chunk::Chunk as ChunkEntity;
-use crate::domain::entities::Chunk;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{ChunkRepositoryPort, RepositoryPort};
+use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
+use lattice_core::domain::entities::Chunk;
+use lattice_core::shared::error::Result;
 
 #[derive(Clone)]
 pub struct MockChunkRepository {
@@ -49,7 +49,7 @@ impl ChunkRepositoryPort for MockChunkRepository {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<Chunk> {
-        use crate::shared::types::DocumentId;
+        use lattice_core::shared::types::DocumentId;
         let doc_id = DocumentId::from(document_id.to_string());
         let chunk = Chunk::new(doc_id, content.to_string(), index);
         self.save(&chunk).await?;
@@ -179,7 +179,7 @@ impl RepositoryPort<ChunkEntity> for MockChunkRepository {
 
     async fn find_by_filter(
         &self,
-        _filter: &dyn crate::application::ports::Filter,
+        _filter: &dyn lattice_core::application::ports::Filter,
     ) -> Result<Vec<ChunkEntity>> {
         // For mock, just return all chunks
         self.find_all().await

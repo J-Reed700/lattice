@@ -20,7 +20,7 @@
 
 use crate::features::llm::dto::{BestModelDto, GetRecommendationsRequestDto};
 use crate::features::llm::use_cases::GetRecommendedModelsUseCase;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetBestModelUseCase {
@@ -60,9 +60,9 @@ impl GetBestModelUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_catalog::MockModelCatalogPort;
-    use crate::application::ports::system_info::MockSystemInfoPort;
     use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
+    use lattice_core::application::ports::model_catalog::MockModelCatalogPort;
+    use lattice_core::application::ports::system_info::MockSystemInfoPort;
 
     fn create_use_case(
         system_info: MockSystemInfoPort,

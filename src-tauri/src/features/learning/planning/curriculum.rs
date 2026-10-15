@@ -4,7 +4,7 @@
 //! deterministic state transition rules so a renderer or model cannot rewrite
 //! completed work, started assessments, or an accepted plan in place.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 

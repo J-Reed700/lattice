@@ -9,7 +9,7 @@ use crate::features::learning::{
     portability_dto::*,
     source_library::LearningSourceLibraryRepository,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::path::Path;
 

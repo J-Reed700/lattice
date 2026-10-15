@@ -1,10 +1,10 @@
 //! Stage 1: everything the turn establishes before it decides what to read.
 use super::budget::TurnBudget;
 use super::*;
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::DocumentReference;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::DocumentReference;
 use tokio_util::sync::CancellationToken;
 
 /// The turn as it stands once the conversation is open and its history read.

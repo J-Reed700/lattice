@@ -5,7 +5,7 @@ use super::{
     db, invalid, json_string,
     remap::{remap_id_array, remap_nested_value},
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, Row, SqliteConnection, TypeInfo};
 use std::collections::HashMap;

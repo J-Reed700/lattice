@@ -9,12 +9,14 @@
 //! number, date or negation and cut none, and no name, from the sentence it
 //! copies.
 
-pub(super) use crate::application::services::evidence_retrieval::{best_windows, ScoredWindow};
-use crate::application::services::evidence_retrieval::{
+use crate::features::qa::dto::SourceDto;
+pub(super) use lattice_core::application::services::evidence_retrieval::{
+    best_windows, ScoredWindow,
+};
+use lattice_core::application::services::evidence_retrieval::{
     extract_normalized_tokens, passage_windows,
 };
-use crate::features::qa::dto::SourceDto;
-use crate::shared::text::normalize_whitespace;
+use lattice_core::shared::text::normalize_whitespace;
 use std::collections::{HashMap, HashSet};
 
 const MIN_CLAIM_CHARS: usize = 24;

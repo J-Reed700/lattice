@@ -1,9 +1,9 @@
 //! Generate questions from bounded passages and require an attributable excerpt.
 use super::study_dto::*;
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::GroundedRequest;
 use crate::features::learning::model_call;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;

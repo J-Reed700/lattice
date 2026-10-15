@@ -303,7 +303,7 @@ pub(super) async fn collect_preflight(
 pub fn spawn_binary_preflight(
     app: &AppHandle,
     devices: Arc<crate::features::llm::engine::system::BackendDevices>,
-    background: &crate::shared::runtime::background::BackgroundTasks,
+    background: &lattice_core::shared::runtime::background::BackgroundTasks,
 ) {
     let app = app.clone();
     let cancellation = background.token();

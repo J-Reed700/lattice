@@ -1,7 +1,7 @@
 //! LLM management commands for local inference.
 use crate::features::llm::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use tauri::State;
 
 mod installed;

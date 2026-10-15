@@ -1,7 +1,7 @@
 //! Sets the active chat model.
 
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tracing::info;
 
 pub struct SetActiveChatModelUseCase {
@@ -42,7 +42,7 @@ impl SetActiveChatModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::models::downloaded::ModelLocation;
+    use lattice_core::domain::models::downloaded::ModelLocation;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {

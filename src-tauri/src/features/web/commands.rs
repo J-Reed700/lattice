@@ -29,10 +29,10 @@
 //! - **Reading Mode**: Extract clean article content for display
 //! - **Batch Import**: Bulk ingestion of web resources
 
-use crate::application::contracts::web::{CleanArticle, UrlPreview};
 use crate::features::web::dto::GetUrlPreviewRequestDto;
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::application::contracts::web::{CleanArticle, UrlPreview};
+use lattice_core::shared::error::AppError;
 // TODO: Fix web_ingestion module test errors before enabling
 // use crate::features::web::ingestion::types::{is_safe_url, normalize_url};
 use serde::{Deserialize, Serialize};

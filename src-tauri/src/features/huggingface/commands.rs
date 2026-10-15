@@ -4,7 +4,7 @@
 //! Tokens are stored securely in the OS keyring via the SecureStorage service.
 
 use crate::infrastructure::security::keyring_storage::SecureStorage;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 

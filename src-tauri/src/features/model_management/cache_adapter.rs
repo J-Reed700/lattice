@@ -29,7 +29,7 @@
 //! ```rust,no_run
 //! use lattice::infrastructure::model_cache_adapter::ModelCacheAdapter;
 //! use lattice::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-//! use lattice::application::ports::ModelCatalogPort;
+//! use lattice_core::application::ports::ModelCatalogPort;
 //! use sqlx::SqlitePool;
 //! use std::sync::Arc;
 //!
@@ -57,8 +57,8 @@ use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::application::ports::{ExternalModelMetadata, ModelCatalogPort};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
+use lattice_core::shared::error::AppError;
 
 /// Cache-key schema version.
 ///
@@ -366,7 +366,7 @@ impl ModelCatalogPort for ModelCacheAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockModelCatalogPort;
+    use lattice_core::application::ports::MockModelCatalogPort;
     use tokio::time::Duration;
 
     async fn create_test_cache() -> ModelCacheAdapter {

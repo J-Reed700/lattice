@@ -6,7 +6,6 @@ use super::file_job::{EmbeddingLoader, FileImporter};
 use super::imports::{BatchImports, FileImport, FILE_IMPORT};
 use super::items::{BatchItems, ItemState};
 use super::url_job::UrlImporter;
-use crate::application::ports::EmbeddingPort;
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::use_cases::IndexFileUseCase;
@@ -22,11 +21,12 @@ use crate::infrastructure::{
     },
     storage::ContentAddressedStorage,
 };
-use crate::shared::{
+use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRuntime, JobStatus, JobStore, NewJob},
 };
-use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -611,14 +611,19 @@ struct PublicationProbe {
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
-impl crate::application::ports::VectorSearchPort for PublicationProbe {
+impl lattice_core::application::ports::VectorSearchPort for PublicationProbe {
     fn search(
         &self,
         vector: &[f32],
         count: usize,
         threshold: f32,
     ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
-        crate::application::ports::VectorSearchPort::search(&self.index, vector, count, threshold)
+        lattice_core::application::ports::VectorSearchPort::search(
+            &self.index,
+            vector,
+            count,
+            threshold,
+        )
     }
     fn search_scoped(
         &self,
@@ -627,7 +632,7 @@ impl crate::application::ports::VectorSearchPort for PublicationProbe {
         threshold: f32,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
-        crate::application::ports::VectorSearchPort::search_scoped(
+        lattice_core::application::ports::VectorSearchPort::search_scoped(
             &self.index,
             vector,
             count,
@@ -640,7 +645,7 @@ impl crate::application::ports::VectorSearchPort for PublicationProbe {
     }
     fn publish_embeddings(
         &self,
-        entries: Vec<crate::application::ports::vector_search_port::VectorIndexEntry>,
+        entries: Vec<lattice_core::application::ports::vector_search_port::VectorIndexEntry>,
     ) -> Result<()> {
         if self
             .fail_first
@@ -672,7 +677,7 @@ impl crate::application::ports::VectorSearchPort for PublicationProbe {
 
 #[tokio::test]
 async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> anyhow::Result<()> {
-    use crate::application::ports::VectorSearchPort;
+    use lattice_core::application::ports::VectorSearchPort;
     let dir = tempfile::tempdir()?;
     let (release, receiver) = std::sync::mpsc::channel();
     let search = Arc::new(PublicationProbe {
@@ -728,7 +733,7 @@ async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> an
         Duration::from_secs(1),
         conversations.add_message_with_status(
             &conversation_id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             "Chat stays writable",
             4,
             None,
@@ -767,8 +772,8 @@ async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> an
 #[tokio::test]
 async fn related_source_rebuild_preserves_identity_context_order_and_failed_index(
 ) -> anyhow::Result<()> {
-    use crate::application::ports::RepositoryPort;
-    use crate::domain::value_objects::source_context::{SourceGroup, StructureMode};
+    use lattice_core::application::ports::RepositoryPort;
+    use lattice_core::domain::value_objects::source_context::{SourceGroup, StructureMode};
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
     let docs = DocumentRepositoryImpl::new(harness.db.pool().clone());

@@ -3,15 +3,15 @@
 use super::extract::{ExtractionStrategy, YtDlpMetadata};
 use super::fetch::TempDirectoryGuard;
 use super::WebIngestionService;
-use crate::application::contracts::web::CleanArticle;
-use crate::domain::ports::article_archive::ArticleArchive;
-use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::MockArticleExtractorService;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionServiceTrait};
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::value_objects::ContextualizedChunk;
+use lattice_core::shared::error::{AppError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -754,7 +754,8 @@ mod late_chunking {
             &self,
             text: &str,
             _prefix: &str,
-        ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+        ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>>
+        {
             let mut chunks = Vec::new();
             let mut start = 0;
             while start < text.len() {
@@ -763,7 +764,7 @@ mod late_chunking {
                     end += 1;
                 }
                 chunks.push(
-                    crate::application::ports::embedding_port::EmbeddingTextChunk {
+                    lattice_core::application::ports::embedding_port::EmbeddingTextChunk {
                         text: text[start..end].to_owned(),
                         start,
                         end,
@@ -937,16 +938,17 @@ mod late_chunking {
     /// Records what reaches the live vector index.
     #[derive(Default)]
     struct RecordingVectorSearch {
-        published: Mutex<Vec<crate::application::ports::vector_search_port::VectorIndexEntry>>,
+        published:
+            Mutex<Vec<lattice_core::application::ports::vector_search_port::VectorIndexEntry>>,
     }
 
-    impl crate::application::ports::VectorSearchPort for RecordingVectorSearch {
+    impl lattice_core::application::ports::VectorSearchPort for RecordingVectorSearch {
         fn search(
             &self,
             _query_embedding: &[f32],
             _top_k: usize,
             _threshold: f32,
-        ) -> Result<Vec<crate::application::contracts::search::SearchResultRecord>> {
+        ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
             Ok(Vec::new())
         }
 
@@ -956,7 +958,7 @@ mod late_chunking {
             _top_k: usize,
             _threshold: f32,
             _allowed_document_ids: Option<&std::collections::HashSet<String>>,
-        ) -> Result<Vec<crate::application::contracts::search::SearchResultRecord>> {
+        ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
             Ok(Vec::new())
         }
 
@@ -966,7 +968,7 @@ mod late_chunking {
 
         fn publish_embeddings(
             &self,
-            entries: Vec<crate::application::ports::vector_search_port::VectorIndexEntry>,
+            entries: Vec<lattice_core::application::ports::vector_search_port::VectorIndexEntry>,
         ) -> Result<()> {
             self.published.lock().expect("lock").extend(entries);
             Ok(())

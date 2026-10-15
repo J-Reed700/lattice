@@ -22,7 +22,7 @@
 
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,17 +45,17 @@ use std::sync::Arc;
 pub async fn setup_test_container() -> Result<Container> {
     let db_pool = SqlitePool::connect(":memory:")
         .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
 
     sqlx::migrate!("./migrations")
         .run(&db_pool)
         .await
         .map_err(|e| {
-            crate::shared::error::AppError::Database(format!("Migration failed: {}", e))
+            lattice_core::shared::error::AppError::Database(format!("Migration failed: {}", e))
         })?;
 
     let temp_dir = std::env::temp_dir().join(format!("recall_test_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&temp_dir).map_err(|e| crate::shared::error::AppError::Io {
+    std::fs::create_dir_all(&temp_dir).map_err(|e| lattice_core::shared::error::AppError::Io {
         message: e.to_string(),
         kind: format!("{:?}", e.kind()),
     })?;
@@ -81,9 +81,11 @@ pub async fn setup_test_container() -> Result<Container> {
 /// Call this after tests complete to remove temporary directories
 pub fn cleanup_test_resources(data_dir: &PathBuf) -> Result<()> {
     if data_dir.starts_with(std::env::temp_dir()) {
-        std::fs::remove_dir_all(data_dir).map_err(|e| crate::shared::error::AppError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
+        std::fs::remove_dir_all(data_dir).map_err(|e| {
+            lattice_core::shared::error::AppError::Io {
+                message: e.to_string(),
+                kind: format!("{:?}", e.kind()),
+            }
         })?;
     }
     Ok(())

@@ -7,8 +7,8 @@ use crate::features::learning::{
     operations::Operation,
     persistence::{db, hash, hash_text, now},
 };
-use crate::shared::error::{AppError, Result};
 use futures::TryStreamExt;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 

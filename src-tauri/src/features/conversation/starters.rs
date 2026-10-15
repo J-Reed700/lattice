@@ -19,12 +19,12 @@ use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 use super::chat::ports::{ChatRuntime, ChatStarterCache};
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::starters_dto::{ChatStarterDto, ChatStartersDto};
-use crate::shared::error::{AppError, Result};
-use crate::shared::ipc::ApiError;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::services::completion_input::{complete_text, TextCall};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::ipc::ApiError;
 
 /// Bump when the fingerprint algorithm changes so old rows auto-invalidate.
 const FINGERPRINT_VERSION: &str = "starters-v2";

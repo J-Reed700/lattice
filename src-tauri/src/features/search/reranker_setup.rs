@@ -13,8 +13,8 @@
 //! facts the retrieval path does: is it switched on, and is it installed.
 
 use crate::infrastructure::services::traits::ModelManagerTrait;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// The one settings value reranker setup reads: the user's reranking

@@ -26,9 +26,9 @@ pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 /// why short prompts are not given the full batch.
 pub(super) fn prefill_allowance(messages: &[Value]) -> Duration {
     let chars: usize = messages.iter().map(|m| m.to_string().chars().count()).sum();
-    let tokens = crate::application::ports::llm_port::tokens_for_chars(
+    let tokens = lattice_core::application::ports::llm_port::tokens_for_chars(
         chars,
-        crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
     )
     .min(PREFILL_BATCH_TOKENS);
     FIRST_FRAME_FLOOR + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)

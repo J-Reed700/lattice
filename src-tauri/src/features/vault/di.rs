@@ -7,7 +7,7 @@
 use crate::features::vault::watcher::RescanSummary;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Vault's registrar surface on `Container`.
 impl Container {

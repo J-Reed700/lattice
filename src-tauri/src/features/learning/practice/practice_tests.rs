@@ -4,7 +4,7 @@ use crate::features::learning::{
     practice_repository::{default_rubric, LearningPracticeRepository, SubmissionWrite},
     repository::LearningRepository,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,

@@ -5,14 +5,14 @@
 #[cfg(test)]
 use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
 #[cfg(test)]
-use crate::shared::error::{AppError, Result};
-// Removed: use crate::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
+use lattice_core::shared::error::{AppError, Result};
+// Removed: use lattice_core::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
 #[cfg(test)]
 pub use crate::features::tags::service::DocumentLockGuard;
 #[cfg(test)]
-use crate::shared::types::TagName;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::shared::types::TagName;
 #[cfg(test)]
 use std::sync::{Arc, RwLock};
 
@@ -56,7 +56,7 @@ impl TagServiceTrait for MockTagService {
         color: Option<&str>,
     ) -> Result<crate::features::tags::entity::Tag> {
         let tag_name = TagName::new(name.to_lowercase()).map_err(|e| {
-            crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
+            lattice_core::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
         })?;
         let tag = crate::features::tags::entity::Tag::new(
             tag_name,
@@ -76,7 +76,10 @@ impl TagServiceTrait for MockTagService {
         if let Some((_, tag)) = tags.iter_mut().find(|(_, t)| t.id().to_string() == tag_id) {
             if let Some(n) = name {
                 let tag_name = TagName::new(n.to_lowercase()).map_err(|e| {
-                    crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
+                    lattice_core::shared::error::AppError::InvalidData(format!(
+                        "Invalid tag name: {}",
+                        e
+                    ))
                 })?;
                 *tag = crate::features::tags::entity::Tag::new(
                     tag_name,
@@ -85,7 +88,7 @@ impl TagServiceTrait for MockTagService {
             }
             Ok(tag.clone())
         } else {
-            Err(crate::shared::error::AppError::NotFound(
+            Err(lattice_core::shared::error::AppError::NotFound(
                 "Tag not found".into(),
             ))
         }
@@ -164,7 +167,7 @@ impl TagServiceTrait for MockTagService {
         let names = tag_names
             .into_iter()
             .map(|name| {
-                crate::shared::types::TagName::new(name.trim().to_lowercase())
+                lattice_core::shared::types::TagName::new(name.trim().to_lowercase())
                     .map(|name| name.to_string())
                     .map_err(|error| AppError::InvalidInput(error.to_string()))
             })
@@ -265,7 +268,10 @@ impl TagServiceTrait for MockTagService {
         } else {
             // Use normalized (lowercase) name to ensure consistency
             let tag_name = TagName::new(normalized.clone()).map_err(|e| {
-                crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
+                lattice_core::shared::error::AppError::InvalidData(format!(
+                    "Invalid tag name: {}",
+                    e
+                ))
             })?;
             let tag = crate::features::tags::entity::Tag::new(tag_name, color.to_string());
             tags.insert(normalized, tag.clone());
@@ -315,8 +321,8 @@ impl MockTagRepository {
     ///
     /// # Example
     /// ```rust
-    /// use lattice::domain::entities::tag::Tag;
-    /// use lattice::shared::types::TagName;
+    /// use lattice_core::domain::entities::tag::Tag;
+    /// use lattice_core::shared::types::TagName;
     /// use lattice::services::traits::MockTagRepository;
     ///
     /// let mock = MockTagRepository::new();
@@ -391,9 +397,13 @@ impl TagRepositoryTrait for MockTagRepository {
             return Ok(tag);
         }
 
-        let tag_name = crate::shared::types::TagName::new(name.to_string()).map_err(|e| {
-            crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
-        })?;
+        let tag_name =
+            lattice_core::shared::types::TagName::new(name.to_string()).map_err(|e| {
+                lattice_core::shared::error::AppError::InvalidData(format!(
+                    "Invalid tag name: {}",
+                    e
+                ))
+            })?;
         let tag_color = color.unwrap_or("#6366f1");
         let tag = crate::features::tags::entity::Tag::new(tag_name, tag_color.to_string());
 
@@ -412,7 +422,7 @@ impl TagRepositoryTrait for MockTagRepository {
 
     async fn find_by_filter(
         &self,
-        _filter: &dyn crate::application::ports::Filter,
+        _filter: &dyn lattice_core::application::ports::Filter,
     ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         // For mock, just return all tags
         self.find_all().await
@@ -545,13 +555,16 @@ impl TagRepositoryTrait for MockTagRepository {
         color: Option<&str>,
     ) -> Result<crate::features::tags::entity::Tag> {
         let mut tags = self.tags.write().unwrap();
-        let tag = tags
-            .get_mut(tag_id)
-            .ok_or_else(|| crate::shared::error::AppError::NotFound("Tag not found".to_string()))?;
+        let tag = tags.get_mut(tag_id).ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound("Tag not found".to_string())
+        })?;
 
         let updated_name = match name {
-            Some(n) => crate::shared::types::TagName::new(n.to_string()).map_err(|e| {
-                crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
+            Some(n) => lattice_core::shared::types::TagName::new(n.to_string()).map_err(|e| {
+                lattice_core::shared::error::AppError::InvalidData(format!(
+                    "Invalid tag name: {}",
+                    e
+                ))
             })?,
             None => tag.name().clone(),
         };

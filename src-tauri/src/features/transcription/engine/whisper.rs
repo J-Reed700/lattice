@@ -19,12 +19,12 @@ use candle_transformers::models::whisper::{quantized_model, Config};
 use tokenizers::Tokenizer;
 use tracing::info;
 
-use crate::application::ports::transcription_port::{Transcript, TranscriptionPort};
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
-use crate::shared::error::AppError;
-use crate::shared::runtime::background::BackgroundTasks;
-use crate::shared::runtime::with_autorelease_pool;
+use lattice_core::application::ports::transcription_port::{Transcript, TranscriptionPort};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::with_autorelease_pool;
 
 mod decode;
 mod load;
@@ -155,7 +155,7 @@ impl WhisperTranscriptionService {
     async fn resolve_model(&self) -> Result<Option<ResolvedModel>, AppError> {
         let mut best: Option<(chrono::DateTime<chrono::Utc>, ResolvedModel)> = None;
 
-        for meta in crate::domain::models::curated::get_curated_transcription_models() {
+        for meta in lattice_core::domain::models::curated::get_curated_transcription_models() {
             if !self.models.is_downloaded(&meta.id).await? {
                 continue;
             }

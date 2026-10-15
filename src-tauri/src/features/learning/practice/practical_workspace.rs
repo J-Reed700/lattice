@@ -70,7 +70,7 @@ impl PracticalWorkspaceSnapshot {
     }
 }
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())

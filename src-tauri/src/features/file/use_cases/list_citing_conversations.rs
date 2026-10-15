@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::features::file::repository::{CitingConversation, CitingConversationsRepositoryPort};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 const DEFAULT_LIMIT: i64 = 10;
 const MAX_LIMIT: i64 = 50;

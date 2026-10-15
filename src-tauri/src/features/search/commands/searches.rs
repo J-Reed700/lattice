@@ -3,15 +3,15 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::ports::RepositoryPort;
-use crate::domain::entities::Document;
 use crate::features::search::dto::{
     CacheStatsDto, EnhancedSearchResponse, SearchOptions, SearchRequestDto, SearchResponseDto,
     SearchResultDto,
 };
 use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey};
 use crate::interfaces::di::container::Container;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::RepositoryPort;
+use lattice_core::domain::entities::Document;
+use lattice_core::shared::error::AppError;
 
 use super::enrichment::{enrich_hybrid_results, enrich_vector_results, LibraryMode};
 
@@ -31,8 +31,8 @@ pub(super) async fn search_fast_impl(
     container: &Container,
     query: String,
     limit: usize,
-) -> crate::shared::ipc::ApiResult<Vec<(String, f32)>> {
-    use crate::shared::ipc::{ApiResult, ErrorCode};
+) -> lattice_core::shared::ipc::ApiResult<Vec<(String, f32)>> {
+    use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
     // Rate limiting check
     if let Err(e) = container
@@ -164,8 +164,8 @@ pub(super) async fn search_fast_impl(
 pub async fn semantic_search_impl(
     container: &Container,
     request: SearchRequestDto,
-) -> crate::shared::ipc::ApiResult<SearchResponseDto> {
-    use crate::shared::ipc::{ApiResult, ErrorCode};
+) -> lattice_core::shared::ipc::ApiResult<SearchResponseDto> {
+    use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
     // Rate limiting check
     if let Err(e) = container
@@ -283,8 +283,8 @@ pub async fn hybrid_search_impl(
     query: String,
     limit: usize,
     search_mode: String,
-) -> crate::shared::ipc::ApiResult<Vec<SearchResultDto>> {
-    use crate::shared::ipc::{ApiResult, ErrorCode};
+) -> lattice_core::shared::ipc::ApiResult<Vec<SearchResultDto>> {
+    use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
     // Rate limiting check
     if let Err(e) = container
@@ -453,7 +453,7 @@ pub async fn search_documents_impl(
             let results = search_service.search_with_threshold(
                 &query_embedding,
                 limit,
-                crate::shared::constants::MIN_SIMILARITY_SCORE,
+                lattice_core::shared::constants::MIN_SIMILARITY_SCORE,
             )?;
             enrich_vector_results(results, enrichment_service).await?
         }

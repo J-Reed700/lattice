@@ -12,12 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
-use crate::application::ports::{EmbeddingPort, LLMPort};
-use crate::application::services::grounded_generation::{
-    self, CallOptions, EvidenceSelection, GroundedRequest,
-};
 use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
 use crate::features::summaries::prompt::{
     self, DocumentPromptInput, SectionPromptInput, SummaryDraft,
@@ -25,7 +19,13 @@ use crate::features::summaries::prompt::{
 use crate::features::summaries::repository::SummaryRepositoryPort;
 use crate::features::summaries::runtime::SummaryRuntimePort;
 use crate::features::summaries::source::SummarySourcePort;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
+use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::services::grounded_generation::{
+    self, CallOptions, EvidenceSelection, GroundedRequest,
+};
+use lattice_core::shared::error::{AppError, Result};
 
 /// One utility-model call. Generous because this is background work, bounded
 /// because a wedged model must not pin a task forever.

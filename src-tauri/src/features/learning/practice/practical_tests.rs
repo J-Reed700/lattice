@@ -37,7 +37,7 @@ fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
     assert!(!marker.exists());
     Ok(())
 }
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 
 fn id() -> String {
@@ -121,7 +121,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let (pool, program_id, lesson_id, _) = fixture().await?;
     let repository = LearningPracticalRepository::new(pool.clone());
     let runs = crate::features::learning::practical_runs::PracticalRunRegistry::new();
-    let background = crate::shared::runtime::background::BackgroundTasks::default();
+    let background = lattice_core::shared::runtime::background::BackgroundTasks::default();
     let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let request = GenerateLearningPracticalActivityRequestDto {
         operation_id: id(),

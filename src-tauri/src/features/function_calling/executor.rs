@@ -11,7 +11,7 @@
 //! # Example
 //! ```rust,no_run
 //! use lattice::infrastructure::services::function_executor::FunctionExecutor;
-//! use lattice::domain::function_call::FunctionCall;
+//! use lattice_core::domain::function_call::FunctionCall;
 //! use serde_json::json;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,10 +38,6 @@ mod web_tools;
 #[cfg(test)]
 mod tests;
 
-use crate::application::ports::{
-    ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
-    RecentDocumentsRepositoryPort,
-};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
@@ -50,9 +46,13 @@ use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::WebServiceTrait;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use jsonschema::JSONSchema;
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
+    RecentDocumentsRepositoryPort,
+};
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -2,8 +2,8 @@
 //! assembler before retrieval decides how much to read.
 use std::sync::Arc;
 
-use crate::application::ports::LLMPort;
-use crate::application::services::context_assembler::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::context_assembler::{
     render, BudgetAllocation, BudgetRequest, ContextAssembler, EvidenceBudget, HistoryCharge,
     ModelCapacity, TokenCounter,
 };
@@ -110,9 +110,9 @@ impl TurnBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::features::llm::engine::factory::MockLLMPort;
-    use crate::shared::error::Result;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::shared::error::Result;
 
     fn mock() -> Arc<dyn LLMPort> {
         Arc::new(MockLLMPort::new())

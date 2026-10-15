@@ -5,7 +5,7 @@ use chrono::Utc;
 use url::Url;
 
 use super::WebArchiveService;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 impl WebArchiveService {
     /// Extract domain from URL

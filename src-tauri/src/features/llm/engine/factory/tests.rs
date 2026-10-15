@@ -121,7 +121,7 @@ fn test_map_local_model_load_error_tensor_metadata() {
 async fn test_mock_llm_port() {
     let mock = MockLLMPort::new();
 
-    use crate::application::services::completion_input::{complete_text, TextCall};
+    use lattice_core::application::services::completion_input::{complete_text, TextCall};
     let response = complete_text(&mock, "test prompt", &[], TextCall::default())
         .await
         .unwrap();

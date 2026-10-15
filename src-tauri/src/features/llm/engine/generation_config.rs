@@ -1,9 +1,9 @@
 //! Sampling defaults and output ceiling a model is loaded with.
 
-use crate::application::contracts::settings::{
+use lattice_core::application::contracts::settings::{
     LLMSettingsDto, SamplingProfileDto, ThinkingOverrideDto,
 };
-use crate::application::ports::llm_port::{ThinkingMode, ThinkingPolicy};
+use lattice_core::application::ports::llm_port::{ThinkingMode, ThinkingPolicy};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for text generation.

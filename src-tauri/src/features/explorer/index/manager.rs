@@ -26,15 +26,15 @@
 use super::build::{self, BuildRequest, LiveIndex};
 use super::run::{Limits, StatusCell, StatusSink};
 use super::store::{self, FolderStore, IndexEntry, OpenStamps, TooLarge};
-use crate::application::ports::EmbeddingPort;
-use crate::shared::{
+use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::{
     runtime::{
         background::BackgroundTasks,
         jobs::{JobRecord, JobRuntime, NewJob},
     },
     Result,
 };
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};

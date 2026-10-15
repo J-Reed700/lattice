@@ -24,13 +24,13 @@
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
-use crate::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, SamplingOverride, ThinkingMode, ToolChoice,
-};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
-use crate::shared::error::Result;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, SamplingOverride, ThinkingMode, ToolChoice,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 use std::ops::Range;
 use tokio::time::timeout;

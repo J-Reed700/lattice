@@ -1,7 +1,6 @@
 //! The `WebIngestionService` type and its end-to-end ingestion workflow.
 
 use super::{WebIngestionConfig, WebIngestionServiceBuilder};
-use crate::application::ports::{SearchResultCachePort, VectorSearchPort};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::use_cases::index_file::{
     publish_chunks_to_live_index, PublishedChunk,
@@ -9,8 +8,9 @@ use crate::features::indexing::use_cases::index_file::{
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait};
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::{SearchResultCachePort, VectorSearchPort};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 

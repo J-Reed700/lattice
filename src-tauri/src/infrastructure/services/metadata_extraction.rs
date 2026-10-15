@@ -6,8 +6,8 @@
 //! - Quality score calculation
 //! - Word and token counting
 
-use crate::domain::entities::document::{Category, Language};
 use chrono::{DateTime, Utc};
+use lattice_core::domain::entities::document::{Category, Language};
 
 /// Service for extracting rich metadata from document content.
 ///

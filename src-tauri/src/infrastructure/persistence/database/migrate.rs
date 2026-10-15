@@ -3,7 +3,7 @@
 //! This module provides a simple wrapper around sqlx's migration functionality.
 //! Migrations are automatically discovered from the migrations/ directory.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 /// Run all pending migrations from the migrations/ directory

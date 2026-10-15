@@ -12,11 +12,11 @@ use async_trait::async_trait;
 use super::{
     cancelled_error, AdmissionRequest, InferenceScheduler, Permit, ServerTokenizer, TokenEstimator,
 };
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::llm_port::{
     tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse,
 };
-use crate::application::ports::LLMPort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::Result;
 
 /// A port whose every model call goes through one backend's scheduler.
 pub(crate) struct ScheduledLlm {

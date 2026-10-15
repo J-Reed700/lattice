@@ -8,7 +8,7 @@ use tauri::{
 use crate::features::transcription::commands as transcription_commands;
 use crate::features::transcription::dto::{TranscriptDto, TranscriptionStatusDto};
 use crate::interfaces::di::Container;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::ipc::ApiError;
 
 #[tauri::command]
 #[specta::specta]

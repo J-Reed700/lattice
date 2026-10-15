@@ -30,10 +30,10 @@
 //! 4. Delegate to service
 //! 5. Return result
 
-use crate::domain::Conversation;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::interfaces::di::container::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::Conversation;
+use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 mod delete;

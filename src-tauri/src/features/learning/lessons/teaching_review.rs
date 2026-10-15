@@ -3,7 +3,7 @@ use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
 use crate::features::learning::{generation, outline_progress::OutlineProgress};
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -521,9 +521,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires LATTICE_LLAMACPP_SETTINGS"]
     async fn live_review_passage_protocol() -> Result<()> {
-        use crate::{
-            application::contracts::settings::LLMSettingsDto, features::llm::llama_cpp::LlamaCppLlm,
-        };
+        use crate::features::llm::llama_cpp::LlamaCppLlm;
+        use lattice_core::application::contracts::settings::LLMSettingsDto;
         let settings: Value = serde_json::from_slice(&std::fs::read(
             std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
         )?)?;

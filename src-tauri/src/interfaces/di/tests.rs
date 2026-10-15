@@ -8,9 +8,9 @@
 
 #[cfg(test)]
 mod di_integration_tests {
-    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     use crate::features::embedding::EmbeddingServiceTrait;
     use crate::interfaces::di::MockAppContainer;
+    use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
     /// Test complete document indexing workflow using mocks
     ///
@@ -34,10 +34,10 @@ mod di_integration_tests {
             .expect("Failed to create document");
 
         assert_eq!(doc.file_name(), "example.txt");
-        use crate::domain::entities::document::DocumentStatus;
+        use lattice_core::domain::entities::document::DocumentStatus;
         assert_eq!(doc.status(), DocumentStatus::Indexed);
 
-        use crate::domain::entities::chunk::Chunk;
+        use lattice_core::domain::entities::chunk::Chunk;
         let chunks_data = vec![
             Chunk::new(doc.id().clone(), "First paragraph content".to_string(), 0),
             Chunk::new(doc.id().clone(), "Second paragraph content".to_string(), 1),
@@ -573,7 +573,7 @@ mod di_integration_tests {
             .await
             .unwrap();
 
-        use crate::domain::entities::chunk::Chunk;
+        use lattice_core::domain::entities::chunk::Chunk;
         let chunks_data: Vec<_> = (0..100)
             .map(|i| Chunk::new(doc.id().clone(), format!("Chunk {} content", i), i))
             .collect();

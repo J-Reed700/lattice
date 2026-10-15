@@ -39,10 +39,10 @@ use std::time::Instant;
 
 use serde::Deserialize;
 
-use crate::application::ports::conversation_memory::ConversationMemoryReadPort;
-use crate::application::ports::ToolDefinition;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
-use crate::shared::error::Result;
+use lattice_core::application::ports::conversation_memory::ConversationMemoryReadPort;
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::error::Result;
 
 mod read;
 mod recall;

@@ -25,7 +25,7 @@ fn test_parse_model_category_invalid() {
 }
 
 fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
-    let mut model = crate::domain::models::curated::get_curated_llm_models()
+    let mut model = lattice_core::domain::models::curated::get_curated_llm_models()
         .into_iter()
         .next()
         .expect("catalog has entries");
@@ -81,7 +81,7 @@ fn the_catalog_overview_lists_every_chat_entry_once() {
         50,
     )];
     merge_curated_chat_models(&mut models, "gguf");
-    let catalog = crate::domain::models::curated::get_curated_llm_models();
+    let catalog = lattice_core::domain::models::curated::get_curated_llm_models();
     assert_eq!(models.len(), catalog.len());
     for model in catalog {
         assert_eq!(
@@ -102,6 +102,7 @@ fn test_map_cpu_architecture() {
     // Just verify it returns a valid value
     assert!(matches!(
         arch,
-        crate::domain::CpuArchitecture::ARM64 | crate::domain::CpuArchitecture::X86_64
+        lattice_core::domain::CpuArchitecture::ARM64
+            | lattice_core::domain::CpuArchitecture::X86_64
     ));
 }

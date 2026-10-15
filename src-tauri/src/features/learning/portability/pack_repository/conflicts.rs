@@ -14,7 +14,7 @@ use crate::features::learning::{
         LearningPackConflictPolicy,
     },
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{borrow::Cow, collections::HashSet};
 

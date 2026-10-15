@@ -17,7 +17,7 @@ use ndarray::Array2;
 use petal_clustering::{Fit, HDbscan};
 use petal_neighbors::distance::Euclidean;
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Hard cap on documents fed to one clustering run.
 ///

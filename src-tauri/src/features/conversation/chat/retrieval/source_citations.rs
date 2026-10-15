@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::{debug, warn};
 
-use crate::application::contracts::web::WebSearchResult;
 use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::SearchResultDto;
-use crate::shared::text::build_excerpt;
+use lattice_core::application::contracts::web::WebSearchResult;
+use lattice_core::shared::text::build_excerpt;
 
 /// Marks a `SourceDto` that came from the web rather than the user's vault.
 ///

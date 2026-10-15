@@ -10,8 +10,6 @@
 //! Async functions store their state on the heap (in Future objects), not the stack.
 //! Deep async call chains don't cause stack overflow - that's the whole point of async.
 
-use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-use crate::domain::models::metadata::ModelType;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
@@ -22,8 +20,10 @@ use crate::features::model_management::use_cases::{
     ClearActiveChatModelUseCase, ClearActiveEmbeddingModelUseCase,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
 use chrono::Utc;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::domain::models::metadata::ModelType;
+use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;

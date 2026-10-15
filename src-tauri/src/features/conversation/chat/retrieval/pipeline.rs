@@ -6,7 +6,7 @@ use crate::features::conversation::chat::turn_record::{
 use crate::features::conversation::chat::web_steps::{self, result_count_line};
 use std::time::Duration;
 
-use crate::domain::qa::hyde::HyDEInterpretation;
+use lattice_core::domain::qa::hyde::HyDEInterpretation;
 
 mod external_lookup;
 mod web_pages;
@@ -25,7 +25,7 @@ pub(super) async fn run_retrieval_pipeline(
     settings: &SettingsDto,
     router_decision: &RouterDecisionOutcome,
     search_flags: SearchFlags,
-    conversation_document_context: &[crate::domain::conversation::DocumentReference],
+    conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
 ) -> RetrievalPipelineOutcome {
@@ -85,7 +85,7 @@ pub(super) async fn run_retrieval_pipeline(
         embedding_unavailable_reason = Some("the embedding model is not ready".to_string());
     }
 
-    let utility_llm: Arc<dyn crate::application::ports::LLMPort> =
+    let utility_llm: Arc<dyn lattice_core::application::ports::LLMPort> =
         match (container.utility_llm_loader())().await {
             Ok(Some(util)) => {
                 tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
@@ -427,7 +427,7 @@ struct ExternalLookup<'a> {
     conversation_id: &'a str,
     request_id: &'a str,
     validated_message: &'a str,
-    utility_llm: &'a Arc<dyn crate::application::ports::LLMPort>,
+    utility_llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
     search_flags: SearchFlags,
     highlight_terms: &'a [String],
     excerpt_chars: usize,

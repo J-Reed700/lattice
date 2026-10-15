@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Port for persisting and reading document/section summaries.
 ///
@@ -331,21 +331,21 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
 pub(crate) async fn enqueue_work(
     pool: &sqlx::SqlitePool,
     id: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("INSERT INTO summary_work_queue(document_id, revision, requested_at) SELECT id, lower(hex(randomblob(16))), unixepoch() FROM documents WHERE id = ? ON CONFLICT(document_id) DO UPDATE SET revision = excluded.revision, requested_at = excluded.requested_at, retry_at = 0")
         .bind(id).execute(pool).await?;
     Ok(())
 }
 pub(crate) async fn next_work(
     pool: &sqlx::SqlitePool,
-) -> crate::shared::error::Result<Option<(String, String)>> {
+) -> lattice_core::shared::error::Result<Option<(String, String)>> {
     Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).await?)
 }
 pub(crate) async fn acknowledge_work(
     pool: &sqlx::SqlitePool,
     id: &str,
     revision: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ? AND revision = ?")
         .bind(id)
         .bind(revision)
@@ -356,7 +356,7 @@ pub(crate) async fn acknowledge_work(
 pub(crate) async fn remove_work(
     pool: &sqlx::SqlitePool,
     id: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ?")
         .bind(id)
         .execute(pool)
@@ -366,7 +366,7 @@ pub(crate) async fn remove_work(
 pub(crate) async fn document_id_at_path(
     pool: &sqlx::SqlitePool,
     path: &std::path::Path,
-) -> crate::shared::error::Result<Option<String>> {
+) -> lattice_core::shared::error::Result<Option<String>> {
     Ok(
         sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
             .bind(path.to_string_lossy().as_ref())
@@ -379,7 +379,7 @@ pub(crate) async fn defer_work(
     pool: &sqlx::SqlitePool,
     id: &str,
     revision: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("UPDATE summary_work_queue SET retry_at = unixepoch() + 60 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
     Ok(())
 }

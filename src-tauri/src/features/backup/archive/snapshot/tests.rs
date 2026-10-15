@@ -875,7 +875,7 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
         "INSERT INTO conversation_memory_state (conversation_id, schema_version) \
              VALUES ('c1', ?)",
     )
-    .bind(crate::domain::conversation::memory::MEMORY_SCHEMA_VERSION)
+    .bind(lattice_core::domain::conversation::memory::MEMORY_SCHEMA_VERSION)
     .execute(&pool)
     .await
     .unwrap();
@@ -886,7 +886,7 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
     assert!(info.memory_tables_present);
     assert_eq!(
         info.memory_schema_version,
-        Some(crate::domain::conversation::memory::MEMORY_SCHEMA_VERSION)
+        Some(lattice_core::domain::conversation::memory::MEMORY_SCHEMA_VERSION)
     );
 
     // Now a snapshot a *newer* build would have written. The migration

@@ -2,13 +2,13 @@
 
 use super::config::{read_pooling_strategy, resolve_prefixes};
 use super::*;
-use crate::application::ports::EmbeddingPort;
-use crate::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN;
-use crate::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
 use crate::features::download::artifact_identity;
 use crate::features::embedding::late_chunking::vector_identity;
 use candle_core::DType;
 use candle_core::Tensor;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN;
+use lattice_core::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
 use std::path::Path;
 use tempfile::TempDir;
 

@@ -5,8 +5,8 @@ use crate::features::learning::curriculum::{
     self, LearningCurriculumLessonState, LearningCurriculumRevision,
 };
 use crate::features::learning::persistence::{db, decode, encode, hash_text, now};
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::{JobStatus, JobStore};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use sqlx::Row;
 
 impl LearningCurriculumRepository {

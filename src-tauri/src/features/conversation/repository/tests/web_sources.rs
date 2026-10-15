@@ -1,9 +1,9 @@
 //! Web pages a turn cited, kept as context for the turns that follow.
 
 use super::*;
-use crate::application::ports::conversation_context::ConversationContextPort;
 use crate::features::conversation::context_repository::SqliteConversationContext;
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::application::ports::conversation_context::ConversationContextPort;
 
 /// The citation archive outlives the page cache and the page itself: the text
 /// a conversation read is stored beside the citation, the first text read is

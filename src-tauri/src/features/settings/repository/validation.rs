@@ -210,7 +210,7 @@ impl SettingsRepository {
             result.add_error("llm", "repeat_penalty must be greater than 0.0".to_string());
         }
         let generation_problems =
-            crate::application::contracts::settings::presence_penalty_problem(
+            lattice_core::application::contracts::settings::presence_penalty_problem(
                 "llm",
                 settings.llm.presence_penalty,
             )

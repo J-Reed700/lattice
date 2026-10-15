@@ -10,17 +10,17 @@ pub(super) fn practice_repo(
 
 pub(super) fn practice_request_hash<T: serde::Serialize>(
     request: &T,
-) -> crate::shared::error::Result<String> {
+) -> lattice_core::shared::error::Result<String> {
     use sha2::Digest;
     let mut value = serde_json::to_value(request)
-        .map_err(|e| crate::shared::error::AppError::Serialization(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Serialization(e.to_string()))?;
     if let Some(fields) = value.as_object_mut() {
         fields.remove("operationId");
         fields.remove("expectedRevision");
         fields.remove("expectedProgramRevision");
     }
     let bytes = serde_json::to_vec(&value)
-        .map_err(|e| crate::shared::error::AppError::Serialization(e.to_string()))?;
+        .map_err(|e| lattice_core::shared::error::AppError::Serialization(e.to_string()))?;
     Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
 }
 
@@ -141,7 +141,7 @@ pub async fn request_learning_tutor_response(
     match (&request.request_kind, &request.hint_level) {
         (LearningTutorRequestKind::Hint, None) => {
             return Err(ApiError::from(
-                crate::shared::error::AppError::InvalidInput(
+                lattice_core::shared::error::AppError::InvalidInput(
                     "Choose an explicit hint level.".into(),
                 ),
             ));
@@ -150,14 +150,14 @@ pub async fn request_learning_tutor_response(
             if session.summary.mode == LearningPracticeMode::Practice =>
         {
             return Err(ApiError::from(
-                crate::shared::error::AppError::InvalidInput(
+                lattice_core::shared::error::AppError::InvalidInput(
                     "Worked explanations are available only in Explore mode.".into(),
                 ),
             ));
         }
         (LearningTutorRequestKind::Question | LearningTutorRequestKind::Critique, Some(_)) => {
             return Err(ApiError::from(
-                crate::shared::error::AppError::InvalidInput(
+                lattice_core::shared::error::AppError::InvalidInput(
                     "Hint levels apply only to hint requests.".into(),
                 ),
             ));
@@ -247,7 +247,7 @@ pub async fn reveal_learning_practice_solution(
         .map_err(ApiError::from)?;
     if session.summary.mode != LearningPracticeMode::Explore {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Worked solutions are available only in Explore mode.".into(),
             ),
         ));

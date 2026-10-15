@@ -4,9 +4,9 @@
 use crate::features::backup::export_repository::ExportRepository;
 use crate::features::backup::use_cases::{ExportConversationsUseCase, ExportFormat, ExportSummary};
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::fs::confinement::confine_to_root;
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::fs::confinement::confine_to_root;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 use std::sync::Arc;
 

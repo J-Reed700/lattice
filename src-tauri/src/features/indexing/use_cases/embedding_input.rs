@@ -1,11 +1,11 @@
 //! Structure-preserving, contextual input shared by imports and rebuilds.
 //! Source text remains byte-for-byte citation evidence; metadata is embedded separately.
-use crate::application::ports::EmbeddingPort;
-use crate::domain::entities::{chunk::Chunk, document::Document};
-use crate::domain::value_objects::section_identifier::SectionIdentifier;
-use crate::domain::value_objects::source_context::StructureMode;
 use crate::features::indexing::engine::extraction::is_code_mime;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::entities::{chunk::Chunk, document::Document};
+use lattice_core::domain::value_objects::section_identifier::SectionIdentifier;
+use lattice_core::domain::value_objects::source_context::StructureMode;
+use lattice_core::shared::error::{AppError, Result};
 
 /// One structure span's embedding input: the span text with its context prefix
 /// already prepended once, plus the byte range of each chunk inside it.

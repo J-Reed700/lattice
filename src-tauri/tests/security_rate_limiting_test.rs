@@ -12,7 +12,7 @@
 //! These tests verify that rate limiting actually prevents abuse
 //! and enforces the configured limits across different operations.
 use lattice::security::rate_limiter::{RateLimiter, RateLimiters};
-use lattice::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use std::time::Duration;
 use tokio::time::sleep;
 

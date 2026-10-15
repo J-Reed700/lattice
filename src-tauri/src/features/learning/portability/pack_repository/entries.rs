@@ -30,8 +30,8 @@ use crate::features::learning::{
         LearningPracticalActivityDto, LearningPracticalRunDto, LearningPracticalRuntimeKind,
     },
 };
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::SqliteConnection;
 use std::collections::HashMap;

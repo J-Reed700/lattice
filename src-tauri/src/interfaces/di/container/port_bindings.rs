@@ -3,7 +3,7 @@
 //! allowed to name both.
 
 use super::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// The note-index sink's readiness gate, implemented over the embedding
 /// runtime and its loader: the same single-flight load with retry cooldown
@@ -58,7 +58,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         &self,
         cutoff: &str,
         limit: i64,
-    ) -> crate::shared::error::Result<
+    ) -> lattice_core::shared::error::Result<
         Vec<crate::features::references::repository::PassageReferenceRecord>,
     > {
         crate::features::references::repository::PassageReferenceRepository::new(
@@ -72,7 +72,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         &self,
         start_date: &str,
         end_date: &str,
-    ) -> crate::shared::error::Result<
+    ) -> lattice_core::shared::error::Result<
         Vec<crate::features::conversation::chat::ports::StoredJournalPage>,
     > {
         let rows = crate::features::daily_notes::repository::DailyNotesRepository::new(
@@ -121,7 +121,8 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
     async fn hydrate_note(
         &self,
         page: crate::features::conversation::chat::ports::StoredJournalPage,
-    ) -> crate::shared::error::Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+    ) -> lattice_core::shared::error::Result<crate::features::daily_notes::dto::WorkspaceNoteDto>
+    {
         let crate::features::conversation::chat::ports::StoredJournalPage {
             revision,
             id,

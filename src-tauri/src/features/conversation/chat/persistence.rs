@@ -1,6 +1,6 @@
 use crate::features::conversation::chat::ports::{ChatRuntime, MemoryVector};
 use crate::features::qa::dto::SourceDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -20,7 +20,7 @@ pub(super) async fn persist_user_message_pending(
     user_message: &str,
     attachment_names: &[String],
     attachment_document_ids: &[String],
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
 ) -> Result<(String, usize)> {
     let message_tokens = llm.count_tokens(user_message);
     // The files this turn brought into the conversation, stamped on the message
@@ -45,7 +45,7 @@ pub(super) async fn persist_user_message_pending(
     let user_msg = conv_service
         .add_message_with_metadata(
             conversation_id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             user_message.to_string(),
             message_tokens as i64,
             "pending".to_string(),
@@ -200,7 +200,7 @@ async fn commit_turn(
     content: String,
     tokens: i64,
     metadata: Option<String>,
-) -> Result<crate::domain::conversation::ConversationMessage> {
+) -> Result<lattice_core::domain::conversation::ConversationMessage> {
     match conv_service
         .complete_turn(conversation_id, user_message_id, content, tokens, metadata)
         .await
@@ -213,15 +213,17 @@ async fn commit_turn(
     }
 }
 
-fn message_dto(message: &crate::domain::conversation::ConversationMessage) -> ConversationMessage {
+fn message_dto(
+    message: &lattice_core::domain::conversation::ConversationMessage,
+) -> ConversationMessage {
     ConversationMessage {
         id: message.id.clone(),
         conversation_id: message.conversation_id.as_str().to_string(),
         tokens: message.tokens,
         role: match message.role {
-            crate::domain::conversation::MessageRole::User => "user".to_string(),
-            crate::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
-            crate::domain::conversation::MessageRole::System => "system".to_string(),
+            lattice_core::domain::conversation::MessageRole::User => "user".to_string(),
+            lattice_core::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
+            lattice_core::domain::conversation::MessageRole::System => "system".to_string(),
         },
         content: message.content.clone(),
         status: message.status.clone(),
@@ -237,11 +239,11 @@ fn message_dto(message: &crate::domain::conversation::ConversationMessage) -> Co
 /// user will find on reload, and would skip the grounding check. What the turn
 /// itself wrote is known without the read, so that is returned instead.
 fn turn_transcript(
-    read: Result<crate::domain::conversation::ConversationAggregate>,
+    read: Result<lattice_core::domain::conversation::ConversationAggregate>,
     user_message_id: &str,
     user_message: &str,
     message_tokens: usize,
-    answer: &crate::domain::conversation::ConversationMessage,
+    answer: &lattice_core::domain::conversation::ConversationMessage,
 ) -> Vec<ConversationMessage> {
     match read {
         Ok(aggregate) => aggregate.messages().iter().map(message_dto).collect(),
@@ -467,7 +469,7 @@ fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
 /// Keep the per-message vector while respecting the active model's token budget.
 /// Every passage contributes; long answers are never silently truncated.
 async fn embed_memory(
-    service: &dyn crate::application::ports::EmbeddingPort,
+    service: &dyn lattice_core::application::ports::EmbeddingPort,
     content: &str,
 ) -> Result<Vec<f32>> {
     let chunks = service.split_text(content, "")?;

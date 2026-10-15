@@ -5,8 +5,8 @@ use async_trait::async_trait;
 
 use super::test_support::source;
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::shared::error::Result;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::error::Result;
 
 /// Replies with a scripted body, after an optional delay, counting calls.
 struct ScriptedLlm {
@@ -168,8 +168,8 @@ async fn judge_overturns_a_lexically_supported_contradiction() {
 #[tokio::test]
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and a reachable model"]
 async fn live_grounding_adversarial_regressions() {
-    use crate::application::contracts::settings::LLMSettingsDto;
     use crate::features::llm::llama_cpp::LlamaCppLlm;
+    use lattice_core::application::contracts::settings::LLMSettingsDto;
     let settings: serde_json::Value = serde_json::from_slice(
         &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
     )
