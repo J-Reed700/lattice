@@ -488,9 +488,11 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert!(!prompts[2].contains("name the sourceIndex of the passage that supports it"));
     assert!(prompts[2].contains("Where a passage directly addresses the specific topic or skill"));
     assert!(!prompts[2].contains("most plan items need no citation"));
-    // Linking offered the saved page's own text as candidates and reported
-    // the outcome in the note.
-    assert!(!linking_prompts(&llm).is_empty());
+    // Linking offers only the saved page's own prose: the preface and appendix
+    // lines are page furniture, never candidates. The outcome is in the note.
+    assert!(linking_prompts(&llm)
+        .iter()
+        .all(|prompt| !prompt.contains("Preface and publishing information") && !prompt.contains("Appendix material")));
     assert!(review.note.contains("of 24 outline items linked to references"));
     let stages = stages.lock().unwrap();
     let position = |stage: OutlineStage| stages.iter().position(|s| *s == stage).unwrap();

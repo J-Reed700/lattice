@@ -20,9 +20,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
-const POLICY: &str = "outline-evidence-link-v1";
+const POLICY: &str = "outline-evidence-link-v2";
 /// Items per chooser call; a batch that does not fit the window is halved.
 const BATCH_SIZE: usize = 8;
 /// Retrieved passages offered per item, before the author's own citation.
@@ -261,11 +261,71 @@ fn sentence_ends(text: &str) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-/// The span of a retrieved passage that becomes the quote: whole sentences
-/// from the passage, within the quote length limit. A passage that was cut
-/// from the middle of a sentence at either end loses the partial sentence.
-/// Returns nothing when no span satisfies the quote rules.
-fn citable_span(passage: &ReferencePassage, excerpt: &str) -> Option<String> {
+/// A line's text as a reader sees it: markdown link targets and bracket
+/// markup removed, link text kept.
+fn visible_text(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ']' && chars.peek() == Some(&'(') {
+            let mut depth = 0;
+            for next in chars.by_ref() {
+                match next {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+        if c == '[' || c == ']' || (c == '!' && chars.peek() == Some(&'[')) {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Running text a learner can read as evidence: at least one full sentence of
+/// five or more words (the quote rule's minimum), mostly letters. Headings, table rows, navigation,
+/// link lists and code are not prose.
+fn is_prose(line: &str) -> bool {
+    let line = line.trim();
+    if line.is_empty()
+        || line.starts_with('#')
+        || line.starts_with('|')
+        || line.starts_with("```")
+        || line.matches('|').count() >= 2
+    {
+        return false;
+    }
+    let visible = visible_text(line);
+    let words = visible
+        .split_whitespace()
+        .filter(|word| word.chars().any(char::is_alphabetic))
+        .count();
+    let letters = visible.chars().filter(|c| c.is_alphabetic()).count();
+    let printable = visible.chars().filter(|c| !c.is_whitespace()).count();
+    words >= 5 && letters * 10 >= printable * 7 && sentence_ends(visible.trim()).next().is_some()
+}
+
+fn terms(text: &str) -> HashSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 4)
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// The span of a retrieved passage that becomes the quote: the contiguous run
+/// of prose lines that shares the most terms with the item, as whole sentences
+/// within the quote length limit. A passage cut mid-sentence loses the partial
+/// sentence. Returns nothing when no prose span satisfies the quote rules.
+fn citable_span(passage: &ReferencePassage, excerpt: &str, query: &str) -> Option<String> {
     let mut text = passage.text.as_str();
     let clean_start = passage.start_byte == 0
         || excerpt
@@ -285,7 +345,31 @@ fn citable_span(passage: &ReferencePassage, excerpt: &str) -> Option<String> {
             text = &text[..cut];
         }
     }
-    text = text.trim();
+    // Runs of prose lines (blank lines may separate paragraphs inside a run).
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut current: Option<(usize, usize)> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        if is_prose(line) {
+            let end = start + line.trim_end().len();
+            current = Some(current.map_or((start, end), |(first, _)| (first, end)));
+        } else if !line.trim().is_empty() {
+            runs.extend(current.take());
+        }
+    }
+    runs.extend(current);
+    let wanted = terms(query);
+    let (start, end) = runs
+        .into_iter()
+        .enumerate()
+        .max_by_key(|(order, (start, end))| {
+            let shared = terms(&text[*start..*end]).intersection(&wanted).count();
+            (shared, std::cmp::Reverse(*order))
+        })
+        .map(|(_, run)| run)?;
+    text = text[start..end].trim();
     while text.chars().count() > generation::MAX_QUOTE_CHARS {
         let limit = text
             .char_indices()
@@ -342,7 +426,8 @@ async fn candidates_for(
         let Some(source_index) = sources.iter().position(|s| s.id == passage.source_id) else {
             continue;
         };
-        let Some(quote) = citable_span(&passage, &sources[source_index].excerpt) else {
+        let Some(quote) = citable_span(&passage, &sources[source_index].excerpt, &pending.query())
+        else {
             continue;
         };
         let candidate = Candidate {
@@ -355,7 +440,8 @@ async fn candidates_for(
         }
     }
     if let Some(author) = &pending.author {
-        if !pending.candidates.contains(author) {
+        // A heading, link or table row the author quoted is not evidence.
+        if author.quote.lines().any(is_prose) && !pending.candidates.contains(author) {
             pending.candidates.push(author.clone());
         }
     }
@@ -900,12 +986,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_exact_author_citation_is_one_candidate_and_kept_when_chosen() {
+    async fn an_author_fragment_is_not_offered_and_the_whole_sentence_replaces_it() {
         let mut draft = draft(json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
             "summary":{"text":"Explain why random assignment limits confounding.","sourceIndex":0,"quote":"Random assignment limits confounding when treatment groups"},
             "outcomes":[],"lessons":[]}]}));
         let llm = model(vec![json!({"links":[
-            {"id":"/modules/0/summary","candidate":"p2","reason":"The author's passage addresses the item."}
+            {"id":"/modules/0/summary","candidate":"p1","reason":"The passage explains random assignment and confounding."}
         ]})]);
         let log = link(&llm, &mut draft, &sources()[..1], None, &OutlineProgress::default())
             .await
@@ -916,17 +1002,16 @@ mod tests {
                 linked: 1,
                 items: 1,
                 removed_unmatched: 0,
-                removed_unchosen: 0
+                removed_unchosen: 1
             }
         );
-        // Retrieval offers the whole sentence (p1); the author's shorter exact
-        // quote joins as its own candidate (p2) and survives unchanged.
+        // The author's exact but unfinished sentence is not evidence a reader
+        // can use, so only retrieval's whole sentence is offered.
         let payload = payload(&llm.prompts.lock().unwrap()[0]);
-        assert_eq!(payload["items"][0]["candidates"], json!(["p1", "p2"]));
-        assert_eq!(payload["passages"][1]["passage"], "Random assignment limits confounding when treatment groups");
+        assert_eq!(payload["items"][0]["candidates"], json!(["p1"]));
         let summary = &draft.candidate["modules"][0]["summary"];
         assert_eq!(summary["sourceIndex"], 0);
-        assert_eq!(summary["quote"], "Random assignment limits confounding when treatment groups");
+        assert_eq!(summary["quote"], ASSIGNMENT);
         let hashes = source_hashes(&sources()[..1]);
         assert!(is_verified(
             &draft.citation_receipts,
@@ -956,7 +1041,7 @@ mod tests {
             score: 1.0,
         };
         // Too long: trimmed to whole sentences under the limit.
-        let quote = citable_span(&passage(start, excerpt.len()), &excerpt).unwrap();
+        let quote = citable_span(&passage(start, excerpt.len()), &excerpt, "random assignment").unwrap();
         assert!(quote.chars().count() <= generation::MAX_QUOTE_CHARS);
         assert!(quote.ends_with("compared."));
         assert!(quote.starts_with("Random assignment"));
@@ -964,12 +1049,12 @@ mod tests {
         // Cut mid-sentence at both ends: the partial sentences are dropped.
         let mid_start = start + 7;
         let mid_end = start + sentence.len() * 3 + 10;
-        let quote = citable_span(&passage(mid_start, mid_end), &excerpt).unwrap();
+        let quote = citable_span(&passage(mid_start, mid_end), &excerpt, "random assignment").unwrap();
         assert!(quote.starts_with("Random assignment"));
         assert!(quote.ends_with("compared."));
         assert_eq!(quote.matches("compared.").count(), 2);
         // Too short to cite.
-        assert!(citable_span(&passage(0, 11), &excerpt).is_none());
+        assert!(citable_span(&passage(0, 11), &excerpt, "intro").is_none());
         // A closing quotation mark stays with its sentence.
         let quoted = "He said \"compare the groups fairly.\" Then he left the room quietly.";
         let short = ReferencePassage {
@@ -982,6 +1067,33 @@ mod tests {
         };
         assert_eq!(last_sentence_end(quoted), Some(quoted.len()));
         assert_eq!(sentence_ends(quoted).next(), Some(quoted.find(" Then").unwrap()));
-        assert_eq!(citable_span(&short, quoted).unwrap(), quoted);
+        assert_eq!(citable_span(&short, quoted, "compare groups").unwrap(), quoted);
+    }
+
+    #[test]
+    fn quotes_are_prose_and_never_headings_navigation_tables_or_link_lists() {
+        let excerpt = "[Edit](https://example.org/edit/page.md)\n\n# Comparing groups\n\n| [Prev](https://example.org/a) | [Up](https://example.org/b) | Part II | [Home](https://example.org/) |\n| --- | --- | --- | --- |\n\n- [Assignment](https://example.org/assignment)\n- [Uncertainty](https://example.org/uncertainty)\n\nRandom assignment limits confounding when treatment groups are compared, as the [design guide](https://example.org/guide) explains.\nIt also makes the comparison fair across every measured and unmeasured trait.\n\n```\nassign(groups, seed=42);\n```\n\nConfidence intervals describe the uncertainty of an estimated difference between the groups.";
+        let passage = ReferencePassage {
+            source_id: "s".into(),
+            text: excerpt.into(),
+            start_byte: 0,
+            end_byte: excerpt.len(),
+            retrieval_kind: "lexical_fallback".into(),
+            score: 1.0,
+        };
+        // The run sharing the item's terms wins; it keeps its inline link text.
+        let quote = citable_span(&passage, excerpt, "random assignment confounding fair comparison").unwrap();
+        assert!(quote.starts_with("Random assignment limits confounding"));
+        assert!(quote.ends_with("unmeasured trait."));
+        assert!(!quote.contains("Prev") && !quote.contains("# Comparing") && !quote.contains("assign("));
+        generation::validate_excerpt_quote(&quote, excerpt).unwrap();
+        let quote = citable_span(&passage, excerpt, "confidence intervals uncertainty").unwrap();
+        assert!(quote.starts_with("Confidence intervals"));
+        // A page of only chrome yields no candidate at all.
+        let chrome = "# What's new in the framework release notes overview\n\n| [Prev](a) | [Up](b) | [Home](c) |\n- [Edit](https://example.org/edit)";
+        let only = ReferencePassage { text: chrome.into(), end_byte: chrome.len(), ..passage.clone() };
+        assert!(citable_span(&only, chrome, "framework release notes").is_none());
+        assert!(!is_prose("What's new in ASP.NET Core in the latest release"));
+        assert!(is_prose("- Value objects can include methods that encapsulate domain logic, but those methods shouldn't produce side effects."));
     }
 }
