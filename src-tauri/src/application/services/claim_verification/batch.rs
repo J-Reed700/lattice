@@ -6,7 +6,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
-pub(crate) struct LocatedClaim {
+pub struct LocatedClaim {
     pub claim: String,
     pub passages: Vec<String>,
 }
@@ -23,7 +23,7 @@ struct BatchCheck {
     response: String,
 }
 
-pub(crate) fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
+pub fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
     let mut passages = Vec::new();
     let mut identities = HashMap::new();
     let mut targets = Vec::new();
@@ -113,11 +113,11 @@ impl ClaimChecker<'_> {
         (prompt, passages, system, remaining)
     }
 
-    pub(crate) fn batch_fits(&self, claims: &[LocatedClaim]) -> bool {
+    pub fn batch_fits(&self, claims: &[LocatedClaim]) -> bool {
         self.batch_request_parts(claims).3 >= 1200 * claims.len()
     }
 
-    pub(crate) async fn check_batch_without_deadline(
+    pub async fn check_batch_without_deadline(
         &self,
         claims: &[LocatedClaim],
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),

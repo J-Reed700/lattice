@@ -513,7 +513,7 @@ impl<'de> Deserialize<'de> for ToolChoice {
 #[cfg(test)]
 impl CompletionRequest {
     /// The last user message: the prompt a scripted test double answers.
-    pub(crate) fn user_text(&self) -> &str {
+    pub fn user_text(&self) -> &str {
         self.input
             .iter()
             .rev()

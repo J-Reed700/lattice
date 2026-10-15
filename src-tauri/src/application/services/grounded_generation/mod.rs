@@ -54,7 +54,7 @@ impl EvidencePassage {
 /// paragraphs cut at whitespace. With [`EvidenceSelection::Prefix`] the model
 /// then reads as much of the opening as the window holds, ending on a whole
 /// passage. Ids are `{id_prefix}:{n}`; earlier passages rank higher.
-pub(crate) fn passages_from_text(
+pub fn passages_from_text(
     id_prefix: &str,
     text: &str,
     max_chars: usize,
@@ -132,7 +132,7 @@ pub struct CallOptions {
 }
 
 /// Where answer text goes while the model writes it.
-pub(crate) struct Streaming<'a> {
+pub struct Streaming<'a> {
     pub on_text: &'a (dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
     /// Set to have a broken connection retried. Hears each new attempt, after
     /// which the text delivered so far is void.
@@ -140,7 +140,7 @@ pub(crate) struct Streaming<'a> {
 }
 
 /// Everything one grounded call needs.
-pub(crate) struct GroundedRequest {
+pub struct GroundedRequest {
     /// The system message.
     pub instructions: String,
     /// What the model is asked to do, written before the evidence.
@@ -187,7 +187,7 @@ impl GroundedRequest {
 
 /// The answer, and what it was built from.
 #[derive(Debug, Clone)]
-pub(crate) struct GroundedOutput {
+pub struct GroundedOutput {
     pub text: String,
     /// Ids of the passages the request carried, in the order given.
     pub used_evidence_ids: Vec<String>,
@@ -230,7 +230,7 @@ impl From<GroundedGenerationError> for AppError {
 
 /// The evidence room a request would get before any evidence is added: for a
 /// caller that must split its material into parts the window can hold.
-pub(crate) fn evidence_room(
+pub fn evidence_room(
     llm: &dyn LLMPort,
     request: &GroundedRequest,
 ) -> Result<usize, GroundedGenerationError> {
@@ -241,7 +241,7 @@ pub(crate) fn evidence_room(
 const PASSAGE_SEPARATOR_TOKENS: usize = 1;
 
 /// The cost a passage is charged when carried, its separator included.
-pub(crate) fn passage_tokens(llm: &dyn LLMPort, passage: &EvidencePassage) -> usize {
+pub fn passage_tokens(llm: &dyn LLMPort, passage: &EvidencePassage) -> usize {
     llm.count_tokens(&passage.render()) + PASSAGE_SEPARATOR_TOKENS
 }
 
@@ -389,7 +389,7 @@ fn render_user_message(request: &GroundedRequest, carried: &[&EvidencePassage]) 
 ///   required whole that does not fit, or evidence of which nothing fits.
 /// - [`GroundedGenerationError::Model`] when the call fails or answers with a
 ///   tool call nobody offered.
-pub(crate) async fn generate(
+pub async fn generate(
     llm: &dyn LLMPort,
     request: GroundedRequest,
 ) -> Result<GroundedOutput, GroundedGenerationError> {
@@ -401,7 +401,7 @@ pub(crate) async fn generate(
 /// # Errors
 ///
 /// As [`generate`]; an error a callback returns fails the call.
-pub(crate) async fn generate_streaming(
+pub async fn generate_streaming(
     llm: &dyn LLMPort,
     request: GroundedRequest,
     streaming: &Streaming<'_>,

@@ -52,7 +52,7 @@ pub struct WebSearchInput {
 
 /// Results per page when a search tool's input leaves it out; the wiki and
 /// custom-query tool inputs share it.
-pub(crate) fn default_max_results() -> usize {
+pub fn default_max_results() -> usize {
     5
 }
 

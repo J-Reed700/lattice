@@ -152,7 +152,7 @@ pub use note_index_sink::NoteIndexSink;
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use repository_port::{Filter, NoFilter, RepositoryPort};
-pub(crate) use settings_port::merge_json_update;
+pub use settings_port::merge_json_update;
 pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
 pub use sparse_term_store_port::{ChunkSparseTerms, SparseTermStorePort};

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 /// Recursively merges a partial JSON settings update into an existing value.
 /// Object fields are preserved unless explicitly replaced by the update.
-pub(crate) fn merge_json_update(target: &mut serde_json::Value, update: serde_json::Value) {
+pub fn merge_json_update(target: &mut serde_json::Value, update: serde_json::Value) {
     match (target, update) {
         (serde_json::Value::Object(target), serde_json::Value::Object(update)) => {
             for (key, value) in update {

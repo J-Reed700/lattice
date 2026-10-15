@@ -9,7 +9,7 @@ pub(crate) const WINDOW_CHARS: usize = 1200;
 const WINDOW_STEP_CHARS: usize = 800;
 
 /// The passage cut into overlapping windows; a short passage is one window.
-pub(crate) fn passage_windows(text: &str) -> Vec<String> {
+pub fn passage_windows(text: &str) -> Vec<String> {
     exact_windows(&normalize_whitespace(text))
 }
 
@@ -33,13 +33,13 @@ fn exact_windows(text: &str) -> Vec<String> {
 
 /// One stretch of a passage, scored against a claim.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ScoredWindow {
+pub struct ScoredWindow {
     /// Position among the passage's windows, so picks can be put back in
     /// reading order and neighbours told apart.
-    pub(crate) index: usize,
+    pub index: usize,
     /// Claim tokens this window shares.
-    pub(crate) score: usize,
-    pub(crate) text: String,
+    pub score: usize,
+    pub text: String,
 }
 
 /// Up to `max` windows of `text` that share the most vocabulary with `claim`,
@@ -51,7 +51,7 @@ pub(crate) struct ScoredWindow {
 /// the two share a third of their text, and the overlap exists so a sentence
 /// lands whole in one of them, not so it is shown twice. A window sharing no
 /// vocabulary at all is dropped unless it is the passage's only one.
-pub(crate) fn best_windows(claim: &str, text: &str, max: usize) -> Vec<ScoredWindow> {
+pub fn best_windows(claim: &str, text: &str, max: usize) -> Vec<ScoredWindow> {
     rank_windows(claim, passage_windows(text), max)
 }
 
@@ -89,7 +89,7 @@ fn rank_windows(claim: &str, windows: Vec<String>, max: usize) -> Vec<ScoredWind
     picked
 }
 
-pub(crate) fn extract_normalized_tokens(text: &str) -> HashSet<String> {
+pub fn extract_normalized_tokens(text: &str) -> HashSet<String> {
     static STEMMER: Lazy<Stemmer> = Lazy::new(|| Stemmer::create(Algorithm::English));
 
     let mut tokens = HashSet::new();
