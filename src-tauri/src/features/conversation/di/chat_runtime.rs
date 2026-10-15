@@ -4,7 +4,6 @@ use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::conversation::chat::ports::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use async_trait::async_trait;
@@ -151,6 +150,9 @@ impl ChatRetrieval for Container {
             .await
             .map(|search| search as Arc<dyn crate::features::summaries::search::SummarySearchPort>)
     }
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        Arc::clone(self.ai.planner_health())
+    }
 }
 
 #[async_trait]
@@ -228,14 +230,6 @@ impl ChatPolicy for Container {
         self.web_page_snapshots()
             .sweep_in_background("conversation deleted");
 
-        let audit_logger = get_audit_logger();
-        let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-            .with_resource_id(conversation_id)
-            .with_metadata("operation", "delete_conversation");
-        if let Err(e) = audit_logger.log(event).await {
-            warn!("Failed to write audit log: {}", e);
-        }
-
         Ok(())
     }
 }
@@ -281,6 +275,9 @@ impl ChatJobs for Container {
     }
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
         Arc::clone(&self.research_waiters)
+    }
+    fn background(&self) -> Arc<crate::shared::runtime::background::BackgroundTasks> {
+        Arc::clone(self.core.background())
     }
 }
 

@@ -263,6 +263,9 @@ async fn live_complete_python_course() -> Result<()> {
         .iter()
         .flat_map(|m| m.lessons.iter().map(|l| l.id.clone()))
         .collect();
+    // No Python bundle is verified here, so Python worked examples report
+    // their runtime unavailable rather than running.
+    let runtimes = lattice::features::learning::embedded_runtime::BuiltinRuntimes::new(None);
     for (index, lesson_id) in lesson_ids.iter().enumerate() {
         if program
             .modules
@@ -278,6 +281,7 @@ async fn live_complete_python_course() -> Result<()> {
         program = service::prepare(
             &repo,
             &model,
+            &runtimes,
             PrepareLearningLessonRequestDto {
                 program_id: program.summary.id.clone(),
                 lesson_id: lesson_id.clone(),

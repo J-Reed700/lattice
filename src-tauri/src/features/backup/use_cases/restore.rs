@@ -8,7 +8,6 @@
 //! # Security
 //! - Validates backup file integrity before restoration
 //! - Creates automatic backup before restore operation
-//! - Audit logs restore operations
 //!
 //! # Example
 //! ```rust,no_run

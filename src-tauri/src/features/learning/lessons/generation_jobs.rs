@@ -32,6 +32,8 @@ type LibraryLoader = Arc<
 #[derive(Clone)]
 pub(in crate::features::learning) struct LessonGenerationWorker {
     pub pool: SqlitePool,
+    /// Where a lesson's worked examples run while it is verified.
+    pub runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes,
     pub load_llm: ModelLoader,
     pub load_library: LibraryLoader,
     pub refresh_sources: SourceRefresh,
@@ -231,6 +233,7 @@ impl LessonGenerationWorker {
                     let preparation = Box::pin(
                         crate::features::learning::generation::prepare_lesson_with_references(
                             llm.as_ref(),
+                            &self.runtimes,
                             &program,
                             lesson,
                             &references,
@@ -412,6 +415,7 @@ mod repository_tests {
             let entered = Arc::new(tokio::sync::Notify::new());
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
+                runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
                 load_library: Arc::new(|| Box::pin(async { None })),
                 pool: pool.clone(),

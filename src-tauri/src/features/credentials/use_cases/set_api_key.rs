@@ -8,7 +8,6 @@
 //! # Security
 //! - Stores credentials in OS keyring (Keychain on macOS, Credential Manager on Windows)
 //! - Never logs or exposes API keys in plain text
-//! - Audit logs credential operations (without key values)
 //!
 //! # Example
 //! ```rust,no_run

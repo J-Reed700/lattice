@@ -58,11 +58,14 @@ impl IndexingModule {
             Arc::clone(&vector_search),
             Arc::clone(&shared.query_cache),
         )?;
-        let ocr = crate::features::ocr::di::build(Arc::new(
-            crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
-                db_pool.clone(),
+        let ocr = crate::features::ocr::di::build(
+            Arc::new(
+                crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
+                    db_pool.clone(),
+                ),
             ),
-        ));
+            Arc::clone(core.background()),
+        );
         let indexing = crate::features::indexing::di::build(
             db_pool.clone(),
             model_provider,
@@ -70,6 +73,7 @@ impl IndexingModule {
             web.web_archive.clone(),
             Arc::clone(&ocr),
             shared,
+            Arc::clone(core.background()),
         )?;
         Ok(Self { indexing, web, ocr })
     }

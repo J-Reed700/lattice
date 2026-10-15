@@ -13,7 +13,6 @@
 //! # Security Features
 //!
 //! - **Rate Limiting (CWE-770)**: Prevents DoS via excessive web requests
-//! - **Audit Logging (CWE-778)**: All web access operations logged
 //! - **SSRF Prevention**: URL validation in service layer
 //!
 //! # Architecture
@@ -32,7 +31,6 @@
 
 use crate::application::contracts::web::{CleanArticle, UrlPreview};
 use crate::features::web::dto::GetUrlPreviewRequestDto;
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 // TODO: Fix web_ingestion module test errors before enabling
@@ -93,30 +91,9 @@ pub async fn read_web_page(
     let read = match container.web_service().read_page(&url).await {
         Ok(read) => read,
         Err(e) => {
-            let audit_logger = get_audit_logger();
-            let event = AuditEvent::new(
-                AuditAction::WebContentAccessed,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&url)
-            .with_metadata("operation", "read_web_page")
-            .with_metadata("error", e.to_string());
-            if let Err(log_err) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", log_err);
-            }
             return Err(e);
         }
     };
-
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::WebContentAccessed, AuditResult::success())
-        .with_resource_id(&url)
-        .with_metadata("operation", "read_web_page")
-        .with_metadata("from_cache", read.output.from_cache.to_string())
-        .with_metadata("word_count", read.output.word_count.to_string());
-    if let Err(e) = audit_logger.log(event).await {
-        tracing::warn!("Failed to write audit log: {}", e);
-    }
 
     Ok(WebPageDto {
         url: read.output.url,
@@ -209,7 +186,6 @@ pub async fn read_web_page(
 /// # Security
 ///
 /// **Rate Limiting (CWE-770)**: Web capture operations rate limited
-/// **Audit Logging (CWE-778)**: All preview operations logged
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -226,7 +202,7 @@ pub async fn read_web_page(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `GetUrlPreviewUseCase` with rate limiting + audit logging
+/// Thin controller delegating to `GetUrlPreviewUseCase` with rate limiting
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn fetch_url_preview(
     url: String,
@@ -240,17 +216,6 @@ pub async fn fetch_url_preview(
         .check_rate_limit("web_capture")
         .await
     {
-        let audit_logger = get_audit_logger();
-        let event = AuditEvent::new(
-            AuditAction::WebContentAccessed,
-            AuditResult::failure(e.to_string()),
-        )
-        .with_resource_id(&url)
-        .with_metadata("operation", "fetch_url_preview")
-        .with_metadata("error", e.to_string());
-        if let Err(log_err) = audit_logger.log(event).await {
-            tracing::warn!("Failed to write audit log: {}", log_err);
-        }
         return Err(AppError::RateLimitExceeded(e.to_string()));
     }
 
@@ -262,17 +227,6 @@ pub async fn fetch_url_preview(
     {
         Ok(preview) => preview,
         Err(e) => {
-            let audit_logger = get_audit_logger();
-            let event = AuditEvent::new(
-                AuditAction::WebContentAccessed,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&url)
-            .with_metadata("operation", "fetch_url_preview")
-            .with_metadata("error", e.to_string());
-            if let Err(log_err) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", log_err);
-            }
             return Err(e);
         }
     };
@@ -291,18 +245,6 @@ pub async fn fetch_url_preview(
         content_type: None,
         keywords: Vec::new(),
     };
-
-    // Audit success
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::WebContentAccessed, AuditResult::success())
-        .with_resource_id(&url)
-        .with_metadata("operation", "fetch_url_preview")
-        .with_metadata("title", &preview.title)
-        .with_metadata("word_count", preview.word_count.to_string());
-
-    if let Err(e) = audit_logger.log(event).await {
-        tracing::warn!("Failed to write audit log: {}", e);
-    }
 
     Ok(preview)
 }
@@ -399,7 +341,6 @@ pub async fn fetch_url_preview(
 /// # Security
 ///
 /// **Rate Limiting (CWE-770)**: Web ingest operations rate limited
-/// **Audit Logging (CWE-778)**: All extraction operations logged
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -423,7 +364,7 @@ pub async fn fetch_url_preview(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `ArticleExtractorService` with rate limiting + audit logging
+/// Thin controller delegating to `ArticleExtractorService` with rate limiting
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn extract_article(
     url: String,
@@ -437,17 +378,6 @@ pub async fn extract_article(
         .check_rate_limit("extract_article")
         .await
     {
-        let audit_logger = get_audit_logger();
-        let event = AuditEvent::new(
-            AuditAction::WebContentAccessed,
-            AuditResult::failure(e.to_string()),
-        )
-        .with_resource_id(&url)
-        .with_metadata("operation", "extract_article")
-        .with_metadata("error", e.to_string());
-        if let Err(log_err) = audit_logger.log(event).await {
-            tracing::warn!("Failed to write audit log: {}", log_err);
-        }
         return Err(AppError::RateLimitExceeded(e.to_string()));
     }
 
@@ -456,32 +386,9 @@ pub async fn extract_article(
     let article = match article_extractor.extract_article_from_url(&url).await {
         Ok(article) => article,
         Err(e) => {
-            let audit_logger = get_audit_logger();
-            let event = AuditEvent::new(
-                AuditAction::WebContentAccessed,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&url)
-            .with_metadata("operation", "extract_article")
-            .with_metadata("error", e.to_string());
-            if let Err(log_err) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", log_err);
-            }
             return Err(e);
         }
     };
-
-    // Audit success
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::WebContentAccessed, AuditResult::success())
-        .with_resource_id(&url)
-        .with_metadata("operation", "extract_article")
-        .with_metadata("title", &article.title)
-        .with_metadata("word_count", article.word_count.to_string());
-
-    if let Err(e) = audit_logger.log(event).await {
-        tracing::warn!("Failed to write audit log: {}", e);
-    }
 
     Ok(article)
 }

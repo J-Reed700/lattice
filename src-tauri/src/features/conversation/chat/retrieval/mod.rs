@@ -22,6 +22,7 @@ use super::{ChatTurn, SearchFlags};
 mod conversation_helpers;
 mod corpus_plan;
 pub(super) use corpus_plan::fused_search;
+pub(crate) use corpus_plan::PlannerHealth;
 mod external_query;
 pub(super) use external_query::search_text_without_url_tracking;
 mod followup_context;

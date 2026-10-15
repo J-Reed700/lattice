@@ -188,8 +188,9 @@ pub async fn compact_for_turn(
 /// requests through the durable watermark: a consolidation waiting behind
 /// another of the same conversation finds nothing left to do.
 pub fn consolidate_after_turn(runtime: Arc<dyn ChatRuntime>, conversation_id: String) {
-    let cancel = crate::shared::runtime::background::cancellation_token();
-    crate::shared::runtime::background::spawn(async move {
+    let background = runtime.background();
+    let cancel = background.token();
+    background.spawn(async move {
         let result: Result<()> = async {
             if !runtime.settings().await?.llm.bounded_conversation_memory {
                 return Ok(());

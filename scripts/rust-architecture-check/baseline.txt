@@ -103,15 +103,6 @@ feature-edge features::vault features::settings 2
 feature-edge features::web features::embedding 4
 feature-edge features::web features::indexing 7
 
-global-state features/conversation/chat/retrieval/corpus_plan/health.rs PLANNER_HEALTH 1
-global-state features/learning/runtime/embedded_runtime.rs GUEST_SLOTS 1
-global-state features/learning/runtime/lab_runner.rs PYTHON_WARMUP 1
-global-state features/learning/runtime/python_runtime.rs BUNDLE_VALID 1
-global-state features/learning/runtime/python_runtime.rs RUNTIME_ROOT 1
-global-state features/vault/watcher.rs RESCAN_LOCK 1
-global-state infrastructure/audit/mod.rs GLOBAL_AUDIT_LOGGER 1
-global-state shared/runtime/background.rs REGISTRY 1
-
 file-length features/backup/archive/restore.rs max-800-lines 1
 file-length features/backup/archive/service.rs max-800-lines 1
 file-length interfaces/di/container.rs max-800-lines 1

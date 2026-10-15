@@ -7,7 +7,6 @@
 //!
 //! # Security
 //! - Stores endpoint securely in credentials store
-//! - Audit logs endpoint changes
 //!
 //! Note: this use case does **not** validate the URL. That is currently safe
 //! because the stored value is never fetched from here, but any code that

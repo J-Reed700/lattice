@@ -324,6 +324,9 @@ pub trait ChatRetrieval: Send + Sync {
     async fn summary_search(
         &self,
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>>;
+    /// How much prompt the corpus planner can take in time, learned across
+    /// every turn this runtime runs — and never shared with a test's runtime.
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
 }
 
 #[async_trait]
@@ -347,8 +350,8 @@ pub trait ChatPolicy: Send + Sync {
     /// The rate limit a user-initiated delete spends.
     async fn check_delete_rate_limit(&self, name: &str) -> Result<()>;
     /// Remove a conversation and everything it owns — its in-flight turn, its
-    /// attachments, its messages — with an audit line, without spending the
-    /// user delete's rate limit.
+    /// attachments, its messages — without spending the user delete's rate
+    /// limit.
     async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()>;
 }
 
@@ -359,6 +362,10 @@ pub trait ChatJobs: Send + Sync {
     /// the job that runs a turn answers the command that sent it — and a test
     /// process never answers the app's commands.
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters>;
+    /// The app's background scope: work a turn leaves running after it
+    /// answers — memory indexing, consolidation, the grounding check — runs
+    /// in it, so shutdown stops and joins it.
+    fn background(&self) -> Arc<crate::shared::runtime::background::BackgroundTasks>;
 }
 
 /// The stop button: the process-wide registry of in-flight turns, so a stop

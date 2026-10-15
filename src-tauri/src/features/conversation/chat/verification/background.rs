@@ -22,6 +22,7 @@ use crate::features::conversation::trait_def::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
 #[cfg(test)]
 use crate::shared::error::Result;
+use crate::shared::runtime::background::BackgroundTasks;
 
 use super::super::source_snapshots;
 use super::super::turn_record::{TurnRecordDto, TurnStepKind, TurnStepState};
@@ -68,13 +69,16 @@ pub(in crate::features::conversation) struct BackgroundVerification {
     /// When the verify step began, so its duration covers the whole check.
     pub started: Instant,
     pub emit: Arc<dyn Fn(ChatStreamEventDto) + Send + Sync>,
+    /// Where the check runs, so shutdown stops it and marks it not checked.
+    pub background: Arc<BackgroundTasks>,
 }
 
 impl BackgroundVerification {
     pub(in crate::features::conversation) async fn spawn(self) {
-        let cancel = crate::shared::runtime::background::cancellation_token();
+        let background = Arc::clone(&self.background);
+        let cancel = background.token();
         let finalizer = self.clone();
-        if crate::shared::runtime::background::spawn(self.run(cancel)).is_none() {
+        if background.spawn(self.run(cancel)).is_none() {
             finalizer.finish_cancelled().await;
         }
     }
@@ -287,6 +291,7 @@ mod tests {
             turn: Some(turn),
             started: Instant::now(),
             emit: Arc::new(move |payload| *event_sink.lock().unwrap() = Some(payload)),
+            background: Arc::default(),
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         let worker_cancel = cancel.clone();

@@ -50,7 +50,6 @@ use tauri::State;
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents mass deletion attacks
-/// - **Audit Logging (CWE-778)**: Logs conversation deletions for compliance
 ///
 /// # Cascade Deletion
 ///
@@ -100,14 +99,12 @@ use tauri::State;
 /// This command is a **thin controller** that:
 /// 1. Applies rate limiting
 /// 2. Delegates to `ConversationService.delete_conversation()`
-/// 3. Logs audit event for compliance
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Execute ConversationService.delete_conversation() (cascade delete)
-/// 3. Log audit event (conversation deleted)
-/// 4. Return success
+/// 3. Return success
 ///
 /// # Side Effects
 ///
@@ -124,7 +121,7 @@ pub async fn delete_conversation_impl(
     runtime
         .check_delete_rate_limit("delete_conversation")
         .await?;
-    // 2. Stop its turn, take its attachments, remove it and audit
+    // 2. Stop its turn, take its attachments and remove it
     runtime
         .delete_conversation_unmetered(&conversation_id)
         .await

@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ocr = Arc::new(VisionOcr::new(
         Arc::new(FixedOcrModel(Some(model))),
         Arc::new(LlamaServerLauncher::with_binary(binary).on_port(8096)),
+        Arc::default(),
     )?);
     let extractor = ContentExtractor::new().with_ocr(Arc::clone(&ocr) as Arc<dyn OcrPort>);
 

@@ -354,18 +354,18 @@ impl IndexPersistence {
     /// end in different places, and a quiet period recognises every one of
     /// them without a flush call in five other features.
     ///
-    /// Shutdown stops ticks, waits for any active save, then performs the
-    /// final flush before closing SQLite. Never cancel an active blocking save.
-    pub async fn run(self: Arc<Self>) {
-        let cancel = crate::shared::runtime::background::cancellation_token();
+    /// Shutdown (`cancel`) stops ticks, waits for any active save, then
+    /// performs the final flush before closing SQLite. Never cancel an active
+    /// blocking save.
+    pub async fn run(self: Arc<Self>, cancel: tokio_util::sync::CancellationToken) {
         loop {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => break,
                 _ = tokio::time::sleep(FLUSH_TICK) => {}
             }
-            // Standalone containers may have no installed application scope.
-            // The worker must not be the only owner keeping an index alive.
+            // A scope that is never closed, as in standalone containers, must
+            // not leave this worker as the only owner keeping an index alive.
             if Arc::strong_count(&self) == 1 {
                 break;
             }

@@ -15,11 +15,21 @@ pub(in crate::features::learning) async fn verify_and_repair(
     output_tokens: usize,
 ) -> Result<(String, LessonVerificationReport)> {
     let references = ReferenceCollection::lexical(sources)?;
-    verify_and_repair_with_references(llm, prompt, schema, raw, &references, output_tokens).await
+    verify_and_repair_with_references(
+        llm,
+        &BuiltinRuntimes::for_tests(),
+        prompt,
+        schema,
+        raw,
+        &references,
+        output_tokens,
+    )
+    .await
 }
 
 pub(in crate::features::learning) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     prompt: &str,
     schema: &Value,
     mut raw: String,
@@ -68,7 +78,8 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 continue;
             }
         }
-        let mut report = verify_with_references(llm, &candidate, active, &mut checks).await?;
+        let mut report =
+            verify_with_references(llm, runtimes, &candidate, active, &mut checks).await?;
         loop {
             let gaps = report
                 .findings

@@ -37,6 +37,9 @@ pub struct ConversationDi {
         Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>,
     /// Conversations a continue-in-new-chat handoff is summarizing.
     pub handoffs_in_flight: Arc<HandoffsInFlight>,
+    /// What the corpus planner has recently managed, shared by every chat
+    /// turn so a timeout on one turn shrinks the next turn's prompt.
+    pub planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
 }
 
 pub fn build(db_pool: SqlitePool) -> ConversationDi {
@@ -53,6 +56,7 @@ pub fn build(db_pool: SqlitePool) -> ConversationDi {
         compaction_slots: Arc::new(CompactionSlots::default()),
         conversation_memory,
         handoffs_in_flight: Arc::new(HandoffsInFlight::default()),
+        planner_health: Arc::default(),
         conversation_history: conversation_service.clone(),
         create_conversation_use_case: Arc::new(CreateConversationUseCase::new(
             conversation_service.clone(),

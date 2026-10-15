@@ -59,6 +59,7 @@ impl AIModule {
             core.data_dir().clone(),
             core.credentials().clone(),
             backend_devices,
+            Arc::clone(core.background()),
         )
         .await?;
         let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);
@@ -153,6 +154,12 @@ impl AIModule {
         &self,
     ) -> &Arc<crate::features::conversation::handoff::HandoffsInFlight> {
         &self.conversation.handoffs_in_flight
+    }
+
+    pub(crate) fn planner_health(
+        &self,
+    ) -> &Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        &self.conversation.planner_health
     }
 
     pub fn conversation_memory(

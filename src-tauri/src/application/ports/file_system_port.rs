@@ -16,7 +16,6 @@
 //! - Validate file paths to prevent directory traversal (CWE-22)
 //! - Use secure system APIs (no shell command execution)
 //! - Check file existence before operations
-//! - Audit file access operations
 //!
 //! # Infrastructure Implementations
 //!
@@ -56,7 +55,6 @@ use std::path::Path;
 /// - Prevent directory traversal attacks (CWE-22)
 /// - Prevent command injection (CWE-78)
 /// - Be thread-safe (`Send + Sync`)
-/// - Audit security-relevant operations
 #[async_trait]
 pub trait FileSystemPort: Send + Sync {
     /// Open a file with the system's default application.
@@ -87,7 +85,6 @@ pub trait FileSystemPort: Send + Sync {
     /// 1. Validate path to prevent directory traversal (CWE-22)
     /// 2. Check file exists before opening
     /// 3. Use secure APIs that don't invoke shell (prevents CWE-78)
-    /// 4. Audit the operation for security logging
     ///
     /// # Example
     ///
@@ -125,7 +122,6 @@ pub trait FileSystemPort: Send + Sync {
     /// 1. Validate path to prevent directory traversal (CWE-22)
     /// 2. Check file exists before revealing
     /// 3. Use secure command construction (OsString, no shell)
-    /// 4. Audit the operation
     ///
     /// # Platform Notes
     ///
@@ -211,7 +207,6 @@ pub trait FileSystemPort: Send + Sync {
     /// Implementations MUST:
     /// 1. Validate path to prevent directory traversal (CWE-22)
     /// 2. Use secure filesystem APIs
-    /// 3. Audit directory creation operations
     ///
     /// # Example
     ///
@@ -247,7 +242,6 @@ pub trait FileSystemPort: Send + Sync {
     /// 1. Validate path to prevent directory traversal (CWE-22)
     /// 2. Check path is a directory before reading
     /// 3. Use secure filesystem APIs
-    /// 4. Audit directory listing operations
     ///
     /// # Example
     ///

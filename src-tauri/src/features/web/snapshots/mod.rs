@@ -32,6 +32,7 @@ pub use gc::{SweepReport, WebSnapshotGc};
 use crate::features::web::traits::page_snapshot::PageCapturePort;
 use crate::shared::error::{AppError, Result};
 use crate::shared::http::normalize_web_source_url;
+use crate::shared::runtime::background::BackgroundTasks;
 use crate::shared::runtime::jobs::{JobRuntime, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
 use store::SnapshotStore;
@@ -166,6 +167,7 @@ pub struct WebPageSnapshotService {
     shared: Arc<Shared>,
     jobs: Arc<JobRuntime>,
     gc: WebSnapshotGc,
+    background: Arc<BackgroundTasks>,
 }
 
 impl WebPageSnapshotService {
@@ -175,6 +177,7 @@ impl WebPageSnapshotService {
         capture: Arc<dyn PageCapturePort>,
         jobs: Arc<JobRuntime>,
         events: Arc<dyn SnapshotEvents>,
+        background: Arc<BackgroundTasks>,
     ) -> Self {
         let repository = SnapshotRepository::new(pool);
         let store = SnapshotStore::new(root);
@@ -187,6 +190,7 @@ impl WebPageSnapshotService {
                 events,
             }),
             jobs,
+            background,
         }
     }
 
@@ -352,7 +356,7 @@ impl WebPageSnapshotService {
     /// The sweep, run in the background with its outcome logged.
     pub fn sweep_in_background(self: &Arc<Self>, reason: &'static str) {
         let service = Arc::clone(self);
-        crate::shared::runtime::background::spawn(async move {
+        self.background.spawn(async move {
             match service.sweep().await {
                 Ok(report) => tracing::info!(
                     reason,

@@ -2,6 +2,7 @@
 //! and no task/body allocated per indexing notification.
 use crate::application::ports::DocumentIndexObserver;
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
+use crate::shared::runtime::background::BackgroundTasks;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 use std::path::Path;
@@ -35,9 +36,10 @@ impl SummaryTrigger {
         &self,
         use_case: Arc<GenerateDocumentSummariesUseCase>,
         pool: SqlitePool,
+        background: &BackgroundTasks,
     ) {
         self.clear_post_index_hook();
-        let cancel = crate::shared::runtime::background::cancellation_token().child_token();
+        let cancel = background.token().child_token();
         let hook = Arc::new(Hook {
             use_case,
             pool,
@@ -49,7 +51,7 @@ impl SummaryTrigger {
         if let Ok(mut slot) = self.hook.write() {
             *slot = Some(hook.clone());
         }
-        crate::shared::runtime::background::spawn(run(hook));
+        background.spawn(run(hook));
     }
 
     pub fn clear_post_index_hook(&self) {

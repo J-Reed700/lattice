@@ -85,6 +85,7 @@ pub fn build_page_snapshots(
     db_pool: SqlitePool,
     jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
     events: Arc<crate::features::web::snapshots::AppEvents>,
+    background: Arc<crate::shared::runtime::background::BackgroundTasks>,
 ) -> Result<Arc<crate::features::web::snapshots::WebPageSnapshotService>> {
     use crate::features::web::snapshots::{store::SnapshotStore, WebPageSnapshotService};
     let capture = crate::features::web::services::snapshot::build_page_capture()?;
@@ -94,6 +95,7 @@ pub fn build_page_snapshots(
         capture,
         jobs,
         events,
+        background,
     )))
 }
 

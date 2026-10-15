@@ -44,7 +44,7 @@ The source-built binary does not change the repository release lock.
 ### Automated checks
 
 - The Rust CI matrix includes `macos-15-intel` for compilation, unit tests,
-  credential/audit integration tests and linting.
+  credential integration tests and linting.
 - The sidecar release matrix builds a self-contained, signed Intel CPU binary
   and executes it after deleting the source/build tree.
 - `desktop-compatibility` builds an instrumented release-mode candidate on each

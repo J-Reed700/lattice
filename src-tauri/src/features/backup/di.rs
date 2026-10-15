@@ -37,6 +37,7 @@ pub fn build(
     db_path: PathBuf,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
+    background: Arc<crate::shared::runtime::background::BackgroundTasks>,
 ) -> BackupDi {
     let backup =
         Arc::new(BackupAdapter::new(db_pool.clone(), db_path.clone())) as Arc<dyn BackupPort>;
@@ -80,6 +81,7 @@ pub fn build(
         create_backup_use_case.clone(),
         settings_repo.clone(),
         archive_service.clone(),
+        background,
     ));
     let scheduler_port: Arc<dyn BackupSchedulerPort> = backup_scheduler.clone();
 

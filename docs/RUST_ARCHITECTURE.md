@@ -115,10 +115,8 @@ belong to their respective adapters, not the sync contracts.
   drafts, selections, and visibility. ESLint keeps view files from value-importing
   `VaultAPI`, a feature client, the transport or a Tauri plugin; files that
   predate the rule sit in allowlists in `eslint.config.js` that can only shrink.
-- CI executes desktop library tests, real audit integration tests, frontend tests,
-  a renderer build, and browser smoke tests. The audit suite exercises a rejected
-  credential command without accessing the OS keychain, plus sink persistence,
-  concurrent delivery, bounded history, and logger enable/disable behavior.
+- CI executes desktop library tests, integration tests, frontend tests, a
+  renderer build, and browser smoke tests.
 
 ## Background work and error contracts
 
@@ -491,7 +489,6 @@ python3 scripts/check-sql-contracts.py
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
 cargo check --manifest-path src-tauri/Cargo.toml --all-targets
 cargo run --manifest-path src-tauri/Cargo.toml --features bindings-export --bin export_bindings -- --check
 cargo test --manifest-path api-rust/Cargo.toml --lib

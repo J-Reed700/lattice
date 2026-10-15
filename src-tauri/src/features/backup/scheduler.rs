@@ -6,7 +6,7 @@ use crate::application::ports::{BackupSchedulerPort, SettingsRepositoryPort};
 use crate::features::backup::archive::service::ArchiveService;
 use crate::features::backup::use_cases::CreateBackupUseCase;
 use crate::shared::error::Result;
-use crate::shared::runtime::background;
+use crate::shared::runtime::background::BackgroundTasks;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,6 +29,8 @@ pub struct BackupScheduler {
     /// must not make the local backup look broken, and vice versa.
     archive_service: Arc<ArchiveService>,
     state: Mutex<SchedulerState>,
+    /// Where the ticker runs, so shutdown stops it between backups.
+    background: Arc<BackgroundTasks>,
 }
 
 impl BackupScheduler {
@@ -36,12 +38,14 @@ impl BackupScheduler {
         create_backup_use_case: Arc<CreateBackupUseCase>,
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         archive_service: Arc<ArchiveService>,
+        background: Arc<BackgroundTasks>,
     ) -> Self {
         Self {
             create_backup_use_case,
             settings_repo,
             archive_service,
             state: Mutex::new(SchedulerState::default()),
+            background,
         }
     }
 
@@ -59,9 +63,9 @@ impl BackupScheduler {
         let create_backup_use_case = self.create_backup_use_case.clone();
         let settings_repo = self.settings_repo.clone();
         let archive_service = self.archive_service.clone();
-        let cancel = background::cancellation_token();
+        let cancel = self.background.token();
 
-        let handle = background::spawn(async move {
+        let handle = self.background.spawn(async move {
             let mut ticker = tokio::time::interval(interval);
             let mut consecutive_failures: u32 = 0;
             let mut archive_failures: u32 = 0;

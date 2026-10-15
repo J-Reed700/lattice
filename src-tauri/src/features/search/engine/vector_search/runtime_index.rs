@@ -7,6 +7,7 @@ use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::features::embedding::loading::EmbeddingIndexBinding;
 use crate::features::search::{engine::service::SearchResult, SearchServiceTrait};
 use crate::shared::error::{AppError, Result};
+use crate::shared::runtime::background::BackgroundTasks;
 use std::{
     collections::HashSet,
     path::PathBuf,
@@ -36,6 +37,8 @@ pub struct RuntimeVectorIndex {
     /// Writes the bound index and its manifest. Set at startup when a model is
     /// already active, or by [`Self::bind_first`] for the first one.
     persistence: OnceLock<Arc<IndexPersistence>>,
+    /// Where the persistence worker runs, so shutdown flushes and stops it.
+    background: Arc<BackgroundTasks>,
 }
 
 impl RuntimeVectorIndex {
@@ -45,6 +48,7 @@ impl RuntimeVectorIndex {
         path: PathBuf,
         compression: VectorIndexCompression,
         persistence: Option<Arc<IndexPersistence>>,
+        background: Arc<BackgroundTasks>,
     ) -> Self {
         let bound = OnceLock::new();
         if let Some(identity) = identity {
@@ -60,6 +64,7 @@ impl RuntimeVectorIndex {
             path,
             compression,
             persistence: persistence_slot,
+            background,
         }
     }
 
@@ -141,7 +146,8 @@ impl RuntimeVectorIndex {
             AppError::InvalidState("Embedding index was already initialized".into())
         })?;
         if self.persistence.set(Arc::clone(&persistence)).is_ok() {
-            crate::shared::runtime::background::spawn(persistence.run());
+            self.background
+                .spawn(persistence.run(self.background.token()));
         }
         Ok(())
     }
@@ -274,6 +280,7 @@ mod tests {
             dir.path().join("usearch-unconfigured.usearch"),
             VectorIndexCompression::None,
             None,
+            Arc::default(),
         ));
         // These handles exist before the user downloads their first model.
         let indexing: Arc<dyn VectorSearchPort> = runtime.clone();
@@ -331,6 +338,7 @@ mod tests {
             dir.path().join("index"),
             VectorIndexCompression::None,
             None,
+            Arc::default(),
         );
         sqlx::query("DROP TABLE text_embeddings")
             .execute(&pool)
@@ -362,6 +370,7 @@ mod tests {
             dir.path().join("usearch-unconfigured-mrl1f32.usearch"),
             compression.clone(),
             None,
+            Arc::default(),
         );
         runtime
             .bind_first(&pool, &Model("sha256:first"), false)

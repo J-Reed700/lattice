@@ -10,7 +10,6 @@ use crate::features::search::dto::{
     SearchResultDto,
 };
 use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::AppError;
 
@@ -88,11 +87,6 @@ pub(super) async fn search_fast_impl(
     // Transform results to tuples
     let result: Vec<(String, f32)> = results.into_iter().map(|r| (r.id, r.score)).collect();
 
-    // Audit logging (non-blocking)
-    if let Err(e) = audit_search(&query, result.len(), false).await {
-        tracing::warn!("Failed to log audit event: {}", e);
-    }
-
     ApiResult::success(result)
 }
 
@@ -144,14 +138,13 @@ pub(super) async fn search_fast_impl(
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query
-/// - **Audit Logging (CWE-778)**: Logs searches with result count
 ///
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
 /// - Applies cross-cutting concerns (rate limiting, validation)
 /// - Delegates to `SemanticSearchUseCase` for business logic
-/// - Handles error translation and audit logging
+/// - Handles error translation
 ///
 /// # Comparison with Other Search Commands
 ///
@@ -165,8 +158,7 @@ pub(super) async fn search_fast_impl(
 /// 2. Input validation
 /// 3. Delegate to SemanticSearchUseCase
 /// 4. Use case handles embedding, search, enrichment
-/// 5. Log audit event
-/// 6. Return enriched results
+/// 5. Return enriched results
 /// Implementation: Pure semantic search using vector similarity.
 #[tracing::instrument(skip(container), fields(query = %request.query))]
 pub async fn semantic_search_impl(
@@ -202,15 +194,6 @@ pub async fn semantic_search_impl(
             return ApiResult::error(ErrorCode::ProcessingError, e.to_string());
         }
     };
-
-    // Audit logging (non-blocking)
-    if !response.results.is_empty() {
-        if let Some(first_result) = response.results.first() {
-            if let Err(e) = audit_search(&first_result.id, response.results.len(), false).await {
-                tracing::warn!("Failed to log audit event: {}", e);
-            }
-        }
-    }
 
     ApiResult::success(response)
 }
@@ -263,7 +246,6 @@ pub async fn semantic_search_impl(
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query
-/// - **Audit Logging (CWE-778)**: Logs searches with result count
 ///
 /// # Search Modes
 ///
@@ -293,8 +275,7 @@ pub async fn semantic_search_impl(
 /// 3. Parse search mode string
 /// 4. Run the library search orchestrator (vector + BM25 + RRF)
 /// 5. Enrich results with metadata
-/// 6. Log audit event
-/// 7. Return ranked results
+/// 6. Return ranked results
 ///
 /// Implementation: Hybrid search combining vector similarity and BM25 keyword matching.
 pub async fn hybrid_search_impl(
@@ -364,28 +345,7 @@ pub async fn hybrid_search_impl(
         }
     };
 
-    // Audit logging (non-blocking)
-    if let Err(e) = audit_search(&query, search_results.len(), false).await {
-        tracing::warn!("Failed to log audit event: {}", e);
-    }
-
     ApiResult::success(search_results)
-}
-
-// Audit helper
-pub(super) async fn audit_search(
-    query: &str,
-    result_count: usize,
-    from_cache: bool,
-) -> Result<(), AppError> {
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::SearchPerformed, AuditResult::success())
-        .with_resource_id(query)
-        .with_metadata("result_count", result_count.to_string())
-        .with_metadata("from_cache", from_cache.to_string());
-
-    audit_logger.log(event).await?;
-    Ok(())
 }
 
 // Access tracking helper
@@ -471,7 +431,6 @@ pub async fn search_documents_impl(
             }),
         };
 
-        audit_search(&options.query, response.results.len(), true).await?;
         track_document_access(&response.results, container.document_repository()).await?;
 
         return Ok(response);
@@ -532,7 +491,6 @@ pub async fn search_documents_impl(
         }),
     };
 
-    audit_search(&options.query, response.results.len(), false).await?;
     track_document_access(&response.results, container.document_repository()).await?;
 
     Ok(response)
@@ -581,6 +539,5 @@ pub async fn find_similar_impl(
 
     let similar = enrich_vector_results(filtered, enrichment_service).await?;
 
-    audit_search(&format!("similar:{}", chunk_id), similar.len(), false).await?;
     Ok(similar)
 }

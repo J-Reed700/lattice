@@ -46,7 +46,12 @@ async fn full_event_channel_does_not_block_pause_or_cancel_and_cleans_registry()
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     engine.set_stall(true);
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
     let _stalled_receiver = stall_event_receiver(&manager).await;
 
     let pause_url = "https://example.com/backpressured-pause.bin";
@@ -112,7 +117,12 @@ async fn root_cancellation_cleans_active_download_with_full_event_channel() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     engine.set_stall(true);
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
     let _stalled_receiver = stall_event_receiver(&manager).await;
 
     let url = "https://example.com/shutdown-backpressure.bin";
@@ -146,7 +156,12 @@ async fn root_cancellation_cleans_active_download_with_full_event_channel() {
 async fn full_event_channel_drops_terminal_hint_but_keeps_reconciliation_candidate() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
     let _stalled_receiver = stall_event_receiver(&manager).await;
 
     let url = "https://example.com/terminal-backpressure.bin";

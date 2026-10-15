@@ -1,7 +1,7 @@
 //! Indexing Command Handlers (DDD Architecture)
 //!
 //! Thin controllers for document indexing operations following Domain-Driven Design.
-//! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
+//! These commands apply cross-cutting concerns (rate limiting, validation)
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
 use crate::application::ports::document_scope::DocumentScopePort;
@@ -179,8 +179,7 @@ impl IndexFileFailure {
 
 /// The single-file index path shared by the `index_file` command and the
 /// vault note sink: ENTRY/EXIT logs, path and model gates, the shared
-/// progress state, the use case, space membership, and the `FileIndexed`
-/// audit event.
+/// progress state, the use case, and space membership.
 pub(crate) async fn index_single_file(
     indexing: &SingleFileIndexing<'_>,
     space: Option<SpaceTarget<'_>>,
@@ -237,17 +236,6 @@ pub(crate) async fn index_single_file(
 
             state.file_processed();
             state.complete();
-
-            // 6. Audit logging
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::FileIndexed,
-                response.document_id.as_str(),
-                "path" => response.file_path.as_str()
-            )
-            .await
-            .ok();
 
             tracing::info!(
                 document_id = %response.document_id,
@@ -321,17 +309,6 @@ pub async fn index_directory_impl(
                 }
             }
 
-            // 4. Audit
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::FileIndexed,
-                "directory",
-                "files_indexed" => response.files_indexed.to_string().as_str()
-            )
-            .await
-            .ok();
-
             ApiResult::success(response)
         }
         Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
@@ -357,16 +334,6 @@ pub async fn reindex_document_impl(
     let use_case = container.reindex_document_use_case();
     match use_case.execute(document_id.clone()).await {
         Ok(response) => {
-            // 3. Audit
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DocumentReindexed,
-                response.document_id.as_str()
-            )
-            .await
-            .ok();
-
             tracing::info!(
                 document_id = %response.document_id,
                 "Command: reindex_document - EXIT"
@@ -400,8 +367,7 @@ pub async fn delete_document_impl(container: &Container, document_id: String) ->
 }
 
 /// The delete path shared by the `delete_document` command and the vault
-/// note sink: ENTRY/EXIT logs, the ownership-aware use case, and the
-/// `FileDeleted` audit event.
+/// note sink: ENTRY/EXIT logs and the ownership-aware use case.
 pub(crate) async fn delete_indexed_document(
     pipeline: &dyn NoteRemovalPipeline,
     document_id: String,
@@ -411,16 +377,6 @@ pub(crate) async fn delete_indexed_document(
     // 1. Execute use case
     match pipeline.remove(document_id.clone()).await {
         Ok(()) => {
-            // 2. Audit
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::FileDeleted,
-                document_id.as_str()
-            )
-            .await
-            .ok();
-
             tracing::info!(document_id = %document_id, "Command: delete_document - EXIT");
             Ok(())
         }
@@ -484,20 +440,7 @@ pub async fn rename_document_impl(
         .execute(document_id.clone(), new_name.clone())
         .await
     {
-        Ok(response) => {
-            // 2. Audit logging
-            let logger = crate::audit::get_audit_logger();
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DocumentUpdated,
-                document_id.as_str(),
-                "new_name" => response.new_name.as_str()
-            )
-            .await
-            .ok();
-
-            ApiResult::success(response)
-        }
+        Ok(response) => ApiResult::success(response),
         Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
     }
 }

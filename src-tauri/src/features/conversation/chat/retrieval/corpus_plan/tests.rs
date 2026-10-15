@@ -394,7 +394,7 @@ async fn live_corpus_retrieval_and_answer() {
         None,
         &catalog,
         &HashMap::new(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -750,7 +750,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         None,
         &correction_catalog(),
         &correction,
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -784,7 +784,7 @@ async fn the_planner_request_carries_the_turns_cancellation() {
         None,
         &correction_catalog(),
         &HashMap::new(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &stop,
     )
     .await
@@ -815,7 +815,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         None,
         &correction_catalog(),
         &correction,
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await;
@@ -936,7 +936,7 @@ async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
         Some(&history),
         &wide_catalog(43),
         &Default::default(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -971,7 +971,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         Some(&"user: earlier turn\n".repeat(200)),
         &wide_catalog(43),
         &correction,
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await

@@ -67,7 +67,8 @@ impl Drop for WriterLifetime {
 pub struct VaultWriterHandle {
     wake: Arc<Notify>,
     // Only handles own this guard; the worker holds a token clone. Dropping
-    // standalone containers therefore stops their worker without an app scope.
+    // standalone containers therefore stops their worker without closing the
+    // background scope.
     _lifetime: Arc<WriterLifetime>,
     /// Shared cell the worker reads on every error to decide whether
     /// to emit a `vault:write-error` Tauri event. Populated post-
@@ -117,13 +118,14 @@ pub fn start_vault_writer(
     settings_uc: Arc<GetSettingsUseCase>,
     suppression: super::watcher::WriteSuppressionRegistry,
     pool: SqlitePool,
+    background: &crate::shared::runtime::background::BackgroundTasks,
 ) -> VaultWriterHandle {
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
     let note_index_sink = Arc::new(std::sync::RwLock::new(None));
-    let cancel = crate::shared::runtime::background::cancellation_token().child_token();
+    let cancel = background.token().child_token();
     let lifetime = Arc::new(WriterLifetime(cancel.clone()));
-    crate::shared::runtime::background::spawn(run_worker(
+    background.spawn(run_worker(
         wake.clone(),
         settings_uc,
         app_handle.clone(),

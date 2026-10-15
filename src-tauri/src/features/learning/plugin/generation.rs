@@ -60,11 +60,13 @@ pub async fn get_learning_generation_job(
 
 pub(super) fn generation_worker(
     container: &Container,
+    runtimes: BuiltinRuntimes,
 ) -> crate::features::learning::generation_jobs::LessonGenerationWorker {
     let model_container = container.clone();
     let library_container = container.clone();
     let source_deps = source_deps(container);
     crate::features::learning::generation_jobs::LessonGenerationWorker {
+        runtimes,
         research_web: Some(container.web_service()),
         pool: container.db_pool().clone(),
         load_library: std::sync::Arc::new(move || {

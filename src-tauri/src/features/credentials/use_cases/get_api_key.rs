@@ -7,7 +7,6 @@
 //!
 //! # Security
 //! - Retrieves credentials from OS keyring
-//! - Audit logs credential access
 //! - Returns error if credential not found
 //!
 //! # Example

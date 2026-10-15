@@ -173,17 +173,6 @@ pub(super) async fn finalize_successful_turn(
         message_tokens,
         &assistant_msg,
     );
-    let logger = crate::infrastructure::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::infrastructure::audit::AuditAction::QuestionAnswered,
-        conversation_id,
-        "context_messages" => context_len.to_string().as_str(),
-        "message_tokens" => message_tokens.to_string().as_str(),
-        "response_tokens" => response_tokens.to_string().as_str()
-    )
-    .await
-    .ok();
 
     Ok((
         ChatResponse {
@@ -394,8 +383,9 @@ fn spawn_memory_indexing(
     conversation_id: String,
     memories: Vec<MemoryToIndex>,
 ) {
-    let cancel = crate::shared::runtime::background::cancellation_token();
-    crate::shared::runtime::background::spawn(async move {
+    let background = container.background();
+    let cancel = background.token();
+    background.spawn(async move {
         let loaded = tokio::select! {
             biased;
             _ = cancel.cancelled() => return,

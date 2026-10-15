@@ -7,7 +7,6 @@
 //!
 //! # Security
 //! - Securely deletes credentials from OS keyring
-//! - Audit logs credential deletion
 //! - Idempotent (succeeds even if key doesn't exist)
 //!
 //! # Example

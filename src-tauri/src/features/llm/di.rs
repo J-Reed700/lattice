@@ -2,6 +2,7 @@
 
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::loading::ModelLoader;
+use crate::shared::runtime::background::BackgroundTasks;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -66,6 +67,7 @@ pub async fn build(
     data_dir: PathBuf,
     credentials: Arc<dyn CredentialsPort>,
     backend_devices: Arc<BackendDevices>,
+    background: Arc<BackgroundTasks>,
 ) -> Result<LlmDi> {
     // Model catalog (HuggingFace + SQLite cache)
     let downloaded_model_repo = Arc::new(DownloadedModelRepository::new(db_pool.clone()));
@@ -83,6 +85,7 @@ pub async fn build(
         download_repository,
         download_engine,
         data_dir,
+        background,
     )) as Arc<dyn DownloadManager>;
 
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
@@ -346,14 +349,16 @@ impl Container {
     /// run on this machine.
     pub fn prewarm_active_models(&self, app_handle: tauri::AppHandle) {
         use tauri::Manager;
+        let background = self.core.background();
         crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(
             &app_handle,
             Arc::clone(&self.llm_runtime.devices),
+            background,
         );
         for role in ["chat", "utility", "embedding"] {
             let handle = app_handle.clone();
-            let cancel = crate::shared::runtime::background::cancellation_token();
-            let _ = crate::shared::runtime::background::spawn(async move {
+            let cancel = background.token();
+            let _ = background.spawn(async move {
                 if cancel.is_cancelled() {
                     return;
                 }

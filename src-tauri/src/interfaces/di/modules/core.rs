@@ -1,6 +1,8 @@
-//! The core module: the database pool, security context, data directory and credentials.
+//! The core module: the database pool, security context, data directory,
+//! background scope and credentials.
 
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
+use crate::shared::runtime::background::BackgroundTasks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +21,7 @@ use crate::application::ports::CredentialsPort;
 /// - Database connection pool
 /// - Security context and file access config
 /// - Application data directory
+/// - Background scope for spawned work
 /// - Credentials port for API keys
 #[derive(Clone)]
 pub struct CoreModule {
@@ -28,6 +31,7 @@ pub struct CoreModule {
     security_context: Arc<SecurityContext>,
     file_access_config: Arc<FileAccessConfig>,
     data_dir: PathBuf,
+    background: Arc<BackgroundTasks>,
 
     // Feature slice
     credentials: crate::features::credentials::di::CredentialsDi,
@@ -39,6 +43,7 @@ impl CoreModule {
         db_pool: SqlitePool,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         data_dir: PathBuf,
+        background: Arc<BackgroundTasks>,
     ) -> crate::shared::error::Result<Self> {
         let security_context = Arc::new(SecurityContext::new());
 
@@ -67,6 +72,7 @@ impl CoreModule {
             security_context,
             file_access_config,
             data_dir,
+            background,
             credentials,
         })
     }
@@ -92,6 +98,12 @@ impl CoreModule {
 
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
+    }
+
+    /// The app's background scope: shutdown closes it and joins its tasks
+    /// before the database closes.
+    pub fn background(&self) -> &Arc<BackgroundTasks> {
+        &self.background
     }
 
     // Credentials feature getters

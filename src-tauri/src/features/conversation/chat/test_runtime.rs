@@ -40,6 +40,12 @@ pub(super) struct FakeRuntime {
     /// One map per test, so a research job answers the command of its own
     /// test — and never another test's.
     pub(super) research_waiters: Arc<crate::features::conversation::chat::ResearchWaiters>,
+    /// One background scope per test, so work a turn leaves running stays in
+    /// its own test.
+    pub(super) background: Arc<crate::shared::runtime::background::BackgroundTasks>,
+    /// One planner health per test, so a planner timeout in one test never
+    /// shrinks another's prompt.
+    pub(super) planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
     /// The `answer_thinking` setting the turn reads.
     pub(super) answer_thinking: bool,
 }
@@ -56,6 +62,8 @@ impl Default for FakeRuntime {
                 crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
             ),
             research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
+            background: Arc::default(),
+            planner_health: Arc::default(),
             answer_thinking: false,
         }
     }
@@ -173,6 +181,9 @@ impl ChatRetrieval for FakeRuntime {
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
         None
     }
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        Arc::clone(&self.planner_health)
+    }
 }
 
 #[async_trait::async_trait]
@@ -219,6 +230,9 @@ impl ChatJobs for FakeRuntime {
     }
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
         Arc::clone(&self.research_waiters)
+    }
+    fn background(&self) -> Arc<crate::shared::runtime::background::BackgroundTasks> {
+        Arc::clone(&self.background)
     }
 }
 

@@ -12,6 +12,7 @@ use super::model::OcrModelSource;
 use super::render;
 use super::server::{OcrServer, ServerLauncher};
 use crate::application::ports::{OcrError, OcrPort};
+use crate::shared::runtime::background::BackgroundTasks;
 
 /// Bound on one page's request to the server. Apple Silicon reads a dense
 /// page in about five seconds; the CPU-only build on an old laptop can take a
@@ -30,10 +31,11 @@ impl VisionOcr {
     pub fn new(
         models: Arc<dyn OcrModelSource>,
         launcher: Arc<dyn ServerLauncher>,
+        background: Arc<BackgroundTasks>,
     ) -> Result<Self, OcrError> {
         Ok(Self {
             models,
-            server: OcrServer::new(launcher),
+            server: OcrServer::new(launcher, background),
             client: OcrClient::new()?,
             page_timeout: OCR_PAGE_TIMEOUT,
         })

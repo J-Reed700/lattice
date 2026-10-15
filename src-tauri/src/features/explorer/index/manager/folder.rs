@@ -109,7 +109,7 @@ impl FolderIndexManager {
 
         // Watching starts before the build, so a save made during a long
         // build is picked up after it rather than missed.
-        let cancel = crate::shared::runtime::background::cancellation_token().child_token();
+        let cancel = self.background.token().child_token();
         let watching = match watcher::watch(&root, self.config.debounce) {
             Ok((watcher, changes)) => {
                 let task = WatchTask {
@@ -122,7 +122,7 @@ impl FolderIndexManager {
                     cancel: cancel.clone(),
                     limits: self.config.limits,
                 };
-                crate::shared::runtime::background::spawn(task.run(watcher, changes))
+                self.background.spawn(task.run(watcher, changes))
             }
             Err(error) => {
                 warn!(%error, "Folder index runs without a watcher");

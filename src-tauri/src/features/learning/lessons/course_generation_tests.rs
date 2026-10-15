@@ -147,6 +147,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     let prepared = service::prepare(
         &repo,
         &Model(lesson_candidate.to_string()),
+        &crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         PrepareLearningLessonRequestDto {
             program_id: draft.summary.id.clone(),
             lesson_id: lesson_id.clone(),
@@ -402,13 +403,14 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         })
         .await?;
     JobStore::new(pool.clone()).claim(&job.id).await?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let first = crate::features::learning::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::features::learning::lesson_drafts::run(
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &program, lesson),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await;
@@ -438,7 +440,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &retry.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &program, lesson),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await?;
@@ -822,17 +824,18 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| AppError::InvalidState("missing fixture lesson".into()))?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let mut thin = lesson_response();
     thin["blocks"] = json!([]);
     assert!(
-        generation::prepare_lesson(&Model(thin.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(thin.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
     let mut shallow = lesson_response();
     shallow["blocks"][4]["body"] = json!("Try this.");
     assert!(
-        generation::prepare_lesson(&Model(shallow.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(shallow.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -843,7 +846,7 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
         blocks.push(duplicate_assignment);
     }
     assert!(
-        generation::prepare_lesson(&Model(ambiguous.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(ambiguous.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -851,7 +854,7 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
     invented["blocks"][0]["sourceIndex"] = json!(0);
     invented["blocks"][0]["quote"] = json!("An imaginary textbook says this is true.");
     assert!(
-        generation::prepare_lesson(&Model(invented.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(invented.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );

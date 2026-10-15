@@ -1,7 +1,6 @@
 //! Ingesting a web page, and filing it under a space or conversation.
 
 use crate::features::web::dto::IngestWebUrlRequestDto;
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -170,12 +169,10 @@ async fn assign_document_to_space(
 /// 5. **Chunk**: Split content into semantic chunks
 /// 6. **Embed**: Generate embeddings for each chunk
 /// 7. **Index**: Store in vector database
-/// 8. **Audit**: Log successful ingestion
 ///
 /// # Security
 ///
 /// **Rate Limiting (CWE-770)**: Max web ingest requests per minute
-/// **Audit Logging (CWE-778)**: All ingestions logged with URL and document ID
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -192,7 +189,7 @@ async fn assign_document_to_space(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `IngestWebUrlUseCase` with rate limiting + audit logging
+/// Thin controller delegating to `IngestWebUrlUseCase` with rate limiting
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn ingest_web_url(
     url: String,
@@ -243,17 +240,6 @@ pub async fn ingest_web_url(
         .check_rate_limit("web_ingest")
         .await
     {
-        let audit_logger = get_audit_logger();
-        let event = AuditEvent::new(
-            AuditAction::WebContentIngested,
-            AuditResult::failure(e.to_string()),
-        )
-        .with_resource_id(&url)
-        .with_metadata("operation", "ingest_web_url")
-        .with_metadata("error", e.to_string());
-        if let Err(log_err) = audit_logger.log(event).await {
-            tracing::warn!("Failed to write audit log: {}", log_err);
-        }
         return Err(AppError::RateLimitExceeded(e.to_string()));
     }
 
@@ -269,17 +255,6 @@ pub async fn ingest_web_url(
         Err(e) => {
             tracing::error!("Web ingestion failed for URL {}: {:?}", url, e);
             container.metrics().record_indexing_error();
-            let audit_logger = get_audit_logger();
-            let event = AuditEvent::new(
-                AuditAction::WebContentIngested,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&url)
-            .with_metadata("operation", "ingest_web_url")
-            .with_metadata("error", e.to_string());
-            if let Err(log_err) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", log_err);
-            }
             return Err(e);
         }
     };
@@ -305,19 +280,6 @@ pub async fn ingest_web_url(
 
     // 6. Record metrics after success
     container.metrics().record_indexing_operation();
-
-    // 7. Audit success
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::WebContentIngested, AuditResult::success())
-        .with_resource_id(&url)
-        .with_metadata("operation", "ingest_web_url")
-        .with_metadata("document_id", &result.document_id)
-        .with_metadata("title", &result.title)
-        .with_metadata("chunks", result.chunks_created.to_string());
-
-    if let Err(e) = audit_logger.log(event).await {
-        tracing::warn!("Failed to write audit log: {}", e);
-    }
 
     // 8. Return response
     Ok(WebIngestResponse {

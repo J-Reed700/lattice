@@ -82,6 +82,7 @@ impl SystemModule {
             db_path,
             core.data_dir().to_path_buf(),
             settings.settings_repo.clone(),
+            Arc::clone(core.background()),
         );
 
         let models_path = core.data_dir().join("models");

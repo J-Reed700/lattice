@@ -73,7 +73,6 @@ use crate::shared::error::{AppError, Result};
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents tag spam and resource exhaustion
 /// - **Input Validation**: Each tag name checked (1-100 characters)
-/// - **Audit Logging (CWE-778)**: Logs tag application with count
 ///
 /// # Tag Creation Behavior
 ///
@@ -95,7 +94,6 @@ use crate::shared::error::{AppError, Result};
 /// 1. Applies rate limiting
 /// 2. Validates all tag names
 /// 3. Delegates to `ApplyTagsUseCase` (create-if-not-exists + assignment logic)
-/// 4. Logs audit event with tag count
 ///
 /// # Command Flow
 ///
@@ -105,8 +103,7 @@ use crate::shared::error::{AppError, Result};
 ///    - Find or create each tag
 ///    - Assign all tags to document (idempotent)
 ///    - Return complete tag list
-/// 4. Log audit event (tags_applied with count)
-/// 5. Return applied tags
+/// 4. Return applied tags
 ///
 /// # Use Cases
 ///
@@ -139,17 +136,6 @@ pub async fn apply_tags_impl(
 
     let use_case = container.apply_tags_use_case();
     let response = use_case.execute(request.clone()).await?;
-
-    // Audit
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::Custom("tags_applied".to_string()),
-        request.document_id.as_str(),
-        "tag_count" => response.tags.len().to_string().as_str()
-    )
-    .await
-    .ok();
 
     Ok(response)
 }
@@ -216,7 +202,6 @@ pub async fn apply_tags_ddd(
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents excessive removal operations
-/// - **Audit Logging (CWE-778)**: Logs tag removals with document and tag IDs
 ///
 /// # Behavior
 ///
@@ -229,14 +214,12 @@ pub async fn apply_tags_ddd(
 /// This command is a **thin controller** that:
 /// 1. Applies rate limiting
 /// 2. Delegates to `RemoveTagFromDocumentUseCase` (removes assignment)
-/// 3. Logs audit event
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Execute RemoveTagFromDocumentUseCase (find and remove assignment)
-/// 3. Log audit event (tag_removed)
-/// 4. Return success
+/// 3. Return success
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn remove_tag_from_document_impl(
@@ -254,17 +237,6 @@ pub async fn remove_tag_from_document_impl(
 
     let use_case = container.remove_tag_from_document_use_case();
     use_case.execute(request.clone()).await?;
-
-    // Audit
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::Custom("tag_removed".to_string()),
-        request.document_id.as_str(),
-        "tag_id" => request.tag_id.as_str()
-    )
-    .await
-    .ok();
 
     Ok(())
 }

@@ -142,7 +142,8 @@ pub(super) async fn run_kb_retrieval(
     );
     // One turn's use of the planner: the shortlist search runs once, and a
     // turn that already waited out a planner timeout does not wait again.
-    let mut planner_turn = super::corpus_plan::PlannerTurn::new();
+    let planner_health = container.planner_health();
+    let mut planner_turn = super::corpus_plan::PlannerTurn::with_health(&planner_health);
     let (mut plan, catalog) = match repository.retrieval_catalog(&scope.document_ids).await {
         Ok(catalog) => {
             let plan = if let Some(plan) =

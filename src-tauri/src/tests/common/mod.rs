@@ -71,6 +71,7 @@ pub async fn setup_test_container() -> Result<Container> {
         "http://localhost:11434", // Ollama default (won't be called in smoke tests)
         "llama2",                 // Default model
         temp_dir,
+        Arc::default(),
     )
     .await
 }

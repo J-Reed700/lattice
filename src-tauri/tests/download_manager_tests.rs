@@ -26,8 +26,12 @@ use tokio::time::{sleep, Duration};
 async fn test_download_manager_start_download() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -61,8 +65,12 @@ async fn test_download_manager_start_download() {
 async fn test_download_manager_pause_and_resume() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
     engine.set_stall(true);
@@ -107,8 +115,12 @@ async fn test_download_manager_pause_and_resume() {
 async fn test_download_manager_cancel() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
     engine.set_stall(true);
@@ -141,8 +153,12 @@ async fn test_download_manager_cancel() {
 async fn test_download_manager_list_downloads() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file1.bin", Some(1000));
     engine.set_file_size("https://example.com/file2.bin", Some(2000));
@@ -188,8 +204,12 @@ async fn test_download_manager_list_downloads() {
 async fn test_download_manager_with_checksum() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -222,9 +242,13 @@ async fn test_download_manager_with_checksum() {
 async fn test_download_manager_concurrent_downloads() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"))
-            .with_max_concurrent(2);
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    )
+    .with_max_concurrent(2);
 
     engine.set_file_size("https://example.com/file1.bin", Some(1000));
     engine.set_file_size("https://example.com/file2.bin", Some(2000));
@@ -283,8 +307,12 @@ async fn test_download_manager_concurrent_downloads() {
 async fn test_download_manager_event_subscription() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -353,8 +381,12 @@ async fn test_download_manager_event_subscription() {
 async fn test_download_manager_error_handling() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     let result = manager.pause_download("non-existent-id").await;
 
@@ -366,8 +398,12 @@ async fn test_download_manager_error_handling() {
 async fn test_download_manager_state_persistence() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
     engine.set_stall(true);
@@ -391,8 +427,12 @@ async fn test_download_manager_state_persistence() {
 
     let status_before = manager.get_download_status(&id).await.unwrap().unwrap();
 
-    let manager2 =
-        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
+    let manager2 = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        PathBuf::from("/tmp"),
+        Arc::default(),
+    );
 
     let status_after = manager2.get_download_status(&id).await.unwrap().unwrap();
 

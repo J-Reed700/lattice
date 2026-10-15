@@ -3,7 +3,6 @@
 
 use crate::features::backup::export_repository::ExportRepository;
 use crate::features::backup::use_cases::{ExportConversationsUseCase, ExportFormat, ExportSummary};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::shared::fs::confinement::confine_to_root;
@@ -94,7 +93,6 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 ///
 /// - **Rate Limiting (CWE-770)**: Backup rate limiter (50 req/min) prevents resource exhaustion
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
-/// - **Audit Logging (CWE-778)**: All export operations logged to audit trail
 ///
 /// # Use Cases
 ///
@@ -123,7 +121,6 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 /// 1. Rate limiting via SecurityContext (CWE-770)
 /// 2. Path validation via ValidatedFilePath (CWE-22)
 /// 3. Async directory creation via tokio::fs
-/// 4. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -131,16 +128,13 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 /// 2. Path validation (prevent directory traversal)
 /// 3. Check/create output directory asynchronously
 /// 4. Export documents to Markdown files
-/// 5. Log audit event (success/failure with count)
-/// 6. Return export count
+/// 5. Return export count
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_markdown_impl(
     output_dir: Option<String>,
     container: &Container,
 ) -> Result<ExportSummary, AppError> {
-    let audit_logger = get_audit_logger();
-
     // Rate limiting
     container
         .security_context()
@@ -151,39 +145,10 @@ pub async fn export_markdown_impl(
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let output_root = resolve_export_root(output_dir, container)?;
-    let output_dir_str = output_root.to_string_lossy().to_string();
 
     let result = export_use_case(container)
         .execute(output_root, ExportFormat::Markdown)
         .await;
-
-    // Audit the outcome
-    match &result {
-        Ok(summary) => {
-            let event = AuditEvent::new(AuditAction::DataExported, AuditResult::success())
-                .with_resource_id(&summary.output_dir)
-                .with_metadata("operation", "export_markdown")
-                .with_metadata("format", "markdown")
-                .with_metadata("files_exported", summary.count().to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::DataExported,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&output_dir_str)
-            .with_metadata("operation", "export_markdown")
-            .with_metadata("format", "markdown");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result
 }
@@ -248,7 +213,6 @@ pub async fn export_markdown_impl(
 ///
 /// - **Rate Limiting (CWE-770)**: Backup rate limiter (50 req/min) prevents resource exhaustion
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
-/// - **Audit Logging (CWE-778)**: All export operations logged to audit trail
 ///
 /// # Use Cases
 ///
@@ -290,7 +254,6 @@ pub async fn export_markdown_impl(
 /// 1. Rate limiting via SecurityContext (CWE-770)
 /// 2. Path validation via ValidatedFilePath (CWE-22)
 /// 3. Async parent directory creation via tokio::fs
-/// 4. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -299,8 +262,7 @@ pub async fn export_markdown_impl(
 /// 3. Create parent directories asynchronously
 /// 4. Serialize documents to JSON (pretty or compact)
 /// 5. Write JSON to file atomically
-/// 6. Log audit event (success/failure)
-/// 7. Return success
+/// 6. Return success
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_json_impl(
@@ -308,8 +270,6 @@ pub async fn export_json_impl(
     pretty: bool,
     container: &Container,
 ) -> Result<ExportSummary, AppError> {
-    let audit_logger = get_audit_logger();
-
     // Rate limiting
     container
         .security_context()
@@ -320,40 +280,10 @@ pub async fn export_json_impl(
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let output_root = resolve_export_root(output_path, container)?;
-    let output_path_str = output_root.to_string_lossy().to_string();
 
     let result = export_use_case(container)
         .execute(output_root, ExportFormat::Json { pretty })
         .await;
-
-    // Audit the outcome
-    match &result {
-        Ok(summary) => {
-            let event = AuditEvent::new(AuditAction::DataExported, AuditResult::success())
-                .with_resource_id(&summary.output_dir)
-                .with_metadata("operation", "export_json")
-                .with_metadata("format", "json")
-                .with_metadata("pretty", pretty.to_string())
-                .with_metadata("files_exported", summary.count().to_string());
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::DataExported,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&output_path_str)
-            .with_metadata("operation", "export_json")
-            .with_metadata("format", "json");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result
 }

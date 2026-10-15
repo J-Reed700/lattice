@@ -32,7 +32,12 @@ async fn test_download_manager_happy_path() -> Result<(), Box<dyn std::error::Er
         }),
     );
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     // Subscribe to events BEFORE starting download
     let event_rx = manager.subscribe_to_events();
@@ -152,6 +157,7 @@ async fn test_download_resumes_from_byte_offset() -> Result<(), Box<dyn std::err
         repository.clone(),
         mock_engine.clone(),
         temp_dir.path().to_path_buf(),
+        Arc::default(),
     );
     let dest_path = temp_dir.path().join("partial_download.bin");
 
@@ -231,7 +237,12 @@ async fn test_download_pause_and_resume() -> Result<(), Box<dyn std::error::Erro
     // Configure mock for slow download (allows pausing)
     mock_engine.set_file_size("https://example.com/large_file.bin", Some(10000));
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let request = DownloadRequest {
         url: "https://example.com/large_file.bin".to_string(),
@@ -310,7 +321,12 @@ async fn test_download_cancellation_cleanup() -> Result<(), Box<dyn std::error::
 
     mock_engine.set_file_size("https://example.com/file_to_cancel.bin", Some(10000));
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let request = DownloadRequest {
         url: "https://example.com/file_to_cancel.bin".to_string(),
@@ -389,6 +405,7 @@ async fn test_download_checksum_verification() -> Result<(), Box<dyn std::error:
         repository.clone(),
         mock_engine.clone(),
         temp_dir.path().to_path_buf(),
+        Arc::default(),
     );
     let dest_path = temp_dir.path().join("checksum_file.bin");
 

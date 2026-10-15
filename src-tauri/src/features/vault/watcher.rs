@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 use notify::{RecursiveMode, Watcher};
 use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
 use crate::features::settings::use_cases::GetSettingsUseCase;
+use crate::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
 
@@ -22,7 +22,11 @@ pub use rescan::{rescan_vault, RescanSummary};
 
 const SUPPRESSION_TTL: Duration = Duration::from_secs(5);
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(800);
-static RESCAN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Serialises full vault rescans. The watcher's overflow rescan and the focus
+/// rescan share one, so two passes never mark and sweep the same notes at once.
+#[derive(Clone, Default)]
+pub struct RescanLock(Arc<Mutex<()>>);
 
 /// Keyed by filename, not `PathBuf`: OS-level path normalization differs
 /// between writer and watcher (Windows `\\?\` prefixes, macOS case-folding,
@@ -70,8 +74,11 @@ pub fn start_vault_watcher(
     db_pool: SqlitePool,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
+    background: Arc<BackgroundTasks>,
+    rescan_lock: RescanLock,
 ) {
-    crate::shared::runtime::background::spawn(async move {
+    let scope = Arc::clone(&background);
+    scope.spawn(async move {
         let settings = match settings_uc.execute().await {
             Ok(s) => s,
             Err(e) => {
@@ -123,7 +130,15 @@ pub fn start_vault_watcher(
             }
         };
 
-        run_watcher(vault_root, db_pool, app_handle, suppression).await;
+        run_watcher(
+            vault_root,
+            db_pool,
+            app_handle,
+            suppression,
+            background,
+            rescan_lock,
+        )
+        .await;
     });
 }
 
@@ -132,6 +147,8 @@ async fn run_watcher(
     db_pool: SqlitePool,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
+    background: Arc<BackgroundTasks>,
+    rescan_lock: RescanLock,
 ) {
     // Queue paths, never arbitrarily large callback batches. Overflow is a
     // request to reconcile the directory; it cannot silently lose an edit.
@@ -194,7 +211,7 @@ async fn run_watcher(
         "vault watcher started"
     );
 
-    let cancel = crate::shared::runtime::background::cancellation_token();
+    let cancel = background.token();
     loop {
         tokio::select! {
             biased;
@@ -222,7 +239,9 @@ async fn run_watcher(
                 db_pool.clone(),
                 vault_root.clone(),
                 suppression.clone(),
+                &rescan_lock,
                 app_handle.clone(),
+                Arc::clone(&background),
             )
             .await
             {

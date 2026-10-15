@@ -49,12 +49,13 @@ pub(super) async fn practical_source_versions(
 pub async fn get_learning_practical_workspace(
     program_id: String,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let workspace = practical_repo(&container)
         .workspace(&program_id)
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -94,6 +95,7 @@ pub fn get_learning_runtime_catalog(
 pub async fn prepare_learning_runtime_preset(
     request: PrepareLearningRuntimePresetRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash =
         source_request_hash(&("prepare_runtime_preset", &request)).map_err(ApiError::from)?;
@@ -103,7 +105,7 @@ pub async fn prepare_learning_runtime_preset(
         .await
         .map_err(ApiError::from)?
     {
-        return Ok(workspace.resolve_runtime().await);
+        return Ok(workspace.resolve_runtime(&runtimes).await);
     }
     let prepared = crate::features::learning::runtime_catalog::prepare_container_preset(
         request.engine,
@@ -128,7 +130,7 @@ pub async fn prepare_learning_runtime_preset(
         )
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -136,13 +138,14 @@ pub async fn prepare_learning_runtime_preset(
 pub async fn save_learning_runtime_profile(
     request: SaveLearningRuntimeProfileRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     let workspace = practical_repo(&container)
         .save_runtime_profile(&request, &hash)
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -150,6 +153,7 @@ pub async fn save_learning_runtime_profile(
 pub async fn generate_learning_practical_activity(
     request: GenerateLearningPracticalActivityRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     let repo = practical_repo(&container);
@@ -163,7 +167,7 @@ pub async fn generate_learning_practical_activity(
         .await
         .map_err(ApiError::from)?
     {
-        return Ok(replayed.resolve_runtime().await);
+        return Ok(replayed.resolve_runtime(&runtimes).await);
     }
     let program = LearningRepository::new(container.db_pool().clone())
         .get(&request.program_id)
@@ -216,6 +220,7 @@ pub async fn generate_learning_practical_activity(
         .map_err(ApiError::from)?;
     let runtime = crate::features::learning::practical_workspace::runtime_generation_context(
         &repo,
+        &runtimes,
         request.runtime_profile_id.as_deref(),
         request.builtin_runtime,
     )
@@ -236,7 +241,7 @@ pub async fn generate_learning_practical_activity(
         .save_generated_activity(&request, &generated, llm.model_name(), &hash)
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -244,11 +249,14 @@ pub async fn generate_learning_practical_activity(
 pub async fn start_learning_practical_run(
     request: StartLearningPracticalRunRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalRunDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     crate::features::learning::practical_runs::start_run(
         &practical_repo(&container),
         &container.practical_run_registry(),
+        container.core.background(),
+        &runtimes,
         &request,
         &hash,
     )

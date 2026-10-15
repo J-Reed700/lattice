@@ -5,10 +5,10 @@
 //! indexing). This adapter is the port's one real implementation. It runs
 //! the same single-file path the `index_file` command does — path
 //! validation, embedding-model readiness, settings-driven chunking, the
-//! shared progress state, the `FileIndexed` audit event and the ENTRY/EXIT
-//! logs — and removes a note through the same path a user-initiated delete
-//! takes, ownership-aware [`DeleteDocumentUseCase`] and `FileDeleted` audit
-//! event included, so a mirrored file is never deleted from disk.
+//! shared progress state and the ENTRY/EXIT logs — and removes a note
+//! through the same path a user-initiated delete takes, ownership-aware
+//! [`DeleteDocumentUseCase`] included, so a mirrored file is never deleted
+//! from disk.
 //!
 //! Every failure is returned, never swallowed: the vault writer keeps the
 //! durable outbox entry deferred and retries on its next pass.
