@@ -2382,6 +2382,18 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The newest lines of the backend's log file, oldest first. `limit` defaults
+ * to 300 and is capped at 1000; no log file yet gives an empty list.
+ */
+async getBackendLogs(limit: number | null) : Promise<Result<BackendLogEntry[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|get_backend_logs", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAllTagsWithCounts() : Promise<Result<TagWithCountDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:tags|get_all_tags_with_counts") };
@@ -4396,6 +4408,12 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
+/**
+ * One line of the backend's file log. Lines that do not match the log format
+ * carry only `message` (the raw line) and an `Unknown` level.
+ */
+export type BackendLogEntry = { timestamp: string | null; level: BackendLogLevel; target: string | null; message: string }
+export type BackendLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "unknown"
 export type BacklinksResultDto = { documentIds: string[] }
 export type BackupInfoDto = { path: string; name: string; createdAt: string; version: string; fileCount: number; size: number }
 /**

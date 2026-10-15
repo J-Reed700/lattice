@@ -1,5 +1,6 @@
 //! Health plugin commands - system health and diagnostics
 
+use crate::features::health::backend_logs;
 use crate::features::health::commands as health_commands;
 use crate::interfaces::di::Container;
 use crate::shared::ipc::{ApiError, ErrorCode};
@@ -66,4 +67,18 @@ pub async fn initialize_database(container: State<'_, Container>) -> Result<Stri
     };
 
     Ok(message)
+}
+
+/// The newest lines of the backend's log file, oldest first. `limit` defaults
+/// to 300 and is capped at 1000; no log file yet gives an empty list.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_backend_logs(limit: Option<u32>) -> Result<Vec<BackendLogEntry>, ApiError> {
+    tokio::task::spawn_blocking(move || backend_logs::recent_backend_logs(limit))
+        .await
+        .map_err(|e| ApiError {
+            code: ErrorCode::InternalError,
+            message: format!("Failed to read backend logs: {}", e),
+            details: None,
+        })
 }
