@@ -15,9 +15,9 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
-const CAPTURE: &str =
+pub(in crate::features::learning) const CAPTURE: &str =
     "Random assignment reduces confounding in comparisons between treatment groups.";
-struct ResearchWeb(MockWebService);
+pub(in crate::features::learning) struct ResearchWeb(MockWebService);
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
     async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
@@ -33,7 +33,7 @@ impl WebServiceTrait for ResearchWeb {
         self.0.validate_url(url)
     }
 }
-fn web(truncated: bool) -> Arc<ResearchWeb> {
+pub(in crate::features::learning) fn web(truncated: bool) -> Arc<ResearchWeb> {
     web_capture(truncated, "https://example.org/research", CAPTURE)
 }
 fn web_capture(truncated: bool, url: &str, content: &str) -> Arc<ResearchWeb> {
@@ -84,7 +84,7 @@ fn model() -> ScriptedModel {
     }
 }
 
-fn selection(indices: &[usize]) -> String {
+pub(in crate::features::learning) fn selection(indices: &[usize]) -> String {
     json!({"decisions":indices.iter().map(|i|json!({"id":format!("result-{i}"),"useForGap":true,"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
 }
 

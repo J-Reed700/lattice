@@ -88,7 +88,7 @@ impl LessonVerificationReport {
             || self
                 .findings
                 .iter()
-                .any(|f| f.verdict != ClaimVerdict::Supported)
+                .any(|f| f.verdict != ClaimVerdict::Supported && !f.general_knowledge())
             || self.executions.iter().any(|e| !e.passed())
         {
             return Err(invalid("A complete verification report for this exact lesson revision is required before publication."));

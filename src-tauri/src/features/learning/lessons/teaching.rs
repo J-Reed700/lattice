@@ -9,6 +9,9 @@ use lattice_core::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+mod quotes;
+use quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
+
 pub fn project_schema() -> Value {
     let list = json!({"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":15,"maxLength":500}});
     json!({"type":"object","additionalProperties":false,"required":["title","brief","deliverables","successCriteria"],"properties":{"title":{"type":"string","minLength":5,"maxLength":160},"brief":{"type":"string","minLength":40,"maxLength":1600},"deliverables":list,"successCriteria":list}})
@@ -103,97 +106,6 @@ fn json_or_text(raw: &str) -> Value {
 pub(in crate::features::learning) const LESSON_REPAIR_SYSTEM: &str = "Teach a rigorous lesson.";
 
 pub(in crate::features::learning) const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
-
-fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<Value> {
-    let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    let mut failures = Vec::new();
-    for field in ["blocks", "questions"] {
-        for (ordinal, item) in candidate
-            .get(field)
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .enumerate()
-        {
-            let index = item.get("sourceIndex").and_then(Value::as_u64);
-            let quote = item
-                .get("quote")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let error = if sources.is_empty() {
-                (index.is_some() || !quote.trim().is_empty())
-                    .then(|| "Topic-based material must not invent source citations.".to_owned())
-            } else {
-                match index
-                    .and_then(|index| {
-                        sources.iter().find(|source| {
-                            source.get("sourceIndex").and_then(Value::as_u64) == Some(index)
-                        })
-                    })
-                    .and_then(|source| source.get("excerpt"))
-                    .and_then(Value::as_str)
-                {
-                    Some(excerpt) => crate::features::learning::generation::validate_excerpt_quote(
-                        quote, excerpt,
-                    )
-                    .err()
-                    .map(|e| e.to_string()),
-                    None => Some("The citation must select a supplied sourceIndex.".to_owned()),
-                }
-            };
-            if let Some(error) = error {
-                failures.push(json!({"path":format!("{field}[{ordinal}]"),"sourceIndex":index,"quote":quote,"error":error}));
-            }
-        }
-    }
-    failures
-}
-
-fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
-    let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
-        return 0;
-    };
-    let mut restored = 0;
-    for field in ["blocks", "questions"] {
-        for item in candidate
-            .get_mut(field)
-            .and_then(Value::as_array_mut)
-            .into_iter()
-            .flatten()
-        {
-            let Some(index) = item.get("sourceIndex").and_then(Value::as_u64) else {
-                continue;
-            };
-            let Some(excerpt) = sources
-                .iter()
-                .find(|source| source.get("sourceIndex").and_then(Value::as_u64) == Some(index))
-                .and_then(|source| source.get("excerpt"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            let Some(quote) = item.get("quote").and_then(Value::as_str) else {
-                continue;
-            };
-            if crate::features::learning::generation::validate_excerpt_quote(quote, excerpt).is_ok()
-            {
-                continue;
-            }
-            let Some(exact) =
-                crate::features::learning::outline_citations::exact_source_quote(excerpt, quote)
-            else {
-                continue;
-            };
-            if let Some(quote) = item.get_mut("quote") {
-                *quote = json!(exact);
-                restored += 1;
-            }
-        }
-    }
-    restored
-}
 
 fn structural_issues(schema: &Value, candidate: &str) -> Result<Vec<String>> {
     let value: Value = match serde_json::from_str(candidate) {
@@ -450,6 +362,16 @@ async fn review_material(
                     restored,
                     "Restored lesson quotation typography from source bytes"
                 );
+            }
+        }
+        if attempt > 0 && !is_outline {
+            let reanchored = reanchor_lesson_quotes(&mut candidate_value, &authoring_context);
+            if reanchored > 0 {
+                crate::features::learning::lesson_progress::stage(
+                    "Citing the saved passages the revised quotations referred to",
+                );
+                candidate = serde_json::to_string(&candidate_value)?;
+                crate::features::learning::lesson_drafts::save(&candidate).await?;
             }
         }
         if let Some(references) = &references {

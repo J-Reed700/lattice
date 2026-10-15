@@ -47,6 +47,59 @@ fn rejects_malformed_or_truncated_json_and_trailing_text() {
 }
 
 #[test]
+fn outline_citations_are_optional_but_exact_when_present() {
+    let sources = [source()];
+    let exact = "A process records each observation with a stable identifier.";
+    assert!(optional_citation(&sources, None, "").unwrap().is_none());
+    assert!(optional_citation(&sources, Some(0), exact)
+        .unwrap()
+        .is_some());
+    // A quote without a source, a source without a match, or any citation
+    // when there are no sources is a fabrication.
+    assert!(optional_citation(&sources, None, exact).is_err());
+    assert!(optional_citation(
+        &sources,
+        Some(0),
+        "Words that appear nowhere in the saved text."
+    )
+    .is_err());
+    assert!(optional_citation(&sources, Some(1), exact).is_err());
+    assert!(optional_citation(&[], Some(0), exact).is_err());
+    assert!(optional_citation(&[], None, "").unwrap().is_none());
+    let with_sources = outline_schema(None, 1).to_string();
+    assert!(with_sources.contains("\"anyOf\":[{\"type\":\"null\"}"));
+    let without = outline_schema(None, 0).to_string();
+    assert!(!without.contains("anyOf"));
+    assert!(without.contains("\"sourceIndex\":{\"type\":\"null\"}"));
+}
+
+#[test]
+fn decode_outline_accepts_null_citations_with_sources_and_rejects_quotes_without_a_source() {
+    let request = GenerateLearningProgramRequestDto {
+        goal: "Record observations".into(),
+        prior_knowledge: String::new(),
+        minutes_per_session: 30,
+        document_ids: vec![],
+        source_urls: vec![],
+        course_depth: None,
+    };
+    let raw = crate::features::learning::lessons::course_generation_tests::outline(2, 2).0;
+    let sources = [source()];
+    let modules = decode_outline(&raw, &request, &sources).unwrap();
+    assert_eq!(modules.len(), 2);
+    let mut cited: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    cited["modules"][0]["summary"]["sourceIndex"] = json!(0);
+    cited["modules"][0]["summary"]["quote"] =
+        json!("A process records each observation with a stable identifier.");
+    assert!(decode_outline(&cited.to_string(), &request, &sources).is_ok());
+    let mut orphan: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    orphan["modules"][0]["outcomes"][0]["quote"] =
+        json!("A process records each observation with a stable identifier.");
+    assert!(decode_outline(&orphan.to_string(), &request, &sources).is_err());
+    assert!(decode_outline(&cited.to_string(), &request, &[]).is_err());
+}
+
+#[test]
 fn generated_ids_are_not_accepted_from_model_schema() {
     let schema = outline_schema(None, 1);
     assert!(schema.to_string().contains("additionalProperties"));
@@ -202,4 +255,47 @@ fn recall_parser_rejects_unknown_fields_and_choice_payloads() {
         "options":["one","two"]
     });
     assert!(parse_recall_drafts(&recall_response(json!([with_choices])), 1, &allowed,).is_err());
+}
+
+#[test]
+fn course_context_carries_whole_objectives_and_every_earlier_recap() {
+    use crate::features::learning::dto::{
+        LearningBlockDto, LearningBlockKind, LearningPreparation,
+    };
+    let mut program = crate::features::learning::tests::fixture();
+    let long = "A detailed objective sentence. ".repeat(40);
+    let recap = "Recap of what the lesson established. ".repeat(80);
+    let lessons = &mut program.modules[0].lessons;
+    let template = lessons[0].clone();
+    for index in 0..4 {
+        let mut extra = template.clone();
+        extra.id = format!("extra-lesson-{index}");
+        lessons.insert(0, extra);
+    }
+    let current = lessons.last().unwrap().id.clone();
+    for lesson in lessons.iter_mut() {
+        lesson.objective = long.clone();
+        if lesson.id != current {
+            lesson.preparation = LearningPreparation::Ready;
+            lesson.blocks = vec![LearningBlockDto {
+                kind: LearningBlockKind::Recap,
+                title: "Recap".into(),
+                body: recap.clone(),
+                source_ids: vec![],
+                rubric: vec![],
+            }];
+        }
+    }
+    let earlier = program.modules[0].lessons.len() - 1;
+    assert!(earlier > 3, "more than the former three recaps");
+    let context = super::lesson::course_context(&program, &current);
+    assert_eq!(
+        context["curriculum"][0]["lessons"][0]["objective"],
+        long.as_str()
+    );
+    let recaps = context["recentTeaching"].as_array().unwrap();
+    assert_eq!(recaps.len(), earlier);
+    assert!(recaps
+        .iter()
+        .all(|entry| entry["recap"][0] == recap.as_str()));
 }

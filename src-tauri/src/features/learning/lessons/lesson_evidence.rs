@@ -41,6 +41,10 @@ pub struct LearningLessonEvidenceDto {
     pub embedding_model: Option<String>,
     pub content_sha256: String,
     pub claim_count: usize,
+    /// Of `claim_count`, the claims kept as general knowledge: no saved
+    /// reference supports or contradicts them, and they were not checked
+    /// against a source.
+    pub general_knowledge_count: usize,
     pub executed_examples: usize,
     pub unexecuted_languages: Vec<String>,
     pub sources_current: bool,

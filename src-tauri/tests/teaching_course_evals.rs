@@ -299,10 +299,14 @@ async fn live_complete_python_course() -> Result<()> {
         )
         .workspace(&program.summary.id)
         .await?;
+    let sources = lattice::features::learning::repository::LearningRepository::new(pool.clone())
+        .verification_sources(&program.summary.id)
+        .await?;
     let tasks = lattice::features::learning::diagnostic_generation::author(
         &model,
         &program,
         &assessment.outcomes,
+        &sources,
     )
     .await?;
     model.save("diagnostic-authoring-private.json", &tasks);

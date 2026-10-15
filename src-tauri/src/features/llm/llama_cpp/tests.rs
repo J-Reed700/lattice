@@ -319,9 +319,19 @@ async fn tools_and_native_assistant_messages_survive_followup() {
         input,
         ..Default::default()
     };
-    Mock::given(path("/v1/chat/completions")).and(body_partial_json(json!({"messages":[message,{"role":"tool","tool_call_id":"call_1","content":"Found Rust docs"}]})))
+    let mut replayed = message.clone();
+    replayed
+        .as_object_mut()
+        .unwrap()
+        .remove("reasoning_content");
+    Mock::given(path("/v1/chat/completions")).and(body_partial_json(json!({"messages":[replayed,{"role":"tool","tool_call_id":"call_1","content":"Found Rust docs"}]})))
         .respond_with(ResponseTemplate::new(200).set_body_string(stream_reply(json!({"role":"assistant","content":"Hello"}), "stop"))).expect(1).mount(&server).await;
     assert_eq!(client.complete(&followup).await.unwrap().text, "Hello");
+    // The reasoning reached the caller for display but did not go back.
+    assert_eq!(response.reasoning.as_deref(), Some("retained reasoning"));
+    let requests = server.received_requests().await.unwrap();
+    let sent: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert!(sent["messages"][0].get("reasoning_content").is_none());
 }
 
 #[tokio::test]
@@ -516,7 +526,10 @@ fn streamed_tool_arguments_reasoning_and_usage_survive_fragmentation() {
     assert_eq!(response.finish_reason, "tool_calls");
     assert_eq!(response.input_tokens, 20);
     assert_eq!(response.output_tokens, 30);
-    assert_eq!(assistant(&response)["reasoning_content"], "Look here");
+    assert!(
+        assistant(&response).get("reasoning_content").is_none(),
+        "reasoning is displayed, not replayed"
+    );
     assert_eq!(response.reasoning.as_deref(), Some("Look here"));
     assert!(matches!(&response.tool_calls[0], CompletionInput::ToolCall {id, ..} if id == "first"));
     assert!(

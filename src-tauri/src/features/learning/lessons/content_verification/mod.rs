@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 mod challenge;
+mod citations;
+use citations::{overlaps, section_citations, take_cited, Citations, CITED};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
@@ -26,6 +28,7 @@ mod claim_reuse;
 mod evidence_checks;
 mod evidence_selection;
 mod execution;
+mod general_knowledge;
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
@@ -60,10 +63,7 @@ pub(in crate::features::learning) mod research;
 mod section_checkpoints;
 #[cfg(test)]
 pub(crate) mod tests;
-use inventory_checkpoint::{
-    complete_inventory, extract_audited_inventory, retain_current_assessment_checks,
-    retain_current_teaching_checks, valid_saved_coverage,
-};
+use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
 pub(in crate::features::learning) use repair_loop::verify_and_repair;
 pub(in crate::features::learning) use repair_loop::{
@@ -71,14 +71,14 @@ pub(in crate::features::learning) use repair_loop::{
 };
 #[cfg(test)]
 use repair_loop::{repair_context, repair_issue_fingerprint};
-use repair_loop::{repair_fingerprint, PendingRepair};
+use repair_loop::{repair_fingerprint, PendingRepair, RepairProgress};
 #[cfg(test)]
 use report::content_hash;
 pub(in crate::features::learning) use report::persist_report;
-const POLICY: &str = "lesson-evidence-v17";
+const POLICY: &str = "lesson-evidence-v20";
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v5";
+const INVENTORY_POLICY: &str = "lesson-evidence-v7";
 
 pub(in crate::features::learning) async fn normalize_example_fences(
     llm: &dyn LLMPort,
@@ -127,12 +127,15 @@ struct InventoryCheckpoint {
     inventory: Inventory,
     coverage: Coverage,
     /// Preserve extracted data across audit-policy changes, never approval.
-    #[serde(default)]
     coverage_policy: Option<String>,
-    #[serde(default)]
-    assessment_policy: Option<String>,
-    #[serde(default)]
-    teaching_context_policy: Option<String>,
+}
+/// An assertion of one original passage that the fidelity audit found
+/// unrepresented, located by its app-owned passage ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MissingAssertion {
+    passage_id: String,
+    statement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -140,9 +143,9 @@ struct CoverageUnit {
     index: usize,
     complete: bool,
     reason: String,
-    /// App-owned locations permit progress checks without interpreting prose.
-    #[serde(default)]
-    unresolved_passages: Vec<String>,
+    /// Empty exactly when complete. The inventory adopts these as claims before
+    /// any evidence check, so an audit finding never blocks the lesson by itself.
+    missing_assertions: Vec<MissingAssertion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,7 +194,24 @@ impl ClaimChecks {
             finding.unit = unit;
             finding.quote = claim.quote.clone();
             finding.statement = claim.statement.clone();
-            finding.evidence = evidence.to_vec();
+            // A decision on this evidence takes its fresh retrieval metadata;
+            // one reached on a deeper page keeps that page's passages.
+            let identity = |p: &EvidencePassage| {
+                (
+                    p.source_id.clone(),
+                    p.start_byte,
+                    p.end_byte,
+                    p.text.clone(),
+                )
+            };
+            if finding
+                .evidence
+                .iter()
+                .map(identity)
+                .eq(evidence.iter().map(identity))
+            {
+                finding.evidence = evidence.to_vec();
+            }
             finding
         })
     }
@@ -334,11 +354,84 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     }
     Ok(())
 }
+/// The tokens one passage costs in a strict batch's passage bank, with its
+/// id and the claim's reference to it.
+pub(in crate::features::learning) fn bank_tokens(llm: &dyn LLMPort, text: &str) -> usize {
+    llm.count_tokens(&json!({"id":"passage-000","text":text}).to_string()) + 5
+}
+
+/// The evidence tokens one claim may carry when `sharing` claims share a
+/// strict batch call: an equal share of the room the call leaves after its
+/// instructions, the claims and their answers. A claim checked alone is
+/// checked by the single-claim judge, so it gets that judge's whole room.
+pub(in crate::features::learning) fn claim_share(
+    llm: &dyn LLMPort,
+    claim: &str,
+    sharing: usize,
+) -> usize {
+    let checker = ClaimChecker::new(
+        llm,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Strict,
+    );
+    if sharing <= 1 {
+        return checker.located_evidence_room(claim);
+    }
+    checker.batch_evidence_room(&vec![claim.to_owned(); sharing]) / sharing
+}
+
+/// A claim the checker could not judge, with why, as a judgment: the cause
+/// travels in its reason, and an unverified verdict is never a receipt.
+pub(in crate::features::learning) fn unchecked(cause: impl Into<String>) -> ClaimJudgment {
+    ClaimJudgment::Judged(JudgeOutcome {
+        verdict: ClaimVerdict::Unverified,
+        reason: Some(cause.into()),
+        quote: None,
+        confidence: None,
+    })
+}
+
+/// Whether `passages` fit within `share` tokens of a passage bank.
+pub(in crate::features::learning) fn within_share<'p>(
+    llm: &dyn LLMPort,
+    share: usize,
+    passages: impl Iterator<Item = &'p EvidencePassage>,
+) -> bool {
+    passages
+        .map(|passage| bank_tokens(llm, &passage.text))
+        .sum::<usize>()
+        <= share
+}
+
+/// A claim's first page of evidence: passed example runs for its section,
+/// then its top-ranked passages, as many as its share of a batch call holds
+/// when `sharing` claims share the call. Deeper pages follow only for a
+/// claim the first page leaves unsupported (see `evidence_checks`).
+#[cfg(test)]
 async fn evidence_for(
+    llm: &dyn LLMPort,
     claim: &str,
     unit: usize,
     references: &ReferenceCollection<'_>,
     observations: &[execution::Observation],
+    sharing: usize,
+) -> Result<Vec<EvidencePassage>> {
+    first_page(llm, claim, unit, references, observations, sharing, &[]).await
+}
+
+/// [`evidence_for`] with the passages the claim's section cites placed first,
+/// in citation order while they fit its share; the rest of the share is
+/// filled with retrieved passages that overlap none of them. Cited passages
+/// that do not fit lead the claim's next page.
+async fn first_page(
+    llm: &dyn LLMPort,
+    claim: &str,
+    unit: usize,
+    references: &ReferenceCollection<'_>,
+    observations: &[execution::Observation],
+    sharing: usize,
+    cited: &[EvidencePassage],
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = Vec::new();
     for observation in observations
@@ -358,7 +451,14 @@ async fn evidence_for(
     // author's selected passages. Contradictory passages are not filtered out.
     // Execution output must not erase retrieved references when it is lengthy.
     // The checker batches by its actual context budget, not a character count.
-    evidence.extend(references.retrieve_for_verification(claim, 8).await?);
+    let share = claim_share(llm, claim, sharing);
+    let shown = take_cited(llm, share, &mut evidence, cited);
+    let (page, _) = references
+        .verification_page(claim, &shown, |passages| {
+            within_share(llm, share, evidence.iter().chain(passages))
+        })
+        .await?;
+    evidence.extend(page);
     canonicalize_evidence(&mut evidence);
     Ok(evidence)
 }
@@ -367,22 +467,32 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
     // Retrieval still chooses the current evidence, including conflicts. Once
     // selected, use a stable order for BOTH the actual judge input and its key.
     // Corpus-dependent ranking changes must not repeat an identical comparison.
+    // The section's own cited passages come first.
     evidence.sort_by(|a, b| {
-        (&a.source_id, a.start_byte, a.end_byte, &a.text).cmp(&(
-            &b.source_id,
-            b.start_byte,
-            b.end_byte,
-            &b.text,
-        ))
+        (
+            a.retrieval_kind != CITED,
+            &a.source_id,
+            a.start_byte,
+            a.end_byte,
+            &a.text,
+        )
+            .cmp(&(
+                b.retrieval_kind != CITED,
+                &b.source_id,
+                b.start_byte,
+                b.end_byte,
+                &b.text,
+            ))
     });
 }
 
 #[cfg(test)]
 pub(in crate::features::learning) async fn live_retrieved_passages(
+    llm: &dyn LLMPort,
     claim: &str,
     references: &ReferenceCollection<'_>,
 ) -> Result<Vec<String>> {
-    Ok(evidence_for(claim, 0, references, &[])
+    Ok(evidence_for(llm, claim, 0, references, &[], 1)
         .await?
         .into_iter()
         .map(|passage| passage.text)
@@ -419,6 +529,23 @@ pub(in crate::features::learning) async fn judge_for_publication(
         512,
         CheckPolicy::Strict,
     );
+    // A page is sized for this judge; one sized for a batch call is cut to
+    // what this judge's window holds, best first.
+    let mut fitted = passages.len();
+    while fitted > 0 && !checker.located_fits(claim, passages.get(..fitted).unwrap_or_default()) {
+        fitted -= 1;
+    }
+    if fitted == 0 && !passages.is_empty() {
+        return unchecked("The claim and its first passage do not fit the claim check in this model's context window.");
+    }
+    if fitted < passages.len() {
+        tracing::warn!(
+            shown = fitted,
+            page = passages.len(),
+            "A claim's page holds more than the single-claim judge's window; checking the passages that fit"
+        );
+    }
+    let passages = passages.get(..fitted).unwrap_or_default();
     let _model_call = crate::features::learning::lesson_progress::model_call();
     let provisional = checker
         .check_passages_without_deadline(claim, passages)
@@ -530,29 +657,10 @@ async fn verify_with_references(
         });
     let (inventory, coverage) = match checkpoint {
         Some(mut saved) => {
-            retain_current_teaching_checks(
-                &mut saved.coverage,
-                &content,
-                saved.teaching_context_policy.as_deref(),
-            );
-            retain_current_assessment_checks(
-                &mut saved.coverage,
-                &content,
-                saved.assessment_policy.as_deref(),
-            );
             if saved.coverage_policy.as_deref() != Some(coverage::POLICY)
                 || !valid_saved_coverage(&saved.coverage, &content)
             {
                 saved.coverage.units.clear();
-            }
-            // v3 adds original choice labels as interpretation context, without
-            // changing which assertions belong in the saved inventory.
-            if !matches!(
-                saved.assessment_policy.as_deref(),
-                Some(coverage::ASSESSMENT_POLICY) | Some("assessment-fidelity-v2")
-            ) {
-                saved.inventory =
-                    inventory::refresh_assessments(llm, &content, saved.inventory).await?;
             }
             crate::features::learning::lesson_progress::phase(
                 crate::features::learning::lesson_progress::Phase::Coverage,
@@ -577,8 +685,6 @@ async fn verify_with_references(
         inventory,
         coverage,
         coverage_policy: Some(coverage::POLICY.into()),
-        assessment_policy: Some(coverage::ASSESSMENT_POLICY.into()),
-        teaching_context_policy: Some(coverage::TEACHING_CONTEXT_POLICY.into()),
     };
     crate::features::learning::lesson_drafts::record_claim_inventory(
         &candidate_text,
@@ -622,8 +728,15 @@ async fn check_evidence(
             ));
         }
     }
-    let results =
-        evidence_checks::check(llm, references, &inventory, &executions, completed).await?;
+    let results = evidence_checks::check_with_citations(
+        llm,
+        references,
+        &inventory,
+        &executions,
+        completed,
+        &section_citations(candidate, references)?,
+    )
+    .await?;
     let findings: Vec<_> = results
         .into_iter()
         .map(|(_, key, finding, _)| {
@@ -631,8 +744,10 @@ async fn check_evidence(
             finding
         })
         .collect();
+    // An unsupported claim without invented specifics is kept as general
+    // knowledge, not checked against a source; it is never an issue.
     for finding in &findings {
-        if finding.verdict != ClaimVerdict::Supported {
+        if finding.verdict != ClaimVerdict::Supported && !finding.general_knowledge() {
             issues.push(format!(
                 "Section {}: {} — {}",
                 finding.unit + 1,

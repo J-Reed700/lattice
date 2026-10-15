@@ -14,7 +14,8 @@ pub(crate) struct Decoder {
     content: String,
     reasoning: BTreeMap<String, String>,
     /// Reasoning received since the caller last drained it. The aggregate
-    /// above is retained for native replay; this buffer is only UI progress.
+    /// above becomes the response's displayable reasoning (it is not
+    /// replayed); this buffer is only UI progress.
     reasoning_delta: String,
     tool_calls: BTreeMap<u64, Value>,
     usage: Value,
@@ -204,7 +205,7 @@ impl Decoder {
                     self.content.push_str(content);
                     text.push(content.into());
                 }
-                // Retain native reasoning alongside tool calls for the next request.
+                // Keep the reasoning for display; the replayed turn drops it.
                 for key in ["reasoning_content", "reasoning"] {
                     if let Some(value) = choice
                         .get("delta")

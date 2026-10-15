@@ -36,6 +36,9 @@ struct Passage {
     start: usize,
     end: usize,
     sha256: String,
+    /// How the passage was chosen, so a section's cited passages stay first.
+    #[serde(default)]
+    kind: Option<String>,
 }
 
 pub(super) fn sources(references: &ReferenceCollection<'_>) -> Vec<SourceBinding> {
@@ -178,7 +181,10 @@ impl Selection {
                     text: text.into(),
                     start_byte: passage.start,
                     end_byte: passage.end,
-                    retrieval_kind: references.mode().into(),
+                    retrieval_kind: passage
+                        .kind
+                        .clone()
+                        .unwrap_or_else(|| references.mode().into()),
                     score: 0.0,
                 })
             })
@@ -194,6 +200,8 @@ pub(super) async fn select(
     current: &[SourceBinding],
     executions: &[execution::Observation],
     retained: &ClaimChecks,
+    sharing: usize,
+    cited: &[EvidencePassage],
 ) -> Result<Vec<EvidencePassage>> {
     let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
@@ -291,13 +299,24 @@ pub(super) async fn select(
                 .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
             if !added.is_empty() && claim_is_research_target {
                 // Use normal hybrid retrieval over the current collection to locate
-                // relevant new sources. Keep the old comparison inputs verbatim.
-                // Do not trim new evidence to the old character budget: that could
-                // drop counterevidence. The checker enforces its real context size.
+                // relevant new sources. Keep the old comparison inputs verbatim and
+                // add new passages while the claim's share of a batch call holds them.
+                let share = claim_share(llm, &claim.statement, sharing);
+                let (found, _) = references
+                    .verification_page(&claim.statement, &[], |passages| {
+                        within_share(
+                            llm,
+                            share,
+                            evidence.iter().chain(
+                                passages
+                                    .iter()
+                                    .filter(|p| added.contains(p.source_id.as_str())),
+                            ),
+                        )
+                    })
+                    .await?;
                 evidence.extend(
-                    references
-                        .retrieve_for_verification(&claim.statement, 8)
-                        .await?
+                    found
                         .into_iter()
                         .filter(|passage| added.contains(passage.source_id.as_str())),
                 );
@@ -305,11 +324,19 @@ pub(super) async fn select(
             (evidence, saved.sources != current)
         } else {
             // This preserves exact keys for existing durable factual receipts.
-            let evidence = evidence_for(&claim.statement, unit, references, executions)
-                .await?
-                .into_iter()
-                .filter(|passage| passage.retrieval_kind != "execution")
-                .collect();
+            let evidence = first_page(
+                llm,
+                &claim.statement,
+                unit,
+                references,
+                executions,
+                sharing,
+                cited,
+            )
+            .await?
+            .into_iter()
+            .filter(|passage| passage.retrieval_kind != "execution")
+            .collect();
             (evidence, true)
         };
     evidence.sort_by(|a, b| {
@@ -331,6 +358,7 @@ pub(super) async fn select(
                     start: p.start_byte,
                     end: p.end_byte,
                     sha256: digest(&p.text),
+                    kind: (p.retrieval_kind == CITED).then(|| CITED.to_owned()),
                 })
                 .collect(),
         };

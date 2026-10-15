@@ -153,22 +153,33 @@ async fn complete_json(
     Ok(output)
 }
 
-fn source_context(sources: &[LearningSourceVersionDto]) -> serde_json::Value {
-    serde_json::Value::Array(
-        sources
-            .iter()
-            .take(12)
-            .map(|source| {
-                serde_json::json!({
-                    "sourceId": source.source_id,
-                    "versionId": source.version.id,
-                    "title": source.version.title,
-                    "text": source.full_text.chars().take(10_000).collect::<String>(),
-                })
-            })
-            .collect(),
+/// `context` with the snapshot passages `query` retrieves, as many as the
+/// request's window leaves room for, under `sourceSnapshots`.
+async fn with_snapshots(
+    llm: &dyn LLMPort,
+    system: &str,
+    mut context: serde_json::Value,
+    sources: &[LearningSourceVersionDto],
+    query: &str,
+    output_tokens: usize,
+) -> Result<String> {
+    let room = crate::features::learning::reference_collection::snapshot_room(
+        llm,
+        system,
+        &context,
+        output_tokens,
+    );
+    let passages = crate::features::learning::reference_collection::snapshot_passages(
+        llm, sources, query, room,
     )
+    .await?;
+    if let Some(fields) = context.as_object_mut() {
+        fields.insert("sourceSnapshots".into(), passages);
+    }
+    Ok(context.to_string())
 }
+
+const ACTIVITY_SYSTEM: &str = "Design a demanding, subject-neutral practical exercise. It must require the learner to make decisions or create an artifact, state constraints and deliverables, and use a visible analytic rubric. When source snapshots are supplied, use them for factual claims. Without sources, build from the lesson and general knowledge, acknowledge uncertainty, and leave sourceVersionIds empty. Do not include a worked solution or hidden answer. For code work, starter files may contain incomplete code but never a completed answer.";
 
 fn activity_schema() -> serde_json::Value {
     // Length caps above 2000 are checked after parsing: as schema bounds they
@@ -290,16 +301,11 @@ pub async fn generate_activity(
         },
         "runtimeEvaluationEnabled": runtime.is_some(),
         "executionEnvironment": runtime,
-        "sourceSnapshots": source_context(sources),
+        "sourceSnapshots": [],
     });
-    let raw = complete_json(
-        llm,
-        "Design a demanding, subject-neutral practical exercise. It must require the learner to make decisions or create an artifact, state constraints and deliverables, and use a visible analytic rubric. When source snapshots are supplied, use them for factual claims. Without sources, build from the lesson and general knowledge, acknowledge uncertainty, and leave sourceVersionIds empty. Do not include a worked solution or hidden answer. For code work, starter files may contain incomplete code but never a completed answer.",
-        context.to_string(),
-        activity_schema(),
-        4_000,
-    )
-    .await?;
+    let query = format!("{learner_brief} {} {}", lesson.title, lesson.objective);
+    let prompt = with_snapshots(llm, ACTIVITY_SYSTEM, context, sources, &query, 4_000).await?;
+    let raw = complete_json(llm, ACTIVITY_SYSTEM, prompt, activity_schema(), 4_000).await?;
     let parsed: ActivityJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The model returned malformed practical activity JSON."))?;
     bounded(&parsed.title, "Practical title", 160)?;
@@ -428,10 +434,9 @@ pub async fn generate_simulation_turn(
         "roles":{"learner":session.learner_role,"counterpart":session.counterpart_role},
         "rubric":activity.rubric,
         "transcript":transcript,
-        "sourceSnapshots":source_context(sources),
+        "sourceSnapshots":[],
         "finalFeedback":final_feedback,
-    })
-    .to_string();
+    });
     // The turn's 6000-character cap is checked after parsing: as a schema
     // bound it would void llama.cpp's whole grammar.
     let schema = serde_json::json!({
@@ -453,6 +458,16 @@ pub async fn generate_simulation_turn(
     } else {
         "Continue the role simulation as the named counterpart. Stay inside the scenario, introduce one realistic decision or complication, do not solve the task for the learner, and cite only exact supplied source passages when making a factual claim."
     };
+    let query = format!(
+        "{} {} {}",
+        activity.title,
+        activity.brief,
+        session
+            .turns
+            .last()
+            .map_or("", |turn| turn.content.as_str())
+    );
+    let prompt = with_snapshots(llm, system, prompt, sources, &query, 1_500).await?;
     let raw = complete_json(llm, system, prompt, schema, 1_500).await?;
     let parsed: SimulationJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The simulation returned malformed structured output."))?;

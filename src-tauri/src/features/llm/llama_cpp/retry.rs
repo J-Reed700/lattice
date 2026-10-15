@@ -103,7 +103,7 @@ impl LlamaCppLlm {
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
         // Failed drafts and partial tool calls must never enter history.
-        let mut body = self.body(request)?;
+        let mut body = self.measured_body(request).await?;
         let first_frame = self.config.prefill_guard.then(|| {
             prefill_allowance(
                 body.get("messages")

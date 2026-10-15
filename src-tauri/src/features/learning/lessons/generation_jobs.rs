@@ -255,6 +255,9 @@ impl LessonGenerationWorker {
                     )
                     .await?
                 };
+                // Research before writing may have saved references this
+                // lesson cites.
+                program.sources = program_repo.verification_sources(&job.program_id).await?;
                 service::validate_prepared(&generated, &program)?;
                 repo.save_lesson_checkpoint(
                     job_id,

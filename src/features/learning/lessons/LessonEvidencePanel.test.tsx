@@ -15,7 +15,7 @@ describe('lesson evidence', () => {
   beforeEach(() => vi.clearAllMocks());
   it('loads on demand and makes limitations and source versions visible', async () => {
     mocks.evidence.mockResolvedValue({ ok: true, data: {
-      policy: 'lesson-evidence-v2', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: 'embedding', contentSha256: 'hash', claimCount: 9, executedExamples: 0, unexecutedLanguages: ['rust'], sourcesCurrent: false,
+      policy: 'lesson-evidence-v2', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: 'embedding', contentSha256: 'hash', claimCount: 9, generalKnowledgeCount: 0, executedExamples: 0, unexecutedLanguages: ['rust'], sourcesCurrent: false,
       teachingClaims: [{ sectionIndex: 0, contentQuote: 'Borrowing leaves ownership with the owner.', claim: 'Borrowing does not transfer ownership.', verdict: 'supported', reason: 'The source supports this.', supportingQuote: 'Borrowing gives access.', passages: [{ sourceVersionId: 'version-1', title: 'Saved Rust reference', url: 'javascript:alert(1)', text: 'Borrowing gives access.', startByte: 0, endByte: 23, retrievalKind: 'hybrid' }] }],
     } });
     show();
@@ -47,7 +47,7 @@ describe('lesson evidence', () => {
 
   it('puts checked claims beside the generated section they verify', async () => {
     const data = {
-      policy: 'lesson-evidence-v17', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 1, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+      policy: 'lesson-evidence-v17', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 1, generalKnowledgeCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
       teachingClaims: [{ sectionIndex: 1, contentQuote: 'The generated sentence.', claim: 'A grounded claim.', verdict: 'supported', reason: 'Exact passage agrees.', supportingQuote: null, passages: [{ sourceVersionId: 'version-2', title: 'Frozen source', url: 'https://example.com', text: 'The exact frozen passage.', startByte: 40, endByte: 65, retrievalKind: 'lexical' }] }],
     };
     const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
@@ -59,5 +59,29 @@ describe('lesson evidence', () => {
     expect(screen.getByText(/The generated sentence/)).toBeVisible();
     await userEvent.click(screen.getByText('Frozen source'));
     expect(screen.getByText('The exact frozen passage.')).toBeVisible();
+  });
+
+  it('labels unsourced claims as general knowledge, neutrally and counted apart', async () => {
+    const data = {
+      policy: 'lesson-evidence-v18', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 3, generalKnowledgeCount: 1, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+      teachingClaims: [
+        { sectionIndex: 0, contentQuote: 'Queries only read.', claim: 'Query handlers read state.', verdict: 'supported', reason: 'Exact passage agrees.', supportingQuote: null, passages: [{ sourceVersionId: 'version-3', title: 'CQRS notes', url: null, text: 'Queries read state.', startByte: 0, endByte: 19, retrievalKind: 'hybrid' }] },
+        { sectionIndex: 0, contentQuote: 'Handlers stay small.', claim: 'Small handlers are easier to test.', verdict: 'general_knowledge', reason: 'No saved reference states this.', supportingQuote: null, passages: [] },
+      ],
+    };
+    const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
+    render(<LessonSectionEvidence report={report} sectionIndex={0} />);
+
+    expect(screen.getByText(/Evidence · 1 checked claim · 1 general knowledge · 1 passage/)).toBeVisible();
+    await userEvent.click(screen.getByText(/Evidence · 1 checked claim/));
+    const label = screen.getByText('General knowledge · not checked against a source');
+    expect(label).toBeVisible();
+    expect(label.className).not.toMatch(/rose|red|amber|emerald/);
+    expect(screen.queryByText('general_knowledge')).not.toBeInTheDocument();
+
+    mocks.evidence.mockResolvedValue({ ok: true, data });
+    show();
+    await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+    expect(await screen.findByText(/2 claims checked against saved evidence · 1 general knowledge, not checked against a source/)).toBeVisible();
   });
 });

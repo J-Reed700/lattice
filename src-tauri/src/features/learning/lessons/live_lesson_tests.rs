@@ -11,6 +11,10 @@ use super::*;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
+#[path = "live_claim_pairs_eval.rs"]
+mod claim_pairs;
+#[path = "live_course_e2e.rs"]
+mod course_e2e;
 #[path = "live_small_lesson.rs"]
 mod small;
 
@@ -320,6 +324,7 @@ async fn live_source_passage_judgments() -> Result<()> {
     for case in cases {
         let passages: Vec<String> = if let Some(references) = &references {
             crate::features::learning::content_verification::live_retrieved_passages(
+                &model,
                 case["claim"].as_str().unwrap(),
                 references,
             )

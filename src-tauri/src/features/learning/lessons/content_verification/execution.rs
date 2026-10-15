@@ -354,10 +354,12 @@ mod capacity_tests {
         }];
         let references = ReferenceCollection::lexical(&sources)?;
         let evidence = super::super::evidence_for(
+            &crate::features::learning::lessons::course_generation_tests::Model(String::new()),
             "example repeated characters",
             0,
             &references,
             &observations,
+            1,
         )
         .await?;
         assert_eq!(

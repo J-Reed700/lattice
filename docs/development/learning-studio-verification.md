@@ -5,6 +5,14 @@ that a learner has mastered a subject, is ready for employment, or will retain
 material. A release result is valid only for the exact commit, platform, model,
 and optional runtime named in its retained artifacts.
 
+Course generation itself (references, outline, evidence linking, review and
+repair, lesson evidence, writing, verification and repair) is documented as built
+in [course-generation-pipeline.md](course-generation-pipeline.md). Its unit
+tests, live end-to-end runs and claim-checker measurements are in
+[course-generation-testing.md](course-generation-testing.md), and every live run
+in [course-generation-history.md](course-generation-history.md). Dated sections
+below are historical records of what was verified at the time.
+
 ## Saved outline drafts and repair
 
 Course packs now use format v2, with a separately versioned
@@ -54,48 +62,54 @@ nor a factual correctness guarantee. Backend acceptance rejects unchecked or
 unresolved drafts. Lesson preparation retains its separate verification gate;
 this repair workflow does not edit already prepared lessons.
 
-Initial generation and resumed repair automatically search for supporting pages
-when references are missing or review reports unresolved findings. There is no
-web-research checkbox. A topic-only draft is saved before research and stays
-unresolved if no usable references can be captured.
+References are gathered before the outline is drafted: the model plans
+subtopics with public searches (never the learner's goal text), and the selected
+pages are captured and saved with the draft. During repair, a factual finding
+gets its own targeted research. There is no web-research checkbox. If web search
+is unavailable or no page can be saved, the topic-only draft is saved with a
+References finding that blocks acceptance until Repair gathers references.
 
-Automatic repair edits affected modules and continues while the unresolved
-finding count decreases. Newly captured references allow another attempt even
-if the count has not decreased. Each operation searches the course goal and each
-affected module at most once, using stable module positions so rewritten titles
-cannot restart the same searches. Duplicate URLs and identical captures are not
-added again. Without new evidence or fewer findings, the remaining issues stay
-visible for another manual attempt. There is no
+Review findings have stable IDs and a kind: factual, plan or references. Each
+review pass gives every open finding a verdict and may raise new findings only
+in the modules it was asked to check. Repair acts by kind: a factual finding is
+researched and judged against all saved references (supported closes it with a
+citation; contradicted or unsupported rewrites its module), and a plan finding
+rewrites its module. Each finding gets two attempts and each module three
+rewrites per operation, so the loop ends by construction. Exhausted plan
+findings become advisory and stop blocking acceptance; other remaining findings
+stay visible for another manual attempt. Duplicate URLs and identical captures
+are not added again. There is no
 overall or per-call elapsed-time deadline for outline authoring/review/repair;
 user cancellation, provider errors and transport stall detection still apply.
 Each call uses a fresh prompt containing the current artifact and relevant
 passages, not an accumulating conversation transcript.
-If a module rewrite breaks a previously valid quotation attached to an unchanged
-claim, the original citation is retained. Changed claims still need their evidence
-checked. After a completed semantic review, repairs can reuse its checks for
-unchanged modules. The next request contains the complete changed or unresolved
-modules and their retrieved evidence, plus every module's instructional fields
-(without repeated quotations) for checking cross-course effects. It can report
-new problems anywhere in that sequence. Exact quotation checks still run across
-the entire outline.
+Repair never adds a citation. If a module rewrite drops a receipted citation on
+an unchanged item, the citation is restored; changed items are linked again.
+After a completed semantic review, repairs can reuse its checks for unchanged
+modules. The next request contains the complete changed or unresolved modules
+and their retrieved evidence, plus every module's instructional fields (without
+citations) for checking cross-course effects. New findings must be anchored to
+a module or item inside the modules being checked; the reviewer cannot raise
+course-wide findings.
 
 A separate persisted review receipt records module hashes and the context of the
 last completed semantic check; merely saving an edited draft does not update it.
-Changed source content or order, learner request, model name, review protocol,
-module/lesson identities or course-wide findings require full review. Missing
+A changed learner request, model name, review protocol or module/lesson
+identities require full review; newly saved references do not. Missing
 receipts also require full review. Failed or interrupted checks cannot create a
 receipt or approve the draft. The UI labels findings from an incomplete recheck
 as previous findings awaiting verification, and displays whether the operation
 is checking the whole outline or selected modules. Incremental checks reduce
 repeated model input; they do not guarantee latency or factual correctness.
 
-Before research or review, formatting-only quote mismatches are repaired by
-copying an exact span from the same saved reference. This handles straight versus
-curly quotation marks and whitespace without a model rewrite. Words, numbers,
-operators and source indices must still match; fabricated or paraphrased quotes
-remain findings. Restored quotations are checkpointed as unchecked and still
-require factual/instructional review of the affected content. The strict quote
-validator itself is unchanged.
+Outline citations are optional and are never findings. Formatting-only quote
+mismatches in the author's citations are repaired by copying an exact span from
+the same saved reference; a quote that still does not match is removed. Evidence
+linking then retrieves candidate passages for every module summary, outcome and
+lesson objective and lets the model choose one or none. The quote is always the
+saved page's own text, each decision is receipted and never judged again, and
+the reviewer never sees citations. The review note reports how many items were
+linked.
 
 Review and repair receive an explicit module-number map: JSON paths and
 prerequisite indices start at zero, while learner-facing module numbers start
@@ -116,18 +130,18 @@ To try draft recovery:
    draft** while review continues. The generation panel shows the current stage,
    elapsed time, model and received response text length.
 2. Cancel during review, or reopen a draft after restarting the app. The draft
-   remains in Programs. Its findings show the affected module/lesson, claim,
-   unmatched quotation where applicable, and reason.
-3. Choose **Repair remaining issues** to resume a stopped draft. Both initial
-   generation and resumed repair automatically search using the goal and affected
-   module titles. **Finding supporting references** appears during research.
-   Research fetches complete pages through
+   remains in Programs. Its findings show the affected module/lesson, kind,
+   claim, reason and attempts used.
+3. Choose **Repair remaining issues** to resume a stopped draft. Every open
+   finding gets fresh attempts. Factual findings are researched with planned
+   public searches, never the goal text; **Researching an unresolved finding**
+   appears during research. Research fetches complete pages through
    the existing safe web service and saves them in the course source library.
    Search snippets and truncated captures are not evidence. Fetched pages still
    require relevance/support review; search rank does not establish authority.
-4. Inspect the revised findings. Acceptance becomes available only when the
-   outline checks pass. Source quote matching remains deterministic even if an
-   AI reviewer approves an invalid quotation.
+4. Inspect the revised findings. Acceptance becomes available when no blocking
+   finding remains (exhausted plan findings are advisory). Quote matching is
+   done by code, never by the reviewer.
 
 Repairs retain module and lesson identities and counts, and use revision checks
 to reject concurrent stale writes. Checkpoints retain previous candidates and
@@ -362,32 +376,11 @@ IDs, preventing constrained generation from pairing an index with another
 section's otherwise-valid ID. Runtime validation still enforces the same rule
 for providers that do not enforce the response schema. A
 malformed response receives a targeted correction request while valid section
-inventories are retained. Coverage correction handles one affected section at a
-time, with its original text, suspected passages, finding and current assertions.
-The model returns additions or explicit replacements using application-owned
-claim IDs; the application retains unmentioned claims and rejects foreign IDs,
-duplicate replacements and invalid passage locations. A finding may name the
-wrong passage, so correction locates the actual assertion within that section.
-It does not repeatedly regenerate complete inventories or repeat unrelated
-sections' findings without their text. Each changed inventory still requires
-a fresh coverage audit and factual verification.
+inventories are retained. The coverage audit then completes the inventory itself; there is no separate
+correction model call and no progress guard. A lesson edit still requires a
+fresh coverage audit and factual verification of the changed sections.
 Missing sections, duplicate indices and invented or
-cross-section passage IDs cannot approve a lesson. A separate coverage audit
-still checks the inventory against every complete section. Missing assertions
-receive targeted inventory correction and another coverage audit, rather than
-a lesson rewrite. The correction retains complete section inventories verbatim;
-only corrected sections need another audit while the lesson itself is unchanged.
-Correction continues while the audit reduces incomplete sections or unresolved
-passages, or captures more claims. These app-counted measures must improve on
-each pass; otherwise the draft is retained with the unresolved findings. This
-prevents an unchanged correction loop without a wall-clock or attempt cutoff.
-Completed coverage batches also save findings for sections with omissions.
-Restarting can reuse those findings instead of repeating completed reviews; an
-omission remains unresolved. These receipts bind the original section, extracted
-assertions, model and coverage policies. A corrected inventory requires a new
-audit, and an interrupted batch cannot create a completed receipt.
-The audit receives full section text and standalone claims
-without repeating the same location passage for every claim.
+cross-section passage IDs cannot approve a lesson.
 
 Coverage review separately accounts for every one of these passages, in groups
 of four sections. Its response uses required passage-ID keys, with claim IDs
@@ -397,42 +390,43 @@ decisions. The review checks qualifiers and every asserted consequence,
 including factual assertions in headings and persuasive language. It checks
 faithful representation even when an assertion is false; evidence judgment
 comes afterward. These are model judgments and can still miss errors.
-For passages mapped to claims without reported omissions, the shared claim
-checker separately compares the original wording with the extracted statements
-selected by that passage's mapping. If the selected subset fails, the checker
-also compares the passage against the complete inventory for that same section.
-This distinguishes an omitted assertion from an assertion the mapper failed to
-select. Only extracted assertions are evidence in this comparison; original
+
+Every passage the mapping treated as factual, whether it selected claims or
+reported an omission, then receives an independent fidelity judgment with its
+own instructions (`coverage.rs`, "Audit inventory fidelity"). The judge sees the
+original passage, its complete same-section inventory and the surrounding
+section (for an assessment: the question, answer index and every option, with
+distractors marked as unendorsed), and returns a schema-constrained list of
+`missingAssertions`: one self-contained statement for each externally checkable
+assertion of the passage that no inventory statement entails with the same
+scope, conditions and attribution. Represented means the list is empty. The
+judge is told it answers representation only, never truth, never sources: an
+unsourced or false assertion the inventory restates is represented, and an
+instruction, deliverable, grading level or prerequisite is a lesson choice whose
+embedded factual premises are the only assertions to record. It replaces the
+mapping's proposed omissions; a statement the inventory already contains
+verbatim is represented by construction. A malformed judge answer gets one
+correction and otherwise fails as unavailable, never as a finding.
+
+The application then adopts every named missing assertion as a claim located at
+the judged passage (`inventory_checkpoint.rs`). This closes representation
+deterministically in one pass: the audit's own finding is the repair, so no
+disagreement between models can stall the inventory or fail the job. Adoption
+approves nothing. An adopted claim goes through the same evidence gate as an
+extracted one, and an unsupported or contradicted one reaches the lesson's
+evidence research and repair path, which corrects or removes the offending
+lesson text and rechecks the revision. Before 2026-10-14 a separate correction
+call could decline the finding, and an app-counted progress guard then failed
+the whole job with "Claim coverage stopped making progress"; both are gone.
+
+Completed coverage batches save their findings, including omissions, under
+receipts bound to the original section, extracted assertions, model and
+coverage policy (`coverage-unit-v2`, `coverage-mapping-v2`,
+`coverage-fidelity-v2`). Restarting reuses them instead of repeating completed
+reviews; an interrupted batch cannot create a completed receipt. Only
+extracted assertions count as representation in the comparison; original
 section text supplies interpretation context, and other sections are excluded.
-An assertion found only in the original section text remains missing from the
-inventory; it cannot serve as its own evidence of extraction.
 Every inventory claim still goes through the separate factual-evidence gate.
-This fidelity check can reject a complete mapping when an asserted
-consequence or qualifier was lost. It treats instructor choices and stipulated
-exercise inputs as instructions while still checking empirical guarantees.
-Passing fidelity establishes representation only, never factual approval.
-If an isolated teaching passage fails this comparison, a second comparison
-receives its original section as interpretation context. This restores local
-scope and references that extraction could read but the isolated comparison
-could not. Context cannot override an explicitly broader claim or substitute
-for a consequence missing from the selected inventory statements. An unusable
-comparison still fails closed. The unchanged base comparison runs first, so
-previous positive base checks remain valid. Negative checks from before this
-fallback are reconsidered; a changed teaching-context policy expires approvals
-that could have used an earlier fallback. These receipts remain bound to the
-complete lesson content and separate from assessment-context receipts.
-For assessment passages, the comparison also receives the question's scenario,
-answer index and target field as interpretation context. A conditional answer
-must be read within its question. This original context is explicitly separate
-from the selected inventory statements and cannot supply missing assertions as
-evidence. Distractors are distinguished from endorsed answers.
-Conditional inventory statements also require the scenario to establish their
-prerequisites at the same scope. A related local property cannot silently stand
-in for an unstated condition about a surrounding structure or dependency.
-Assessment-context checks have their own policy receipt: changing those rules
-expires assessment extraction and audits while retaining teaching audits with identical inputs
-and unchanged checking instructions. A change to the common coverage policy
-still expires every coverage audit.
 The application uses the validated answer index to keep unendorsed alternatives
 as separate interpretation context, outside factual claim locations. Their bytes
 are retained, but the checker is not asked to prove deliberately incorrect choices
@@ -440,16 +434,14 @@ true. Question premises, the selected answer, and every explanatory assertion
 remain coverage targets. The independent blinded answer-key review still checks
 all alternatives; this separation cannot validate an incorrect answer key.
 Missing or invalid indices do not exempt any choice from coverage.
-An unusable fidelity response preserves the draft and blocks publication.
-Coverage-policy receipts are separate from extraction checkpoints. A policy
-change may reuse the unchanged extracted claims as data, but must audit their
-coverage again before any factual approval can publish a lesson.
-Completed extraction and corrected inventories are checkpointed before the next
-audit. Interruption or a failed audit preserves those claims as data without
-retaining an audit approval for the changed inventory.
-The checkpoint retains completed, unchanged section audits as well. Retry with
-the same content and coverage policy resumes pending sections or the remaining
-corrections; duplicate or foreign section and passage locations invalidate reuse.
+There is one coverage policy (`passage-coverage-v6`); changing it expires every
+saved coverage audit and section receipt, while unchanged extracted claims may
+be reused as data. Completed and adopted inventories are checkpointed before
+the next stage. Interruption or a failed audit preserves those claims as data
+without retaining an audit approval for the changed inventory. Retry with the
+same content and coverage policy resumes pending sections; duplicate or foreign
+section and passage locations, or a unit whose completeness disagrees with its
+missing-assertion list, invalidate reuse.
 
 Factual retrieval restores surrounding source text before judging a matching
 passage. Nearby conditions, exceptions and introductory definitions must not be
@@ -698,8 +690,8 @@ Source catalogs and outline evidence are selected within a fraction of the chose
 model's context window, while source indices still identify the complete collection.
 A partial catalog says how many entries were omitted from that prompt; it does
 not remove sources from retrieval. Claim inventories and coverage findings have
-no per-section count cutoff. Corrections retain unmentioned claims and the normal
-coverage, fidelity, and evidence gates still apply.
+no per-section count cutoff, and assertions the fidelity audit names are adopted
+without a cap; the normal coverage, fidelity, and evidence gates still apply.
 Teaching findings and valid research selections are not rejected for exceeding
 an item count. Every runnable worked example is observed, without a per-lesson
 example-count ceiling; each run retains the runtime's execution and output
@@ -809,6 +801,26 @@ and persistence behavior, not live-model factual accuracy or repair quality on
 unseen lessons; the live source-acquisition path and held-out evaluations still
 need separate evidence. See the
 [implementation scope and research plan](../design/2026-10-04-learning-content-verification.md).
+
+## Coverage completion by adoption — 2026-10-14
+
+A live first lesson ("What's New in .NET 10 & ASP.NET Core 10", 31 gathered
+references, Qwen3.8-27B) failed after 18 minutes with "Claim coverage stopped
+making progress". The recorded calls showed two defects on the path: the
+fidelity comparison reused the strict source-support judge (`supported` /
+`unsupported` over "Source passages" and a "Claim"), so it demanded inventory
+support for rubric criteria and reported "no passage mentions the feature"
+instead of naming what the inventory lacked; and the correction call declined
+the finding as instructional, leaving an app-counted loop with nothing to
+change but a terminal error. The fix gives fidelity its own representation-only
+instructions and a structured `missingAssertions` answer, and the application
+adopts those assertions as claims for the evidence check; the correction call
+and the progress guard were deleted. Deterministic regressions:
+`coverage_adoption_tests::an_assertion_named_by_the_fidelity_audit_is_adopted_checked_and_repaired`
+(the live shape, converging through the evidence repair to a publishable
+revision) and
+`coverage_adoption_tests::a_rubric_without_a_missing_assertion_is_neither_adopted_nor_repaired`
+(the correct neighbour: a proposed omission the judge rejects adopts nothing).
 
 ## Interactive teaching and placement review — 2026-10-04
 

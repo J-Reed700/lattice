@@ -672,6 +672,14 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             );
         }
     }
+    // Reasoning is shown, not replayed. Carried through a tool loop it soon
+    // outweighs everything else in the prompt. Dropping it costs the server a
+    // re-read of the newest turn's visible output, which it cached with the
+    // reasoning still in place; that is small next to carrying every round's.
+    if let Some(object) = assistant.as_object_mut() {
+        object.remove("reasoning_content");
+        object.remove("reasoning");
+    }
     let reasoning = ["reasoning_content", "reasoning"]
         .iter()
         .find_map(|key| message.get(key).and_then(Value::as_str))

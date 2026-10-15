@@ -43,6 +43,13 @@ function Passage({ passage, number }: { passage: LearningEvidencePassageDto; num
   );
 }
 
+/** No saved reference supports or contradicts the claim; it was kept unchecked. */
+const GENERAL_KNOWLEDGE = 'general_knowledge';
+
+function isGeneralKnowledge(claim: LearningClaimEvidenceDto) {
+  return claim.verdict === GENERAL_KNOWLEDGE;
+}
+
 function ClaimEvidence({
   claim,
   passageNumbers,
@@ -54,9 +61,15 @@ function ClaimEvidence({
     <article className="wrap-anywhere rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-sm font-medium leading-6 text-text-primary">{claim.claim}</p>
-        <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-          {claim.verdict || 'checked'}
-        </span>
+        {isGeneralKnowledge(claim) ? (
+          <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">
+            General knowledge · not checked against a source
+          </span>
+        ) : (
+          <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+            {claim.verdict || 'checked'}
+          </span>
+        )}
       </div>
       {claim.contentQuote && (
         <blockquote className="mt-2 border-l-2 border-border pl-3 text-xs leading-5 text-text-muted">
@@ -122,7 +135,8 @@ export function LessonEvidencePanel({
           {data && (
             <>
               <p className="text-sm leading-6 text-text-secondary">
-                {data.claimCount} claims checked against saved evidence · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
+                {data.claimCount - data.generalKnowledgeCount} claims checked against saved evidence
+                {data.generalKnowledgeCount > 0 && ` · ${data.generalKnowledgeCount} general knowledge, not checked against a source`} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
               </p>
               <p className="text-xs leading-5 text-text-muted">
                 {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical_fallback' ? 'Keyword retrieval — embeddings were unavailable' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
@@ -162,6 +176,8 @@ export function LessonSectionEvidence({
   const claims = data?.teachingClaims.filter((claim) => claim.sectionIndex === sectionIndex) ?? [];
   const passageNumbers = useMemo(() => passageNumbersFor(data), [data]);
   const sectionPassages = new Set(claims.flatMap((claim) => claim.passages.map(passageKey)));
+  const general = claims.filter(isGeneralKnowledge).length;
+  const checked = claims.length - general;
 
   if (report.isFetching && !data) {
     return <p role="status" className="mt-4 text-xs text-text-muted">Loading citations for this section…</p>;
@@ -172,7 +188,8 @@ export function LessonSectionEvidence({
     <details className="mt-4 border-t border-border pt-3">
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
         <ShieldCheck size={14} />
-        Evidence · {claims.length} checked {claims.length === 1 ? 'claim' : 'claims'} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
+        Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
+        {general > 0 && ` · ${general} general knowledge`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
         <span className="ml-auto flex gap-1" aria-label="Citations in this section">
           {[...sectionPassages].map((key) => <span key={key} className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">{passageNumbers.get(key)}</span>)}
         </span>

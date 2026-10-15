@@ -6488,7 +6488,13 @@ export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
 export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; available: boolean; version: string | null; reason: string | null }
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
-export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
+/**
+ * Of `claim_count`, the claims kept as general knowledge: no saved
+ * reference supports or contradicts them, and they were not checked
+ * against a source.
+ */
+generalKnowledgeCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
@@ -6503,12 +6509,73 @@ export type LearningOutlineEvidenceDto = { reviewStatus: LearningOutlineReviewSt
 unavailableCount: number }
 export type LearningOutlineIssueDto = {
 /**
+ * Stable identity assigned by code when the finding is first raised.
+ */
+id: string;
+/**
  * JSON pointer into the saved candidate. Empty means the entire curriculum.
  */
-path: string; kind: LearningOutlineIssueKind; claim: string; quote: string; sourceId: string | null; message: string }
-export type LearningOutlineIssueKind = "quote" | "content"
-export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
-export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string }
+path: string; kind: LearningOutlineIssueKind;
+/**
+ * The item text at `path` as of the last review, refreshed by code.
+ */
+claim: string;
+/**
+ * The reviewer's current reason, refreshed on each unresolved verdict.
+ */
+message: string;
+/**
+ * Repair attempts spent on this finding in the current operation.
+ */
+attempts: number;
+/**
+ * The attempt limit or the module's rewrite budget is spent; waits for the user.
+ */
+exhausted: boolean;
+/**
+ * Evidence shown to the user: the contradicting or best passage found.
+ */
+quote: string; sourceId: string | null;
+/**
+ * Public searches already run for this finding.
+ */
+searched: string[] }
+export type LearningOutlineIssueKind =
+/**
+ * An assertion about the world stated as true (a version, behaviour,
+ * number, date, API fact) that the reviewer believes is wrong or unsupported.
+ */
+"factual" |
+/**
+ * Sequencing, prerequisites, duplication, scope, session fit, project
+ * progression or a contradictory requirement.
+ */
+"plan" |
+/**
+ * Course-wide: no references could be gathered, so lessons cannot be prepared.
+ */
+"references"
+export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage;
+/**
+ * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
+ * dive's gathering and evidence linking are never a silent spinner.
+ */
+detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
+/**
+ * Outline items whose citation is verified: chosen by evidence linking or
+ * attached by a supported factual repair.
+ */
+citationsVerified: number;
+/**
+ * Author citations removed in this operation because they did not match
+ * their source exactly or evidence linking did not choose them.
+ */
+citationsRemoved: number;
+/**
+ * Reference pages gathered automatically for this program.
+ */
+referencesGathered: number }
 export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
 export type LearningPackConflictDto = { kind: LearningPackConflictKind;
@@ -7069,7 +7136,7 @@ contentPath: string;
  */
 title?: string | null }
 export type OpenLearningPracticeSourceRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; sourceId: string; versionId: string }
-export type OutlineStage = "reading_sources" | "loading_model" | "drafting" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
+export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */

@@ -1,0 +1,8 @@
+{
+  "goal": "Learn PostgreSQL query performance tuning: read EXPLAIN and EXPLAIN ANALYZE plans, choose the right indexes, and diagnose and fix slow queries in a production database.",
+  "priorKnowledge": "Comfortable writing everyday SQL (joins, GROUP BY, simple subqueries) and using an ORM, but I have never read a query plan or tuned a database.",
+  "minutesPerSession": 45,
+  "documentIds": [],
+  "sourceUrls": [],
+  "courseDepth": "course"
+}

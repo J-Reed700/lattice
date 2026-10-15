@@ -37,7 +37,7 @@ impl DisconnectDuringFidelity {
         if prompt.starts_with("Audit claim coverage independently.") {
             self.mapping_calls.fetch_add(1, Ordering::Relaxed);
         }
-        if prompt.starts_with("Audit claim fidelity.")
+        if prompt.starts_with("Audit inventory fidelity.")
             && self.fidelity_calls.fetch_add(1, Ordering::Relaxed) == 1
         {
             // Disconnect only after the other concurrent passage has committed
@@ -49,7 +49,7 @@ impl DisconnectDuringFidelity {
                         .lesson_checkpoints_with_prefix(
                             &self.job,
                             &self.lesson,
-                            "coverage-fidelity-v1:",
+                            "coverage-fidelity-v2:",
                         )
                         .await
                         .unwrap();

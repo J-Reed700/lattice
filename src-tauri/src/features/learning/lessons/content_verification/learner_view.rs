@@ -101,6 +101,7 @@ impl LessonVerificationReport {
                     content_quote: finding.quote.clone(),
                     claim: finding.statement.clone(),
                     verdict: match finding.verdict {
+                        _ if finding.general_knowledge() => "general_knowledge",
                         ClaimVerdict::Supported => "supported",
                         ClaimVerdict::Contradicted => "contradicted",
                         ClaimVerdict::Unsupported => "unsupported",
@@ -121,6 +122,11 @@ impl LessonVerificationReport {
             embedding_model: self.embedding_model.clone(),
             content_sha256: self.content_sha256.clone(),
             claim_count: self.findings.len(),
+            general_knowledge_count: self
+                .findings
+                .iter()
+                .filter(|finding| finding.general_knowledge())
+                .count(),
             executed_examples: self.executions.len(),
             unexecuted_languages: self.unexecuted_languages.clone(),
             sources_current,

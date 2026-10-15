@@ -42,10 +42,16 @@ pub async fn start_learning_diagnostic(
         .await
         .map_err(ApiError::from)?;
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    // Whole captured texts, not the program's stored previews.
+    let sources = LearningRepository::new(container.db_pool().clone())
+        .verification_sources(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
     let tasks = crate::features::learning::diagnostic_generation::author(
         llm.as_ref(),
         &program,
         &workspace.outcomes,
+        &sources,
     )
     .await
     .map_err(ApiError::from)?;

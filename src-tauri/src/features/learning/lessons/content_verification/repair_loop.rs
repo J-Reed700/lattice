@@ -2,7 +2,13 @@
 use super::*;
 
 /// Evidence-driven repairs, with full re-extraction and rechecking afterward.
-/// Continue while defects decrease; preserve a draft when repairs stop helping.
+/// Repairs continue while they make progress: the candidate with the fewest
+/// issues so far is the best. A round that does not beat it sends the next
+/// repair escalated (repeatedDefects: remove the disputed assertions whole);
+/// a round that beats it clears the escalation. When an escalated round also
+/// fails to beat the best, the best candidate is saved as the lesson draft
+/// and the job stops, so a retry resumes from it. The best count and the
+/// escalation survive a resume through the pending-repair checkpoint.
 /// Operational extraction/audit errors propagate rather than asking the author
 /// to rewrite valid content because a checker is unavailable.
 #[cfg(test)]
@@ -38,6 +44,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
 ) -> Result<(String, LessonVerificationReport)> {
     let mut expanded = None;
     let mut previous_issue_fingerprint = None;
+    let mut progress = RepairProgress::default();
     let mut repair_history = Vec::new();
     let mut resume_repair = true;
     let mut checks = ClaimChecks::default();
@@ -55,6 +62,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     .filter(|saved| saved.matches(llm, prompt, schema, &candidate, active))
             {
                 previous_issue_fingerprint = saved.issue_fingerprint.clone();
+                progress = saved.progress.clone();
                 repair_history = saved
                     .context
                     .get("repairHistory")
@@ -73,6 +81,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     output_tokens,
                     active,
                     saved.defects,
+                    &progress,
                 )
                 .await?;
                 continue;
@@ -141,20 +150,13 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         if report.issues.is_empty() {
             return Ok((raw, report));
         }
-        if report
-            .findings
-            .iter()
-            .any(|f| f.verdict == ClaimVerdict::Unverified)
-        {
-            let unfinished = report
-                .findings
-                .iter()
-                .filter(|f| f.verdict == ClaimVerdict::Unverified)
-                .count();
-            return Err(AppError::ServiceNotAvailable(format!("The evidence checker could not complete {unfinished} claim checks. No lesson was published. Retry when the checker is available; durable jobs retain the lesson draft.")));
+        if let Some(error) = unchecked_claims(&report.findings) {
+            return Err(error);
         }
+        progress.record(&raw, &report.issues).await?;
         let issue_fingerprint = repair_issue_fingerprint(&report.issues);
-        let repeated_defects = previous_issue_fingerprint.as_ref() == Some(&issue_fingerprint);
+        let repeated_defects =
+            progress.escalated || previous_issue_fingerprint.as_ref() == Some(&issue_fingerprint);
         previous_issue_fingerprint = Some(issue_fingerprint.clone());
         remember_failed_claims(&mut repair_history, &report);
         crate::features::learning::lesson_progress::phase(
@@ -183,6 +185,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             defects: report.issues.len(),
             issue_fingerprint: Some(issue_fingerprint),
             context: context.clone(),
+            progress: progress.clone(),
         };
         crate::features::learning::lesson_drafts::record_pending_repair(
             &candidate.to_string(),
@@ -197,9 +200,87 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             output_tokens,
             expanded.as_ref().unwrap_or(references),
             report.issues.len(),
+            &progress,
         )
         .await?;
     }
+}
+
+/// The best candidate verified so far, by fewest issues.
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct BestCandidate {
+    issues: Vec<String>,
+    candidate: String,
+}
+
+/// Whether repairs still make progress; see `verify_and_repair_with_references`.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(super) struct RepairProgress {
+    best: Option<BestCandidate>,
+    /// The repair under way removes disputed assertions whole because the
+    /// last round did not beat the best.
+    escalated: bool,
+}
+
+impl RepairProgress {
+    /// Record a verified candidate that still has `issues`. A round that
+    /// beats the best becomes it and clears the escalation; one that does not
+    /// escalates the next repair, and after an escalated round it stops: the
+    /// best candidate is saved as the lesson draft and an error explains why.
+    pub(super) async fn record(&mut self, raw: &str, issues: &[String]) -> Result<()> {
+        match &self.best {
+            Some(best) if issues.len() >= best.issues.len() => {
+                if self.escalated {
+                    crate::features::learning::lesson_drafts::save(&best.candidate).await?;
+                    return Err(AppError::InvalidInput(format!(
+                        "Repairs stopped reducing the lesson's problems: {} remain ({}). The best draft is saved; retry to continue.",
+                        best.issues.len(),
+                        best.issues
+                            .iter()
+                            .take(3)
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )));
+                }
+                self.escalated = true;
+            }
+            _ => {
+                self.best = Some(BestCandidate {
+                    issues: issues.to_vec(),
+                    candidate: raw.to_owned(),
+                });
+                self.escalated = false;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The error for claims the checker could not judge. An outage never gets
+/// here: it fails the check and the job waits it out. What is left is
+/// deterministic (a request that cannot fit, an answer unusable after its
+/// retries), and the same inputs would fail the same way, so the job stops
+/// with the claims and their causes instead of being deferred.
+pub(super) fn unchecked_claims(findings: &[Finding]) -> Option<AppError> {
+    let unchecked: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.verdict == ClaimVerdict::Unverified)
+        .collect();
+    let first = unchecked.first()?;
+    let more = unchecked.len() - 1;
+    Some(AppError::InvalidInput(format!(
+        "The evidence checker could not check {} claim{}. \"{}\": {}{} No lesson was published.",
+        unchecked.len(),
+        if unchecked.len() == 1 { "" } else { "s" },
+        first.statement,
+        first.reason,
+        if more == 0 {
+            String::new()
+        } else {
+            format!(" ({more} more claims could not be checked.)")
+        }
+    )))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -209,6 +290,9 @@ pub(super) struct PendingRepair {
     #[serde(default)]
     pub(super) issue_fingerprint: Option<String>,
     pub(super) context: Value,
+    /// The loop's best candidate and escalation, so a resume keeps them.
+    #[serde(default)]
+    pub(super) progress: RepairProgress,
 }
 
 pub(super) fn repair_issue_fingerprint(issues: &[String]) -> String {
@@ -221,11 +305,9 @@ pub(super) fn repair_issue_fingerprint(issues: &[String]) -> String {
 }
 
 fn remember_failed_claims(history: &mut Vec<Value>, report: &LessonVerificationReport) {
-    for finding in report
-        .findings
-        .iter()
-        .filter(|finding| finding.verdict != ClaimVerdict::Supported)
-    {
+    for finding in report.findings.iter().filter(|finding| {
+        finding.verdict != ClaimVerdict::Supported && !finding.general_knowledge()
+    }) {
         let rejected = json!({
             "unit": finding.unit,
             "statement": finding.statement,
@@ -267,7 +349,7 @@ pub(super) fn repair_fingerprint(
         .map(|source| (&source.id, digest(&source.excerpt)))
         .collect();
     sources.sort();
-    digest(&json!({"policy":POLICY,"repairPolicy":"pending-repair-v1","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
+    digest(&json!({"policy":POLICY,"repairPolicy":"pending-repair-v2","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
 }
 
 impl PendingRepair {
@@ -299,7 +381,7 @@ pub(super) fn repair_context(
     let mut locations = HashMap::new();
     let mut passages = Vec::new();
     let failed: Vec<_> = report.findings.iter()
-        .filter(|finding| finding.verdict != ClaimVerdict::Supported)
+        .filter(|finding| finding.verdict != ClaimVerdict::Supported && !finding.general_knowledge())
         .map(|finding| {
             let evidence: Vec<_> = finding.evidence.iter().map(|passage| {
                 let key = (&passage.source_id, passage.start_byte, passage.end_byte, &passage.text);

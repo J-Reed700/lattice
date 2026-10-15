@@ -23,9 +23,7 @@ impl LlamaCppLlm {
         /// Estimated prompt tokens are scaled by this before being subtracted.
         const ESTIMATE_SAFETY: usize = 3;
         const ESTIMATE_SAFETY_DIVISOR: usize = 2;
-        const MIN_OUTPUT_TOKENS: u32 = 1024;
 
-        let window = self.config.context_window;
         let prompt_chars: usize = messages
             .iter()
             .map(|message| message.to_string().chars().count())
@@ -35,9 +33,16 @@ impl LlamaCppLlm {
             lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
         ) * ESTIMATE_SAFETY
             / ESTIMATE_SAFETY_DIVISOR;
+        self.output_room_after(prompt_tokens, requested)
+    }
+
+    /// The output reservation once `prompt_tokens` are in the window. The
+    /// floor guards against the window clamp, never against a cap the caller
+    /// asked for: a 512-token verdict stays 512.
+    fn output_room_after(&self, prompt_tokens: usize, requested: u32) -> u32 {
+        const MIN_OUTPUT_TOKENS: u32 = 1024;
+        let window = self.config.context_window;
         let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
-        // The floor guards against the window clamp, never against a cap
-        // the caller asked for: a 512-token verdict stays 512.
         let allowed = requested.min(room.max(MIN_OUTPUT_TOKENS));
         if allowed < requested {
             tracing::debug!(
@@ -49,6 +54,75 @@ impl LlamaCppLlm {
             );
         }
         allowed
+    }
+
+    /// [`Self::body`], with an output reservation the estimate clamped below
+    /// what was asked recomputed from the server's own token count. The rough
+    /// estimate reads high on a large prompt a caller measured exactly, and
+    /// would cut its answer to the floor. When the estimate leaves the room
+    /// asked for, or the request asked for no specific room (chat's common
+    /// case), nothing extra is sent; when the server has no tokenizer, the
+    /// estimate stands.
+    pub(super) async fn measured_body(&self, request: &CompletionRequest) -> Result<Value> {
+        let mut body = self.body(request)?;
+        let configured = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);
+        let requested = request.effective_max_output_tokens(configured);
+        let estimated = body
+            .get("max_tokens")
+            .and_then(Value::as_u64)
+            .and_then(|tokens| u32::try_from(tokens).ok())
+            .unwrap_or(requested);
+        // Only a caller that reserved a specific answer size is held to it; a
+        // request that takes the configured limit keeps the estimate's clamp.
+        if request.max_output_tokens.is_none() || estimated >= requested {
+            return Ok(body);
+        }
+        let messages = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let Some(prompt_tokens) = self.exact_prompt_tokens(&messages).await else {
+            return Ok(body);
+        };
+        let allowed = self.output_room_after(prompt_tokens, requested);
+        if let Some(fields) = body.as_object_mut() {
+            fields.insert("max_tokens".into(), json!(allowed));
+        }
+        Ok(body)
+    }
+
+    /// The prompt's tokens as this server counts them, with the chat
+    /// template's framing: a ChatML-style template wraps each message in
+    /// about five special tokens (`<|im_start|>`, the role, a newline,
+    /// `<|im_end|>`, a newline) and opens the answer with about six more
+    /// (the assistant header and an empty think block); eight per message and
+    /// sixteen for the answer cover those with room to spare. `None` when the
+    /// server cannot tokenize.
+    async fn exact_prompt_tokens(&self, messages: &[Value]) -> Option<usize> {
+        const TEMPLATE_TOKENS_PER_MESSAGE: usize = 8;
+        const TEMPLATE_TOKENS_FOR_ANSWER: usize = 16;
+        let text = messages
+            .iter()
+            .map(|message| match message.get("content") {
+                Some(Value::String(content)) => content.clone(),
+                _ => message.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tokenizer = crate::features::llm::scheduler::ServerTokenizer::new(
+            self.client.clone(),
+            self.server_root(),
+        );
+        match tokenizer.count(&text).await {
+            Ok(tokens) => Some(
+                tokens + TEMPLATE_TOKENS_PER_MESSAGE * messages.len() + TEMPLATE_TOKENS_FOR_ANSWER,
+            ),
+            Err(error) => {
+                tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
+                None
+            }
+        }
     }
 
     /// The streamed Chat Completions body for `request`, refusing tool traffic

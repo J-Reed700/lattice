@@ -1,4 +1,6 @@
 use super::*;
+use crate::features::learning::patient_model::{patiently, PatientModel};
+use lattice_core::shared::runtime::jobs::Backoff;
 
 #[tauri::command]
 #[specta::specta]
@@ -73,12 +75,18 @@ pub async fn generate_learning_program(
             let deps = source_deps(&container);
             let sources = crate::features::learning::sources::acquire(&deps, &request).await?;
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
-            let llm = container.get_or_load_llm().await?;
+            // A temporary model outage is waited out, call by call; see
+            // `patient_model`.
+            let llm = patiently(progress.as_ref(), Backoff::default(), |_| {
+                container.get_or_load_llm()
+            })
+            .await?;
             progress.model(llm.model_name());
+            let llm = PatientModel::new(llm.as_ref(), progress.as_ref());
             service::generate_with_references_and_progress(
                 &LearningRepository::new(container.db_pool().clone()),
                 &container.draft_run_registry(),
-                llm.as_ref(),
+                &llm,
                 request,
                 sources.sources,
                 &sources.references,
@@ -116,12 +124,16 @@ pub async fn repair_learning_outline(
     progress
         .run(async {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
-            let llm = container.get_or_load_llm().await?;
+            let llm = patiently(progress.as_ref(), Backoff::default(), |_| {
+                container.get_or_load_llm()
+            })
+            .await?;
             progress.model(llm.model_name());
+            let llm = PatientModel::new(llm.as_ref(), progress.as_ref());
             crate::features::learning::outline_draft::repair_saved(
                 &LearningRepository::new(container.db_pool().clone()),
                 &container.draft_run_registry(),
-                llm.as_ref(),
+                &llm,
                 &request,
                 progress,
                 Some(container.web_service().as_ref()),
