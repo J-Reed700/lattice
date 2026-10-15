@@ -8,8 +8,18 @@ pub mod outline_draft;
 pub(crate) mod outline_draft_repository;
 pub(crate) mod outline_evidence;
 pub mod outline_evidence_view;
+pub(crate) mod outline_linking;
 pub mod outline_progress;
+#[cfg(test)]
+mod outline_reference_tests;
+pub(crate) mod outline_references;
 pub(crate) mod outline_repair;
-pub(crate) mod outline_research;
+#[cfg(test)]
+mod outline_repair_tests;
+pub(crate) mod outline_review;
 pub(crate) mod outline_review_scope;
+#[cfg(test)]
+mod outline_review_scope_tests;
+#[cfg(test)]
+mod outline_review_tests;
 pub mod plan_dto;

@@ -1,0 +1,8 @@
+{
+  "goal": "Prepare for senior system design interviews: caching, sharding and replication, message queues, consistency models, rate limiting, and how to structure a 45-minute design answer.",
+  "priorKnowledge": "Nine years as a backend engineer building APIs and services; I have used Redis and a message broker but never designed a large distributed system from scratch.",
+  "minutesPerSession": 60,
+  "documentIds": [],
+  "sourceUrls": [],
+  "courseDepth": "deep_dive"
+}

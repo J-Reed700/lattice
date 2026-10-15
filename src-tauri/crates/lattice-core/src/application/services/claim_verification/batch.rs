@@ -113,6 +113,21 @@ impl ClaimChecker<'_> {
         (prompt, passages, system, remaining)
     }
 
+    /// The tokens a batch of `claims` leaves for its passage bank once its
+    /// instructions, the claims themselves and each claim's answer are paid.
+    pub fn batch_evidence_room(&self, claims: &[String]) -> usize {
+        let located: Vec<LocatedClaim> = claims
+            .iter()
+            .map(|claim| LocatedClaim {
+                claim: claim.clone(),
+                passages: Vec::new(),
+            })
+            .collect();
+        self.batch_request_parts(&located)
+            .3
+            .saturating_sub(1200 * claims.len())
+    }
+
     pub fn batch_fits(&self, claims: &[LocatedClaim]) -> bool {
         self.batch_request_parts(claims).3 >= 1200 * claims.len()
     }

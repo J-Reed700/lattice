@@ -4,6 +4,7 @@ use crate::features::learning::dto::{GenerateLearningProgramRequestDto, Learning
 use crate::features::learning::dto::{
     LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
 };
+use crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION;
 use crate::features::web::traits::WebServiceTrait;
 use crate::infrastructure::security::RateLimiter;
 use lattice_core::application::ports::LibraryPassagesPort;
@@ -33,6 +34,7 @@ pub struct SourceDeps {
     pub pool: SqlitePool,
 }
 
+#[derive(Debug, Clone)]
 pub struct InitialReference {
     pub source_id: String,
     pub origin: String,
@@ -180,8 +182,7 @@ pub async fn acquire(
             resolved_url: Some(article.url),
             text: article.content,
             truncated: article.content_truncated,
-            extraction_version: crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION
-                .into(),
+            extraction_version: REFERENCE_TEXT_EXTRACTION_VERSION.into(),
         };
         validate_capture(&captured)?;
         let id = uuid::Uuid::new_v4().to_string();
@@ -250,8 +251,7 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
                     resolved_url: Some(article.url),
                     text: article.content,
                     truncated: article.content_truncated,
-                    extraction_version:
-                        crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
+                    extraction_version: REFERENCE_TEXT_EXTRACTION_VERSION.into(),
                 },
             )
         }

@@ -293,7 +293,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             !coverage.units[1].complete,
             "A saved omission must remain unresolved"
         );
-        assert_eq!(coverage.units[1].unresolved_passages.len(), 1);
+        assert_eq!(coverage.units[1].missing_assertions.len(), 1);
         assert_eq!(
             coverage.units.iter().filter(|unit| unit.complete).count(),
             4
@@ -394,7 +394,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         }],
     };
     let claim = &inventory.units[0].claims[0];
-    let evidence = evidence_for(GOOD, 0, &references, &[]).await?;
+    let evidence = evidence_for(&model, GOOD, 0, &references, &[], 2).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let candidate = candidate(GOOD);
     // The server cannot finish the group, so the claims are checked one at a

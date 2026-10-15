@@ -386,3 +386,31 @@ fn unicode_passage_offsets_remain_lossless_without_a_whole_document_offset_array
     }
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn deeper_evidence_must_mention_what_the_claim_is_about() -> Result<()> {
+    let sources: Vec<LearningSourceDto> = [
+        "ASP.NET Core hosts the app. ASP.NET Core configures logging.",
+        "ASP.NET Core runs middleware in order for each request.",
+        "ASP.NET Core minimal APIs support endpoint filters.",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, text)| LearningSourceDto {
+        id: format!("s{i}"),
+        title: format!("Reference {i}"),
+        url: None,
+        excerpt: (*text).into(),
+        acquired_at: 1,
+    })
+    .collect();
+    let collection = ReferenceCollection::lexical(&sources)?;
+    let claim = "ASP.NET Core endpoint filters run before the handler.";
+    // Shares only the subject's common words.
+    assert!(!collection.mentions_subject_of(claim, "ASP.NET Core runs middleware in order."));
+    // Mentions what the claim is about.
+    assert!(collection.mentions_subject_of(claim, "Endpoint filters wrap a minimal API handler."));
+    // A page sharing nothing with the claim stops the walk.
+    assert!(!collection.mentions_subject_of("ASP.NET Core", "Vacuum reclaims storage."));
+    Ok(())
+}

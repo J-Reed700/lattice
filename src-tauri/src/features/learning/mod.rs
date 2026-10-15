@@ -6,6 +6,7 @@ pub mod dto;
 pub mod lessons;
 mod model_call;
 pub(crate) mod operations;
+mod patient_model;
 pub(crate) mod persistence;
 pub mod planning;
 pub mod plugin;
@@ -62,8 +63,10 @@ use lessons::teaching_review;
 use planning::outline_citations;
 use planning::outline_draft_repository;
 use planning::outline_evidence;
+use planning::outline_linking;
+use planning::outline_references;
 use planning::outline_repair;
-use planning::outline_research;
+use planning::outline_review;
 use planning::outline_review_scope;
 use practice::practical_workspace;
 use references::source_identity;
@@ -77,3 +80,5 @@ mod tests;
 
 #[cfg(test)]
 mod consistency_tests;
+#[cfg(test)]
+mod content_caps_tests;

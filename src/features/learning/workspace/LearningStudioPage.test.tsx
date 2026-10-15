@@ -207,7 +207,7 @@ describe('Learning Studio program workflow', () => {
     const user = userEvent.setup();
     const draft = program();
     draft.summary.revision = 4;
-    draft.outlineReview = { status: 'needs_repair', repairPasses: 1, updatedAt: 0, contentHash: 'draft-hash', note: 'Draft and completed corrections saved.', issues: [{ path: '/modules/0/lessons/0', kind: 'quote', claim: 'The disputed claim', quote: 'An unproven quotation from the generated draft.', sourceId: source.id, message: 'This quote did not match the saved reference.' }] };
+    draft.outlineReview = { status: 'needs_repair', repairPasses: 1, updatedAt: 0, contentHash: 'draft-hash', note: 'Draft and completed corrections saved.', citationsVerified: 0, citationsRemoved: 1, referencesGathered: 0, issues: [{ id: 'finding-1', path: '/modules/0/lessons/0', kind: 'plan', claim: 'The disputed claim', quote: 'A contradicting passage from the saved reference.', sourceId: source.id, message: 'The saved reference contradicts this objective.', attempts: 2, exhausted: true, searched: [] }] };
     const fixed = structuredClone(draft);
     fixed.summary.revision = 8;
     fixed.outlineReview = { ...draft.outlineReview, status: 'passed', issues: [], repairPasses: 2, contentHash: 'repaired-hash', note: 'Outline checks passed for this revision.' };
@@ -222,9 +222,11 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     expect(await screen.findByText('Saved draft · 1 unresolved finding')).toBeVisible();
-    expect(screen.getByText('An unproven quotation from the generated draft.')).toBeVisible();
+    expect(screen.getByText('A contradicting passage from the saved reference.')).toBeVisible();
+    expect(screen.getByText(/Plan check/)).toBeVisible();
+    expect(screen.getByText(/2 of 2 attempts used · automatic repair has stopped/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
-    expect(screen.getByText(/Supporting references are researched automatically/)).toBeVisible();
+    expect(screen.getByText(/References were gathered from public searches planned for each subtopic/)).toBeVisible();
     expect(screen.queryByRole('checkbox', { name: /Search the web/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Repair remaining issues' }));
     expect(mocks.repair).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 4 }, expect.objectContaining({ requestId: expect.any(String), onProgress: expect.any(Function) }));
@@ -250,7 +252,7 @@ describe('Learning Studio program workflow', () => {
   it('lets the learner inspect the saved draft while initial review is still running', async () => {
     const user = userEvent.setup();
     const draft = program();
-    draft.outlineReview = { status: 'unchecked', repairPasses: 0, updatedAt: 0, contentHash: 'draft', issues: [], note: 'Draft saved. Review has not completed.' };
+    draft.outlineReview = { status: 'unchecked', repairPasses: 0, updatedAt: 0, contentHash: 'draft', issues: [], note: 'Draft saved. Review has not completed.', citationsVerified: 0, citationsRemoved: 0, referencesGathered: 0 };
     mocks.list.mockResolvedValue(ok([summary(draft)]));
     mocks.get.mockResolvedValue(ok(draft));
     let update!: (value: LearningOutlineProgressDto) => void;

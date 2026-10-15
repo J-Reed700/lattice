@@ -129,3 +129,6 @@ docs/audit/
 # harness writes them to the system temp dir by default, and this covers the case
 # where someone points LATTICE_EVAL_LOG_DIR at the repository.
 lattice-conversation-memory-evals-*.jsonl
+
+# Personal course requests stay local (the repository is public)
+/evals/courses/requests/1-dotnet-interview.json

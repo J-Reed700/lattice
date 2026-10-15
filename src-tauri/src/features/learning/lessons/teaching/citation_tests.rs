@@ -170,6 +170,57 @@ async fn a_model_approval_cannot_skip_repair_of_an_invalid_lesson_quotation() ->
 }
 
 #[tokio::test]
+async fn a_paraphrased_repaired_quotation_is_cited_as_the_real_passage() -> Result<()> {
+    let model = ScriptedModel {
+        outputs: Mutex::new(vec![approval().to_string(), json!({"edits":[{"path":"/blocks/0/quote","before":"An invented quotation that does not appear in the selected source.","after":"This saved reference describes exactly how the example tool behaves."}]}).to_string(), approval().to_string()].into()),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let result = review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context().to_string(),
+        &json!({"type":"object"}),
+        lesson("An invented quotation that does not appear in the selected source.").to_string(),
+        4000,
+    )
+    .await?;
+    assert_eq!(serde_json::from_str::<Value>(&result)?, lesson(EXCERPT));
+    // The final review saw the real passage, not the paraphrase.
+    let prompts = model.prompts.lock().unwrap();
+    assert!(prompts.last().unwrap().contains(EXCERPT));
+    Ok(())
+}
+
+#[test]
+fn reanchoring_prefers_the_quote_then_the_item_and_never_invents_a_relation() {
+    let authoring = json!({"sources":[
+        {"sourceIndex":0,"excerpt":"Navigation home page. The cache stores computed values so repeated requests return quickly."},
+        {"sourceIndex":1,"excerpt":"Replication copies each write to several machines so a single failure loses nothing."}
+    ]});
+    // A paraphrase of a sentence in another source moves to that source.
+    let mut candidate = json!({"blocks":[{"body":"Why replicas matter.","sourceIndex":0,"quote":"Replication copies every write to several machines so one failure loses nothing."}],"questions":[]});
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+    assert_eq!(candidate["blocks"][0]["sourceIndex"], 1);
+    assert_eq!(
+        candidate["blocks"][0]["quote"],
+        "Replication copies each write to several machines so a single failure loses nothing."
+    );
+    // No usable quote: the item's own text chooses the passage.
+    let mut candidate = json!({"blocks":[{"body":"A cache returns repeated requests quickly from stored values.","sourceIndex":null,"quote":""}],"questions":[]});
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+    assert_eq!(candidate["blocks"][0]["sourceIndex"], 0);
+    assert_eq!(
+        candidate["blocks"][0]["quote"],
+        "The cache stores computed values so repeated requests return quickly."
+    );
+    // Nothing in common with any excerpt: left alone for the strict check.
+    let mut candidate = json!({"blocks":[{"body":"Unrelated material.","sourceIndex":0,"quote":"Completely different wording appears here instead."}],"questions":[]});
+    let before = candidate.clone();
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 0);
+    assert_eq!(candidate, before);
+}
+
+#[tokio::test]
 async fn an_invalid_repaired_quotation_stops_before_more_model_review() {
     let invalid = lesson("An invented quotation that does not appear in the selected source.");
     let model = ScriptedModel {

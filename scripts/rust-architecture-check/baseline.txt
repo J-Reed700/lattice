@@ -85,7 +85,7 @@ feature-edge features::indexing features::transcription 1
 feature-edge features::initialization features::download 1
 feature-edge features::learning features::daily_notes 5
 feature-edge features::learning features::vault 1
-feature-edge features::learning features::web 14
+feature-edge features::learning features::web 13
 feature-edge features::llm features::download 9
 feature-edge features::llm features::embedding 2
 feature-edge features::llm features::model_management 22

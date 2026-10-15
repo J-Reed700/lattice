@@ -1,13 +1,181 @@
 //! Strict, bounded source-grounded assessment candidate authoring. Answer keys
 //! remain internal and never appear in renderer DTOs.
 use crate::features::learning::model_call;
+use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::features::learning::{assessment_engine as engine, dto::*};
+use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
 use std::{collections::HashSet, time::Duration};
+
+const SYSTEM: &str = "Author source-grounded assessment items. Each item needs an explanation of its rationale and, when sources are supplied, an exact quote from its sourceIndex source. Rubric has two to four task-specific criteria for open formats (title, description, dimension), or an empty array for objectively keyed items. Criteria must state observable incomplete, adequate and strong performance without leaking the answer. Include a concrete scenario and deliverable that require the outcome, not a request to repeat its title. If there are no sources, author from the supplied lesson material and outcomes, set sourceIndex to null and quote to an empty string; never invent citations. MCQ uses answerIndex; short_answer uses acceptedAnswers and empty options; ordering uses options as the shuffled values and orderedValues as the correct permutation; open formats use empty options/keys.";
+
+/// One authoring request: `count` items for one requirement.
+struct Batch {
+    index: usize,
+    count: usize,
+    query: String,
+    skeleton: serde_json::Value,
+    schema: serde_json::Value,
+    output_tokens: usize,
+}
+
+impl Batch {
+    fn new(
+        request: &CreateLearningAssessmentBlueprintRequestDto,
+        outcomes: &[LearningOutcomeDefinitionDto],
+        lessons: &[LearningLessonDto],
+        index: usize,
+        count: usize,
+        source_count: usize,
+    ) -> Self {
+        let requirement = request.requirements.get(index);
+        let outcome = requirement
+            .and_then(|r| outcomes.iter().find(|o| o.id == r.outcome_id))
+            .map(|o| o.title.clone())
+            .or_else(|| requirement.map(|r| r.outcome_id.clone()))
+            .unwrap_or_default();
+        let requirements = requirement.map(|r| vec![serde_json::json!({"requirementIndex":index,"outcome":outcome,"format":r.format,"difficultyMin":r.difficulty_min,"difficultyMax":r.difficulty_max,"count":count})]).unwrap_or_default();
+        let skeleton = serde_json::json!({"title":request.title,"instructions":request.instructions,"requirements":requirements,"sources":[],"returnCount":count,"lessons":lessons.iter().map(|lesson|serde_json::json!({"title":lesson.title,"objective":lesson.objective,"blocks":lesson.blocks})).collect::<Vec<_>>()});
+        // An item prompt's 8000-character cap is checked by `validate_candidate`;
+        // as a schema bound above 2000 it would void llama.cpp's whole grammar.
+        let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["requirementIndex","prompt","explanation","options","answerIndex","acceptedAnswers","orderedValues","sourceIndex","quote","rubric"],"properties":{"requirementIndex":{"type":"integer","minimum":index,"maximum":index},"prompt":{"type":"string","minLength":8},"explanation":{"type":"string","minLength":8,"maxLength":1200},"options":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}},"answerIndex":{"type":"integer","minimum":0,"maximum":7},"acceptedAnswers":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}},"orderedValues":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":500}},"sourceIndex":if source_count == 0 {serde_json::json!({"type":"null"})} else {serde_json::json!({"type":"integer","minimum":0,"maximum":source_count-1})},"rubric":crate::features::learning::teaching::rubric_schema(),"quote":{"type":"string","minLength":if source_count == 0 {0} else {12},"maxLength":700}}}}}});
+        Self {
+            index,
+            count,
+            query: format!("{outcome} {}", request.instructions),
+            skeleton,
+            schema,
+            output_tokens: count * 1100 + 600,
+        }
+    }
+
+    /// The room this request leaves for source passages; zero when even its
+    /// prompt and answer do not fit.
+    fn room(&self, llm: &dyn LLMPort) -> usize {
+        let mut request = GroundedRequest::new(SYSTEM, self.skeleton.to_string());
+        request.output_tokens = self.output_tokens;
+        model_call::source_room(llm, &request, usize::MAX)
+    }
+
+    async fn author(
+        &self,
+        llm: &dyn LLMPort,
+        collection: &ReferenceCollection<'_>,
+        sources: &[LearningSourceVersionDto],
+    ) -> Result<Vec<Item>> {
+        let room = self.room(llm);
+        if room == 0 {
+            return Err(AppError::InvalidInput(
+                "Assessment authoring request exceeds the model context window.".into(),
+            ));
+        }
+        let entry = |source_index: usize, passages: &[&str]| {
+            let title = sources.get(source_index).map(|s| s.version.title.as_str());
+            serde_json::json!({"sourceIndex":source_index,"title":title,"passages":passages})
+        };
+        let index_of = |passage: &ReferencePassage| {
+            sources
+                .iter()
+                .position(|source| source.version.id == passage.source_id)
+        };
+        let passages = collection
+            .retrieve_within(&self.query, |passages| {
+                passages
+                    .iter()
+                    .map(|p| llm.count_tokens(&serde_json::json!(p.text).to_string()) + 2)
+                    .sum::<usize>()
+                    + passages
+                        .iter()
+                        .filter_map(index_of)
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .map(|index| llm.count_tokens(&entry(index, &[]).to_string()) + 2)
+                        .sum::<usize>()
+                    <= room
+            })
+            .await?;
+        let mut grouped: Vec<(usize, Vec<&str>)> = Vec::new();
+        for passage in &passages {
+            let Some(index) = index_of(passage) else {
+                continue;
+            };
+            match grouped.iter_mut().find(|(known, _)| *known == index) {
+                Some((_, texts)) => texts.push(passage.text.as_str()),
+                None => grouped.push((index, vec![passage.text.as_str()])),
+            }
+        }
+        let mut prompt = self.skeleton.clone();
+        if let Some(fields) = prompt.as_object_mut() {
+            fields.insert(
+                "sources".into(),
+                grouped
+                    .iter()
+                    .map(|(index, texts)| entry(*index, texts))
+                    .collect(),
+            );
+        }
+        let prompt = prompt.to_string();
+        let response = model_call::send(
+            llm,
+            model_call::structured(
+                SYSTEM,
+                prompt.clone(),
+                self.schema.clone(),
+                self.output_tokens,
+                "low",
+            ),
+            None,
+            Some(model_call::Deadline {
+                after: Duration::from_secs(120),
+                message: "Assessment authoring timed out.",
+            }),
+            "Assessment authoring request exceeds the model context window.",
+        )
+        .await?;
+        if ["length", "max_tokens", "incomplete", "content_filter"]
+            .iter()
+            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
+        {
+            return Err(AppError::InvalidInput(
+                "Assessment authoring output was incomplete.".into(),
+            ));
+        }
+        let raw = crate::features::learning::teaching::review_and_repair(
+            llm,
+            SYSTEM,
+            &prompt,
+            &self.schema,
+            response.text,
+            self.output_tokens,
+        )
+        .await?;
+        if raw.chars().count() > 80_000 {
+            return Err(AppError::InvalidInput(
+                "Assessment authoring response is too large.".into(),
+            ));
+        }
+        let parsed: Response = serde_json::from_str(&raw).map_err(|_| {
+            AppError::InvalidInput(
+                "Assessment authoring returned malformed structured data.".into(),
+            )
+        })?;
+        if parsed.items.len() != self.count
+            || parsed
+                .items
+                .iter()
+                .any(|item| item.requirement_index != self.index)
+        {
+            return Err(AppError::InvalidInput(
+                "Assessment authoring did not satisfy the requested item count.".into(),
+            ));
+        }
+        Ok(parsed.items)
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -36,71 +204,45 @@ pub async fn generate(
     sources: &[LearningSourceVersionDto],
     lessons: &[LearningLessonDto],
 ) -> Result<Vec<LearningAssessmentCandidateWriteDto>> {
-    let mut slots = Vec::new();
-    for (i, r) in request.requirements.iter().enumerate() {
-        for _ in 0..r.count {
-            slots.push((i, r));
-        }
-    }
-    if slots.is_empty() || slots.len() > 64 || sources.len() > 24 {
+    if request.requirements.iter().all(|r| r.count == 0) {
         return Err(AppError::InvalidInput(
             "Assessment coverage or source scope is outside its allowed bounds.".into(),
         ));
     }
-    let source_context=sources.iter().map(|s|serde_json::json!({"id":s.version.id,"title":s.version.title,"text":s.full_text.chars().take(8000).collect::<String>()})).collect::<Vec<_>>();
-    let requirements=request.requirements.iter().map(|r|serde_json::json!({"outcome":outcomes.iter().find(|o|o.id==r.outcome_id).map(|o|o.title.as_str()).unwrap_or(r.outcome_id.as_str()),"format":r.format,"difficultyMin":r.difficulty_min,"difficultyMax":r.difficulty_max,"count":r.count})).collect::<Vec<_>>();
-    let prompt=serde_json::json!({"title":request.title,"instructions":request.instructions,"requirements":requirements,"sources":source_context,"returnCount":slots.len(),"lessons":lessons.iter().map(|lesson|serde_json::json!({"title":lesson.title,"objective":lesson.objective,"blocks":lesson.blocks})).collect::<Vec<_>>()}).to_string();
-    let system="Author source-grounded assessment items. Each item needs an explanation of its rationale and, when sources are supplied, an exact quote from its sourceIndex source. Rubric has two to four task-specific criteria for open formats (title, description, dimension), or an empty array for objectively keyed items. Criteria must state observable incomplete, adequate and strong performance without leaking the answer. Include a concrete scenario and deliverable that require the outcome, not a request to repeat its title. If there are no sources, author from the supplied lesson material and outcomes, set sourceIndex to null and quote to an empty string; never invent citations. MCQ uses answerIndex; short_answer uses acceptedAnswers and empty options; ordering uses options as the shuffled values and orderedValues as the correct permutation; open formats use empty options/keys.";
-    // An item prompt's 8000-character cap is checked by `validate_candidate`;
-    // as a schema bound above 2000 it would void llama.cpp's whole grammar.
-    let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","minItems":slots.len(),"maxItems":slots.len(),"items":{"type":"object","additionalProperties":false,"required":["requirementIndex","prompt","explanation","options","answerIndex","acceptedAnswers","orderedValues","sourceIndex","quote","rubric"],"properties":{"requirementIndex":{"type":"integer","minimum":0,"maximum":request.requirements.len().saturating_sub(1)},"prompt":{"type":"string","minLength":8},"explanation":{"type":"string","minLength":8,"maxLength":1200},"options":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}},"answerIndex":{"type":"integer","minimum":0,"maximum":7},"acceptedAnswers":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}},"orderedValues":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":500}},"sourceIndex":if sources.is_empty() {serde_json::json!({"type":"null"})} else {serde_json::json!({"type":"integer","minimum":0,"maximum":sources.len()-1})},"rubric":crate::features::learning::teaching::rubric_schema(),"quote":{"type":"string","minLength":if sources.is_empty(){0}else{12},"maxLength":700}}}}}});
-    let output_tokens = (slots.len() * 1100 + 600).min(16_000);
-    let response = model_call::send(
-        llm,
-        model_call::structured(system, prompt.clone(), schema.clone(), output_tokens, "low"),
-        None,
-        Some(model_call::Deadline {
-            after: Duration::from_secs(120),
-            message: "Assessment authoring timed out.",
-        }),
-        "Assessment authoring request exceeds the model context window.",
-    )
-    .await?;
-    if ["length", "max_tokens", "incomplete", "content_filter"]
+    // Sources are searched in full; each request carries the passages its
+    // requirement retrieves, as many as its window holds.
+    let documents: Vec<LearningSourceDto> = sources
         .iter()
-        .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
-    {
-        return Err(AppError::InvalidInput(
-            "Assessment authoring output was incomplete.".into(),
-        ));
-    }
-    let raw = response.text;
-    let raw = crate::features::learning::teaching::review_and_repair(
-        llm,
-        system,
-        &prompt,
-        &schema,
-        raw,
-        output_tokens,
-    )
-    .await?;
-    if raw.chars().count() > 80_000 {
-        return Err(AppError::InvalidInput(
-            "Assessment authoring response is too large.".into(),
-        ));
-    }
-    let parsed: Response = serde_json::from_str(&raw).map_err(|_| {
-        AppError::InvalidInput("Assessment authoring returned malformed structured data.".into())
-    })?;
-    if parsed.items.len() != slots.len() {
-        return Err(AppError::InvalidInput(
-            "Assessment authoring did not satisfy the requested item count.".into(),
-        ));
+        .map(|source| LearningSourceDto {
+            id: source.version.id.clone(),
+            title: source.version.title.clone(),
+            url: None,
+            excerpt: source.full_text.clone(),
+            acquired_at: 0,
+        })
+        .collect();
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let mut items = Vec::new();
+    for (index, requirement) in request.requirements.iter().enumerate() {
+        let mut remaining = requirement.count;
+        while remaining > 0 {
+            // As many of this requirement's items as one request holds.
+            let mut count = remaining;
+            while count > 1
+                && Batch::new(request, outcomes, lessons, index, count, sources.len()).room(llm)
+                    == 0
+            {
+                count = count.div_ceil(2);
+            }
+            let batch = Batch::new(request, outcomes, lessons, index, count, sources.len());
+            items.extend(batch.author(llm, &collection, sources).await?);
+            remaining -= count;
+        }
     }
     let mut used = HashSet::new();
     let mut output = Vec::new();
     let mut coverage = vec![0usize; request.requirements.len()];
-    for item in parsed.items {
+    for item in items {
         let Some(requirement) = request.requirements.get(item.requirement_index) else {
             return Err(AppError::InvalidInput(
                 "Assessment authoring referenced invalid coverage.".into(),
