@@ -85,7 +85,11 @@ struct StubPreview;
 
 #[async_trait]
 impl DocumentContentPreviewPort for StubPreview {
-    async fn preview(&self, document_id: &str) -> Result<Option<RepresentativeDoc>> {
+    async fn preview(
+        &self,
+        document_id: &str,
+        _max_chars: usize,
+    ) -> Result<Option<RepresentativeDoc>> {
         Ok(Some(RepresentativeDoc {
             title: format!("doc-title-{}", document_id),
             content_preview: format!("Preview content for {}", document_id),

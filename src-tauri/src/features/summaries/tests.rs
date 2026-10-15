@@ -211,6 +211,7 @@ fn source_with_sections(sections: usize) -> SummarySource {
                 text: format!("Section {i} explains a procedure in detail."),
             })
             .collect(),
+        unsectioned: String::new(),
     }
 }
 
@@ -448,35 +449,33 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
         .contains("Key topics: preflight, engines"));
 }
 
-/// The source text is the call's evidence: the model reads its opening, as
-/// much as the window and the ceiling allow, ending on a whole passage, and
-/// the response contract still comes last.
+/// A document too long for one call used to be described from its opening
+/// (3,000 tokens of it). It is now read whole: part by part, in order, and
+/// then summarized from the parts' summaries, the contract last every time.
 #[tokio::test]
-async fn a_long_document_is_summarized_from_its_opening_with_the_contract_last() {
+async fn a_long_document_is_summarized_from_all_of_it_part_by_part() {
     let pool = pool_with_document().await;
     let mut source = source_with_sections(0);
-    source.body = (0..5_000)
+    source.body = (0..12_000)
         .map(|i| format!("w{i}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let (use_case, prompts) = use_case(
-        true,
-        Some(source),
-        &[r#"{"summary":"Three sentences.","topics":["a"]}"#],
-        &pool,
-        memory_index(),
-    );
+    let responses: Vec<&str> = vec![r#"{"summary":"Three sentences.","topics":["a"]}"#; 20];
+    let (use_case, prompts) = use_case(true, Some(source), &responses, &pool, memory_index());
 
     assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
 
-    let prompt = prompts.lock()[0].clone();
-    assert!(
-        prompt.contains("Beginning of the document:\nw0 w1 w2"),
-        "{prompt:.200}"
-    );
-    assert!(!prompt.contains("w4999"));
-    assert!(prompt.split_whitespace().count() < 3_200);
-    assert!(prompt.ends_with("No prose before or after it."));
+    let prompts = prompts.lock().clone();
+    assert!(prompts.len() >= 3, "{} calls", prompts.len());
+    assert!(prompts[0].contains("part 1 of"), "{:.300}", prompts[0]);
+    assert!(prompts[0].contains("Document text:\nw0 w1 w2"));
+    assert!(prompts.iter().any(|prompt| prompt.contains("w11999")));
+    let last = prompts.last().unwrap();
+    assert!(last.contains("Summaries of the text's parts, in order:"));
+    assert!(last.contains("Part 1: Three sentences."));
+    assert!(prompts
+        .iter()
+        .all(|prompt| prompt.ends_with("No prose before or after it.")));
 }
 
 #[tokio::test]
@@ -494,11 +493,12 @@ async fn too_few_sections_means_only_a_document_summary() {
     assert_eq!(prompts.lock().len(), 1);
 }
 
+/// Sections past the twelfth used to go unsummarized. Every one is.
 #[tokio::test]
-async fn section_summaries_are_capped_per_document() {
+async fn every_section_is_summarized() {
     let pool = pool_with_document().await;
     let index = memory_index();
-    let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 40];
+    let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 41];
     let (use_case, _) = use_case(
         true,
         Some(source_with_sections(40)),
@@ -507,10 +507,7 @@ async fn section_summaries_are_capped_per_document() {
         Arc::clone(&index),
     );
     let written = use_case.execute("doc-1").await.unwrap();
-    assert_eq!(
-        written,
-        1 + crate::features::summaries::prompt::MAX_SECTION_SUMMARIES
-    );
+    assert_eq!(written, 1 + 40);
 }
 
 #[tokio::test]
@@ -553,6 +550,7 @@ async fn empty_source_is_complete_but_missing_model_is_retryable() {
             body: "   ".into(),
             cluster_label: None,
             sections: Vec::new(),
+            unsectioned: String::new(),
         }),
         &[r#"{"summary":"S."}"#],
         &pool,
@@ -800,4 +798,116 @@ async fn forgetting_a_document_drops_its_rows_and_its_vectors() {
 
     // Forgetting a document with nothing stored is a no-op, not an error.
     generator.forget("doc-2").await.unwrap();
+}
+
+/// A 300-section manual was hundreds of calls in one go, holding the one
+/// model slot for hours. A run makes its share of calls and stops; the next
+/// resumes from the calls already finished, repeating none, and publishes
+/// once every summary is in.
+#[tokio::test]
+async fn a_long_job_runs_in_shares_and_resumes_where_it_stopped() {
+    use crate::features::summaries::use_cases::generate_summaries::{SummaryRun, CALLS_PER_RUN};
+    let pool = pool_with_document().await;
+    let index = memory_index();
+    let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 41];
+    let (use_case, prompts) = use_case(
+        true,
+        Some(source_with_sections(40)),
+        &responses,
+        &pool,
+        Arc::clone(&index),
+    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    assert_eq!(
+        use_case.run("doc-1", "rev-1", &cancel).await.unwrap(),
+        SummaryRun::Paused
+    );
+    assert_eq!(prompts.lock().len(), CALLS_PER_RUN);
+    assert_eq!(index.count(), 0, "nothing is published part way");
+    assert_eq!(
+        use_case.run("doc-1", "rev-1", &cancel).await.unwrap(),
+        SummaryRun::Paused
+    );
+    assert_eq!(
+        use_case.run("doc-1", "rev-1", &cancel).await.unwrap(),
+        SummaryRun::Published(41)
+    );
+    assert_eq!(prompts.lock().len(), 41, "no call was repeated");
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM summary_work_progress")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+/// A re-indexed document is a new revision: what a run finished over the
+/// old text is not reused for the new.
+#[tokio::test]
+async fn a_new_revision_does_not_reuse_the_old_ones_calls() {
+    use crate::features::summaries::use_cases::generate_summaries::{SummaryRun, CALLS_PER_RUN};
+    let pool = pool_with_document().await;
+    let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 2 * CALLS_PER_RUN];
+    let (use_case, prompts) = use_case(
+        true,
+        Some(source_with_sections(40)),
+        &responses,
+        &pool,
+        memory_index(),
+    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+    assert_eq!(
+        use_case.run("doc-1", "old", &cancel).await.unwrap(),
+        SummaryRun::Paused
+    );
+    assert_eq!(
+        use_case.run("doc-1", "new", &cancel).await.unwrap(),
+        SummaryRun::Paused
+    );
+    assert_eq!(prompts.lock().len(), 2 * CALLS_PER_RUN);
+    let first_new = prompts.lock()[CALLS_PER_RUN].clone();
+    assert_eq!(first_new, prompts.lock()[0], "the new revision starts over");
+}
+
+/// A long document with sections used to be read twice: whole, in parts, for
+/// its own summary, and again section by section. The sections are read once
+/// and the document is described from their summaries.
+#[tokio::test]
+async fn a_long_sectioned_document_is_read_once() {
+    let pool = pool_with_document().await;
+    let mut source = source_with_sections(4);
+    source.body = (0..12_000)
+        .map(|i| format!("w{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    source.unsectioned = "A foreword under no heading.".into();
+    let responses: Vec<&str> = vec![r#"{"summary":"Section said this."}"#; 5];
+    let (use_case, prompts) = use_case(true, Some(source), &responses, &pool, memory_index());
+
+    assert_eq!(use_case.execute("doc-1").await.unwrap(), 5);
+    let prompts = prompts.lock().clone();
+    assert_eq!(prompts.len(), 5, "four sections and the document");
+    assert!(prompts.iter().all(|prompt| !prompt.contains("w11999")));
+    let document = prompts.last().unwrap();
+    assert!(document.contains(crate::features::summaries::prompt::SECTION_SUMMARIES_HEADING));
+    assert!(document.contains("Section Section 3: Section said this."));
+    assert!(document.contains("A foreword under no heading."));
+}
+
+/// A run whose every call failed paused and was requeued at once, so a
+/// failing model was asked again and again with no pause. It is an error,
+/// and the queue waits before the next try.
+#[tokio::test]
+async fn a_run_with_no_usable_call_is_an_error_not_progress() {
+    let pool = pool_with_document().await;
+    let responses: Vec<&str> = vec!["not a summary"; 20];
+    let (use_case, _) = use_case(
+        true,
+        Some(source_with_sections(40)),
+        &responses,
+        &pool,
+        memory_index(),
+    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+    assert!(use_case.run("doc-1", "rev", &cancel).await.is_err());
 }

@@ -15,7 +15,7 @@ use super::call_labels::{
 use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
-use super::tool_sources::collect_tool_sources;
+use super::tool_sources::{collect_tool_sources, render_with_citations};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
     tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
@@ -29,8 +29,8 @@ use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, ExplorerTurn, FetchUrlContentOutput, FunctionCall, FunctionResult,
 };
 use crate::features::conversation::chat::retrieval::{
-    assign_citation_ids, deduplicate_sources, fetched_page_text_room, format_tool_result,
-    merge_tool_sources, record_tool_document_references,
+    assign_citation_ids, deduplicate_sources, document_page_room, fetched_page_text_room,
+    format_tool_result, merge_tool_sources, record_tool_document_references,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
@@ -305,13 +305,13 @@ impl<'a> ToolCalls<'a> {
     ) -> Planned<'a> {
         timings.tool_call_count = timings.tool_call_count.saturating_add(1);
         // What is left of the window, shared between the calls this round
-        // still has to answer. The configured cap alone let one round of page
-        // fetches outgrow a small model's entire context.
+        // still has to answer. A fixed cap let one round of page fetches
+        // outgrow a small model's entire context, and cut every result on a
+        // large one; the window alone decides now.
         let allowance = tool_result_allowance(
             self.scope.window_chars,
             chars_in_flight(input) + self.scope.tool_schema_chars + reserved,
             calls_left,
-            self.scope.tool_output_settings.max_chars as usize,
         );
         let answered = |output: String| Planned::Answered {
             id: call.id.clone(),
@@ -346,6 +346,7 @@ impl<'a> ToolCalls<'a> {
             );
             return answered("Requested tool is unavailable".into());
         }
+        let mut reread_from = None;
         if let Some(url) = fetch_memory::fetch_target(&call.arguments) {
             // A URL this turn already failed on costs a request to learn
             // nothing. Answer it from memory so the round can still spend its
@@ -369,20 +370,31 @@ impl<'a> ToolCalls<'a> {
             let condensed = self.condensed_pages.remove(&identity(url));
             // A page this turn already read is answered from memory: no
             // request, no politeness delay, and nothing re-sent that the
-            // model has.
-            if let Some(recall) = (!condensed)
-                .then(|| self.fetch_memory.recall(url))
-                .flatten()
-            {
-                info!(
-                    requested_function = call.name.as_str(),
-                    resolved_function = tool,
-                    url,
-                    already_whole = matches!(recall, Recall::AlreadyWhole { .. }),
-                    "Answered a repeat page request from this turn's memory"
-                );
-                timings.tool_success_count = timings.tool_success_count.saturating_add(1);
-                return answered(recalled_page_notice(url, &recall));
+            // model has. A page whose text memory no longer holds is read
+            // again from the archive, from where the model's copy stops.
+            let recall = (!condensed)
+                .then(|| {
+                    self.fetch_memory.recall(
+                        url,
+                        fetch_memory::fetch_offset(&call.arguments),
+                        fetched_page_text_room(allowance),
+                    )
+                })
+                .flatten();
+            match recall {
+                Some(Recall::Reread { offset }) => reread_from = Some(offset),
+                Some(recall) => {
+                    info!(
+                        requested_function = call.name.as_str(),
+                        resolved_function = tool,
+                        url,
+                        already_whole = matches!(recall, Recall::AlreadyWhole { .. }),
+                        "Answered a repeat page request from this turn's memory"
+                    );
+                    timings.tool_success_count = timings.tool_success_count.saturating_add(1);
+                    return answered(recalled_page_notice(url, &recall));
+                }
+                None => {}
             }
         }
         if let Some(query) = call
@@ -406,11 +418,19 @@ impl<'a> ToolCalls<'a> {
             resolved_function = tool,
             "Executing tool call from LLM"
         );
+        let mut arguments = if tool == "get_document" {
+            document_part_sized_to(&call.arguments, allowance)
+        } else {
+            call.arguments.clone()
+        };
+        if let (Some(offset), Some(object)) = (reread_from, arguments.as_object_mut()) {
+            object.insert("offset".into(), serde_json::json!(offset));
+        }
         Planned::Run(Pending {
             id: call.id.clone(),
             name: call.name.clone(),
             tool: tool.to_string(),
-            arguments: call.arguments.clone(),
+            arguments,
             allowance,
             step,
         })
@@ -481,6 +501,13 @@ impl<'a> ToolCalls<'a> {
                 // A char allowance used as a byte ceiling is conservative in
                 // the safe direction.
                 max_response_bytes: pending.allowance,
+                // The turn's history reads together come to at most one
+                // window, however many rounds ask.
+                turn_response_bytes: if scope.window_chars == 0 {
+                    history_tools::HistoryToolBudget::default().turn_response_bytes
+                } else {
+                    scope.window_chars
+                },
                 deadline: Some(scope.clock.deadline()),
             };
             // The conversation id comes from the turn, and the scope has no
@@ -612,27 +639,17 @@ impl<'a> ToolCalls<'a> {
                 warn!(%error, "Failed to update retrieval trace after tool search");
             }
         }
-        let round_output_settings = ToolOutputSettingsDto {
-            max_chars: u32::try_from(allowance).unwrap_or(u32::MAX),
-            ..settings.clone()
-        };
-        let mut result_text = format_tool_result(
-            tool,
-            &result,
-            self.scope.highlight_terms,
-            &round_output_settings,
-        );
-        for source in sources
+        let page_offset = fetch_memory::fetch_offset(&arguments).unwrap_or(0);
+        // The citation numbers this result's sources take come out of the
+        // same allowance as the result, so the two together fit it.
+        let citable: Vec<(u32, &SourceDto)> = sources
             .iter()
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
-        {
-            if let Some(number) = source.citation_id {
-                result_text.push_str(&format!(
-                    "\n\nCitable passage [{number}] — {}\n{}",
-                    source.file_name, source.content
-                ));
-            }
-        }
+            .filter_map(|source| source.citation_id.map(|number| (number, source)))
+            .collect();
+        let result_text = render_with_citations(&citable, allowance, |room| {
+            format_tool_result(tool, &result, settings, room, page_offset)
+        });
         let result_text = self
             .document_evidence
             .render(tool, &result, result_text, |excerpt| {
@@ -666,12 +683,15 @@ impl<'a> ToolCalls<'a> {
                 .clone()
                 .and_then(|data| serde_json::from_value::<FetchUrlContentOutput>(data).ok());
             if let (Some(url), Some(page)) = (url, page) {
-                let room = fetched_page_text_room(allowance);
                 let text = page.content.trim();
-                let delivery = if text.chars().count() <= room {
-                    Delivery::Whole
-                } else {
-                    Delivery::Clipped { shown_chars: room }
+                // The part this result showed; a later request without an
+                // offset carries on from the first part not yet shown.
+                let total = text.chars().count();
+                let delivery = Delivery::Part {
+                    start: page_offset.min(total),
+                    end: page_offset
+                        .saturating_add(fetched_page_text_room(allowance))
+                        .min(total),
                 };
                 self.fetch_memory.record_page(url, text, delivery);
                 self.fetched.push(url.to_string());
@@ -706,6 +726,28 @@ impl<'a> ToolCalls<'a> {
         );
         Ok(())
     }
+}
+
+/// A `get_document` call whose part is sized to this call's allowance, so the
+/// part the tool returns is shown whole. Parts are addressed by character
+/// offset and each result names where the next starts, so parts of different
+/// sizes neither overlap nor skip text. A model asking for less gets less.
+fn document_part_sized_to(arguments: &serde_json::Value, allowance: usize) -> serde_json::Value {
+    let mut arguments = arguments.clone();
+    let room = document_page_room(allowance).max(1);
+    let asked = arguments
+        .get("max_content_length")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|asked| usize::try_from(asked).ok())
+        .filter(|asked| *asked > 0)
+        .unwrap_or(usize::MAX);
+    if let Some(object) = arguments.as_object_mut() {
+        object.insert(
+            "max_content_length".into(),
+            serde_json::json!(asked.min(room)),
+        );
+    }
+    arguments
 }
 
 #[cfg(test)]

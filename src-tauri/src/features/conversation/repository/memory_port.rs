@@ -82,8 +82,8 @@ impl ConversationMemoryPort for ConversationRepository {
             .await
     }
 
-    async fn forgotten_labels(&self, conversation_id: &str, limit: usize) -> Result<Vec<String>> {
-        self.memory_forgotten_labels(conversation_id, limit).await
+    async fn forgotten_labels(&self, conversation_id: &str) -> Result<Vec<String>> {
+        self.memory_forgotten_labels(conversation_id).await
     }
 
     async fn commit_memory(

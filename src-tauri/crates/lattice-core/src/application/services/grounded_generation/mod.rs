@@ -192,6 +192,8 @@ pub struct GroundedOutput {
     pub finish_reason: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// How the provider read the prompt, when it says.
+    pub prefill: Option<crate::application::ports::llm_port::PrefillTiming>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -231,6 +233,28 @@ pub fn evidence_room(
     request: &GroundedRequest,
 ) -> Result<usize, GroundedGenerationError> {
     Ok(plan(llm, request)?.budget.total())
+}
+
+/// Passage tokens the chunker aims for (the embedding input policy's
+/// retrieval target). Used only when the library's passages cannot be
+/// measured, to size how deep a search reads.
+pub const ASSUMED_PASSAGE_TOKENS: usize = 480;
+
+/// How many passages a search reads: as many as `evidence_tokens` can carry
+/// at what one of this library's passages measures, so a large window is
+/// handed enough to fill it and a small one is not handed a pile it must
+/// throw away. Rounded up: the prompt's best-first fill, not this count,
+/// decides what goes in.
+pub fn retrieval_depth(
+    evidence_tokens: usize,
+    passage_chars: Option<usize>,
+    chars_per_token: f64,
+) -> usize {
+    let passage_tokens = passage_chars
+        .map(|chars| crate::application::ports::llm_port::tokens_for_chars(chars, chars_per_token))
+        .unwrap_or(ASSUMED_PASSAGE_TOKENS)
+        .max(1);
+    evidence_tokens.div_ceil(passage_tokens).max(1)
 }
 
 /// The blank line written between two passages.
@@ -526,6 +550,7 @@ async fn run(
         finish_reason: response.finish_reason,
         input_tokens: response.input_tokens,
         output_tokens: response.output_tokens,
+        prefill: response.prefill,
     })
 }
 

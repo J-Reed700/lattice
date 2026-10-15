@@ -717,5 +717,11 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
                 })
             })
             .and_then(lattice_core::application::ports::llm_port::first_token_logprobs),
+        prefill: value.get("timings").and_then(|timings| {
+            Some(lattice_core::application::ports::llm_port::PrefillTiming {
+                tokens: timings.get("prompt_n")?.as_u64()?,
+                seconds: timings.get("prompt_ms")?.as_f64()? / 1000.0,
+            })
+        }),
     })
 }

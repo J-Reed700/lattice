@@ -251,8 +251,56 @@ pub fn floor_char_boundary(text: &str, index: usize) -> usize {
         .unwrap_or(0)
 }
 
+/// `text` in consecutive parts of at most `max_chars` characters that
+/// together are exactly `text`: for material too long for one model call,
+/// which is read in parts rather than cut. A part ends at a line break, or
+/// failing that a space, in its last fifth where there is one, so a part
+/// rarely ends mid-word.
+pub fn split_into_parts(text: &str, max_chars: usize) -> Vec<&str> {
+    let size = max_chars.max(1);
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let end = rest
+            .char_indices()
+            .nth(size)
+            .map_or(rest.len(), |(offset, _)| offset);
+        let mut cut = end;
+        if end < rest.len() {
+            let floor = rest
+                .char_indices()
+                .nth(size - size / 5)
+                .map_or(end, |(offset, _)| offset)
+                .min(end);
+            let window = &rest[floor..end];
+            if let Some(found) = window.rfind('\n').or_else(|| window.rfind(' ')) {
+                cut = floor + found + 1;
+            }
+        }
+        parts.push(&rest[..cut]);
+        rest = &rest[cut..];
+    }
+    parts
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parts_are_bounded_lossless_and_break_between_words() {
+        let text: String = (0..500).map(|index| format!("word{index} ")).collect();
+        let parts = super::split_into_parts(&text, 100);
+        assert!(parts.len() > 1);
+        assert_eq!(parts.concat(), text);
+        assert!(parts.iter().all(|part| part.chars().count() <= 100));
+        assert!(parts[..parts.len() - 1]
+            .iter()
+            .all(|part| part.ends_with(' ')));
+        assert_eq!(super::split_into_parts("short", 100), vec!["short"]);
+        assert!(super::split_into_parts("", 100).is_empty());
+        // No break to use: a hard cut on a character boundary.
+        assert_eq!(super::split_into_parts("時時時時", 3), vec!["時時時", "時"]);
+    }
+
     #[test]
     fn floor_char_boundary_never_splits_a_character() {
         let text = "ab時cd"; // '時' spans bytes 2..5

@@ -60,6 +60,7 @@ fn make_caps(
     SystemCapabilities {
         total_ram_gb: ram_gb,
         available_ram_gb: ram_gb,
+        available_memory_bytes: None,
         gpu: gpu_vendor.map(|vendor| GPUInfo {
             vendor,
             name: format!("{:?} test GPU", vendor),
@@ -1317,29 +1318,113 @@ fn plain_9b() -> GgufModelInfo {
 
 const PLAIN_9B_BYTES: u64 = 5_629_109_248;
 
-/// The machine that reported the bug: an M3 Max with 28753 MiB of unified
-/// memory, which ran an 8192 window because nothing had looked.
-#[test]
-fn a_large_gpu_gets_the_ceiling_not_the_trained_length() {
-    let chosen = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
+const GIB: u64 = 1024 * 1024 * 1024;
 
-    assert_eq!(chosen, AUTO_MAX_CONTEXT_SIZE);
-    assert!(chosen > DEFAULT_GPU_CONTEXT_SIZE, "the old flat default");
+/// A Mac with `available_gb` available now out of `total_gb` installed.
+fn mac(available_gb: u64, total_gb: u64) -> Option<SharedMemory> {
+    Some(SharedMemory {
+        available_bytes: available_gb * GIB,
+        total_bytes: total_gb * GIB,
+    })
 }
 
-/// The trained length is a ceiling, never a target. Asking a 262144-trained
-/// model for 262144 would want 34 GB of KV cache.
-#[test]
-fn the_trained_length_is_never_treated_as_achievable() {
-    let roomy = context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
+/// What the sizing before growth chose for this machine and model.
+fn pre_growth(vram_gb: f64, weights: u64, info: &GgufModelInfo) -> u32 {
+    let ceiling = info.trained_context_length.unwrap_or(32_768).min(32_768);
+    let usable = (vram_gb * VRAM_USABLE_FRACTION * GIB as f64) as u64;
+    let spare = usable - weights;
+    (1..=ceiling / 1024)
+        .rev()
+        .map(|thousands| thousands * 1024)
+        .find(|&tokens| info.kv_cache_bytes(tokens).unwrap() <= spare)
+        .unwrap_or(0)
+        .max(AUTO_MIN_CONTEXT_SIZE.min(ceiling))
+}
 
-    assert_eq!(roomy, AUTO_MAX_CONTEXT_SIZE);
+/// The M3 Max this was found on: 36 GB, 23 GB of swap still allocated and
+/// little memory available. Subtracting swap in use dropped it to the 4,096
+/// minimum for good, since macOS keeps swap long after the pressure is gone.
+/// It gets what the sizing before growth gave it: the 32,768 its share holds.
+#[test]
+fn a_busy_mac_keeps_what_the_old_sizing_gave_it() {
+    let busy = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), mac(4, 36)).unwrap();
+
+    assert_eq!(busy, pre_growth(28.1, PLAIN_9B_BYTES, &plain_9b()));
+    assert_eq!(busy, 32_768);
+}
+
+/// With plenty available the window grows past 32,768, while its cache fits
+/// what is available less the headroom and weights, and within the share.
+#[test]
+fn a_mac_with_memory_available_grows_past_the_old_ceiling() {
+    let roomy = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), mac(30, 36)).unwrap();
+    let share_only = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
+
+    assert!(roomy > 32_768, "{roomy}");
+    assert_eq!(roomy, share_only, "the share is the ceiling here");
+    let usable = (28.1 * VRAM_USABLE_FRACTION * GIB as f64) as u64;
+    assert!(u64::from(roomy) * 131_072 + PLAIN_9B_BYTES <= usable);
+
+    // Less available: it grows only as far as what is available holds.
+    let some = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), mac(16, 36)).unwrap();
+    let spare = 16 * GIB - swap_headroom_bytes(36 * GIB) - PLAIN_9B_BYTES;
+    assert!(some > 32_768 && some < roomy, "{some}");
+    assert!(u64::from(some) * 131_072 <= spare);
+    assert!(u64::from(some + 1024) * 131_072 > spare);
+}
+
+/// However much is available, the trained length is never passed.
+#[test]
+fn growth_never_passes_the_trained_length() {
+    let short = GgufModelInfo {
+        trained_context_length: Some(49_152),
+        ..plain_9b()
+    };
+    assert_eq!(
+        context_size_for(80.0, PLAIN_9B_BYTES, 0, &short, mac(120, 128)),
+        Some(49_152)
+    );
+    assert_eq!(
+        context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b(), mac(120, 128)),
+        Some(262_144)
+    );
+}
+
+/// The headroom kept back grows with the machine and never drops under 2 GiB.
+#[test]
+fn the_swap_headroom_is_a_tenth_of_ram_and_at_least_two_gib() {
+    assert_eq!(swap_headroom_bytes(8 * GIB), 2 * GIB);
+    assert_eq!(swap_headroom_bytes(64 * GIB), 64 * GIB / 10);
+}
+
+/// The trained length is the ceiling, never passed however much memory is
+/// free. Below it, memory decides.
+#[test]
+fn the_trained_length_is_the_ceiling() {
+    let roomy = context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
+
+    assert_eq!(roomy, 262_144);
+}
+
+/// A header without its trained length gets what the sizing before growth
+/// gave it, which stopped at 32,768 for want of one, and does not grow.
+#[test]
+fn an_unknown_trained_length_keeps_the_old_sizing_and_does_not_grow() {
+    let info = GgufModelInfo {
+        trained_context_length: None,
+        ..plain_9b()
+    };
+
+    assert_eq!(
+        context_size_for(28.1, PLAIN_9B_BYTES, 0, &info, mac(30, 36)),
+        Some(32_768)
+    );
 }
 
 /// A mid-sized card must come back with a window its memory can hold.
 #[test]
 fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
-    let chosen = context_size_for(12.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
+    let chosen = context_size_for(12.0, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
 
     let budget = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
     let cache = u64::from(chosen) * 131_072;
@@ -1347,7 +1432,7 @@ fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
         cache + PLAIN_9B_BYTES <= budget,
         "{chosen} tokens needs {cache} bytes on top of the weights"
     );
-    assert!(chosen < AUTO_MAX_CONTEXT_SIZE, "and below the ceiling");
+    assert!(chosen < 262_144, "and below the trained length");
 }
 
 /// A card that can barely hold the weights still gets a loadable window.
@@ -1355,7 +1440,7 @@ fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
 /// guaranteed not to fit.
 #[test]
 fn a_cramped_gpu_gets_the_floor_rather_than_the_larger_default() {
-    let chosen = context_size_for(8.0, PLAIN_9B_BYTES, 0, &plain_9b()).unwrap();
+    let chosen = context_size_for(8.0, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
 
     assert_eq!(chosen, AUTO_MIN_CONTEXT_SIZE);
     assert!(chosen < DEFAULT_GPU_CONTEXT_SIZE);
@@ -1369,7 +1454,10 @@ fn a_short_trained_model_caps_at_what_it_was_trained_for() {
         ..plain_9b()
     };
 
-    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info), Some(4096));
+    assert_eq!(
+        context_size_for(28.1, PLAIN_9B_BYTES, 0, &info, None),
+        Some(4096)
+    );
 }
 
 /// The 9B (5.6 GB) on an 8 GB Mac: the weights alone exceed the usable
@@ -1378,7 +1466,7 @@ fn a_short_trained_model_caps_at_what_it_was_trained_for() {
 #[test]
 fn weights_past_the_usable_share_get_the_floor_not_the_flat_default() {
     assert_eq!(
-        context_size_for(5.3, PLAIN_9B_BYTES, 0, &plain_9b()),
+        context_size_for(5.3, PLAIN_9B_BYTES, 0, &plain_9b(), None),
         Some(AUTO_MIN_CONTEXT_SIZE)
     );
 }
@@ -1392,11 +1480,14 @@ fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
     let vram = 10.7;
     let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
 
-    let alone = context_size_for(vram, UTILITY_BYTES, 0, &plain_9b()).unwrap();
-    assert_eq!(alone, AUTO_MAX_CONTEXT_SIZE, "the whole card to itself");
+    let alone = context_size_for(vram, UTILITY_BYTES, 0, &plain_9b(), None).unwrap();
+    assert!(
+        UTILITY_BYTES + u64::from(alone) * 131_072 <= budget,
+        "the whole card to itself, and no more"
+    );
 
     let small_chat = 3_000_000_000;
-    let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &plain_9b()).unwrap();
+    let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &plain_9b(), None).unwrap();
     let cache = u64::from(beside) * 131_072;
     assert!(beside < alone);
     assert!(
@@ -1406,7 +1497,7 @@ fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
 
     let chat_9b_at_8k = PLAIN_9B_BYTES + 8192 * 131_072;
     assert_eq!(
-        context_size_for(vram, UTILITY_BYTES, chat_9b_at_8k, &plain_9b()),
+        context_size_for(vram, UTILITY_BYTES, chat_9b_at_8k, &plain_9b(), None),
         Some(AUTO_MIN_CONTEXT_SIZE),
         "no room left beside the 9B: the floor"
     );
@@ -1436,8 +1527,8 @@ fn a_qwen_hybrid_gets_four_times_the_window_its_full_attention_layers_allow() {
         ..qwen35_9b()
     };
 
-    let before = context_size_for(vram, QWEN35_9B_BYTES, 0, &every_layer).unwrap();
-    let after = context_size_for(vram, QWEN35_9B_BYTES, 0, &qwen35_9b()).unwrap();
+    let before = context_size_for(vram, QWEN35_9B_BYTES, 0, &every_layer, None).unwrap();
+    let after = context_size_for(vram, QWEN35_9B_BYTES, 0, &qwen35_9b(), None).unwrap();
 
     assert_eq!(before, 6144);
     assert_eq!(after, 24_576);
@@ -1457,11 +1548,11 @@ fn a_qwen_hybrid_clears_the_floor_where_counting_every_layer_did_not() {
     };
 
     assert_eq!(
-        context_size_for(8.0, QWEN35_9B_BYTES, 0, &every_layer),
+        context_size_for(8.0, QWEN35_9B_BYTES, 0, &every_layer, None),
         Some(AUTO_MIN_CONTEXT_SIZE)
     );
     assert_eq!(
-        context_size_for(8.0, QWEN35_9B_BYTES, 0, &qwen35_9b()),
+        context_size_for(8.0, QWEN35_9B_BYTES, 0, &qwen35_9b(), None),
         Some(9216)
     );
 }
@@ -1514,10 +1605,16 @@ fn gemma_4_sliding_layers_are_charged_their_window_not_the_whole_context() {
     };
 
     assert_eq!(
-        context_size_for(12.0, GEMMA4_12B_BYTES, 0, &what_the_reader_used_to_see),
+        context_size_for(
+            12.0,
+            GEMMA4_12B_BYTES,
+            0,
+            &what_the_reader_used_to_see,
+            None
+        ),
         Some(AUTO_MIN_CONTEXT_SIZE)
     );
-    let chosen = context_size_for(12.0, GEMMA4_12B_BYTES, 0, &gemma4_12b()).unwrap();
+    let chosen = context_size_for(12.0, GEMMA4_12B_BYTES, 0, &gemma4_12b(), None).unwrap();
     assert_eq!(chosen, 23_552);
 
     let spare = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64 - GEMMA4_12B_BYTES;
@@ -1538,7 +1635,7 @@ fn an_unreadable_model_declines_to_choose() {
         ..Default::default()
     };
 
-    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info), None);
+    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info, None), None);
 }
 
 /// A missing file is the common case in tests and on a broken install; the

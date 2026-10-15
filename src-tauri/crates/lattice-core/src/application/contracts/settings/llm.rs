@@ -240,14 +240,10 @@ fn default_verification_top_k() -> i32 {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolOutputSettingsDto {
-    /// Maximum characters to include for a tool result in the LLM context
-    pub max_chars: u32,
-
-    /// Excerpt length for document/tool content
+    /// Length of the excerpt a source card shows for a document or tool
+    /// result. Display only: what a tool result carries into the model's
+    /// context is decided by the window (see the tool loop's allowance).
     pub excerpt_chars: u32,
-
-    /// Maximum search results to summarize from a tool call
-    pub max_results: u32,
 
     /// Maximum highlight terms extracted from the user query
     pub highlight_terms_max: u32,
@@ -462,7 +458,7 @@ impl Default for LLMPromptSettingsDto {
         Self {
             system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.".to_string(),
             greeting_prompt_template: default_greeting_prompt_template(),
-            rag_prompt_template: "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:".to_string(),
+            rag_prompt_template: "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:".to_string(),
             no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),
         }
     }
@@ -485,9 +481,7 @@ impl Default for LLMVerificationSettingsDto {
 impl Default for ToolOutputSettingsDto {
     fn default() -> Self {
         Self {
-            max_chars: 50000,
             excerpt_chars: 4000,
-            max_results: 12,
             highlight_terms_max: 8,
             templates: ToolOutputTemplatesDto::default(),
         }

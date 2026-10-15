@@ -73,16 +73,15 @@ impl ModelCapacity {
 /// beats a prompt that is silently nothing but the system prompt.
 pub const MIN_USABLE_CAPACITY: usize = 1024;
 
-/// Upper bounds for each pool, as fractions of `available` (§10.2).
-const MANDATORY_CAP: usize = 4096;
+/// Each pool's share of `available` (§10.2). Shares only, with no absolute
+/// ceiling: a larger window carries a longer summary and more recalled turns,
+/// not the same few thousand tokens an 8K model gets.
 const MANDATORY_FRACTION: f64 = 0.25;
-const SUMMARY_CAP: usize = 1536;
 const SUMMARY_FRACTION: f64 = 0.10;
-const RECALL_CAP: usize = 2048;
 const RECALL_FRACTION: f64 = 0.15;
 const RECENT_FRACTION: f64 = 0.35;
-/// Ceiling on mandatory memory after borrowing unused optional allocation.
-const MANDATORY_BORROW_CAP: usize = 8192;
+/// Share of `available` mandatory memory may reach by borrowing unused
+/// optional allocation.
 const MANDATORY_BORROW_FRACTION: f64 = 0.50;
 
 /// Ceiling on the default generation reservation. A reasoning model spends
@@ -246,18 +245,18 @@ impl BudgetAllocation {
         }
         let available = input_budget - fixed;
 
-        let fraction = |value: f64, cap: usize| ((available as f64 * value) as usize).min(cap);
+        let fraction = |value: f64| (available as f64 * value) as usize;
         let (mandatory_memory, summary, recall, recent_history) = match request.history {
             // Without a ledger there is nothing to put in the memory pools.
             HistoryCharge::Carried(_) => (0, 0, 0, 0),
             HistoryCharge::Reserved | HistoryCharge::Measured(_) => (
-                fraction(MANDATORY_FRACTION, MANDATORY_CAP),
-                fraction(SUMMARY_FRACTION, SUMMARY_CAP),
-                fraction(RECALL_FRACTION, RECALL_CAP),
-                (available as f64 * RECENT_FRACTION) as usize,
+                fraction(MANDATORY_FRACTION),
+                fraction(SUMMARY_FRACTION),
+                fraction(RECALL_FRACTION),
+                fraction(RECENT_FRACTION),
             ),
         };
-        // Saturating because the four pools are each capped and cannot exceed
+        // Saturating because the four shares sum below one and cannot exceed
         // `available` together, but a future tuning change must not be able to
         // wrap this.
         let history_pools = mandatory_memory
@@ -272,9 +271,7 @@ impl BudgetAllocation {
         };
         let evidence = available - history_charged;
 
-        let mandatory_borrow_ceiling = ((available as f64 * MANDATORY_BORROW_FRACTION) as usize)
-            .min(MANDATORY_BORROW_CAP)
-            .max(mandatory_memory);
+        let mandatory_borrow_ceiling = fraction(MANDATORY_BORROW_FRACTION).max(mandatory_memory);
 
         let allocation = Self {
             capacity: total,
@@ -336,7 +333,6 @@ pub struct EvidenceShare {
     fraction: f64,
     /// Kept while the remaining room can still hold it.
     floor: usize,
-    cap: usize,
 }
 
 impl EvidenceShare {
@@ -347,28 +343,25 @@ impl EvidenceShare {
     pub const ATTACHMENTS: Self = Self {
         fraction: 0.6,
         floor: 0,
-        cap: usize::MAX,
     };
-    /// The folder an Explorer conversation reads beside the chat: enough to
-    /// show the open file on a small local model without crowding out the
-    /// question and its history.
+    /// The folder an Explorer conversation reads beside the chat: a quarter
+    /// of what is left, so the open file shows on a small local model without
+    /// crowding out the question and its history, and grows with the window.
     pub const FOLDER: Self = Self {
         fraction: 0.25,
         floor: 500,
-        cap: 8_000,
     };
-    /// Passages earlier turns cited, recalled for this one.
+    /// Passages earlier turns cited, recalled for this one: a quarter of what
+    /// is left, however large the window.
     pub const PRIOR_EVIDENCE: Self = Self {
         fraction: 0.25,
         floor: 0,
-        cap: 4_000,
     };
     /// Fetched web pages. The rest stays with the user's own documents, which
     /// the prompt ranks first.
     pub const WEB_PAGES: Self = Self {
         fraction: 0.4,
         floor: 0,
-        cap: usize::MAX,
     };
 }
 
@@ -399,7 +392,7 @@ impl EvidenceBudget {
     /// charges what its material actually measured.
     pub fn allowance(&self, share: EvidenceShare) -> usize {
         let remaining = self.remaining();
-        let proportional = ((remaining as f64 * share.fraction) as usize).min(share.cap);
+        let proportional = (remaining as f64 * share.fraction) as usize;
         proportional.max(share.floor).min(remaining)
     }
 
@@ -538,16 +531,23 @@ mod tests {
     }
 
     #[test]
-    fn pool_ceilings_hold_at_large_capacities_so_a_big_window_is_not_all_memory() {
-        let allocation = BudgetAllocation::plan(&capacity(1_000_000), &fixed(1_000)).expect("plan");
-        assert_eq!(allocation.mandatory_memory, MANDATORY_CAP);
-        assert_eq!(allocation.summary, SUMMARY_CAP);
-        assert_eq!(allocation.recall, RECALL_CAP);
-        // Recent history has no absolute cap — a large window should carry more
-        // raw conversation, not more distillation of it.
-        assert!(allocation.recent_history > RECENT_FRACTION as usize);
-        assert!(allocation.evidence > 0);
-        assert_eq!(allocation.output_reserved, OUTPUT_RESERVATION_CAP);
+    fn memory_pools_are_shares_of_the_window_with_no_absolute_ceiling() {
+        let small = BudgetAllocation::plan(&capacity(8_192), &fixed(1_000)).expect("plan");
+        let large = BudgetAllocation::plan(&capacity(1_000_000), &fixed(1_000)).expect("plan");
+        for allocation in [&small, &large] {
+            let share = |fraction: f64| (allocation.available as f64 * fraction) as usize;
+            assert_eq!(allocation.mandatory_memory, share(MANDATORY_FRACTION));
+            assert_eq!(allocation.summary, share(SUMMARY_FRACTION));
+            assert_eq!(allocation.recall, share(RECALL_FRACTION));
+            assert_eq!(allocation.recent_history, share(RECENT_FRACTION));
+            // The memory pools leave a share of the window to evidence.
+            assert!(allocation.evidence > 0);
+        }
+        // A large window carries a longer summary and more recall, not the
+        // same few thousand tokens a small model gets.
+        assert!(large.summary > 1_536 * 10, "{}", large.summary);
+        assert!(large.recall > 2_048 * 10, "{}", large.recall);
+        assert_eq!(large.output_reserved, OUTPUT_RESERVATION_CAP);
     }
 
     #[test]
@@ -598,7 +598,10 @@ mod tests {
     fn borrowing_is_capped_and_still_funds_the_newest_turn() {
         let allocation = BudgetAllocation::plan(&capacity(32_768), &fixed(1_000)).expect("plan");
         assert!(allocation.mandatory_borrow_ceiling >= allocation.mandatory_memory);
-        assert!(allocation.mandatory_borrow_ceiling <= MANDATORY_BORROW_CAP);
+        assert_eq!(
+            allocation.mandatory_borrow_ceiling,
+            (allocation.available as f64 * MANDATORY_BORROW_FRACTION) as usize
+        );
 
         // Reserving the newest turn reduces what memory may borrow...
         let with_turn = allocation.mandatory_ceiling_with_turn_reserved(2_000);
@@ -670,11 +673,16 @@ mod tests {
         let mut budget = EvidenceBudget::new(10_000);
         assert_eq!(budget.allowance(EvidenceShare::ATTACHMENTS), 6_000);
         budget.charge(5_000);
-        // A quarter of what is left, capped, and never past what is left.
+        // A quarter of what is left, never past what is left, and no fixed
+        // ceiling on a large window.
         assert_eq!(budget.allowance(EvidenceShare::PRIOR_EVIDENCE), 1_250);
         assert_eq!(
             EvidenceBudget::new(100_000).allowance(EvidenceShare::PRIOR_EVIDENCE),
-            4_000
+            25_000
+        );
+        assert_eq!(
+            EvidenceBudget::new(100_000).allowance(EvidenceShare::FOLDER),
+            25_000
         );
         // The folder keeps its floor while the room can hold it, and gives
         // way when it cannot.

@@ -60,10 +60,11 @@ pub const TOOL_SEARCH_CONVERSATION_HISTORY: &str = "search_conversation_history"
 pub const TOOL_READ_CONVERSATION_HISTORY: &str = "read_conversation_history";
 pub const TOOL_SEARCH_SAVED_KNOWLEDGE: &str = "search_saved_knowledge";
 
-/// §9.1 step 5: the candidate ceiling for one retrieval.
+/// §9.1 step 5: candidates one search returns. The history search tool's
+/// largest page; a result names the offset its next page starts at, so every
+/// match is reachable. Automatic recall searches again for more while its
+/// budget has room.
 const MAX_CANDIDATES: usize = 24;
-/// §9.1 step 7: passage groups packed before the budget is consulted at all.
-const MAX_PASSAGE_GROUPS: usize = 6;
 /// §9.1 step 1: how much recent-turn context may be folded into the query, in
 /// whitespace-separated tokens. Enough to resolve "that option"; not enough for
 /// the whole tail of the conversation to become the query.
@@ -80,11 +81,12 @@ const DEFAULT_RESPONSE_BYTES: usize = 8 * 1024;
 /// Floor on a response ceiling. Below this a read returns a cursor and no text,
 /// which costs a generation round to learn nothing.
 const MIN_RESPONSE_BYTES: usize = 512;
-/// Everything these tools may deliver across one whole turn. Per-call ceilings
-/// come from the tool loop's remaining-context arithmetic; this is the other
-/// half of §9.3's "share the turn's budget", and it is what stops twenty
-/// separately-affordable reads from adding up to the window.
-const MAX_TURN_RESPONSE_BYTES: usize = 128 * 1024;
+/// What these tools may deliver across one whole turn when the caller names no
+/// window. The tool loop names its model's: per-call ceilings come from its
+/// remaining-context arithmetic, and the turn's total is the window, which is
+/// the other half of §9.3's "share the turn's budget" and what stops twenty
+/// separately-affordable reads from adding up past it.
+const DEFAULT_TURN_RESPONSE_BYTES: usize = 16 * DEFAULT_RESPONSE_BYTES;
 /// Message ceiling for one read. Paired with a byte ceiling because either one
 /// alone is unbounded in the other dimension.
 const MAX_READ_MESSAGES: usize = 64;
@@ -142,10 +144,16 @@ pub fn history_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum excerpts to return",
+                        "description": "Excerpts in this page of results",
                         "default": 8,
                         "minimum": 1,
                         "maximum": MAX_CANDIDATES
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Matches to skip: the next_offset a previous page named",
+                        "default": 0,
+                        "minimum": 0
                     }
                 },
                 "required": ["query"],
@@ -239,6 +247,9 @@ pub fn tools_for_turn(
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryToolBudget {
     pub max_response_bytes: usize,
+    /// Everything these tools may deliver across the turn, from the model's
+    /// window.
+    pub turn_response_bytes: usize,
     pub deadline: Option<Instant>,
 }
 
@@ -246,6 +257,7 @@ impl Default for HistoryToolBudget {
     fn default() -> Self {
         Self {
             max_response_bytes: DEFAULT_RESPONSE_BYTES,
+            turn_response_bytes: DEFAULT_TURN_RESPONSE_BYTES,
             deadline: None,
         }
     }
@@ -336,8 +348,10 @@ pub struct HistoryToolMemo {
 
 impl HistoryToolMemo {
     /// Bytes still available to these tools for the rest of the turn.
-    fn turn_remaining(&self) -> usize {
-        MAX_TURN_RESPONSE_BYTES.saturating_sub(self.bytes_delivered)
+    fn turn_remaining(&self, budget: &HistoryToolBudget) -> usize {
+        budget
+            .turn_response_bytes
+            .saturating_sub(self.bytes_delivered)
     }
 }
 
@@ -345,12 +359,14 @@ impl HistoryToolMemo {
 // Arguments
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct SearchArgs {
     #[serde(default)]
     query: String,
     #[serde(default)]
     limit: Option<u64>,
+    #[serde(default)]
+    offset: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -433,7 +449,7 @@ pub async fn execute(
             let room = scope
                 .budget
                 .max_response_bytes
-                .min(MAX_TURN_RESPONSE_BYTES.saturating_sub(memo.bytes_delivered));
+                .min(memo.turn_remaining(&scope.budget));
             if room < MIN_RESPONSE_BYTES {
                 return Ok(FunctionResult::error(
                     "TURN_BUDGET_EXHAUSTED",

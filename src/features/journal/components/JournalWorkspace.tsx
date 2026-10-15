@@ -20,7 +20,7 @@ import { useJournalNotice } from '@/features/journal/hooks/useJournalNotice';
 import { useJournalPageActions } from '@/features/journal/hooks/useJournalPageActions';
 import { useJournalSources } from '@/features/journal/hooks/useJournalSources';
 import { useFollowNoteIdParam, useJournalSpaces } from '@/features/journal/hooks/useJournalSpaces';
-import { SYNTHESIS_ENTRY_LIMIT, useJournalSynthesis } from '@/features/journal/hooks/useJournalSynthesis';
+import { RECENT_DECK_SIZE, useJournalSynthesis } from '@/features/journal/hooks/useJournalSynthesis';
 import { usePinnedNoteHighlights, useSidebarCollapsed } from '@/features/journal/hooks/useJournalViewPrefs';
 import { useWeeklySynthesisCandidatesQuery } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { useActiveSynthesis } from '@/features/journal/synthesis/synthesisPanel';
@@ -231,7 +231,7 @@ export function JournalWorkspace() {
 
   const journalName = journalSpace?.name ?? 'Journal';
   const pinnedEntryCount = [...pinnedIds].length;
-  const deckCount = Math.min(entries.length, SYNTHESIS_ENTRY_LIMIT);
+  const deckCount = Math.min(entries.length, RECENT_DECK_SIZE);
 
   if (topLevelError) {
     return <JournalLoadError error={topLevelError} onRetry={retryJournalLoad} />;

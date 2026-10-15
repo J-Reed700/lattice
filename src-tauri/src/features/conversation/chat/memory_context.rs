@@ -17,28 +17,21 @@ use std::sync::Arc;
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort, SourceReadLimits,
 };
+use lattice_core::application::ports::llm_port::chars_within_tokens;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::{
-    ContextAssembler, ContextPlan, ContextRequest, InlineEvidence, ModelCapacity, RankedEvidence,
-    TokenAccounting, TokenCounter,
+    BudgetAllocation, ContextAssembler, ContextPlan, ContextRequest, InlineEvidence, ModelCapacity,
+    RankedEvidence, TokenAccounting, TokenCounter,
 };
 use lattice_core::domain::conversation::memory::{MemorySnapshot, SourceMessage};
 use lattice_core::shared::error::{AppError, Result};
 
 use super::history_tools::{self, HistoryToolBudget, HistoryToolScope, RecallRequest};
 
-/// How many of the newest messages are offered to the assembler as candidates.
-///
-/// A ceiling on *work*, not on what the prompt carries: the assembler decides
-/// how many actually fit. Reading the whole archive to then discard most of it
-/// is the unbounded-load problem this design removes.
-const RECENT_CANDIDATE_MESSAGES: usize = 64;
-
-/// Byte ceiling on the recent candidates read for one turn.
-const RECENT_CANDIDATE_BYTES: usize = 512 * 1024;
-
-/// Byte ceiling on recalled passages for one turn.
-const RECALL_BYTE_BUDGET: usize = 8 * 1024;
+/// Framing the assembler adds to every recent message beyond its words; a
+/// candidate's cost is never below it, so it also bounds how many candidates
+/// a pool can be worth reading.
+const RECENT_MESSAGE_FRAMING_TOKENS: usize = 4;
 
 /// Everything one assembled turn produced, plus what it could not do.
 #[derive(Debug)]
@@ -177,6 +170,27 @@ pub async fn build_memory_plan_for_query(
 
     let snapshot = memory.load_snapshot(conversation_id).await?;
 
+    let counter = {
+        let llm = Arc::clone(llm);
+        Arc::new(move |text: &str| llm.count_tokens(text))
+    };
+    let assembler = ContextAssembler::new(counter);
+
+    // `count_tokens` is documented as an approximation on this port, so the plan
+    // says so. A margin chosen against an estimate is not a guarantee, and a
+    // provider overflow is reported separately rather than being folded into the
+    // accounting as if it had been predicted.
+    let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
+        .with_accounting(TokenAccounting::Estimated);
+    // The pools this turn's plan will divide, priced before anything is read:
+    // the recent-history pool decides how far back candidates are read, and
+    // the recall pool how much recall may bring back.
+    let pools = BudgetAllocation::plan(
+        &capacity,
+        &assembler.fixed_parts(system_policy, current_input, tool_schema_tokens, today),
+    )?;
+    let recall_bytes = chars_within_tokens(pools.recall, llm.chars_per_token()).max(1);
+
     // An invalidated ledger cannot cover any original messages, even if an
     // older watermark remains on the snapshot.
     let watermark = if snapshot.is_usable() {
@@ -184,15 +198,19 @@ pub async fn build_memory_plan_for_query(
     } else {
         0
     };
-    let unreachable_source = watermark
-        < snapshot
-            .latest_sequence
-            .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64);
     let RecentCandidates {
         messages: mut recent,
         unread_source,
         reaches_start,
-    } = load_recent(memory, conversation_id, &snapshot, watermark).await?;
+    } = load_recent(
+        memory,
+        conversation_id,
+        &snapshot,
+        watermark,
+        pools.recent_history,
+        &|text: &str| llm.count_tokens(text),
+    )
+    .await?;
     // The pending current message is supplied separately, possibly enriched
     // with documents. Compare against the raw query before removing it.
     if recent.last().is_some_and(|m| {
@@ -217,7 +235,8 @@ pub async fn build_memory_plan_for_query(
     let scope = HistoryToolScope::new(
         conversation_id,
         HistoryToolBudget {
-            max_response_bytes: RECALL_BYTE_BUDGET,
+            max_response_bytes: recall_bytes,
+            turn_response_bytes: recall_bytes,
             deadline: None,
         },
     );
@@ -228,23 +247,10 @@ pub async fn build_memory_plan_for_query(
             user_input: query,
             recent_turns: &recent_text,
             active_memory: &active_text,
-            max_bytes: RECALL_BYTE_BUDGET,
+            max_bytes: recall_bytes,
         },
     )
     .await?;
-
-    let counter = {
-        let llm = Arc::clone(llm);
-        Arc::new(move |text: &str| llm.count_tokens(text))
-    };
-    let assembler = ContextAssembler::new(counter);
-
-    // `count_tokens` is documented as an approximation on this port, so the plan
-    // says so. A margin chosen against an estimate is not a guarantee, and a
-    // provider overflow is reported separately rather than being folded into the
-    // accounting as if it had been predicted.
-    let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
-        .with_accounting(TokenAccounting::Estimated);
 
     let prepared = memory.prepare_memory(conversation_id, query).await?;
     if prepared
@@ -284,7 +290,7 @@ pub async fn build_memory_plan_for_query(
     // Source below the candidate window is unprocessed and has nothing standing
     // in for it, so it counts as needing compaction just as much as a message the
     // assembler evicted.
-    plan.compaction_required |= unreachable_source || unread_source;
+    plan.compaction_required |= unread_source;
 
     Ok(Some(MemoryTurnContext {
         plan,
@@ -360,38 +366,68 @@ struct RecentCandidates {
 
 /// The newest messages as assembler candidates, and what was left unread.
 ///
-/// Paged from the end rather than loading the aggregate: the whole point is that
-/// prompt construction stops reading the entire conversation. Read newest first
-/// so the byte cap drops the oldest candidates; those the ledger already covers
-/// are not missing, so only an unread message above the watermark counts.
-/// Otherwise a conversation whose last 64 messages outgrow the cap would need
-/// compaction on every turn, and compaction could never satisfy it.
+/// Paged from the end rather than loading the aggregate: prompt construction
+/// does not read the entire conversation. Pages are read newest first until
+/// the candidates outweigh the recent-history pool (`pool_tokens`) beyond the
+/// newest message, which the assembler keeps whatever it costs. How far back
+/// that reaches is the window's business, not a message count: a large
+/// window carries hundreds of short turns verbatim before anything needs
+/// compaction. Messages the ledger already covers are not missing, so only an
+/// unread message above the watermark counts as unread source.
 async fn load_recent(
     memory: &dyn ConversationMemoryPort,
     conversation_id: &str,
     snapshot: &MemorySnapshot,
     watermark: i64,
+    pool_tokens: usize,
+    count_tokens: &(dyn Fn(&str) -> usize + Sync),
 ) -> Result<RecentCandidates> {
-    let from = snapshot
-        .latest_sequence
-        .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64)
-        .max(0);
-    let page = memory
-        .page_recent_source_messages(
-            conversation_id,
-            from,
-            snapshot.latest_sequence,
-            SourceReadLimits::new(RECENT_CANDIDATE_MESSAGES, RECENT_CANDIDATE_BYTES),
-        )
-        .await?;
-    let unread_source = match page.messages.first() {
-        Some(oldest_read) if page.has_more && oldest_read.sequence > watermark.max(from) + 1 => {
+    let cost = |message: &SourceMessage| {
+        count_tokens(&message.content).saturating_add(RECENT_MESSAGE_FRAMING_TOKENS)
+    };
+    let mut pages: Vec<Vec<SourceMessage>> = Vec::new();
+    let mut through = snapshot.latest_sequence;
+    let mut tokens = 0usize;
+    let mut target: Option<usize> = None;
+    let mut has_more;
+    loop {
+        let page = memory
+            .page_recent_source_messages(conversation_id, 0, through, SourceReadLimits::DEFAULT)
+            .await?;
+        let Some(oldest) = page.messages.first() else {
+            has_more = page.has_more;
+            break;
+        };
+        let oldest_sequence = oldest.sequence;
+        // The newest message is kept whatever it costs, so the pool is counted
+        // on top of it.
+        let target = *target.get_or_insert_with(|| {
+            page.messages
+                .last()
+                .map_or(0, cost)
+                .saturating_add(pool_tokens)
+        });
+        tokens = page
+            .messages
+            .iter()
+            .map(cost)
+            .fold(tokens, usize::saturating_add);
+        has_more = page.has_more;
+        pages.push(page.messages);
+        if !has_more || tokens > target {
+            break;
+        }
+        through = oldest_sequence - 1;
+    }
+    let read: Vec<SourceMessage> = pages.into_iter().rev().flatten().collect();
+    let unread_source = match read.first() {
+        Some(oldest_read) if has_more && oldest_read.sequence > watermark + 1 => {
             // Sequences can have gaps (deleted messages), so ask whether any
             // message actually sits between the watermark and what was read.
             let probe = memory
                 .page_recent_source_messages(
                     conversation_id,
-                    watermark.max(from),
+                    watermark,
                     oldest_read.sequence - 1,
                     SourceReadLimits::new(1, 0),
                 )
@@ -399,15 +435,14 @@ async fn load_recent(
             !probe.messages.is_empty()
         }
         Some(_) => false,
-        None => page.has_more,
+        None => has_more,
     };
     // A failed assistant output is not an answer that was returned, so it is not
     // replayed as one. A pending or failed *user* message is kept: the user still
     // said it, and a generation failure must not erase their instruction.
     Ok(RecentCandidates {
-        reaches_start: from == 0 && !page.has_more,
-        messages: page
-            .messages
+        reaches_start: !has_more,
+        messages: read
             .into_iter()
             .filter(SourceMessage::is_eligible_source)
             .collect(),

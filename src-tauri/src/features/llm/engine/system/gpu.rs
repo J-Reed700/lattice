@@ -34,6 +34,13 @@ impl GPUVendor {
     pub fn is_accelerated(&self) -> bool {
         !matches!(self, GPUVendor::Unknown)
     }
+
+    /// Whether the GPU draws on system RAM (Apple's unified memory, Intel's
+    /// integrated graphics), so a KV cache it allocates is RAM the rest of
+    /// the machine loses. A discrete card's cache lives in its own VRAM.
+    pub fn shares_system_memory(&self) -> bool {
+        matches!(self, GPUVendor::Apple | GPUVendor::Intel)
+    }
 }
 
 /// GPU information and capabilities.

@@ -195,6 +195,50 @@ fn search_reports_line_column_and_respects_the_prefix() {
     assert!(outside.is_err());
 }
 
+/// Search read each file only to its first megabyte, so a match further in
+/// was never found. Files are streamed to their last line.
+#[test]
+fn search_reads_a_large_file_to_its_last_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut big = "filler line\n".repeat(200_000).into_bytes();
+    big.extend_from_slice(b"the needle is here\n");
+    write(dir.path(), "big.txt", &big);
+    let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
+    let result = fs::search(
+        &scope,
+        &SearchRequest {
+            query: "needle",
+            regex: false,
+            path_prefix: None,
+            max_results: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(result.matches[0].line, 200_001);
+}
+
+/// Matches past the ones a result can show are counted, so the tool says
+/// how many more there are instead of "there may be more".
+#[test]
+fn search_counts_the_matches_past_those_kept() {
+    let (_dir, scope) = fixture();
+    let (result, more) = fs::search_counting(
+        &scope,
+        &SearchRequest {
+            query: "fn",
+            regex: false,
+            path_prefix: None,
+            max_results: 1,
+        },
+        WalkBounds::default(),
+    )
+    .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(more, 3, "README, main.rs and util.rs's two lines hold four");
+    assert!(!result.truncated);
+}
+
 #[test]
 fn search_bounds_set_truncated() {
     let (_dir, scope) = fixture();
@@ -221,7 +265,6 @@ fn search_bounds_set_truncated() {
         },
         WalkBounds {
             max_files: 1,
-            max_bytes_per_file: 1024,
             time_budget: Duration::from_secs(2),
         },
     )
@@ -317,14 +360,15 @@ mod model_tools {
             1_000_000,
         )
         .unwrap();
+        // The read used to stop at 400 lines whatever the room. A room that
+        // holds the whole file gets the whole file.
         assert!(
-            first.starts_with("src/long.txt · lines 1–400 of 1000\n"),
-            "{first}"
+            first.starts_with("src/long.txt · lines 1–1000 of 1000\n"),
+            "{first:.200}"
         );
         assert!(first.contains("   1│ line 1\n"));
-        assert!(first.contains(" 400│ line 400\n"));
-        assert!(!first.contains("│ line 401"));
-        assert!(first.contains("start_line 401"));
+        assert!(first.contains("1000│ line 1000\n"));
+        assert!(first.ends_with("[End of file.]"));
 
         // Numbers as strings, as small local models often write them.
         let tail = tools::run(
@@ -336,6 +380,32 @@ mod model_tools {
         .unwrap();
         assert!(tail.contains("lines 995–1000 of 1000"), "{tail}");
         assert!(tail.ends_with("[End of file.]"));
+    }
+
+    /// A file over the viewer's 2 MiB used to be refused outright, though
+    /// the tool reads by lines. It is now read as a stream, a window at a time.
+    #[test]
+    fn read_file_streams_a_file_too_large_to_load() {
+        let (_dir, scope) = fixture();
+        let line = "x".repeat(99);
+        let lines = (fs::MAX_TEXT_BYTES as usize / 100) + 500;
+        let text: String = (1..=lines).map(|n| format!("{line}{}\n", n % 10)).collect();
+        write(scope.root(), "huge.log", text.as_bytes());
+        let window = tools::run(
+            &scope,
+            "read_file",
+            &json!({"path": "huge.log", "start_line": lines - 1}),
+            10_000,
+        )
+        .unwrap();
+        assert!(
+            window.starts_with(&format!(
+                "huge.log · lines {}–{lines} of {lines}\n",
+                lines - 1
+            )),
+            "{window:.200}"
+        );
+        assert!(window.ends_with("[End of file.]"));
     }
 
     #[test]
@@ -399,7 +469,7 @@ mod model_tools {
     fn step_labels_are_plain() {
         assert_eq!(
             tools::activity_label("read_file", &json!({"path": "src/foo.rs"})),
-            "Read src/foo.rs 1–400"
+            "Read src/foo.rs from line 1"
         );
         assert_eq!(
             tools::activity_label(
@@ -691,4 +761,56 @@ fn locate_file_does_not_auto_open_a_match_from_an_incomplete_search() {
         .unwrap(),
         ["src/main.rs"]
     );
+}
+
+/// A file with no newline in it used to be read as one line into one buffer
+/// the size of the file. It streams in pieces, each part of line 1, never
+/// longer than a piece, and nothing of it is lost.
+#[test]
+fn a_newline_free_file_streams_in_bounded_pieces() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two-byte characters, so a piece boundary would fall mid-character.
+    let text = "é".repeat(fs::LINE_PIECE_BYTES * 2);
+    write(dir.path(), "one-line.txt", text.as_bytes());
+    let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
+
+    let mut pieces: Vec<(u32, String)> = Vec::new();
+    let total = fs::scan_lines(&scope, "one-line.txt", &mut |number, piece| {
+        pieces.push((number, piece.to_string()));
+        true
+    })
+    .unwrap();
+    assert_eq!(total, 1);
+    assert!(pieces.len() > 1);
+    assert!(pieces
+        .iter()
+        .all(|(number, piece)| *number == 1 && piece.len() <= fs::LINE_PIECE_BYTES));
+    let joined: String = pieces.into_iter().map(|(_, piece)| piece).collect();
+    assert_eq!(joined, text, "no character split or replaced");
+}
+
+/// A match in a later piece of a very long line reports its true column.
+#[test]
+fn search_in_a_very_long_line_reports_the_true_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = "x".repeat(fs::LINE_PIECE_BYTES + 10);
+    write(
+        dir.path(),
+        "long.txt",
+        format!("{before}needle\n").as_bytes(),
+    );
+    let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
+    let result = fs::search(
+        &scope,
+        &SearchRequest {
+            query: "needle",
+            regex: false,
+            path_prefix: None,
+            max_results: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(result.matches[0].line, 1);
+    assert_eq!(result.matches[0].column as usize, before.len() + 1);
 }

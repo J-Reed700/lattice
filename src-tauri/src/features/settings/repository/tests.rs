@@ -632,3 +632,24 @@ async fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
     settings.search.vector_index_compression.dims = MAX_VECTOR_COMPRESSION_DIMS + 1;
     assert!(!repo.validate_settings(&settings).valid);
 }
+
+/// The page-fetch timeout bounds the pipeline's own page reads. With page
+/// reading off nothing uses it, and a 0 left there made every save fail.
+#[tokio::test]
+async fn the_page_fetch_timeout_is_only_checked_when_pages_are_read() {
+    let (repo, _dir) = create_test_repository().await;
+
+    let mut settings = SettingsDto::default();
+    settings.search.retrieval_tuning.read_web_pages = false;
+    settings.search.retrieval_tuning.web_page_fetch_timeout_secs = 0;
+    assert!(repo.validate_settings(&settings).valid);
+
+    settings.search.retrieval_tuning.read_web_pages = true;
+    let rejected = repo.validate_settings(&settings);
+    assert!(!rejected.valid);
+    assert!(rejected
+        .errors
+        .values()
+        .flatten()
+        .any(|message| message.contains("web_page_fetch_timeout_secs")));
+}

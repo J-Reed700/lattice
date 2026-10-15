@@ -13,9 +13,6 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::retrieval::truncate_chars;
-use super::use_case::{MAX_EXCERPT_CHARS, MAX_VALUE_CHARS};
-
 /// Column name -> (value, quote). Missing / unparseable columns are absent.
 pub type ParsedRow = HashMap<String, (Option<String>, Option<String>)>;
 
@@ -48,7 +45,7 @@ const NULL_LIKE: [&str; 7] = [
 
 /// Collapses a JSON value to a trimmed string, or `None` when it carries no
 /// answer. Objects and arrays mean the model went off-script.
-fn normalize_value(value: Option<serde_json::Value>, max_chars: usize) -> Option<String> {
+fn normalize_value(value: Option<serde_json::Value>) -> Option<String> {
     let raw = match value? {
         serde_json::Value::String(text) => text,
         serde_json::Value::Number(number) => number.to_string(),
@@ -56,10 +53,11 @@ fn normalize_value(value: Option<serde_json::Value>, max_chars: usize) -> Option
         serde_json::Value::Null => return None,
         serde_json::Value::Object(_) | serde_json::Value::Array(_) => return None,
     };
-    normalize_text(&raw, max_chars)
+    normalize_text(&raw)
 }
 
-fn normalize_text(raw: &str, max_chars: usize) -> Option<String> {
+/// The answer as the model wrote it, trimmed; never shortened.
+fn normalize_text(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if NULL_LIKE
         .iter()
@@ -67,7 +65,7 @@ fn normalize_text(raw: &str, max_chars: usize) -> Option<String> {
     {
         return None;
     }
-    Some(truncate_chars(trimmed, max_chars))
+    Some(trimmed.to_string())
 }
 
 fn absorb(parsed: &mut ParsedRow, lookup: &HashMap<String, String>, map: HashMap<String, RawCell>) {
@@ -78,8 +76,8 @@ fn absorb(parsed: &mut ParsedRow, lookup: &HashMap<String, String>, map: HashMap
         if parsed.contains_key(canonical) {
             continue;
         }
-        let value = normalize_value(cell.value, MAX_VALUE_CHARS);
-        let quote = normalize_value(cell.quote, MAX_EXCERPT_CHARS);
+        let value = normalize_value(cell.value);
+        let quote = normalize_value(cell.quote);
         if value.is_none() && quote.is_none() {
             // An explicit null answer is still an answer: record it so the
             // salvage pass does not invent one.
@@ -151,9 +149,9 @@ fn salvage_column(raw: &str, column: &str) -> Option<(Option<String>, Option<Str
     let bounded_lower = &tail_lower[..bounded.len()];
 
     let value = find_string_after(bounded, bounded_lower, "\"value\"")
-        .and_then(|text| normalize_text(&text, MAX_VALUE_CHARS));
+        .and_then(|text| normalize_text(&text));
     let quote = find_string_after(bounded, bounded_lower, "\"quote\"")
-        .and_then(|text| normalize_text(&text, MAX_EXCERPT_CHARS));
+        .and_then(|text| normalize_text(&text));
 
     if value.is_none() && quote.is_none() {
         return None;

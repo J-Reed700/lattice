@@ -1,7 +1,7 @@
 //! Automatic recall before generation, and the queries it searches with.
 use super::{
     clip_to_bytes, HistoryToolScope, ADJACENT_TURNS, DEFAULT_RESPONSE_BYTES, MAX_CANDIDATES,
-    MAX_CONTEXT_TOKENS, MAX_EXACT_TERMS, MAX_PASSAGE_GROUPS, MIN_RESPONSE_BYTES,
+    MAX_CONTEXT_TOKENS, MAX_EXACT_TERMS,
 };
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryReadPort, RecallCandidate, SourceReadLimits,
@@ -150,19 +150,6 @@ pub async fn recall_for_turn(
         });
     }
 
-    let found = port
-        .search_source_messages(
-            scope.conversation_id(),
-            &query,
-            &exact_terms,
-            MAX_CANDIDATES,
-        )
-        .await?;
-    diagnostics.lexical_ran = found.lexical_ran;
-    diagnostics.semantic_ran = found.semantic_ran;
-    diagnostics.candidates_considered = found.candidates.len();
-    diagnostics.index_error = found.index_error.clone();
-
     let mut already: Vec<&str> = Vec::new();
     already.extend(request.recent_turns.iter().map(String::as_str));
     already.extend(request.active_memory.iter().map(String::as_str));
@@ -175,76 +162,51 @@ pub async fn recall_for_turn(
     let mut remaining = max_bytes;
     let mut groups: Vec<PassageGroup> = Vec::new();
     let mut claimed: Vec<String> = Vec::new();
+    let mut considered: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for candidate in ranked(&found.candidates) {
-        if groups.len() >= MAX_PASSAGE_GROUPS || remaining == 0 {
+    // Groups fill the byte budget, which the turn sizes from its recall pool,
+    // rather than stopping at a fixed count. Candidates are searched a page at
+    // a time, each page twice the last, while the budget has room and the
+    // search may hold more than it returned.
+    let mut limit = MAX_CANDIDATES;
+    loop {
+        let found = port
+            .search_source_messages(scope.conversation_id(), &query, &exact_terms, limit)
+            .await?;
+        diagnostics.lexical_ran |= found.lexical_ran;
+        diagnostics.semantic_ran |= found.semantic_ran;
+        diagnostics.index_error = found.index_error.clone();
+        let exhausted = found.candidates.len() < limit;
+        let fresh: Vec<&RecallCandidate> = ranked(&found.candidates)
+            .into_iter()
+            .filter(|candidate| considered.insert(candidate.message_id.clone()))
+            .collect();
+        let had_fresh = !fresh.is_empty();
+        for candidate in fresh {
+            if remaining == 0 {
+                break;
+            }
+            if let Some(group) = pack_group(
+                port,
+                scope,
+                candidate,
+                &already,
+                &mut claimed,
+                &mut remaining,
+                max_bytes,
+                groups.len(),
+            )
+            .await?
+            {
+                groups.push(group);
+            }
+        }
+        if remaining == 0 || exhausted || !had_fresh {
             break;
         }
-        if claimed.contains(&candidate.message_id) {
-            // Already inside a neighbouring group; a second copy of it would
-            // spend budget to say the same thing twice.
-            continue;
-        }
-        let window = port
-            .read_adjacent_turns(
-                scope.conversation_id(),
-                candidate.sequence,
-                ADJACENT_TURNS,
-                ADJACENT_TURNS,
-                SourceReadLimits::new(1 + 2 * ADJACENT_TURNS, remaining.max(MIN_RESPONSE_BYTES)),
-            )
-            .await?;
-        let window: Vec<&SourceMessage> = window
-            .iter()
-            .filter(|message| message.is_eligible_source())
-            .collect();
-        if window.is_empty() {
-            continue;
-        }
-
-        let mut group = PassageGroup {
-            passages: Vec::new(),
-            already_in_context: Vec::new(),
-            anchor_sequence: candidate.sequence,
-            selection_rank: groups.len(),
-            from_exact_identifier: candidate.exact_identifier,
-        };
-        for message in &window {
-            let in_prompt = already
-                .iter()
-                .any(|present| present.contains(message.content.as_str()));
-            // Adjacent windows overlap, so a neighbour can belong to a group
-            // that was already packed. Paying for it twice buys nothing and
-            // takes the budget from a group that has something new to say.
-            if in_prompt || claimed.contains(&message.id) {
-                // §9.1 step 8: named so the group still explains the link,
-                // without paying for text the prompt already carries.
-                group.already_in_context.push(message.id.clone());
-                claimed.push(message.id.clone());
-                continue;
-            }
-            let (text, clipped) = clip_to_bytes(&message.content, remaining);
-            if text.is_empty() {
-                break;
-            }
-            remaining = remaining.saturating_sub(text.len());
-            claimed.push(message.id.clone());
-            group.passages.push(SelectedPassage {
-                message_id: message.id.clone(),
-                sequence: message.sequence,
-                role: message.role,
-                text: text.to_string(),
-            });
-            if clipped {
-                break;
-            }
-        }
-        if group.passages.is_empty() {
-            // Everything in the window is already in front of the model.
-            continue;
-        }
-        groups.push(group);
+        limit = limit.saturating_mul(2);
     }
+    diagnostics.candidates_considered = considered.len();
 
     // Selection is by rank so the budget drops the weakest group, but the model
     // reads the thread in the order it happened, so emission is chronological.
@@ -259,6 +221,110 @@ pub async fn recall_for_turn(
         groups,
         diagnostics,
     })
+}
+
+/// One candidate and its neighbours, packed into what is left of the budget.
+/// `None` when the candidate is already claimed or everything in its window
+/// is already in front of the model.
+///
+/// A passage goes in whole or not at all, so a later, shorter group can still
+/// use the room. The one exception is a passage too long for the whole recall
+/// budget that would otherwise leave recall empty: it is cut to the budget,
+/// logged, and marked in its text so the model knows it reads a part.
+#[allow(clippy::too_many_arguments)]
+async fn pack_group(
+    port: &dyn ConversationMemoryReadPort,
+    scope: &HistoryToolScope,
+    candidate: &RecallCandidate,
+    already: &[&str],
+    claimed: &mut Vec<String>,
+    remaining: &mut usize,
+    max_bytes: usize,
+    selection_rank: usize,
+) -> Result<Option<PassageGroup>> {
+    if claimed.contains(&candidate.message_id) {
+        // Already inside a neighbouring group; a second copy of it would
+        // spend budget to say the same thing twice.
+        return Ok(None);
+    }
+    let window = port
+        .read_adjacent_turns(
+            scope.conversation_id(),
+            candidate.sequence,
+            ADJACENT_TURNS,
+            ADJACENT_TURNS,
+            SourceReadLimits::new(1 + 2 * ADJACENT_TURNS, SourceReadLimits::DEFAULT.max_bytes),
+        )
+        .await?;
+    let window: Vec<&SourceMessage> = window
+        .iter()
+        .filter(|message| message.is_eligible_source())
+        .collect();
+    if window.is_empty() {
+        return Ok(None);
+    }
+
+    let mut group = PassageGroup {
+        passages: Vec::new(),
+        already_in_context: Vec::new(),
+        anchor_sequence: candidate.sequence,
+        selection_rank,
+        from_exact_identifier: candidate.exact_identifier,
+    };
+    for message in &window {
+        let in_prompt = already
+            .iter()
+            .any(|present| present.contains(message.content.as_str()));
+        // Adjacent windows overlap, so a neighbour can belong to a group
+        // that was already packed. Paying for it twice buys nothing and
+        // takes the budget from a group that has something new to say.
+        if in_prompt || claimed.contains(&message.id) {
+            // §9.1 step 8: named so the group still explains the link,
+            // without paying for text the prompt already carries.
+            group.already_in_context.push(message.id.clone());
+            claimed.push(message.id.clone());
+            continue;
+        }
+        let text = if message.content.len() <= *remaining {
+            message.content.clone()
+        } else if *remaining == max_bytes && selection_rank == 0 && group.passages.is_empty() {
+            let (part, _) =
+                clip_to_bytes(&message.content, max_bytes.saturating_sub(CUT_MARK_BYTES));
+            if part.is_empty() {
+                break;
+            }
+            tracing::warn!(
+                message_id = %message.id,
+                bytes = message.content.len(),
+                budget = max_bytes,
+                "A recalled message is longer than the whole recall budget; carrying its opening"
+            );
+            format!("{part}{}", cut_mark(message.content.len() - part.len()))
+        } else {
+            // Does not fit what is left: leave the room to a shorter group.
+            break;
+        };
+        *remaining = remaining.saturating_sub(text.len());
+        claimed.push(message.id.clone());
+        group.passages.push(SelectedPassage {
+            message_id: message.id.clone(),
+            sequence: message.sequence,
+            role: message.role,
+            text,
+        });
+        if *remaining == 0 {
+            break;
+        }
+    }
+    Ok((!group.passages.is_empty()).then_some(group))
+}
+
+/// Room kept for the mark on a cut passage.
+const CUT_MARK_BYTES: usize = 96;
+
+/// The mark on a passage cut to the recall budget.
+fn cut_mark(left_out_bytes: usize) -> String {
+    format!(" […cut: {left_out_bytes} more bytes of this message are not shown]")
 }
 
 /// Candidates in selection order: exact-identifier hits first, then BM25 rank

@@ -125,27 +125,21 @@ impl FunctionExecutor {
                 }
             };
 
-            // Paginate content for large documents using max_content_length as page size.
-            let page_size_chars = input.max_content_length.max(1);
+            // A part of the document from `offset`, as long as was asked for;
+            // the rest is reached by asking again from `next_offset`.
             let total_chars = content.chars().count();
-            let total_pages = std::cmp::max(1, total_chars.div_ceil(page_size_chars));
-            let current_page = input.page.clamp(1, total_pages);
-            let start_char = (current_page - 1) * page_size_chars;
-            let end_char = std::cmp::min(start_char + page_size_chars, total_chars);
+            let start_char = input.offset.min(total_chars);
+            let end_char = input.max_content_length.map_or(total_chars, |length| {
+                start_char.saturating_add(length.max(1)).min(total_chars)
+            });
             let final_content = Self::slice_by_char_range(&content, start_char, end_char);
-            let truncated = total_pages > 1;
-
-            let has_previous_page = current_page > 1;
-            let has_next_page = current_page < total_pages;
-            let previous_page = has_previous_page.then_some(current_page - 1);
-            let next_page = has_next_page.then_some(current_page + 1);
+            let next_offset = (end_char < total_chars).then_some(end_char);
             debug!(
                 document_id = %input.document_id,
                 content_len = final_content.len(),
                 total_chars = total_chars,
-                page = current_page,
-                total_pages = total_pages,
-                truncated = truncated,
+                offset = start_char,
+                next_offset = ?next_offset,
                 "Get document: content assembled"
             );
 
@@ -240,14 +234,10 @@ impl FunctionExecutor {
             let output = GetDocumentOutput {
                 document_id: input.document_id,
                 content: final_content,
-                content_truncated: truncated,
-                page: current_page,
-                total_pages,
+                content_truncated: next_offset.is_some(),
+                offset: start_char,
+                next_offset,
                 total_chars,
-                has_previous_page,
-                has_next_page,
-                previous_page,
-                next_page,
                 metadata,
             };
 

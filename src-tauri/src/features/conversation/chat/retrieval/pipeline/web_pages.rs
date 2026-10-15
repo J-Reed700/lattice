@@ -32,15 +32,23 @@ fn host_of(url: &str) -> String {
         .unwrap_or_else(|| "a web page".to_string())
 }
 
+/// Pages a search opens: none when the user turned page reading off (the
+/// search then answers from snippets), otherwise as many as the page budget
+/// gives a share worth reading.
+pub(super) fn pages_wanted(read_web_pages: bool, page_budget_chars: usize) -> usize {
+    if read_web_pages {
+        pages_the_budget_carries(page_budget_chars)
+    } else {
+        0
+    }
+}
+
 impl ExternalLookup<'_> {
-    /// How many readable pages this turn wants in its prompt.
+    /// How many readable pages this turn wants in its prompt: as many as the
+    /// page budget can give a share worth reading, so a large window reads
+    /// every result it was handed and a small one reads only what it can carry.
     fn pages_wanted(&self) -> usize {
-        let configured = self.tuning.web_fetch_page_count as usize;
-        if self.search_flags.deep_research_mode {
-            configured.saturating_mul(DEEP_RESEARCH_PAGE_MULTIPLIER)
-        } else {
-            configured
-        }
+        pages_wanted(self.tuning.read_web_pages, self.page_budget_chars)
     }
 
     /// Read one page, or say why not.
@@ -147,6 +155,8 @@ impl ExternalLookup<'_> {
         let mut outcomes: Vec<Option<PageOutcome>> = (0..results.len()).map(|_| None).collect();
         let mut memory = FetchMemory::default();
 
+        let budget = self.page_budget_chars;
+        let useful = useful_page_share(budget);
         let wanted = self.pages_wanted().min(results.len());
         if wanted == 0 {
             return (outcomes, memory);
@@ -167,7 +177,22 @@ impl ExternalLookup<'_> {
         let mut next = 0usize;
         let mut attempted = 0usize;
         for wave in 0..MAX_PAGE_FETCH_WAVES {
-            let short_by = wanted.saturating_sub(read.len());
+            // Open more only while the pages read so far, given room by rank,
+            // leave a useful share for another: a failed page, or short ones,
+            // free room for the next results down.
+            let short_by = if wave == 0 {
+                wanted
+            } else {
+                read.sort_by_key(|(slot, _)| *slot);
+                let lengths: Vec<usize> = read
+                    .iter()
+                    .map(|(_, output)| output.content.trim().chars().count())
+                    .collect();
+                let used: usize = super::super::page_budget::by_rank(&lengths, budget, useful)
+                    .iter()
+                    .sum();
+                pages_the_budget_carries(budget.saturating_sub(used))
+            };
             if short_by == 0 || next >= results.len() {
                 break;
             }
@@ -208,15 +233,12 @@ impl ExternalLookup<'_> {
             }
         }
 
+        read.sort_by_key(|(slot, _)| *slot);
         let lengths: Vec<usize> = read
             .iter()
             .map(|(_, output)| output.content.trim().chars().count())
             .collect();
-        let budgets = super::super::page_budget::allocate(
-            &lengths,
-            self.page_budget_chars,
-            self.tuning.web_page_max_chars as usize,
-        );
+        let budgets = super::super::page_budget::by_rank(&lengths, budget, useful);
 
         let mut carried = 0usize;
         let mut carried_whole = 0usize;
@@ -228,16 +250,17 @@ impl ExternalLookup<'_> {
             };
             // No room for it in this prompt. It is still remembered, so the
             // model can ask for it and be answered without a request.
-            if budget < MIN_USEFUL_PAGE_CHARS.min(length) {
-                memory.record_page(&result.url, full, Delivery::Clipped { shown_chars: 0 });
+            if budget == 0 {
+                memory.record_page(&result.url, full, Delivery::Part { start: 0, end: 0 });
                 continue;
             }
             let whole = budget >= length;
             let delivery = if whole {
                 Delivery::Whole
             } else {
-                Delivery::Clipped {
-                    shown_chars: budget,
+                Delivery::Part {
+                    start: 0,
+                    end: budget,
                 }
             };
             memory.record_page(&result.url, full, delivery);
@@ -418,10 +441,7 @@ impl ExternalLookup<'_> {
                                                 format!("\nPublished: {}", date.to_rfc3339())
                                             })
                                             .unwrap_or_default();
-                                        let snippet = safe_truncate(
-                                            &result.snippet,
-                                            tuning.web_snippet_max_chars as usize,
-                                        );
+                                        let snippet = result.snippet.trim();
                                         // A page that was read in full replaces the
                                         // search engine's one-line blurb. The snippet
                                         // stays for the rest, so a fetch that failed

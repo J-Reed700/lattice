@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::features::corpus_shape::entity::{Cluster, ClusterRun, LabelSource};
-use crate::features::corpus_shape::labeling::{RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS};
+use crate::features::corpus_shape::labeling::RepresentativeDoc;
 use crate::features::corpus_shape::repository::{ClusterRepositoryPort, SqliteClusterRepository};
 use crate::features::corpus_shape::use_cases::{
     run_clustering::DocumentContentPreviewPort, ProgressSink, RunClusteringUseCase,
@@ -210,17 +210,25 @@ impl ChunkBackedContentPreview {
 
 #[async_trait::async_trait]
 impl DocumentContentPreviewPort for ChunkBackedContentPreview {
-    async fn preview(&self, document_id: &str) -> Result<Option<RepresentativeDoc>> {
+    async fn preview(
+        &self,
+        document_id: &str,
+        max_chars: usize,
+    ) -> Result<Option<RepresentativeDoc>> {
         let doc = self.document_repo.find_by_id(document_id).await?;
         let Some(doc) = doc else {
             return Ok(None);
         };
 
-        // Pull up to a few chunks, concatenate up to REP_CONTENT_PREVIEW_CHARS.
+        // The document's opening, chunk by chunk, up to `max_chars`. The
+        // label is a sample of the cluster, so a long document is shown in
+        // part, and the cut is marked.
         let chunks = self.chunk_repo.find_by_document(document_id).await?;
         let mut preview = String::new();
+        let mut more = false;
         for chunk in chunks {
-            if preview.chars().count() >= REP_CONTENT_PREVIEW_CHARS {
+            if preview.chars().count() >= max_chars {
+                more = true;
                 break;
             }
             if !preview.is_empty() {
@@ -228,12 +236,19 @@ impl DocumentContentPreviewPort for ChunkBackedContentPreview {
             }
             preview.push_str(chunk.content());
         }
-
-        let trimmed: String = preview.chars().take(REP_CONTENT_PREVIEW_CHARS).collect();
+        if preview.chars().count() > max_chars {
+            preview = lattice_core::shared::text::split_into_parts(&preview, max_chars)
+                .first()
+                .map_or_else(String::new, |part| (*part).to_string());
+            more = true;
+        }
+        if more {
+            preview.push_str(" […]");
+        }
 
         Ok(Some(RepresentativeDoc {
             title: doc.file_name().to_string(),
-            content_preview: trimmed,
+            content_preview: preview,
         }))
     }
 }

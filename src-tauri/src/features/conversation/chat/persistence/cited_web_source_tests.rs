@@ -89,18 +89,19 @@ fn one_page_cited_twice_is_kept_once() {
     assert_eq!(kept[0].excerpt.as_deref(), Some("first"));
 }
 
-/// A deep-research turn can cite dozens of pages. The prompt window that
-/// reads these takes ten, so one turn must not fill it on its own and push
-/// every earlier round of the conversation out.
+/// A deep-research turn can cite dozens of pages. Every one of them is kept:
+/// a fixed count here used to drop the ninth and later citations for good.
 #[test]
-fn one_turn_cannot_crowd_out_every_earlier_round() {
+fn every_cited_page_of_a_long_research_turn_is_kept() {
     let sources: Vec<SourceDto> = (0..40)
         .map(|i| web(&format!("https://example.com/{i}"), "Page", "text"))
         .collect();
 
+    let kept = cited_web_sources(&sources);
+    assert_eq!(kept.len(), 40);
     assert_eq!(
-        cited_web_sources(&sources).len(),
-        CITED_WEB_SOURCES_KEPT_PER_TURN
+        kept.last().map(|source| source.url.as_str()),
+        Some("https://example.com/39")
     );
 }
 
@@ -119,4 +120,20 @@ fn a_url_standing_in_for_a_missing_title_is_not_stored_as_one() {
 fn a_turn_that_cited_no_web_page_stores_nothing() {
     assert!(cited_web_sources(&[document("doc-1")]).is_empty());
     assert!(cited_web_sources(&[]).is_empty());
+}
+
+/// A page the turn read was kept twice: whole in the archive and whole again
+/// as this row's excerpt, which every later turn loaded to list one link. The
+/// row keeps the page's preview; the page itself is in the archive once.
+#[test]
+fn a_read_page_is_kept_as_its_preview_not_a_second_copy() {
+    let page = "Long article text. ".repeat(5_000);
+    let mut read = web("https://example.com/a", "Article", &page);
+    read.chunk_id = "web-content-1".to_string();
+    read.excerpt = Some("Long article text. Long article text. …".to_string());
+    let kept = cited_web_sources(&[read]);
+    assert_eq!(
+        kept[0].excerpt.as_deref(),
+        Some("Long article text. Long article text. …")
+    );
 }

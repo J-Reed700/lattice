@@ -264,14 +264,6 @@ fn turn_transcript(
     }
 }
 
-/// How many of a turn's web citations are kept as conversation context.
-///
-/// The prompt side already takes only the ten most recent and truncates their
-/// excerpts, so a larger number here buys nothing for the next turn. It only
-/// governs how fast one long research turn can push earlier rounds out of that
-/// window, which is why it is smaller than a full result page.
-const CITED_WEB_SOURCES_KEPT_PER_TURN: usize = 8;
-
 /// Keep the pages a turn cited as context for the turns that follow.
 ///
 /// Without this, web research ends with the turn that did it: the citations
@@ -340,10 +332,10 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut keepable: Vec<CitedWebSource> = Vec::new();
+    // Every cited page is kept: a source the answer cited is evidence the next
+    // turn may need, and what the next prompt has room for is decided where
+    // that prompt is assembled, not by a count here.
     for source in sources {
-        if keepable.len() >= CITED_WEB_SOURCES_KEPT_PER_TURN {
-            break;
-        }
         // `file_path` holds the page URL for a web source; `document_id` is the
         // same URL behind a prefix and is what marks it as one.
         if !source.document_id.starts_with(WEB_SOURCE_PREFIX) {
@@ -360,8 +352,17 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
             title: Some(source.file_name.trim())
                 .filter(|value| !value.is_empty() && *value != url)
                 .map(ToOwned::to_owned),
-            excerpt: Some(source.content.trim())
+            // The pointer the sources panel shows, not the page: a page the
+            // turn read is archived whole beside this row (`content`), and
+            // storing it again here doubled it on disk and had every later
+            // turn load it to list a link. A search result's pointer is its
+            // snippet.
+            excerpt: source
+                .excerpt
+                .as_deref()
+                .map(str::trim)
                 .filter(|value| !value.is_empty())
+                .or_else(|| Some(source.content.trim()).filter(|value| !value.is_empty()))
                 .map(ToOwned::to_owned),
             score: source.score,
         });

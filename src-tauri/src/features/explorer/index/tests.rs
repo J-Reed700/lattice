@@ -1,4 +1,4 @@
-use super::chunker::{self, chunk_text, MAX_CHUNK_CHARS, MAX_CHUNK_LINES, MAX_LINE_CHARS};
+use super::chunker::{self, chunk_text, Chunk, MAX_CHUNK_CHARS, MAX_CHUNK_LINES};
 use super::dto::{FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryState};
 use super::manager::{EmbedderSource, FolderIndexManager, ManagerConfig};
 use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
@@ -366,15 +366,24 @@ mod chunking {
         }
         assert_eq!(chunks.last().unwrap().end_line, 1_000);
 
+        // A line longer than a chunk used to be clipped at 500 characters.
+        // It is indexed whole, in parts that each point at that line.
         let long = format!("short\n{}\nafter\n", "y".repeat(10_000));
         let chunks = chunk_text(&long);
-        let clipped = chunks
+        let parts: Vec<&Chunk> = chunks
             .iter()
-            .flat_map(|chunk| chunk.body.lines())
-            .find(|line| line.starts_with('y'))
-            .unwrap();
-        assert_eq!(clipped.chars().count(), MAX_LINE_CHARS + 1);
-        assert!(clipped.ends_with('…'));
+            .filter(|chunk| chunk.start_line == 2)
+            .collect();
+        assert!(parts.len() > 1);
+        assert!(parts.iter().all(|chunk| chunk.end_line == 2));
+        assert!(parts
+            .iter()
+            .all(|chunk| chunk.body.len() <= MAX_CHUNK_CHARS));
+        let ys: usize = parts
+            .iter()
+            .map(|chunk| chunk.body.matches('y').count())
+            .sum();
+        assert_eq!(ys, 10_000);
         assert_eq!(chunks.last().unwrap().end_line, 3);
     }
 
@@ -441,7 +450,7 @@ mod rules {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_folder_over_the_cap_embeds_nothing() {
+    async fn a_folder_over_the_bound_is_indexed_up_to_it_and_says_how_many_more() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let mut config = rig.config();
@@ -459,12 +468,16 @@ mod rules {
         assert_eq!(status.state, FolderIndexState::TooLarge);
         assert_eq!(status.files_total, 8);
         let message = status.message.unwrap();
+        // Indexed up to the bound, the rest counted; a folder one file past
+        // the bound used to have nothing indexed at all.
         assert!(
-            message.contains("8 files") && message.contains("limit is 5"),
+            message.contains("5 of 8 files are indexed")
+                && message.contains("other 3")
+                && message.contains("limit of 5"),
             "{message}"
         );
-        assert!(embedder.embedded().is_empty());
-        assert!(manager.search_for(&root).await.is_none());
+        assert!(!embedder.embedded().is_empty());
+        assert!(manager.search_for(&root).await.is_some());
         manager.close().await;
     }
 
@@ -963,9 +976,10 @@ mod registry {
             .remove(0);
         assert_eq!(summary.state, FolderIndexSummaryState::TooLarge);
         assert_eq!(summary.files_total, 5);
+        assert_eq!(summary.files_indexed, 3);
         let message = summary.message.unwrap();
         assert!(
-            message.contains("5 files") && message.contains("limit is 3"),
+            message.contains("3 of 5 files are indexed") && message.contains("limit of 3"),
             "{message}"
         );
 

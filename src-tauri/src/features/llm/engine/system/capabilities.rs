@@ -17,6 +17,13 @@ pub struct SystemCapabilities {
     /// Currently available RAM in GB
     pub available_ram_gb: f64,
 
+    /// System memory available at detection, as the OS counts it (on macOS
+    /// free, inactive and purgeable pages less what the compressor holds).
+    /// Swap in use is not subtracted: macOS keeps swap allocated long after
+    /// the pressure that caused it is gone. `None` when not reported.
+    #[serde(default)]
+    pub available_memory_bytes: Option<u64>,
+
     /// GPU information (if available)
     pub gpu: Option<GPUInfo>,
 
@@ -142,6 +149,10 @@ async fn detect_capabilities_inner(
     // 3. User knows their system better than we do
     let available_ram_gb = total_ram_gb;
 
+    // The context window, unlike a download, does care what is available
+    // *now*: its KV cache is allocated when the server loads.
+    let available_memory_bytes = Some(sys.available_memory()).filter(|bytes| *bytes > 0);
+
     // Detect CPU
     let cpu_cores = sys.physical_core_count().unwrap_or(1);
     let cpu_threads = sys.cpus().len();
@@ -173,6 +184,7 @@ async fn detect_capabilities_inner(
     SystemCapabilities {
         total_ram_gb,
         available_ram_gb,
+        available_memory_bytes,
         gpu,
         cpu_cores,
         cpu_threads,

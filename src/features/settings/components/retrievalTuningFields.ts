@@ -24,8 +24,6 @@ export type TuningGroup = {
 };
 
 const CANDIDATE_FIELDS: NumericFieldConfig[] = [
-  { key: 'kbSearchMinLimit', label: 'KB search min limit', min: 1, max: 256, step: 1 },
-  { key: 'kbSearchMaxLimit', label: 'KB search max limit', min: 1, max: 512, step: 1 },
   {
     key: 'docShortlistCandidateMin',
     label: 'Doc shortlist candidate min',
@@ -54,10 +52,7 @@ const CANDIDATE_FIELDS: NumericFieldConfig[] = [
 
 const EXTERNAL_SOURCE_FIELDS: NumericFieldConfig[] = [
   { key: 'wikiSearchMaxResults', label: 'Wiki search max results', min: 1, max: 50, step: 1 },
-  { key: 'wikiSnippetMaxChars', label: 'Wiki snippet max chars', min: 64, max: 4000, step: 1 },
-  { key: 'wikiContextLimit', label: 'Wiki context limit', min: 1, max: 20, step: 1 },
   { key: 'webSearchMaxResults', label: 'Web search max results', min: 1, max: 50, step: 1 },
-  { key: 'webSnippetMaxChars', label: 'Web snippet max chars', min: 64, max: 4000, step: 1 },
   {
     key: 'externalSearchMaxWikiTerms',
     label: 'External max wiki terms',
@@ -188,13 +183,6 @@ export function normalizeTuningPairBounds(
   tuning: ApiRetrievalTuningSettings
 ): ApiRetrievalTuningSettings {
   const next = { ...tuning };
-
-  if (key === 'kbSearchMinLimit' && next.kbSearchMinLimit > next.kbSearchMaxLimit) {
-    next.kbSearchMaxLimit = next.kbSearchMinLimit;
-  }
-  if (key === 'kbSearchMaxLimit' && next.kbSearchMaxLimit < next.kbSearchMinLimit) {
-    next.kbSearchMinLimit = next.kbSearchMaxLimit;
-  }
 
   if (
     key === 'docShortlistCandidateMin' &&

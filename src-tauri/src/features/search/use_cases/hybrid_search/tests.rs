@@ -816,3 +816,42 @@ fn a_reranked_pool_is_three_times_the_cut_and_at_most_sixty_four() {
     assert_eq!(RerankOptions::candidate_pool(30), 64);
     assert_eq!(RerankOptions::candidate_pool(0), 0);
 }
+
+/// A cut sized to a large evidence budget is deeper than the widening bound.
+/// The pool must still hold the whole cut, or the search hands back fewer
+/// passages than the budget asked for.
+#[test]
+fn a_reranked_pool_is_never_narrower_than_the_cut() {
+    assert_eq!(RerankOptions::candidate_pool(200), 200);
+}
+
+/// A deep cut (1,500 passages on a 1M-token window) is not all sent through
+/// the cross-encoder: it judges its candidates, and the passages past them
+/// follow in fused order instead of being sorted in among blended scores on
+/// another scale.
+#[tokio::test]
+async fn only_the_candidates_are_judged_and_the_rest_follow_in_fused_order() {
+    let reranker = ScriptedReranker::scoring(vec![0.0, 0.0]);
+    let search = reranking_with(reranker.clone());
+    let results = vec![
+        hit("first", "a", 0.9),
+        hit("second", "b", 0.8),
+        hit("third", "c", 0.7),
+        hit("fourth", "d", 0.6),
+        hit("fifth", "e", 0.5),
+    ];
+    let fused = SearchResponseDto {
+        total: results.len(),
+        results,
+        query_time_ms: 0,
+    };
+
+    let reranked = search.rerank(fused, &rerank_options(2)).await;
+
+    assert!(reranked.applied);
+    assert_eq!(reranker.calls()[0].1.len(), 2);
+    assert_eq!(
+        ids(&reranked.response.results),
+        ["first", "second", "third", "fourth", "fifth"]
+    );
+}

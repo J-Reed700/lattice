@@ -7,7 +7,6 @@
 use super::branching_dto::{
     ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
 };
-use super::memory::MAX_FORGOTTEN_LABELS;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
 use lattice_core::application::ports::llm_port::{
@@ -186,9 +185,7 @@ impl Forgotten {
         let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
         Ok(Self {
             spans: memory.suppressed_spans(conversation_id, &ids).await?,
-            labels: memory
-                .forgotten_labels(conversation_id, MAX_FORGOTTEN_LABELS)
-                .await?,
+            labels: memory.forgotten_labels(conversation_id).await?,
         })
     }
 

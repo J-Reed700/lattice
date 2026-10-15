@@ -714,7 +714,7 @@ fn prepared_memory_is_recorded_as_used_only_while_its_text_is_in_the_prompt() {
     // is not memory the answer was given.
     let big = format!(
         r#"{{"memory_id":"optional-2","evidence":"{}"}}"#,
-        "word ".repeat(4_000)
+        "word ".repeat(12_000)
     );
     let prepared = crate::application::ports::conversation_memory::PreparedMemory {
         optional: vec![big],
@@ -724,4 +724,48 @@ fn prepared_memory_is_recorded_as_used_only_while_its_text_is_in_the_prompt() {
         .assemble_with_memory(&request(Some(&memory), &recent, 8_192), Some(&prepared))
         .expect("plan");
     assert_eq!(plan.used_memory_ids, vec!["shared-1".to_string()]);
+}
+
+/// Optional saved memories share the evidence pool. Capped at the evidence
+/// share (15% of what is left once every memory pool is reserved), a 32K
+/// model gave them about 3K tokens even when the turn used little of those
+/// pools. What the history pools leave unused now goes to evidence too.
+#[test]
+fn optional_memories_use_the_room_the_history_pools_left() {
+    let recent = vec![message(1, SourceRole::User, "hello")];
+    let memory = snapshot(Vec::new(), None, 1);
+    let optional: Vec<String> = (0..10)
+        .map(|n| {
+            format!(
+                r#"{{"memory_id":"optional-{n}","evidence":"{}"}}"#,
+                "word ".repeat(500)
+            )
+        })
+        .collect();
+    let prepared = crate::application::ports::conversation_memory::PreparedMemory {
+        revisions: None,
+        mandatory: Vec::new(),
+        optional,
+    };
+    let request = request(Some(&memory), &recent, 32_768);
+    let allocation = BudgetAllocation::plan(
+        &request.capacity,
+        &assembler().fixed_parts(
+            request.system_policy,
+            request.current_input,
+            request.tool_schema_tokens,
+            request.today,
+        ),
+    )
+    .expect("pools");
+    let plan = assembler()
+        .assemble_with_memory(&request, Some(&prepared))
+        .expect("plan");
+    assert!(
+        plan.accounting.document_evidence > allocation.evidence,
+        "{} tokens of saved memory against an evidence share of {}",
+        plan.accounting.document_evidence,
+        allocation.evidence
+    );
+    assert!(plan.accounting.document_evidence >= 5_000);
 }

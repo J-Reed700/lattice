@@ -148,6 +148,14 @@ impl<'a> ClaimChecker<'a> {
             policy,
         }
     }
+    /// Tokens of source text one [`Self::check`] of `claim` can carry: the window
+    /// less both prompts and the answer's room. More is judged in a further call.
+    pub fn evidence_room_tokens(&self, claim: &str) -> usize {
+        let prompts = self.llm.count_tokens(&self.system_prompt(false, false))
+            + self.llm.count_tokens(&render_claim_check("", claim));
+        (self.llm.max_context_tokens()).saturating_sub(prompts + self.max_output_tokens as usize)
+    }
+
     pub async fn check(
         &self,
         claim: &str,

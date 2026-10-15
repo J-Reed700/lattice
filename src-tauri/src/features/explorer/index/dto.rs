@@ -11,7 +11,8 @@ pub enum FolderIndexState {
     /// Embedding the files that are new or changed.
     Indexing,
     Ready,
-    /// More indexable files than the cap; nothing was embedded.
+    /// More indexable files than the bound: the first up to it are indexed,
+    /// and the message says how many more are found by text matching only.
     TooLarge,
     /// The filesystem root, the home folder or an ancestor of it, or a
     /// folder that holds Lattice's own data.

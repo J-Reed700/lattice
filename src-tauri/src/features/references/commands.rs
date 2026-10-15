@@ -15,32 +15,39 @@ use uuid::Uuid;
 
 const DEFAULT_LIST_LIMIT: i64 = 200;
 const MAX_LIST_LIMIT: i64 = 1000;
-pub(super) const MAX_TEXT_CHARS: usize = 20_000;
-const MAX_TITLE_CHARS: usize = 200;
-/// Chunk ids are uuid-shaped; this only guards against a hostile caller.
+/// Chunk ids are uuid-shaped; a longer one is not an id, and is refused
+/// rather than shortened into a different one.
 const MAX_ID_CHARS: usize = 200;
-const MAX_NOTE_CHARS: usize = 4_000;
-const MAX_LOCATOR_CHARS: usize = 120;
 
-/// Char-safe truncation with a trailing ellipsis. Never slices bytes.
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut output = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    output.push('…');
-    output
-}
-
-/// Trims, collapses empty to `None`, and truncates to `max_chars`.
-fn optional_field(value: Option<String>, max_chars: usize) -> Option<String> {
+/// Trims and collapses empty to `None`. Never shortens: a title or locator is
+/// kept as given, and a long one is clipped where it is displayed, not cut
+/// where it is stored.
+fn optional_field(value: Option<String>) -> Option<String> {
     value
         .map(|raw| raw.trim().to_string())
         .filter(|trimmed| !trimmed.is_empty())
-        .map(|trimmed| truncate_chars(&trimmed, max_chars))
+}
+
+/// An optional id, refused when it is longer than an id can be.
+fn optional_id(value: Option<String>, field: &str) -> Result<Option<String>> {
+    let id = optional_field(value);
+    if id
+        .as_ref()
+        .is_some_and(|id| id.chars().count() > MAX_ID_CHARS)
+    {
+        return Err(AppError::InvalidInput(format!(
+            "{field} is longer than {MAX_ID_CHARS} characters, which no id is"
+        )));
+    }
+    Ok(id)
+}
+
+/// Trims and collapses empty to `None`; never shortens. A note is the user's
+/// own writing and is kept as they wrote it.
+fn optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|raw| raw.trim().to_string())
+        .filter(|trimmed| !trimmed.is_empty())
 }
 
 fn required_field(value: &str, field: &str) -> Result<String> {
@@ -70,7 +77,7 @@ fn repository(container: &Container) -> PassageReferenceRepository {
     PassageReferenceRepository::new(container.db_pool().clone())
 }
 
-/// Validates, trims and truncates a create request into a storable record.
+/// Validates and trims a create request into a storable record.
 ///
 /// Pure: this is where every input rule lives, so it can be tested without a
 /// `Container` or a database.
@@ -85,13 +92,15 @@ pub(super) fn build_create_record(
     Ok(PassageReferenceRecord {
         id: format!("pref_{}", Uuid::new_v4()),
         document_id,
-        chunk_id: optional_field(request.chunk_id, MAX_ID_CHARS),
+        chunk_id: optional_id(request.chunk_id, "chunkId")?,
         file_path,
         file_name,
-        locator: optional_field(request.locator, MAX_LOCATOR_CHARS),
-        text: truncate_chars(&text, MAX_TEXT_CHARS),
-        title: optional_field(request.title, MAX_TITLE_CHARS),
-        note: optional_field(request.note, MAX_NOTE_CHARS),
+        locator: optional_field(request.locator),
+        // Stored whole: a saved passage is read back as the user saved it,
+        // and week synthesis reads it in full.
+        text,
+        title: optional_field(request.title),
+        note: optional_text(request.note),
         created_at: now_db_timestamp(),
     })
 }
@@ -119,8 +128,8 @@ pub async fn update_passage_reference_impl(
     request: UpdatePassageReferenceRequestDto,
 ) -> Result<PassageReferenceDto> {
     let id = required_field(&request.id, "id")?;
-    let title = optional_field(request.title, MAX_TITLE_CHARS);
-    let note = optional_field(request.note, MAX_NOTE_CHARS);
+    let title = optional_field(request.title);
+    let note = optional_text(request.note);
 
     let repo = repository(container);
     repo.update_annotations(&id, title.as_deref(), note.as_deref())

@@ -3,14 +3,16 @@
 use crate::application::ports::conversation_context::ConversationContextPort;
 use crate::application::services::context_window_builder::ContextWindowBuilder;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text::safe_truncate;
 use std::sync::Arc;
 
-const LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS: i64 = 10;
-const LINKED_WEB_SOURCE_PROMPT_MAX_EXCERPT_CHARS: usize = 280;
+/// Share of the window the list of pages linked to the chat may take. Every
+/// page is listed by title and address while that share holds them, so the
+/// model knows each one exists and can fetch it; excerpts fill what is left,
+/// newest first.
 const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO: f64 = 0.08;
-const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MIN: usize = 120;
-const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MAX: usize = 320;
+
+/// Linked sources read per query while the list is being filled.
+const LINKED_SOURCE_PAGE_ROWS: usize = 64;
 
 async fn build_linked_web_sources_prompt_context(
     supplemental: &dyn ConversationContextPort,
@@ -18,57 +20,28 @@ async fn build_linked_web_sources_prompt_context(
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     max_tokens: usize,
 ) -> Result<Option<String>> {
-    let rows = supplemental
-        .linked_sources(conversation_id, LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS)
-        .await?;
-
-    if rows.is_empty() {
-        return Ok(None);
-    }
-
-    let raw_budget =
+    let token_budget =
         ((max_tokens as f64) * LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO).round() as usize;
-    let token_budget = raw_budget.clamp(
-        LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MIN,
-        LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MAX,
-    );
-
-    let mut entries: Vec<String> = Vec::new();
-    let mut used_tokens = 0usize;
-
-    for row in rows {
-        let url = row.url.trim();
-        if url.is_empty() {
-            continue;
+    let count = |text: &str| llm.count_tokens(text);
+    // Read a page of rows at a time, newest first, only until the list no
+    // longer fits: a long-running research chat links hundreds of pages, and
+    // every turn loaded all of them to show the few its share holds.
+    let mut rows = Vec::new();
+    let total = loop {
+        let page = supplemental
+            .linked_sources(conversation_id, rows.len(), LINKED_SOURCE_PAGE_ROWS)
+            .await?;
+        let fetched = page.len();
+        rows.extend(page);
+        if fetched < LINKED_SOURCE_PAGE_ROWS {
+            break rows.len();
         }
-
-        let title = row
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(url);
-
-        let mut entry = format!("- {} ({})", title, url);
-        if let Some(excerpt) = row
-            .excerpt
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let truncated_excerpt =
-                safe_truncate(excerpt, LINKED_WEB_SOURCE_PROMPT_MAX_EXCERPT_CHARS);
-            entry.push_str(&format!("\n  Excerpt: {}", truncated_excerpt));
+        if linked_source_entries(&rows, token_budget, count).1 > 0 {
+            break supplemental.linked_source_count(conversation_id).await?;
         }
-
-        let entry_tokens = llm.count_tokens(&entry);
-        if !entries.is_empty() && used_tokens.saturating_add(entry_tokens) > token_budget {
-            break;
-        }
-
-        used_tokens = used_tokens.saturating_add(entry_tokens);
-        entries.push(entry);
-    }
+    };
+    let (entries, _) = linked_source_entries(&rows, token_budget, count);
+    let unlisted = total.saturating_sub(entries.len());
 
     if entries.is_empty() {
         return Ok(None);
@@ -78,15 +51,79 @@ async fn build_linked_web_sources_prompt_context(
     // template, which renders them, instructs the model to cite numerically.
     // Left implicit, a model handed a titled URL and told to cite will invent a
     // number for it, and an invented number is worse than an uncited sentence.
+    let unlisted_note = if unlisted > 0 {
+        format!(
+            "\n- …and {unlisted} older linked page{} not listed here for lack of room.",
+            if unlisted == 1 { "" } else { "s" }
+        )
+    } else {
+        String::new()
+    };
     Ok(Some(format!(
         "Web sources on record for this conversation (links and short excerpts \
 that earlier turns cited or the user attached — background, not numbered \
-evidence):\n{}\n\nThese have no citation numbers, so do not cite them with \
+evidence):\n{}{unlisted_note}\n\nThese have no citation numbers, so do not cite them with \
 brackets. Use them to stay consistent with what this conversation has already \
 established. To rely on one for a new claim, open it with fetch_url_content \
 first and cite what you read.",
         entries.join("\n")
     )))
+}
+
+/// The listed entries, newest first, and how many pages had no room.
+///
+/// Every page's title and address come first, newest first, while the budget
+/// holds them; excerpts are then added whole, newest first, to the pages
+/// whose excerpt still fits. An excerpt that does not fit leaves its page
+/// listed without one, never cut mid-sentence.
+fn linked_source_entries(
+    rows: &[crate::application::ports::conversation_context::LinkedConversationSource],
+    token_budget: usize,
+    count: impl Fn(&str) -> usize,
+) -> (Vec<String>, usize) {
+    let listed: Vec<(String, Option<String>)> = rows
+        .iter()
+        .filter_map(|row| {
+            let url = row.url.trim();
+            if url.is_empty() {
+                return None;
+            }
+            let title = row
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(url);
+            let excerpt = row
+                .excerpt
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|excerpt| format!("\n  Excerpt: {excerpt}"));
+            Some((format!("- {title} ({url})"), excerpt))
+        })
+        .collect();
+
+    let mut used = 0usize;
+    let mut entries: Vec<String> = Vec::new();
+    for (line, _) in &listed {
+        let cost = count(line);
+        if !entries.is_empty() && used.saturating_add(cost) > token_budget {
+            break;
+        }
+        used = used.saturating_add(cost);
+        entries.push(line.clone());
+    }
+    let unlisted = listed.len() - entries.len();
+    for (entry, (_, excerpt)) in entries.iter_mut().zip(&listed) {
+        let Some(excerpt) = excerpt else { continue };
+        let cost = count(excerpt);
+        if used.saturating_add(cost) <= token_budget {
+            used = used.saturating_add(cost);
+            entry.push_str(excerpt);
+        }
+    }
+    (entries, unlisted)
 }
 
 pub async fn build_conversation_context(
@@ -230,14 +267,20 @@ mod tests {
         async fn linked_sources(
             &self,
             _: &str,
-            limit: i64,
+            offset: usize,
+            _: usize,
         ) -> Result<Vec<LinkedConversationSource>> {
-            assert_eq!(limit, 10);
             Ok(vec![LinkedConversationSource {
                 title: Some(" source ".into()),
                 url: " https://example.com ".into(),
                 excerpt: Some("excerpt".into()),
-            }])
+            }]
+            .into_iter()
+            .skip(offset)
+            .collect())
+        }
+        async fn linked_source_count(&self, _: &str) -> Result<usize> {
+            Ok(1)
         }
     }
 
@@ -346,6 +389,87 @@ mod tests {
         .await;
         assert!(
             matches!(result, Err(AppError::Database(message)) if message == "context unavailable")
+        );
+    }
+
+    fn row(index: usize, excerpt: &str) -> LinkedConversationSource {
+        LinkedConversationSource {
+            title: Some(format!("page {index}")),
+            url: format!("https://example.com/{index}"),
+            excerpt: Some(excerpt.to_string()),
+        }
+    }
+
+    /// Sources past the tenth used to be invisible. Every page is listed by
+    /// title and address while the share of the window holds them.
+    #[test]
+    fn every_linked_page_is_listed_when_the_window_holds_it() {
+        let rows: Vec<_> = (0..30).map(|index| row(index, "short note")).collect();
+        let (entries, unlisted) =
+            linked_source_entries(&rows, 10_000, |text| text.chars().count() / 4 + 1);
+        assert_eq!(entries.len(), 30);
+        assert_eq!(unlisted, 0);
+        assert!(entries
+            .iter()
+            .all(|entry| entry.contains("Excerpt: short note")));
+    }
+
+    /// When the share cannot hold them all, the newest are listed and the rest
+    /// are counted rather than dropped without a word; an excerpt that does
+    /// not fit leaves its page listed without one, never cut.
+    #[test]
+    fn pages_without_room_are_counted_and_excerpts_are_whole_or_absent() {
+        let long = "x".repeat(400);
+        let rows: Vec<_> = (0..10).map(|index| row(index, &long)).collect();
+        let (entries, unlisted) =
+            linked_source_entries(&rows, 60, |text| text.chars().count() / 4 + 1);
+        assert!(entries.len() < 10, "{entries:?}");
+        assert_eq!(unlisted, 10 - entries.len());
+        assert!(entries[0].starts_with("- page 0 ("));
+        assert!(entries.iter().all(|entry| !entry.contains("Excerpt")));
+    }
+
+    /// Hundreds of linked pages, a share that lists a few: the rows are read a
+    /// page at a time until the list is full, not all of them every turn, and
+    /// the ones left out are still counted.
+    #[tokio::test]
+    async fn linked_sources_are_read_only_as_far_as_the_share_lists() {
+        struct Many(std::sync::Mutex<usize>);
+        #[async_trait::async_trait]
+        impl ConversationContextPort for Many {
+            async fn space_prompt(&self, _: &str) -> Result<Option<String>> {
+                Ok(None)
+            }
+            async fn linked_sources(
+                &self,
+                _: &str,
+                offset: usize,
+                limit: usize,
+            ) -> Result<Vec<LinkedConversationSource>> {
+                *self.0.lock().unwrap() += limit.min(500usize.saturating_sub(offset));
+                Ok((offset..500.min(offset + limit))
+                    .map(|index| row(index, "note"))
+                    .collect())
+            }
+            async fn linked_source_count(&self, _: &str) -> Result<usize> {
+                Ok(500)
+            }
+        }
+        let source = Many(std::sync::Mutex::new(0));
+        let llm: Arc<dyn crate::application::ports::LLMPort> = Arc::new(Counter);
+        let text = build_linked_web_sources_prompt_context(&source, "chat", &llm, 4_096)
+            .await
+            .unwrap()
+            .expect("some are listed");
+        let read = *source.0.lock().unwrap();
+        assert!(read < 500, "read {read} of 500 rows");
+        let listed = text
+            .lines()
+            .filter(|line| line.starts_with("- page "))
+            .count();
+        assert!(
+            text.contains(&format!("…and {} older linked pages", 500 - listed)),
+            "{text}"
         );
     }
 }

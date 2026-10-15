@@ -27,9 +27,9 @@ mod prompts;
 mod week_scope;
 
 use prompts::{
-    assign_synthesis_source_ids, build_journal_map_prompt, build_journal_reduce_prompt,
-    build_synthesis_citations, build_synthesis_transcript, chunk_journal_synthesis_entries,
-    extract_latest_assistant_message, normalize_synthesis_scope, source_keys_by_message,
+    assign_synthesis_source_ids, build_journal_merge_prompt, build_journal_reduce_prompt,
+    build_synthesis_citations, build_synthesis_transcript, extract_latest_assistant_message,
+    group_for_merge, normalize_synthesis_scope, plan_journal_map_prompts, source_keys_by_message,
 };
 use week_scope::select_week_entries;
 
@@ -60,18 +60,28 @@ struct SynthesisMessage {
     content: String,
     citation_keys: HashMap<u32, SourceKey>,
 }
-const JOURNAL_SYNTHESIS_ENTRY_LIMIT_DEFAULT: usize = 12;
-const JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX: usize = 24;
-const JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT: usize = 900;
-const JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT: usize = 6000;
-const JOURNAL_SYNTHESIS_CHUNK_CHAR_LIMIT: usize = 14000;
 const WEEK_SYNTHESIS_DAYS: i64 = 7;
-const WEEK_SYNTHESIS_MAX_CONVERSATIONS: usize = 12;
-const WEEK_SYNTHESIS_MAX_REFERENCES: usize = 20;
-const WEEK_SYNTHESIS_MAX_NOTES: usize = 8;
-const WEEK_SYNTHESIS_CANDIDATE_SCAN: i64 = 200;
-const WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT: usize = 600;
+/// Conversations listed per read while the week scope pages back through
+/// them; it reads on until one is older than the week.
+const WEEK_SYNTHESIS_CONVERSATION_PAGE: i64 = 200;
 const WEEK_SYNTHESIS_PAGE_TITLE_PREFIX: &str = "Week of ";
+
+/// Characters one synthesis prompt may hold on `llm`. Each part is a chat turn
+/// in a scratch conversation, whose system prompt and tool schemas share the
+/// turn's input budget with it, so a part takes half of that budget and
+/// leaves the other half to them.
+fn synthesis_part_chars(llm: &dyn lattice_core::application::ports::LLMPort) -> usize {
+    use lattice_core::application::services::context_assembler::{
+        BudgetAllocation, BudgetRequest, ModelCapacity,
+    };
+    let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens());
+    let input = BudgetAllocation::plan(&capacity, &BudgetRequest::new(0, 0, 0))
+        .map_or(0, |allocation| allocation.input_budget);
+    lattice_core::application::ports::llm_port::chars_within_tokens(
+        input / 2,
+        llm.chars_per_token(),
+    )
+}
 
 /// What a synthesis entry was built from. Conversations keep today's meaning;
 /// references and notes only ever appear under the "week" scope.
@@ -157,6 +167,9 @@ pub(crate) struct SynthesisPlan {
     conversation_ids: Vec<String>,
     citations: Vec<SynthesisCitationDto>,
     sources: Vec<SourceDto>,
+    /// What one prompt may hold, so the merge of the parts' notes is split
+    /// the same way the entries were.
+    part_chars: usize,
 }
 
 /// One part's notes, saved as soon as the model writes them.
@@ -191,24 +204,16 @@ async fn plan_synthesis(
         }
     }
 
-    let max_entries = request
-        .max_entries
-        .unwrap_or(JOURNAL_SYNTHESIS_ENTRY_LIMIT_DEFAULT)
-        .clamp(1, JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX);
-
     // The "week" scope selects server-side, so it carries no conversation ids.
-    // Every other scope still requires an explicit selection.
+    // Every other scope still requires an explicit selection, which is read
+    // whole: what does not fit one prompt is split across parts.
     let entries = if normalized_scope == "week" {
-        select_week_entries(runtime, max_entries).await?
+        select_week_entries(runtime).await?
     } else {
         if conversation_ids.is_empty() {
             return Err(AppError::InvalidInput(
                 "At least one conversation ID is required for journal synthesis".to_string(),
             ));
-        }
-
-        if conversation_ids.len() > max_entries {
-            conversation_ids.truncate(max_entries);
         }
 
         let mut selected = Vec::new();
@@ -255,13 +260,11 @@ async fn plan_synthesis(
 
     let mut entries = entries;
     let sources = assign_synthesis_source_ids(&mut entries);
-    let chunks = chunk_journal_synthesis_entries(&entries);
-    let prompts = chunks
-        .iter()
-        .enumerate()
-        .map(|(index, chunk)| build_journal_map_prompt(chunk, index + 1, chunks.len()))
-        .collect();
+    let llm = runtime.get_or_load_llm().await?;
+    let part_chars = synthesis_part_chars(llm.as_ref());
+    let prompts = plan_journal_map_prompts(&entries, part_chars);
     Ok(SynthesisPlan {
+        part_chars,
         scope: normalized_scope,
         entry_count: entries.len(),
         prompts,
@@ -507,6 +510,45 @@ impl JobHandler for JournalSynthesisJob {
             },
         )
         .await;
+        // Notes too many for one brief are merged level by level, each merge
+        // saved like a part, until one prompt holds them all.
+        let mut level = 0usize;
+        loop {
+            let groups = group_for_merge(&outputs, plan.part_chars);
+            if groups.len() <= 1 {
+                break;
+            }
+            let mut merged = Vec::with_capacity(groups.len());
+            for (index, group) in groups.iter().enumerate() {
+                if let [only] = group.as_slice() {
+                    merged.push(only.clone());
+                    continue;
+                }
+                let key = format!("merge:{level}:{index}");
+                if let Some(saved) = context.checkpoint(&key).await? {
+                    merged.push(decode::<StepOutput>(saved)?.output);
+                    continue;
+                }
+                let prompt = build_journal_merge_prompt(group, index + 1, groups.len());
+                let Some(output) = self.write(context, &prompt).await? else {
+                    return Ok(JobOutcome::Stopped);
+                };
+                if !context
+                    .put_checkpoint(
+                        &key,
+                        &encode(&StepOutput {
+                            output: output.clone(),
+                        })?,
+                    )
+                    .await?
+                {
+                    return Ok(JobOutcome::Stopped);
+                }
+                merged.push(output);
+            }
+            outputs = merged;
+            level += 1;
+        }
         let Some(synthesis) = self
             .write(context, &build_journal_reduce_prompt(&outputs))
             .await?

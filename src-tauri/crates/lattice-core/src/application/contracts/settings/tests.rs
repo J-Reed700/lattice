@@ -102,3 +102,56 @@ fn test_validation_result_add_warning() {
     assert!(result.has_warnings());
     assert_eq!(result.warnings.get("llm").unwrap().len(), 1);
 }
+
+/// Settings that only existed to cap what a model is given were removed: the
+/// KB result clamp, the tool-result ceiling and result count, and the web page
+/// count and per-page ceiling. A settings file written before that still has
+/// them, and must still load; serde ignores the keys it no longer knows.
+#[test]
+fn a_settings_file_with_the_removed_cap_settings_still_loads() {
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let tuning = value
+        .pointer_mut("/search/retrievalTuning")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("retrieval tuning is serialized under search");
+    tuning.insert("kbSearchMinLimit".into(), serde_json::json!(16));
+    tuning.insert("kbSearchMaxLimit".into(), serde_json::json!(48));
+    tuning.insert("webFetchPageCount".into(), serde_json::json!(3));
+    tuning.insert("webPageMaxChars".into(), serde_json::json!(50_000));
+    let tool_output = value
+        .pointer_mut("/llm/toolOutput")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("tool output is serialized under llm");
+    tool_output.insert("maxChars".into(), serde_json::json!(50_000));
+    tool_output.insert("maxResults".into(), serde_json::json!(12));
+
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        loaded.llm.tool_output.excerpt_chars,
+        SettingsDto::default().llm.tool_output.excerpt_chars
+    );
+}
+
+/// The page count's 0 meant "search snippets only"; that choice is a switch
+/// now. A settings file without it reads pages, and one that turned it off
+/// keeps it off.
+#[test]
+fn reading_web_pages_is_a_switch_that_defaults_on() {
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let tuning = value
+        .pointer_mut("/search/retrievalTuning")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("retrieval tuning is serialized under search");
+    assert_eq!(tuning.remove("readWebPages"), Some(serde_json::json!(true)));
+    let loaded: SettingsDto = serde_json::from_value(value.clone()).unwrap();
+    assert!(loaded.search.retrieval_tuning.read_web_pages);
+
+    if let Some(tuning) = value
+        .pointer_mut("/search/retrievalTuning")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        tuning.insert("readWebPages".into(), serde_json::json!(false));
+    }
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert!(!loaded.search.retrieval_tuning.read_web_pages);
+}

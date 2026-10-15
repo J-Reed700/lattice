@@ -152,7 +152,6 @@ export function ReferenceAnnotationStrip({
                 }
               }}
               rows={3}
-              maxLength={2000}
               className="w-full resize-y rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-sm text-[hsl(var(--text-secondary))] outline-hidden focus:border-[hsl(var(--accent))]"
             />
           ) : (

@@ -7,6 +7,8 @@ pub(crate) const WINDOW_CHARS: usize = 1200;
 /// Windows overlap by a third so a sentence that straddles a boundary still
 /// lands whole in one of them.
 const WINDOW_STEP_CHARS: usize = 800;
+/// Text a window shares with each neighbour; joined neighbours show it once.
+pub const WINDOW_OVERLAP_CHARS: usize = WINDOW_CHARS - WINDOW_STEP_CHARS;
 
 /// The passage cut into overlapping windows; a short passage is one window.
 pub fn passage_windows(text: &str) -> Vec<String> {
@@ -53,6 +55,52 @@ pub struct ScoredWindow {
 /// vocabulary at all is dropped unless it is the passage's only one.
 pub fn best_windows(claim: &str, text: &str, max: usize) -> Vec<ScoredWindow> {
     rank_windows(claim, passage_windows(text), max)
+}
+
+/// Every window of `text`, scored against `claim`, in page order.
+///
+/// Unlike [`best_windows`] nothing is left out — windows sharing no
+/// vocabulary score zero and neighbours are all kept — for a caller that
+/// covers a whole passage, in parts if it must.
+pub fn scored_windows(claim: &str, text: &str) -> Vec<ScoredWindow> {
+    let claim_tokens = extract_normalized_tokens(claim);
+    passage_windows(text)
+        .into_iter()
+        .enumerate()
+        .map(|(index, window)| ScoredWindow {
+            index,
+            score: claim_tokens
+                .intersection(&extract_normalized_tokens(&window))
+                .count(),
+            text: window,
+        })
+        .collect()
+}
+
+/// Windows of one passage as continuous text, in page order. Neighbouring
+/// windows are joined where they overlap, so the text they share is shown
+/// once; a stretch left out between two windows is marked with `gap`.
+pub fn join_windows(windows: &[&ScoredWindow], gap: &str) -> String {
+    let mut ordered = windows.to_vec();
+    ordered.sort_by_key(|window| window.index);
+    ordered.dedup_by_key(|window| window.index);
+    let overlap = WINDOW_OVERLAP_CHARS;
+    let mut joined = String::new();
+    let mut previous: Option<usize> = None;
+    for window in ordered {
+        match previous {
+            Some(index) if window.index == index + 1 => {
+                joined.extend(window.text.chars().skip(overlap));
+            }
+            Some(_) => {
+                joined.push_str(gap);
+                joined.push_str(&window.text);
+            }
+            None => joined.push_str(&window.text),
+        }
+        previous = Some(window.index);
+    }
+    joined
 }
 
 fn rank_windows(claim: &str, windows: Vec<String>, max: usize) -> Vec<ScoredWindow> {
@@ -133,3 +181,40 @@ const STOPWORDS: &[&str] = &[
     "without", "them", "they", "its", "it's", "was", "are", "is", "you", "our", "out", "all",
     "any", "can", "may", "not", "but", "per",
 ];
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    /// Joining every window of a passage gives the passage back: the overlap
+    /// is shown once, and nothing is lost between windows.
+    #[test]
+    fn every_window_joined_is_the_whole_passage() {
+        let text: String = (0..900).map(|i| format!("w{i} ")).collect();
+        let normalized = normalize_whitespace(&text);
+        let windows = scored_windows("w5", &text);
+        assert!(windows.len() > 3);
+        let all: Vec<&ScoredWindow> = windows.iter().collect();
+        assert_eq!(join_windows(&all, " […] "), normalized);
+    }
+
+    #[test]
+    fn a_gap_between_windows_is_marked_and_order_is_restored() {
+        let text: String = (0..900).map(|i| format!("w{i} ")).collect();
+        let windows = scored_windows("w5", &text);
+        let picked = [&windows[3], &windows[0]];
+        let joined = join_windows(&picked, "|GAP|");
+        assert!(joined.starts_with(windows[0].text.as_str()));
+        assert!(joined.ends_with(windows[3].text.as_str()));
+        assert!(joined.contains("|GAP|"));
+    }
+
+    #[test]
+    fn scoring_keeps_windows_that_share_nothing() {
+        let text = format!("{} needle", "hay ".repeat(1_000));
+        let windows = scored_windows("needle", &text);
+        assert_eq!(windows.len(), passage_windows(&text).len());
+        assert!(windows.iter().any(|window| window.score == 0));
+        assert!(windows.last().is_some_and(|window| window.score == 1));
+    }
+}

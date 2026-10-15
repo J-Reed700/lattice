@@ -9,7 +9,7 @@ use crate::features::qa::dto::SourceDto;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
 use lattice_core::domain::entities::document::Document;
-use lattice_core::shared::text::{build_excerpt, safe_truncate};
+use lattice_core::shared::text::build_excerpt;
 
 use super::super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::{infer_category, select_informative_terms, tokenize_keyword_terms};
@@ -42,6 +42,72 @@ impl FollowupDocument {
     }
 }
 
+/// Whether what the conversation already read of the document under
+/// discussion (its name and the passages cited from it) shares a term with
+/// the follow-up.
+///
+/// The cited passages, not the whole text: a whole book shares some term with
+/// almost any question, so testing all of it stopped the gate filtering at
+/// all, and it built a token set of the entire book every turn. The scan
+/// stops at the first anchor it meets.
+fn document_mentions_an_anchor(
+    file_name: &str,
+    passages: &[String],
+    anchors: &HashSet<String>,
+) -> bool {
+    std::iter::once(file_name)
+        .chain(passages.iter().map(String::as_str))
+        .any(|text| mentions_any(text, anchors))
+}
+
+/// Whether `text` holds any of `anchors` as a word, read word by word and
+/// stopping at the first.
+fn mentions_any(text: &str, anchors: &HashSet<String>) -> bool {
+    let mut word = String::new();
+    for ch in text.chars().chain(std::iter::once(' ')) {
+        if ch.is_alphanumeric() {
+            word.extend(ch.to_lowercase());
+        } else if !word.is_empty() {
+            if anchors.contains(&word) {
+                return true;
+            }
+            word.clear();
+        }
+    }
+    false
+}
+
+/// The passages the latest answer cited from `document_id`.
+fn cited_passages(messages: &[ConversationMessage], document_id: &str) -> Vec<String> {
+    let Some(answer) = messages
+        .iter()
+        .rev()
+        .find(|message| message.is_completed() && message.role == MessageRole::Assistant)
+    else {
+        return Vec::new();
+    };
+    let Some(metadata) = answer
+        .metadata
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+    else {
+        return Vec::new();
+    };
+    metadata
+        .get("sources")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| serde_json::from_value::<SourceDto>(value.clone()).ok())
+        .filter(|source| source.document_id == document_id)
+        .map(|source| source.content)
+        .filter(|content| !content.trim().is_empty())
+        .collect()
+}
+
+/// Room kept for the line saying the document goes on and where.
+const CONTINUES_NOTE_TOKENS: usize = 64;
+
 pub(super) async fn build_followup_context(
     container: &dyn ChatRuntime,
     conv_service: &Arc<dyn ConversationServiceTrait>,
@@ -52,6 +118,11 @@ pub(super) async fn build_followup_context(
     llm: &Arc<dyn LLMPort>,
     excerpt_chars: usize,
 ) -> Option<(FollowupDocument, Vec<SourceDto>)> {
+    // No room for the document is no document: a fixed excerpt in its place
+    // overran the budget it was given.
+    if token_budget == 0 {
+        return None;
+    }
     let last_ref = super::conversation_helpers::followup_reference(document_context)?;
     let doc_id = last_ref.document_id.clone();
     let followup_anchor_terms =
@@ -77,33 +148,48 @@ pub(super) async fn build_followup_context(
         return None;
     }
 
-    if !followup_anchor_terms.is_empty() {
-        let mut anchor_haystack = String::new();
-        anchor_haystack.push_str(document.file_name());
-        anchor_haystack.push(' ');
-        anchor_haystack.push_str(&safe_truncate(&content, 18_000));
-        let haystack_terms: HashSet<String> = super::tokenize_overlap_terms(&anchor_haystack)
-            .into_iter()
-            .collect();
-        let anchor_hits = followup_anchor_terms
-            .iter()
-            .filter(|term| haystack_terms.contains(term.as_str()))
-            .count();
-        if anchor_hits == 0 {
-            warn!(
-                conversation_id = conversation_id,
-                document_id = doc_id.as_str(),
-                anchor_terms = ?followup_anchor_terms,
-                "Skipping follow-up document reuse due to zero topical anchor overlap"
-            );
-            return None;
-        }
+    let mut read_before = match conv_service.get_conversation(conversation_id).await {
+        Ok(Some(aggregate)) => cited_passages(aggregate.messages(), &doc_id),
+        _ => Vec::new(),
+    };
+    let referenced = last_ref
+        .chunk_id
+        .as_deref()
+        .and_then(|id| {
+            document
+                .chunks()
+                .iter()
+                .find(|chunk| chunk.id().as_str() == id)
+        })
+        .map(|chunk| chunk.content().to_string());
+    read_before.extend(referenced);
+    if !followup_anchor_terms.is_empty()
+        && !read_before.is_empty()
+        && !document_mentions_an_anchor(document.file_name(), &read_before, &followup_anchor_terms)
+    {
+        warn!(
+            conversation_id = conversation_id,
+            document_id = doc_id.as_str(),
+            anchor_terms = ?followup_anchor_terms,
+            "Skipping follow-up document reuse due to zero topical anchor overlap"
+        );
+        return None;
     }
 
-    let trimmed_content = if token_budget == 0 {
-        safe_truncate(&content, excerpt_chars)
+    // What does not fit is said, with where to read on, never cut silently.
+    let trimmed_content = if llm.count_tokens(&content) <= token_budget {
+        content.clone()
     } else {
-        truncate_to_token_budget(&content, token_budget, llm)
+        let shown = truncate_to_token_budget(
+            &content,
+            token_budget.saturating_sub(CONTINUES_NOTE_TOKENS),
+            llm,
+        );
+        let shown_chars = shown.chars().count();
+        format!(
+            "{shown}\n[The document continues: the first {shown_chars} of its {} characters are shown. Call get_document with document_id=\"{doc_id}\" and offset={shown_chars} to read on.]",
+            content.chars().count()
+        )
     };
 
     let mut sources = build_followup_sources(&document, last_ref, highlight_terms, excerpt_chars);
@@ -329,5 +415,48 @@ mod followup_label_tests {
             rendered.starts_with("[2] Document: earlier.md\n"),
             "{rendered}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn anchors(text: &str) -> HashSet<String> {
+        super::super::tokenize_overlap_terms(text)
+            .into_iter()
+            .collect()
+    }
+
+    /// A follow-up about a passage the last answer cited far into a long
+    /// document is still about that document.
+    #[test]
+    fn an_anchor_in_a_cited_passage_keeps_the_document() {
+        let passage = format!(
+            "{} The appendix covers photosynthesis in detail.",
+            "Filler about unrelated matters. ".repeat(200)
+        );
+        assert!(document_mentions_an_anchor(
+            "notes.pdf",
+            &[passage],
+            &anchors("photosynthesis")
+        ));
+    }
+
+    /// The whole text of a book shares some word with almost any question,
+    /// so testing all of it never filtered anything. Only what was cited
+    /// from it counts.
+    #[test]
+    fn a_term_only_elsewhere_in_the_book_does_not_keep_it() {
+        assert!(!document_mentions_an_anchor(
+            "notes.pdf",
+            &["A chapter about rivers and their deltas.".to_string()],
+            &anchors("photosynthesis")
+        ));
+        assert!(mentions_any(
+            "Rivers, deltas; PHOTOSYNTHESIS.",
+            &anchors("photosynthesis")
+        ));
+        assert!(!mentions_any("photosynthetic", &anchors("photosynthesis")));
     }
 }

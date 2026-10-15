@@ -157,6 +157,12 @@ impl ChatRetrieval for Container {
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())
     }
+    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
+        Arc::clone(self.ai.intent_pace())
+    }
+    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
+        Arc::clone(self.ai.judge_pace())
+    }
 }
 
 #[async_trait]

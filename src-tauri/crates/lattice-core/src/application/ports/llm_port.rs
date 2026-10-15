@@ -550,6 +550,27 @@ pub struct CompletionResponse {
     /// provider reports them.
     #[serde(default)]
     pub first_token_logprobs: Option<Vec<(String, f32)>>,
+    /// How the provider read the prompt, when it says: the tokens it had to
+    /// evaluate and the time that took, without queueing or writing. A call
+    /// with a deadline sizes its next prompt from this.
+    #[serde(default)]
+    pub prefill: Option<PrefillTiming>,
+}
+
+/// One request's prompt reading, as the provider measured it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct PrefillTiming {
+    /// Prompt tokens evaluated, not counting any reused from a cache.
+    pub tokens: u64,
+    /// Seconds spent evaluating them.
+    pub seconds: f64,
+}
+
+impl PrefillTiming {
+    /// Tokens read per second, when the measure says anything.
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        (self.tokens > 0 && self.seconds > 0.0).then(|| self.tokens as f64 / self.seconds)
+    }
 }
 
 impl CompletionResponse {

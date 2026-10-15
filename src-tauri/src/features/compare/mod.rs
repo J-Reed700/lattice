@@ -7,8 +7,10 @@
 //! ## Cost shape
 //!
 //! Retrieval is per (document, column) — cheap, no LLM. Generation is **one
-//! call per document**, covering every column at once, so a 12 × 6 table costs
-//! 12 generations rather than 72. Documents run two at a time.
+//! call per document** covering as many columns as the model's answer room
+//! holds, so a 12 × 6 table costs 12 generations rather than 72; a row of more
+//! columns than one answer holds takes a few calls. Documents run two at a
+//! time.
 //!
 //! ## Public surface
 //!

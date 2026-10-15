@@ -11,11 +11,11 @@ use lattice_core::domain::conversation::memory::{
 
 use super::super::prompts::{EXTRACTOR_PROMPT_VERSION, VALIDATOR_VERSION};
 use super::super::selection::{
-    adjacent_context, quotable_messages, render_context, select_boundary,
+    adjacent_context, context_room_chars, quotable_messages, render_context, select_boundary,
 };
 use super::super::{
     extract, segment, summarize, verify, CompactionError, CompactionOutcome, CompactionRequest,
-    CompactionStatus, CompactionTrigger, Deadline, MAX_FORGOTTEN_LABELS,
+    CompactionStatus, CompactionTrigger, Deadline,
 };
 use super::{
     hold_before, redact_forgotten, summary_resume_point, CandidateLedger, CompactionJob,
@@ -173,7 +173,10 @@ impl CompactionJob {
         for batch in &batches {
             let context = adjacent_context(&eligible, batch);
             let quotable = quotable_messages(&eligible, batch, &context);
-            let rendered = render_context(&context);
+            let rendered = render_context(
+                &context,
+                context_room_chars(self.utility_llm.as_ref(), batch, context.len()),
+            );
 
             let extraction_phase = PhaseTiming::start(conversation_id, "extract");
             let outcome = extract::extract_segments(
@@ -331,10 +334,7 @@ impl CompactionJob {
             Vec::new()
         } else {
             let labels_phase = PhaseTiming::start(conversation_id, "read_forgotten_labels");
-            let labels = self
-                .memory
-                .forgotten_labels(conversation_id, MAX_FORGOTTEN_LABELS)
-                .await;
+            let labels = self.memory.forgotten_labels(conversation_id).await;
             labels_phase.finish(if labels.is_ok() { "completed" } else { "error" });
             labels?
         };

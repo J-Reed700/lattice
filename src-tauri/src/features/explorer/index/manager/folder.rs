@@ -236,11 +236,11 @@ impl FolderIndexManager {
             if current.root != root {
                 return None;
             }
+            // A folder past the file bound is indexed up to it, so its index
+            // is searched for what it holds.
             if matches!(
                 current.status.get().state,
-                FolderIndexState::TooLarge
-                    | FolderIndexState::Refused
-                    | FolderIndexState::Unavailable
+                FolderIndexState::Refused | FolderIndexState::Unavailable
             ) {
                 return None;
             }

@@ -133,10 +133,6 @@ pub enum EmbeddingStrategySettingDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrievalTuningSettingsDto {
-    /// Min and max KB candidate limits derived from tool output max_results
-    pub kb_search_min_limit: u32,
-    pub kb_search_max_limit: u32,
-
     /// Min and max limits for document shortlist candidate collection
     pub doc_shortlist_candidate_min: u32,
     pub doc_shortlist_candidate_max: u32,
@@ -149,23 +145,16 @@ pub struct RetrievalTuningSettingsDto {
     pub shortlist_gate_min_candidates: u32,
     pub shortlist_gate_min_docs: u32,
 
-    /// External source retrieval limits and snippet shaping
+    /// How many results a wiki or web search asks for. Every result a search
+    /// returns reaches the turn with its whole snippet; how many the prompt
+    /// shows is the turn's budget's to decide.
     pub wiki_search_max_results: u32,
-    pub wiki_snippet_max_chars: u32,
-    pub wiki_context_limit: u32,
     pub web_search_max_results: u32,
-    pub web_snippet_max_chars: u32,
-    /// How many of the top web results are opened and read in full for the
-    /// prompt. Search engines return a headline and roughly one sentence; a
-    /// question about what a page actually says cannot be answered from that.
-    /// 0 disables page reading and falls back to snippets alone.
-    #[serde(default = "default_web_fetch_page_count")]
-    pub web_fetch_page_count: u32,
-    /// Ceiling on any one fetched page's text in the prompt. The room a page
-    /// actually gets is its share of the turn's page budget, which is derived
-    /// from the model's context window; this only caps that share.
-    #[serde(default = "default_web_page_max_chars")]
-    pub web_page_max_chars: u32,
+    /// Whether a web search opens its results and reads the pages. Off, a
+    /// search answers from the results' snippets alone. How many pages are
+    /// read, and how much of each, follows the model's window.
+    #[serde(default = "default_read_web_pages")]
+    pub read_web_pages: bool,
     /// Seconds any one page fetch may take before it is abandoned and the
     /// result falls back to its snippet.
     #[serde(default = "default_web_page_fetch_timeout_secs")]
@@ -207,15 +196,8 @@ pub struct RetrievalTuningSettingsDto {
     pub doc_support_single_hit_ratio_max: f32,
 }
 
-fn default_web_fetch_page_count() -> u32 {
-    3
-}
-
-/// The fetcher's own ceiling, so by default a page is only ever shortened by
-/// the turn's page budget — which knows the model's context window — and not
-/// by a constant that does not.
-fn default_web_page_max_chars() -> u32 {
-    50_000
+fn default_read_web_pages() -> bool {
+    true
 }
 
 fn default_web_page_fetch_timeout_secs() -> u32 {
@@ -321,8 +303,6 @@ pub const DEFAULT_VECTOR_COMPRESSION_DIMS: u32 = 256;
 impl Default for RetrievalTuningSettingsDto {
     fn default() -> Self {
         Self {
-            kb_search_min_limit: 16,
-            kb_search_max_limit: 48,
             doc_shortlist_candidate_min: 48,
             doc_shortlist_candidate_max: 192,
             doc_shortlist_doc_min: 10,
@@ -330,12 +310,8 @@ impl Default for RetrievalTuningSettingsDto {
             shortlist_gate_min_candidates: 8,
             shortlist_gate_min_docs: 4,
             wiki_search_max_results: 5,
-            wiki_snippet_max_chars: 1200,
-            wiki_context_limit: 3,
             web_search_max_results: 5,
-            web_snippet_max_chars: 1200,
-            web_fetch_page_count: default_web_fetch_page_count(),
-            web_page_max_chars: default_web_page_max_chars(),
+            read_web_pages: default_read_web_pages(),
             web_page_fetch_timeout_secs: default_web_page_fetch_timeout_secs(),
             deep_research_depth: default_deep_research_depth(),
             deep_research_branch_queries: default_deep_research_branch_queries(),

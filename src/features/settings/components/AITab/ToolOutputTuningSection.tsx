@@ -5,7 +5,10 @@ import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
 import { NUMBER_FIELD_CLASS, TEXTAREA_CLASS, toFinite, clamp } from './shared';
 
-/** How tool results are trimmed and templated before the model reads them. */
+/**
+ * How tool results are templated, and how long a source card's excerpt is. How
+ * much of a result the model reads is decided by its context window, not here.
+ */
 export function ToolOutputTuningSection({
   llmSettings,
   toolOutputDraft,
@@ -50,34 +53,6 @@ export function ToolOutputTuningSection({
 
   return (
     <SettingsSection title="Tool output">
-      <SettingsRow label="Max characters" htmlFor="tool-max-chars">
-        <input
-          id="tool-max-chars"
-          type="number"
-          min={200}
-          max={200000}
-          step={50}
-          value={toolOutputDraft.maxChars}
-          onChange={(event) =>
-            setToolOutputDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    maxChars: Math.round(toFinite(event.target.value, previous.maxChars)),
-                  }
-                : previous
-            )
-          }
-          onBlur={() =>
-            void saveToolOutputField(
-              'maxChars',
-              Math.round(clamp(toolOutputDraft.maxChars, 200, 200000))
-            )
-          }
-          className={NUMBER_FIELD_CLASS}
-        />
-      </SettingsRow>
-
       <SettingsRow label="Excerpt characters" htmlFor="tool-excerpt-chars">
         <input
           id="tool-excerpt-chars"
@@ -102,34 +77,6 @@ export function ToolOutputTuningSection({
             void saveToolOutputField(
               'excerptChars',
               Math.round(clamp(toolOutputDraft.excerptChars, 100, 4000))
-            )
-          }
-          className={NUMBER_FIELD_CLASS}
-        />
-      </SettingsRow>
-
-      <SettingsRow label="Max results" htmlFor="tool-max-results">
-        <input
-          id="tool-max-results"
-          type="number"
-          min={1}
-          max={48}
-          step={1}
-          value={toolOutputDraft.maxResults}
-          onChange={(event) =>
-            setToolOutputDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    maxResults: Math.round(toFinite(event.target.value, previous.maxResults)),
-                  }
-                : previous
-            )
-          }
-          onBlur={() =>
-            void saveToolOutputField(
-              'maxResults',
-              Math.round(clamp(toolOutputDraft.maxResults, 1, 48))
             )
           }
           className={NUMBER_FIELD_CLASS}

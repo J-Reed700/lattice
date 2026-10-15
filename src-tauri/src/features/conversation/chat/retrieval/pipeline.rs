@@ -161,12 +161,12 @@ pub(super) async fn run_retrieval_pipeline(
     };
     let kb_search = async {
         let kb_retrieval_start = Instant::now();
-        let kb_search_limit = derive_kb_search_limit(tool_output_settings, tuning);
         let kb_outcome = run_kb_retrieval(
             container,
             turn,
             search_flags,
-            kb_search_limit,
+            evidence.remaining(),
+            llm.chars_per_token(),
             search_settings.enable_reranking,
             search_settings.similarity_threshold,
             tuning,
@@ -416,8 +416,27 @@ enum PageOutcome {
 /// waits on the network.
 const MAX_PAGE_FETCH_WAVES: usize = 3;
 
-/// A research turn was asked to go deep; it reads this many times the pages.
-const DEEP_RESEARCH_PAGE_MULTIPLIER: usize = 2;
+/// The least of a page worth carrying when it cannot go whole: a few
+/// screens of article text, enough to answer from. A page given this or more
+/// and cut short says so, and the rest is read by offset.
+const USEFUL_PAGE_SHARE_CHARS: usize = 8_000;
+
+/// A useful share of a page within `budget_chars`: the whole budget when it is
+/// smaller than the usual share, so a small window still reads one page.
+fn useful_page_share(budget_chars: usize) -> usize {
+    USEFUL_PAGE_SHARE_CHARS.min(budget_chars)
+}
+
+/// How many more pages a budget of `budget_chars` has a useful share for:
+/// the pages opened next, in rank order. The pages read are then given room
+/// by rank (see [`page_budget::by_rank`]), and a wave that leaves room opens
+/// more; one that does not, none.
+fn pages_the_budget_carries(budget_chars: usize) -> usize {
+    if budget_chars < MIN_USEFUL_PAGE_CHARS {
+        return 0;
+    }
+    (budget_chars / useful_page_share(budget_chars)).max(1)
+}
 
 struct ExternalLookup<'a> {
     container: &'a dyn ChatRuntime,
@@ -513,8 +532,8 @@ fn render_page_body(page: Option<&PageOutcome>) -> String {
                 page.word_count, page.text
             ),
             Some(shown) => format!(
-                "\nPage content ({} words; the first {} characters are shown — call fetch_url_content with this URL if you need the rest):\n{}",
-                page.word_count, shown, page.text
+                "\nPage content ({} words; the first {} characters are shown, as much as this prompt has room for — call fetch_url_content with this URL and offset={} for the rest):\n{}",
+                page.word_count, shown, shown, page.text
             ),
         },
         Some(PageOutcome::Unreadable(reason)) => format!(

@@ -38,7 +38,7 @@ export function describeFolderChip(folder: ExplorerFolder): { text: string; tone
         percent,
       };
     case 'tooLarge':
-      return { text: 'Too large', tone: 'quiet', percent: null };
+      return { text: 'Partly indexed', tone: 'quiet', percent: null };
     case 'error':
       return { text: 'Index error', tone: 'alarm', percent: null };
     case 'notIndexed':

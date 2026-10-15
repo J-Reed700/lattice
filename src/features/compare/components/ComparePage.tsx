@@ -37,7 +37,7 @@ export function ComparePage() {
   const documentIds = useMemo(() => parseIds(searchParams.get('ids')), [searchParams]);
   const [columnDraft, setColumnDraft] = useState(() => searchParams.get('columns') ?? '');
   const [columns, setColumns] = useState<string[]>(() =>
-    parseColumns(searchParams.get('columns') ?? '').slice(0, 6),
+    parseColumns(searchParams.get('columns') ?? ''),
   );
   const [hasRun, setHasRun] = useState(() => columns.length > 0);
   const [previewSource, setPreviewSource] = useState<SourceWithMetadata | null>(null);

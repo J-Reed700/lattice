@@ -162,16 +162,19 @@ impl FunctionExecutor {
                 .map_err(|e| AppError::InvalidInput(format!("Invalid arguments: {}", e)))?;
 
             debug!(
-                "Semantic search: query='{}', limit={}",
-                input.query, input.limit
+                "Semantic search: query='{}', limit={}, offset={}",
+                input.query, input.limit, input.offset
             );
+            // A page past the first is the same search asked for more, with
+            // the earlier pages skipped.
+            let wanted = input.offset.saturating_add(input.limit);
 
             let doc_results: Vec<DocumentResult> = match input.search_mode {
                 SearchMode::Semantic => {
                     let embedding = self.embedding_service.embed_query(&input.query).await?;
                     let results = self
                         .search_service
-                        .search_with_metadata(&embedding, input.limit)
+                        .search_with_metadata(&embedding, wanted)
                         .await?
                         .into_iter()
                         .filter(|r| r.score >= input.threshold)
@@ -181,7 +184,7 @@ impl FunctionExecutor {
                 }
                 SearchMode::Keyword => self
                     .bm25_service
-                    .search(&input.query, input.limit)
+                    .search(&input.query, wanted)
                     .await?
                     .into_iter()
                     .map(|r| self.build_document_result_from_search(r.into()))
@@ -190,12 +193,15 @@ impl FunctionExecutor {
                 SearchMode::Hybrid => {
                     let response = self
                         .hybrid_search
-                        .execute(SearchRequestDto::hybrid(input.query.clone(), input.limit))
+                        .execute(SearchRequestDto::hybrid(input.query.clone(), wanted))
                         .await?;
                     self.label_hits(response.results).await?
                 }
             };
 
+            let found = doc_results.len();
+            let doc_results: Vec<DocumentResult> =
+                doc_results.into_iter().skip(input.offset).collect();
             let search_time_ms = start.elapsed().as_secs_f64() * 1000.0;
             let documents = Self::build_document_evidence(&doc_results);
 
@@ -205,6 +211,7 @@ impl FunctionExecutor {
                 total_found: doc_results.len(),
                 search_time_ms,
                 query: input.query,
+                next_offset: (found >= wanted).then_some(wanted),
             };
 
             info!(

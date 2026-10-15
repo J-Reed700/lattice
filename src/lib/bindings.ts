@@ -4818,7 +4818,8 @@ export type CompareRowDto = { documentId: string; title: string; filePath: strin
 cells: CompareCellDto[];
 /**
  * Set when this document could not be processed (timeout, no chunks, LLM
- * unavailable). Cells are all-null in that case. Rendered as a muted row note.
+ * unavailable), in whole or in part. Cells filled before the failure are
+ * kept; the rest are null. Rendered as a muted row note.
  */
 error: string | null;
 /**
@@ -5808,7 +5809,8 @@ export type FolderIndexState =
  */
 "indexing" | "ready" |
 /**
- * More indexable files than the cap; nothing was embedded.
+ * More indexable files than the bound: the first up to it are indexed,
+ * and the message says how many more are found by text matching only.
  */
 "tooLarge" |
 /**
@@ -7435,10 +7437,6 @@ focusedDocuments?: number | null }
  */
 export type RetrievalTuningSettingsDto = {
 /**
- * Min and max KB candidate limits derived from tool output max_results
- */
-kbSearchMinLimit: number; kbSearchMaxLimit: number;
-/**
  * Min and max limits for document shortlist candidate collection
  */
 docShortlistCandidateMin: number; docShortlistCandidateMax: number;
@@ -7451,22 +7449,17 @@ docShortlistDocMin: number; docShortlistDocMax: number;
  */
 shortlistGateMinCandidates: number; shortlistGateMinDocs: number;
 /**
- * External source retrieval limits and snippet shaping
+ * How many results a wiki or web search asks for. Every result a search
+ * returns reaches the turn with its whole snippet; how many the prompt
+ * shows is the turn's budget's to decide.
  */
-wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number;
+wikiSearchMaxResults: number; webSearchMaxResults: number;
 /**
- * How many of the top web results are opened and read in full for the
- * prompt. Search engines return a headline and roughly one sentence; a
- * question about what a page actually says cannot be answered from that.
- * 0 disables page reading and falls back to snippets alone.
+ * Whether a web search opens its results and reads the pages. Off, a
+ * search answers from the results' snippets alone. How many pages are
+ * read, and how much of each, follows the model's window.
  */
-webFetchPageCount: number;
-/**
- * Ceiling on any one fetched page's text in the prompt. The room a page
- * actually gets is its share of the turn's page budget, which is derived
- * from the model's context window; this only caps that share.
- */
-webPageMaxChars: number;
+readWebPages: boolean;
 /**
  * Seconds any one page fetch may take before it is abandoned and the
  * result falls back to its snippet.
@@ -8146,7 +8139,7 @@ export type SynthesisDestinationDto =
  */
 { kind: "week"; title: string }
 export type SynthesisStage = "gathering" | "reading" | "writing"
-export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
+export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null }
 export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];
 /**
  * Source passages from the conversations and journal notes, numbered to
@@ -8277,17 +8270,11 @@ export type ToolLoopTimingMetrics = { totalMs: number; iterations: number; llmSt
  */
 export type ToolOutputSettingsDto = {
 /**
- * Maximum characters to include for a tool result in the LLM context
- */
-maxChars: number;
-/**
- * Excerpt length for document/tool content
+ * Length of the excerpt a source card shows for a document or tool
+ * result. Display only: what a tool result carries into the model's
+ * context is decided by the window (see the tool loop's allowance).
  */
 excerptChars: number;
-/**
- * Maximum search results to summarize from a tool call
- */
-maxResults: number;
 /**
  * Maximum highlight terms extracted from the user query
  */

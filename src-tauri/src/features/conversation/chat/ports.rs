@@ -47,7 +47,14 @@ pub trait ChatRecords: ConversationMemoryPort + ConversationMemoryReadPort {
     ) -> Result<Option<(String, HashSet<String>)>>;
     async fn retrieval_catalog(&self, allowed_ids: &HashSet<String>)
         -> Result<Vec<CorpusDocument>>;
-    /// The opening passages of each selected document, within `allowed`.
+    /// The mean length, in characters, of the indexed passages within
+    /// `allowed`, or `None` when it has none.
+    async fn retrieval_mean_chunk_chars(
+        &self,
+        allowed_ids: &HashSet<String>,
+    ) -> Result<Option<usize>>;
+    /// The opening passages of each selected document, within `allowed`, up
+    /// to `chunks_per_document` of each in reading order.
     async fn retrieval_openings(
         &self,
         selected_ids: &[String],
@@ -250,12 +257,8 @@ pub trait ChatStarterCache: Send + Sync {
     async fn prune(&self, keep: i64) -> Result<()>;
     /// `(file_type, count)` over `allowed_ids`, most common first.
     async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>>;
-    /// The newest document titles in `allowed_ids`.
-    async fn recent_titles(
-        &self,
-        allowed_ids: &HashSet<String>,
-        limit: usize,
-    ) -> Result<Vec<String>>;
+    /// Every document title in `allowed_ids`, newest first.
+    async fn recent_titles(&self, allowed_ids: &HashSet<String>) -> Result<Vec<String>>;
     /// Newest `indexed_at` in `allowed_ids`, or an empty string when there is none.
     async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String>;
 }
@@ -289,7 +292,6 @@ pub trait SynthesisEntries: Send + Sync {
     async fn references_created_since(
         &self,
         cutoff: &str,
-        limit: i64,
     ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>>;
     /// Journal pages updated between `start_date` and `end_date`, as stored.
     async fn notes_in_range(
@@ -329,6 +331,12 @@ pub trait ChatRetrieval: Send + Sync {
     /// How much prompt the corpus planner can take in time, learned across
     /// every turn this runtime runs — and never shared with a test's runtime.
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
+    /// How much prompt the turn-intent classifier's model reads inside the
+    /// classifier's deadline, learned the same way.
+    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
+    /// How much source text the grounding judge's model reads inside the
+    /// judge's budget, learned the same way.
+    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
 }
 
 #[async_trait]

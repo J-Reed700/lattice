@@ -28,11 +28,12 @@ const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
 const PREVIEW_CHARS: usize = 200;
 
-/// How far one search or find may go before it stops and says `truncated`.
+/// How far one search or find may walk before it stops and says `truncated`.
+/// A walk bound, not a content one: every file a search reaches is read to
+/// its last line.
 #[derive(Debug, Clone, Copy)]
 pub struct WalkBounds {
     pub max_files: usize,
-    pub max_bytes_per_file: u64,
     pub time_budget: Duration,
 }
 
@@ -40,7 +41,6 @@ impl Default for WalkBounds {
     fn default() -> Self {
         Self {
             max_files: 20_000,
-            max_bytes_per_file: 1024 * 1024,
             time_budget: Duration::from_secs(2),
         }
     }
@@ -165,6 +165,70 @@ pub(super) fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(BINARY_SNIFF_BYTES).any(|&byte| byte == 0)
 }
 
+/// The most of one line read at a time. A file with no newline in gigabytes
+/// is read in pieces this long, each handed on as part of the same line, so
+/// a line is never held whole and memory stays flat whatever the file.
+pub(super) const LINE_PIECE_BYTES: usize = 64 * 1024;
+
+/// The length of the longest prefix of `bytes` that does not end partway
+/// through a UTF-8 character, so a piece cut mid-line decodes cleanly.
+fn utf8_prefix_len(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    for back in 1..=len.min(4) {
+        let Some(&byte) = bytes.get(len - back) else {
+            break;
+        };
+        if byte & 0xC0 == 0x80 {
+            continue;
+        }
+        let width = match byte {
+            0x00..=0x7F => 1,
+            0xC0..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            _ => 4,
+        };
+        return if back < width { len - back } else { len };
+    }
+    len
+}
+
+/// Reads the next piece of a line into `piece`: through the next newline, or
+/// [`LINE_PIECE_BYTES`] of a longer line, cut on a character boundary.
+/// Returns whether the piece ends its line; an empty `piece` is the end of
+/// the file.
+pub(super) fn read_line_piece(
+    reader: &mut impl std::io::BufRead,
+    piece: &mut Vec<u8>,
+) -> std::io::Result<bool> {
+    piece.clear();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(true);
+        }
+        let room = LINE_PIECE_BYTES - piece.len();
+        let window = available
+            .get(..available.len().min(room))
+            .unwrap_or_default();
+        if let Some(newline) = window.iter().position(|&byte| byte == b'\n') {
+            piece.extend_from_slice(window.get(..=newline).unwrap_or_default());
+            reader.consume(newline + 1);
+            return Ok(true);
+        }
+        let full = window.len() == room;
+        let take = if full {
+            utf8_prefix_len(window).max(1)
+        } else {
+            window.len()
+        };
+        piece.extend_from_slice(window.get(..take).unwrap_or_default());
+        reader.consume(take);
+        if full {
+            return Ok(false);
+        }
+    }
+}
+
 /// Reads up to `limit` bytes, and says whether the file had more.
 pub(super) fn read_prefix(path: &Path, limit: u64) -> std::io::Result<(Vec<u8>, bool)> {
     let file = std::fs::File::open(path)?;
@@ -173,6 +237,44 @@ pub(super) fn read_prefix(path: &Path, limit: u64) -> std::io::Result<(Vec<u8>, 
     let cut = bytes.len() as u64 > limit;
     bytes.truncate(limit as usize);
     Ok((bytes, cut))
+}
+
+/// Streams the lines of a file too large to load, numbering them from 1 and
+/// handing each to `visit` until it returns false, and counts them all. Read
+/// in one pass with constant memory: a line longer than [`LINE_PIECE_BYTES`]
+/// arrives in pieces, each with the line's number. Invalid UTF-8 is
+/// replaced, as the viewer replaces it.
+pub(super) fn scan_lines(
+    scope: &Scope,
+    path: &str,
+    visit: &mut dyn FnMut(u32, &str) -> bool,
+) -> Result<u32> {
+    let file = scope.resolve(path)?;
+    let read_error = |error: std::io::Error| AppError::FileRead {
+        path: file.relative.clone(),
+        reason: error.to_string(),
+    };
+    let mut reader =
+        std::io::BufReader::new(std::fs::File::open(&file.canonical).map_err(read_error)?);
+    let mut buffer = Vec::new();
+    let mut total = 0u32;
+    let mut visiting = true;
+    let mut continuing = false;
+    loop {
+        let ends_line = read_line_piece(&mut reader, &mut buffer).map_err(read_error)?;
+        if buffer.is_empty() {
+            break;
+        }
+        if !continuing {
+            total = total.saturating_add(1);
+        }
+        continuing = !ends_line;
+        if visiting {
+            let line = String::from_utf8_lossy(&buffer);
+            visiting = visit(total, line.trim_end_matches(['\n', '\r']));
+        }
+    }
+    Ok(total)
 }
 
 pub fn read_file(scope: &Scope, path: &str) -> Result<ExplorerFileDto> {
@@ -288,13 +390,29 @@ pub fn search_with_bounds(
     request: &SearchRequest<'_>,
     bounds: WalkBounds,
 ) -> Result<ExplorerSearchResultDto> {
+    let (mut result, more) = search_counting(scope, request, bounds)?;
+    result.truncated |= more > 0;
+    Ok(result)
+}
+
+/// The first `max_results` matches, and how many more the walk found past
+/// them. Each file is streamed line by line to its end, so a match deep in a
+/// large file is found; a fixed prefix used to stop reading at a megabyte.
+pub fn search_counting(
+    scope: &Scope,
+    request: &SearchRequest<'_>,
+    bounds: WalkBounds,
+) -> Result<(ExplorerSearchResultDto, usize)> {
+    use std::io::BufRead;
     let matcher = build_matcher(request.query, request.regex)?;
     let start = walk_start(scope, request.path_prefix)?;
     let max_results = request.max_results.max(1);
     let deadline = Instant::now() + bounds.time_budget;
     let mut matches = Vec::new();
+    let mut more = 0usize;
     let mut files_scanned = 0usize;
     let mut truncated = false;
+    let mut buffer = Vec::new();
 
     walk_files(scope, start.as_ref(), |path| {
         if files_scanned >= bounds.max_files || Instant::now() >= deadline {
@@ -302,39 +420,66 @@ pub fn search_with_bounds(
             return false;
         }
         files_scanned += 1;
-        let Ok((bytes, cut)) = read_prefix(path, bounds.max_bytes_per_file) else {
+        let Ok(file) = std::fs::File::open(path) else {
             return true;
         };
-        if looks_binary(&bytes) {
-            return true;
+        let mut reader = std::io::BufReader::with_capacity(BINARY_SNIFF_BYTES, file);
+        match reader.fill_buf() {
+            Ok(head) if !looks_binary(head) => {}
+            _ => return true,
         }
-        truncated |= cut;
         let Some(relative) = scope.relative_of(path) else {
             return true;
         };
-        let text = String::from_utf8_lossy(&bytes);
-        for (index, line) in text.lines().enumerate() {
-            if let Some(found) = matcher.find(line) {
-                matches.push(ExplorerSearchMatchDto {
-                    path: relative.clone(),
-                    line: index as u32 + 1,
-                    column: line[..found.start()].chars().count() as u32 + 1,
-                    preview: preview(line, found.start()),
-                });
-                if matches.len() >= max_results {
-                    truncated = true;
-                    return false;
+        let mut number = 0u32;
+        // Characters of the current line in its earlier pieces, so a match in
+        // a later piece of a very long line has its true column.
+        let mut column_base = 0usize;
+        let mut continuing = false;
+        loop {
+            match read_line_piece(&mut reader, &mut buffer) {
+                Ok(_) if buffer.is_empty() => break,
+                Err(_) => break,
+                Ok(ends_line) => {
+                    if !continuing {
+                        number = number.saturating_add(1);
+                        column_base = 0;
+                    }
+                    continuing = !ends_line;
                 }
+            }
+            let text = String::from_utf8_lossy(&buffer);
+            let line = text.trim_end_matches(['\n', '\r']);
+            if let Some(found) = matcher.find(line) {
+                if matches.len() < max_results {
+                    let column = column_base + line[..found.start()].chars().count();
+                    matches.push(ExplorerSearchMatchDto {
+                        path: relative.clone(),
+                        line: number,
+                        column: u32::try_from(column + 1).unwrap_or(u32::MAX),
+                        preview: preview(line, found.start()),
+                    });
+                } else {
+                    more += 1;
+                }
+            }
+            column_base += line.chars().count();
+            if number.is_multiple_of(4096) && Instant::now() >= deadline {
+                truncated = true;
+                return false;
             }
         }
         true
     });
 
-    Ok(ExplorerSearchResultDto {
-        matches,
-        truncated,
-        files_scanned: files_scanned as u32,
-    })
+    Ok((
+        ExplorerSearchResultDto {
+            matches,
+            truncated,
+            files_scanned: files_scanned as u32,
+        },
+        more,
+    ))
 }
 
 /// The matched line, trimmed, and cut to a window around the match when long.
@@ -358,10 +503,12 @@ fn preview(line: &str, match_start: usize) -> String {
     format!("{head}{window}{tail}")
 }
 
-/// Paths found by name, with whether a bound cut the list short.
+/// Paths found by name, how many more matched past them, and whether the
+/// walk stopped before covering the folder.
 #[derive(Debug, Clone, Default)]
 pub struct FoundFiles {
     pub paths: Vec<String>,
+    pub more: usize,
     pub truncated: bool,
 }
 
@@ -398,10 +545,10 @@ pub fn find_files_with_bounds(
             return true;
         };
         if matches_path(&relative) {
-            found.paths.push(relative);
-            if found.paths.len() >= max_results.max(1) {
-                found.truncated = true;
-                return false;
+            if found.paths.len() < max_results.max(1) {
+                found.paths.push(relative);
+            } else {
+                found.more += 1;
             }
         }
         true

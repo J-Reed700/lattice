@@ -352,42 +352,74 @@ impl ContextAssembler {
         };
 
         // --- 7. recalled passages -----------------------------------------
-        let mut recalled = Vec::new();
-        let recall_pool = allocation.recall.min(remaining);
-        let status_cost = request
-            .recall_status
-            .and_then(|status| render::render_recalled(&[], Some(status)))
+        // Recall was sized to its share when it was searched; here it may use
+        // whatever the pools above left, ahead of any document. A passage too
+        // long for what is left is passed over, not the end of recall: the
+        // shorter ones after it still go in, and the ones left out are named
+        // by message id so they can be read.
+        let status_cost = render::render_recalled(&[], request.recall_status, &[])
             .map(|section| self.section_cost(&section))
             .unwrap_or(0);
-        let passage_pool = recall_pool.saturating_sub(status_cost);
+        let passage_pool = remaining.saturating_sub(status_cost);
+        // Indexes into `request.recalled`, so both lists stay in rank order.
+        let mut kept: Vec<usize> = Vec::new();
+        let mut left_out: Vec<usize> = Vec::new();
         let mut recall_tokens = 0usize;
-        for passage in &request.recalled {
+        for (index, passage) in request.recalled.iter().enumerate() {
             let cost = self.count(&passage.text) + MESSAGE_FRAMING_TOKENS;
             if recall_tokens + cost > passage_pool {
-                break;
+                left_out.push(index);
+                continue;
             }
             recall_tokens += cost;
-            recalled.push(passage.clone());
+            kept.push(index);
         }
+        let render_recall = |kept: &[usize], left_out: &[usize]| {
+            let passages: Vec<SelectedPassage> = kept
+                .iter()
+                .filter_map(|&index| request.recalled.get(index).cloned())
+                .collect();
+            let ids: Vec<&str> = left_out
+                .iter()
+                .filter_map(|&index| request.recalled.get(index))
+                .map(|passage| passage.message_id.as_str())
+                .collect();
+            render::render_recalled(&passages, request.recall_status, &ids)
+        };
+        // The note naming what was left out costs room too: the lowest-ranked
+        // passages give way to it until the section fits.
+        let mut recalled_section = render_recall(&kept, &left_out);
+        while let Some(section) = &recalled_section {
+            let cost = self.section_cost(section);
+            if cost <= remaining {
+                accounting.recall = cost;
+                remaining -= cost;
+                break;
+            }
+            let Some(last) = kept.pop() else {
+                accounting.evicted.push("recall".into());
+                recalled_section = None;
+                break;
+            };
+            left_out.push(last);
+            left_out.sort_unstable();
+            recalled_section = render_recall(&kept, &left_out);
+        }
+        if !left_out.is_empty() {
+            accounting
+                .evicted
+                .push(format!("recall:{}", left_out.len()));
+        }
+        let recalled: Vec<SelectedPassage> = kept
+            .iter()
+            .filter_map(|&index| request.recalled.get(index).cloned())
+            .collect();
         let mut retrieval = request.retrieval.clone();
         retrieval.passages_selected = recalled.len();
         retrieval.selected_message_ids = recalled
             .iter()
             .map(|passage| passage.message_id.clone())
             .collect();
-        let mut recalled_section = render::render_recalled(&recalled, request.recall_status);
-        if let Some(section) = &recalled_section {
-            let cost = self.section_cost(section);
-            if cost <= remaining && cost <= recall_pool {
-                accounting.recall = cost;
-                remaining -= cost;
-            } else {
-                accounting.evicted.push("recall".into());
-                recalled_section = None;
-                retrieval.passages_selected = 0;
-                retrieval.selected_message_ids.clear();
-            }
-        }
 
         // --- 8. document and web evidence ----------------------------------
         // Evidence the caller rendered into the current message is carried
@@ -424,9 +456,16 @@ impl ContextAssembler {
         });
         let mut evidence_blocks = Vec::new();
         let mut evidence_tokens = 0usize;
-        let evidence_pool = allocation
-            .evidence
-            .min(remaining.saturating_sub(inline_tokens));
+        // Everything the history left, not only the evidence share: room a
+        // memory pool reserved and did not use (no summary yet, few active
+        // facts, a short recall) goes to saved memories and ranked evidence.
+        // Capped at the evidence share, a 32K model gave optional saved
+        // memories about 3K tokens once the memory pools lost their fixed
+        // ceilings, however little of those pools a turn used. The pools are
+        // still charged first, and every recalled passage that fit was taken
+        // above, so a document only ever has room no recalled passage could
+        // use.
+        let evidence_pool = remaining.saturating_sub(inline_tokens);
         for item in evidence {
             let block = format!("- {}\n{}", item.label, item.content);
             let cost = self.count(&block) + MESSAGE_FRAMING_TOKENS;

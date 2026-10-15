@@ -91,13 +91,20 @@ const SITE_SLOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Sites tracked at once before idle entries are dropped. `WebService` is a
 /// container singleton, so the map would otherwise live for the whole process.
 const MAX_TRACKED_SITES: usize = 64;
-/// Most of an article's text sits well inside this; past it a page is a
-/// dump, and the prompt has better uses for the room.
-const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
-// Reference snapshots retain all extracted text. The shared decoded HTTP-body
-// limit already bounds acquisition; a second text cap would discard a book's
-// tail after a successful, bounded download.
-const MAX_REFERENCE_PAGE_CHARS: usize = usize::MAX;
+/// What a page is read for. Either way the whole extracted text is kept: the
+/// decoded body is already bounded by [`MAX_PAGE_BODY_BYTES`], and a second
+/// cap on the text would discard a page's tail after a successful, bounded
+/// download. What the text is for decides how it is extracted and cached; how
+/// much of it a prompt carries is decided by that prompt's own budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PageRead {
+    /// A page read for a conversation: article extraction, the browser
+    /// fallback for script-built pages, and the shared page cache.
+    Chat,
+    /// A reference capture: full-document extraction, never served from or
+    /// written to the chat cache, and no browser fallback.
+    Reference,
+}
 /// Maximum decoded bytes accepted from a page before HTML parsing.
 const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
 /// Maximum decoded bytes accepted from a search provider response.
@@ -415,9 +422,7 @@ impl WebServiceTrait for WebService {
     }
 
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
-        let page = self
-            .read_page_bounded(url, MAX_REFERENCE_PAGE_CHARS)
-            .await?;
+        let page = self.read_page_as(url, PageRead::Reference).await?;
         if page.output.content.trim().len() < THIN_PAGE_CHARS {
             return Err(AppError::InvalidInput("This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text.".into()));
         }

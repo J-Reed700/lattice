@@ -332,16 +332,19 @@ fn the_tutor_sees_the_newest_whole_turns_that_fit_and_counts_the_rest() {
     let prompt =
         json!({"taskPrompt":"Solve it.","recentTurns":[],"earlierTurns":"","sourceSnapshots":[]});
     // Six turns all fit: not the former four.
+    let pace = crate::features::learning::practice_generation::tutor_pace();
     let shown = crate::features::learning::practice_generation::with_recent_turns(
         &llm,
+        &pace,
         prompt.clone(),
         &few,
     );
     assert_eq!(shown["recentTurns"].as_array().unwrap().len(), 6);
     assert_eq!(shown["earlierTurns"], "");
     // Four hundred do not: the newest whole turns, then a count of the rest.
-    let shown =
-        crate::features::learning::practice_generation::with_recent_turns(&llm, prompt, &many);
+    let shown = crate::features::learning::practice_generation::with_recent_turns(
+        &llm, &pace, prompt, &many,
+    );
     let turns = shown["recentTurns"].as_array().unwrap();
     assert!(turns.len() > 4 && turns.len() < 400);
     assert!(turns[0]["request"]

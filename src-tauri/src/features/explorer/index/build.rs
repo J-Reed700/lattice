@@ -189,7 +189,7 @@ fn progress_message(state: FolderIndexState) -> &'static str {
         FolderIndexState::Scanning => "Scanning the folder",
         FolderIndexState::Indexing => "Embedding passages",
         FolderIndexState::Ready => "Ready",
-        FolderIndexState::TooLarge => "Too large to index",
+        FolderIndexState::TooLarge => "Partly indexed",
         FolderIndexState::Refused => "Not indexed",
         FolderIndexState::Unavailable => "No embedding model",
         FolderIndexState::Error => "Failed",
@@ -407,16 +407,15 @@ impl Build<'_> {
                     message: progress_message(FolderIndexState::Ready).into(),
                 })
             }
-            Ok(Outcome::TooLarge { count, capped }) => {
-                let message = too_large_message(
-                    TooLarge { count, capped },
-                    self.manager.config().limits.max_files,
-                );
+            Ok(Outcome::TooLarge { count }) => {
+                let message =
+                    too_large_message(TooLarge { count }, self.manager.config().limits.max_files);
                 status.update(|status| {
                     status.state = FolderIndexState::TooLarge;
                     status.files_total = u32::try_from(count).unwrap_or(u32::MAX);
-                    status.files_indexed = 0;
                     status.message = Some(message);
+                    status.passages_per_second = None;
+                    status.eta_seconds = None;
                 });
                 progress.save(&status.get(), true).await?;
                 Ok(JobOutcome::Completed {

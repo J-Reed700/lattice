@@ -101,7 +101,6 @@ impl SynthesisEntries for StoredPages {
     async fn references_created_since(
         &self,
         _cutoff: &str,
-        _limit: i64,
     ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
         unreachable!("only journal pages are read here")
     }
@@ -149,11 +148,8 @@ async fn week_notes_hydrate_only_the_pages_they_use() {
         stored_page("unused-empty", "Sep 1", "   "),
         stored_page("unused-week", "Week of Aug 25", "Last week's synthesis"),
     ];
-    rows.extend(
-        (0..WEEK_SYNTHESIS_MAX_NOTES)
-            .map(|index| stored_page(&format!("note-{index}"), "Sep 4", "Notes")),
-    );
-    rows.push(stored_page("unused-over-cap", "Sep 5", "One page too many"));
+    // More pages than the old cap of eight: every one in the week is read.
+    rows.extend((0..12).map(|index| stored_page(&format!("note-{index}"), "Sep 4", "Notes")));
     let store = StoredPages {
         rows,
         hydrated: std::sync::Mutex::default(),
@@ -163,9 +159,7 @@ async fn week_notes_hydrate_only_the_pages_they_use() {
         .await
         .expect("a page the synthesis passes over cannot fail it");
 
-    let used: Vec<String> = (0..WEEK_SYNTHESIS_MAX_NOTES)
-        .map(|index| format!("note-{index}"))
-        .collect();
+    let used: Vec<String> = (0..12).map(|index| format!("note-{index}")).collect();
     assert_eq!(*store.hydrated.lock().unwrap(), used);
     assert_eq!(
         entries
