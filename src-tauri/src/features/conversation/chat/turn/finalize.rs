@@ -3,7 +3,6 @@ use super::generate::GeneratedAnswer;
 use super::prepare::PreparedTurn;
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn finalize_turn(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
@@ -97,19 +96,18 @@ pub(super) async fn finalize_turn(
     // saved is not a failed turn.
     let (mut chat_response, answer_id) = finalize_successful_turn(
         container,
-        &turn.conv_service,
-        &turn.conv_id,
+        turn.chat_turn(),
         user_message_id,
-        &turn.message,
-        assistant_response,
-        turn.history_len,
-        sources,
-        verification_metadata,
-        memory_usage,
-        retrieval_trace,
-        Some(turn_record),
         message_tokens,
-        &turn.llm,
+        turn.history_len,
+        FinishedAnswer {
+            response: assistant_response,
+            sources,
+            verification: verification_metadata,
+            memory_usage,
+            retrieval_trace,
+            turn_record: Some(turn_record),
+        },
     )
     .await?;
     metrics.finalize_persistence_ms = elapsed_ms(finalize_start);
@@ -136,7 +134,6 @@ pub(super) async fn finalize_turn(
 
 /// The grounding check, after the answer is saved and returned: it reports
 /// through its own event and finishes the turn's verify step when it lands.
-#[allow(clippy::too_many_arguments)]
 async fn start_background_verification(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,

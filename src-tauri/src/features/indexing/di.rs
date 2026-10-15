@@ -6,13 +6,15 @@ use sqlx::SqlitePool;
 
 use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
-    ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentRepository,
-    DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
-    FileSystemPort, OcrPort, TranscriptionPort, VectorSearchPort,
+    ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
+    DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
+    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, TranscriptionPort,
+    VectorSearchPort,
 };
 use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
+use crate::features::indexing::engine::extraction::{ContentExtractor, ExtractionWorkers};
 use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
@@ -54,13 +56,28 @@ pub struct IndexingDi {
     pub transcription: Arc<dyn TranscriptionPort>,
 }
 
+/// What indexing shares with the rest of the app: the search cache it
+/// invalidates, the summary tier it reports to, and the parser workers every
+/// extractor counts against.
+pub struct IndexingShared {
+    pub query_cache: Arc<dyn SearchResultCachePort>,
+    pub index_observer: Arc<dyn DocumentIndexObserver>,
+    pub extraction_workers: ExtractionWorkers,
+}
+
 pub fn build(
     db_pool: SqlitePool,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn VectorSearchPort>,
     web_archive: Arc<dyn ArticleArchive>,
     ocr: Arc<dyn OcrPort>,
+    shared: IndexingShared,
 ) -> Result<IndexingDi> {
+    let IndexingShared {
+        query_cache,
+        index_observer,
+        extraction_workers,
+    } = shared;
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
     let chunk_repo =
@@ -83,9 +100,11 @@ pub fn build(
     // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
     let transcription = crate::features::transcription::di::build(db_pool).port;
     // Import and re-index share this adapter, so both read scanned pages.
-    let content_extractor =
-        Arc::new(ContentExtractionAdapter::with_transcription(transcription.clone()).with_ocr(ocr))
-            as Arc<dyn ContentExtractionPort>;
+    let content_extractor = Arc::new(
+        ContentExtractionAdapter::with_transcription(transcription.clone())
+            .with_extractor(ContentExtractor::new().with_workers(extraction_workers))
+            .with_ocr(ocr),
+    ) as Arc<dyn ContentExtractionPort>;
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
 
     let indexing_embedding =
@@ -108,7 +127,9 @@ pub fn build(
             uow_factory.clone(),
         )
         .with_vector_search(vector_search.clone())
-        .with_sparse_term_store(Arc::clone(&sparse_term_store)),
+        .with_sparse_term_store(Arc::clone(&sparse_term_store))
+        .with_query_cache(Arc::clone(&query_cache))
+        .with_index_observer(Arc::clone(&index_observer)),
     );
     let index_directory_use_case = Arc::new(IndexDirectoryUseCase::new(
         index_file_use_case.clone(),
@@ -123,16 +144,21 @@ pub fn build(
             vector_search.clone(),
         )
         .with_content_extractor(content_extractor.clone())
-        .with_sparse_term_store(Arc::clone(&sparse_term_store)),
+        .with_sparse_term_store(Arc::clone(&sparse_term_store))
+        .with_query_cache(Arc::clone(&query_cache)),
     );
-    let delete_document_use_case = Arc::new(DeleteDocumentUseCase::new(
-        document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-        vector_search,
-        uow_factory.clone(),
-        content_storage,
-        Arc::clone(&library_gc),
-        web_archive,
-    ));
+    let delete_document_use_case = Arc::new(
+        DeleteDocumentUseCase::new(
+            document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
+            vector_search,
+            uow_factory.clone(),
+            content_storage,
+            Arc::clone(&library_gc),
+            web_archive,
+        )
+        .with_query_cache(query_cache)
+        .with_index_observer(index_observer),
+    );
     let rename_document_use_case = Arc::new(RenameDocumentUseCase::new(
         document_repo.clone() as Arc<dyn DocumentRepositoryPort>
     ));

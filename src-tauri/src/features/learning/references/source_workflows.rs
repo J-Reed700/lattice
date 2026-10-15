@@ -78,15 +78,17 @@ where
             .into(),
     };
     repo.add(
-        &request.operation_id,
-        &request.source_id,
-        &request.version_id,
-        &request.program_id,
-        LearningSourceKind::Web,
-        "add_web",
-        requested_url,
-        Some(requested_url),
-        request.freshness_policy,
+        crate::features::learning::source_library::NewLearningSource {
+            operation_id: &request.operation_id,
+            source_id: &request.source_id,
+            version_id: &request.version_id,
+            program_id: &request.program_id,
+            kind: LearningSourceKind::Web,
+            operation_kind: "add_web",
+            origin: requested_url,
+            requested_url: Some(requested_url),
+            freshness: request.freshness_policy,
+        },
         captured,
         hash,
     )

@@ -20,16 +20,16 @@ use crate::application::ports::{LLMPort, SettingsSideEffectsPort};
 use crate::features::embedding::runtime::EmbeddingRuntime;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::function_calling::executor::FunctionExecutor;
+use crate::features::function_calling::executor::{FunctionExecutor, FunctionExecutorServices};
 use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools,
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::features::settings::di::ContainerSettingsSideEffects;
 use crate::features::web::services::web::WebService;
 use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 use crate::infrastructure::storage::ContentAddressedStorage;
+use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
 use crate::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -120,6 +120,9 @@ pub struct Container {
 
     /// Frozen copies of cited web pages; its captures run on `jobs`.
     pub(crate) web_page_snapshots: Arc<crate::features::web::snapshots::WebPageSnapshotService>,
+    /// Where the snapshot service sends its events; attached to the main
+    /// window in [`Container::with_app_handle`].
+    web_snapshot_events: Arc<crate::features::web::snapshots::AppEvents>,
 
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
@@ -147,6 +150,18 @@ pub struct Container {
     /// The one registry of executing learning practical runs for this process.
     pub(crate) practical_run_registry:
         Arc<crate::features::learning::practical_runs::PracticalRunRegistry>,
+
+    /// The one search result cache: the search commands read it and every
+    /// indexer invalidates it, so all of them must reach the same instance.
+    pub(crate) query_cache: Arc<crate::features::search::query_cache::QueryCache>,
+
+    /// The summary tier's trigger and open indexes. Indexing reports to the
+    /// trigger; registration installs and clears its hook.
+    pub(crate) summary_tier: Arc<crate::features::summaries::di::SummaryTier>,
+
+    /// What every model load shares: the per-backend schedulers, the
+    /// artifacts known not to start, and the sidecar's device probe.
+    pub(crate) llm_runtime: crate::features::llm::loading::LlmRuntime,
 
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
@@ -190,6 +205,16 @@ impl Container {
         let utility_llm_cache = Arc::new(ModelCache::new());
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
+        // State more than one feature reaches. Each is built once, here, and
+        // handed to whatever uses it, so every user shares the one instance.
+        let query_cache = Arc::new(crate::features::search::query_cache::QueryCache::for_search());
+        let summary_tier = Arc::new(crate::features::summaries::di::SummaryTier::new());
+        let extraction_workers =
+            crate::features::indexing::engine::extraction::ExtractionWorkers::new();
+        let backend_devices = Arc::new(crate::features::llm::engine::system::BackendDevices::new());
+        let llm_runtime =
+            crate::features::llm::loading::LlmRuntime::new(Arc::clone(&backend_devices));
+
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
@@ -201,8 +226,14 @@ impl Container {
 
         // Each module builds its own dependencies. Stack frames are independent.
 
-        let system =
-            Arc::new(super::modules::SystemModule::new(db_pool.clone(), core.clone()).await?);
+        let system = Arc::new(
+            super::modules::SystemModule::new(
+                db_pool.clone(),
+                core.clone(),
+                Arc::clone(&backend_devices),
+            )
+            .await?,
+        );
         tracing::debug!("SystemModule initialized");
 
         let search = Arc::new(
@@ -219,8 +250,14 @@ impl Container {
             Arc::new(super::modules::LibraryModule::new(db_pool.clone(), core.clone()).await?);
         tracing::debug!("LibraryModule initialized");
 
-        let file_ops =
-            Arc::new(super::modules::FileOpsModule::new(db_pool.clone(), core.clone()).await?);
+        let file_ops = Arc::new(
+            super::modules::FileOpsModule::new(
+                db_pool.clone(),
+                core.clone(),
+                extraction_workers.clone(),
+            )
+            .await?,
+        );
         tracing::debug!("FileOpsModule initialized");
 
         let ai = Arc::new(
@@ -230,6 +267,7 @@ impl Container {
                 llm_cache.clone(),
                 llm_endpoint,
                 llm_model,
+                backend_devices,
             )
             .await?,
         );
@@ -241,6 +279,11 @@ impl Container {
                 core.clone(),
                 embedding_runtime.clone(),
                 search.vector_search().clone(),
+                crate::features::indexing::di::IndexingShared {
+                    query_cache: query_cache.clone(),
+                    index_observer: summary_tier.trigger().clone(),
+                    extraction_workers,
+                },
             )
             .await?,
         );
@@ -284,18 +327,20 @@ impl Container {
         let web_service = Arc::new(WebService::new(core.data_dir())?);
 
         let function_executor = Arc::new(FunctionExecutor::new_with_custom_tools(
-            function_registry.clone(),
-            embedding_service,
-            search.search_service().clone(),
-            search.bm25_search_service().clone(),
-            search.hybrid_search_use_case().clone(),
-            search.document_repo().clone(),
-            indexing.chunk_repository().clone(),
-            library.tag_service().clone(),
-            library.favorites_repo().clone(),
-            library.recent_docs_repo().clone(),
-            indexing.file_storage().clone(),
-            web_service.clone(),
+            FunctionExecutorServices {
+                registry: function_registry.clone(),
+                embedding_service,
+                search_service: search.search_service().clone(),
+                bm25_service: search.bm25_search_service().clone(),
+                hybrid_search: search.hybrid_search_use_case().clone(),
+                document_repository: search.document_repo().clone(),
+                chunk_repository: indexing.chunk_repository().clone(),
+                tag_service: library.tag_service().clone(),
+                favorites_repository: library.favorites_repo().clone(),
+                recent_documents_repository: library.recent_docs_repo().clone(),
+                file_storage: indexing.file_storage().clone(),
+                web_service: web_service.clone(),
+            },
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
 
@@ -319,9 +364,11 @@ impl Container {
             });
 
         let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+        let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
             Arc::clone(&jobs),
+            Arc::clone(&web_snapshot_events),
         )?;
 
         let turn_cancellation = Arc::new(
@@ -356,11 +403,15 @@ impl Container {
             settings_side_effects,
             jobs,
             web_page_snapshots,
+            web_snapshot_events,
             turn_cancellation,
             research_waiters,
             outline_run_registry,
             draft_run_registry,
             practical_run_registry,
+            query_cache,
+            summary_tier,
+            llm_runtime,
             folder_index: None,
             app_handle: None,
         })
@@ -370,6 +421,12 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        self.web_snapshot_events.attach(handle.clone());
+        // A page that refuses the HTTP client is read in a hidden window of
+        // the app's own browser engine, which exists only from here on.
+        self.web_service.attach_browser(Arc::new(
+            crate::features::web::services::browser_reader::BrowserReader::new(handle.clone()),
+        ));
         // The vault writer starts before the container exists, so its corpus
         // sink is installed here, once the indexing pipeline is built. Until
         // then — and in tests that skip this step — the writer defers its
@@ -732,10 +789,78 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
             &crate::features::daily_notes::repository::DailyNotesRepository::new(
                 self.db_pool().clone(),
             ),
-            &crate::features::conversation::repository::ConversationRepository::new(
-                self.db_pool().clone(),
-            ),
+            self,
             row,
+        )
+        .await
+    }
+}
+
+/// The conversation archive a journal page recovers its web citations from,
+/// read through the conversation repository. Daily notes is the record and
+/// conversations are built on it, so the port is daily notes' and is bound
+/// here, where both may be named.
+#[async_trait::async_trait]
+impl crate::features::daily_notes::ports::LinkedConversationArchive for Container {
+    async fn archived_web_page(
+        &self,
+        conversation_id: &str,
+        url: &str,
+    ) -> Result<Option<crate::features::daily_notes::ports::ArchivedWebPage>> {
+        let snapshot = crate::features::conversation::repository::ConversationRepository::new(
+            self.db_pool().clone(),
+        )
+        .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())
+        .await?;
+        // Field for field, so a field added to the archive fails to compile here.
+        Ok(snapshot.map(|snapshot| {
+            let crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto {
+                title,
+                content,
+                fetched_at,
+                truncated,
+            } = snapshot;
+            crate::features::daily_notes::ports::ArchivedWebPage {
+                title,
+                content,
+                fetched_at,
+                truncated,
+            }
+        }))
+    }
+}
+
+/// The vault's markdown mirror as daily notes' projection. The vault is a
+/// projection of the journal onto files, so it serves daily notes' port
+/// rather than daily notes calling into the vault; the binding sits here
+/// because the container owns the writer.
+impl crate::features::daily_notes::ports::NoteProjection for Container {
+    fn note_saved(&self) {
+        crate::features::vault::writeback::spawn_sync_workspace_note(self.vault_writer());
+    }
+
+    fn note_deleted(&self) {
+        crate::features::vault::writeback::spawn_delete_workspace_note(self.vault_writer());
+    }
+}
+
+/// Explorer's folder threads, deleted through the chat's conversation delete.
+/// Conversations are built on Explorer, so the port is Explorer's and is bound
+/// here, where both may be named.
+#[async_trait::async_trait]
+impl crate::features::explorer::folders::FolderThreads for Container {
+    async fn check_delete_limit(&self) -> Result<()> {
+        crate::features::conversation::chat::ports::ChatPolicy::check_delete_rate_limit(
+            self,
+            "delete_conversation",
+        )
+        .await
+    }
+
+    async fn delete_thread(&self, conversation_id: &str) -> Result<()> {
+        crate::features::conversation::chat::ports::ChatPolicy::delete_conversation_unmetered(
+            self,
+            conversation_id,
         )
         .await
     }

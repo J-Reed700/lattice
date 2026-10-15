@@ -94,17 +94,28 @@ pub fn vectors_path(dir: &Path, identity: &str) -> PathBuf {
     ))
 }
 
-/// Milliseconds since the epoch, strictly increasing within the process, so
-/// two folders opened in the same millisecond still have an order.
-pub fn next_open_stamp() -> i64 {
-    static LAST: AtomicI64 = AtomicI64::new(0);
-    let now = chrono::Utc::now().timestamp_millis();
-    let mut previous = LAST.load(Ordering::SeqCst);
-    loop {
-        let stamp = now.max(previous + 1);
-        match LAST.compare_exchange(previous, stamp, Ordering::SeqCst, Ordering::SeqCst) {
-            Ok(_) => return stamp,
-            Err(actual) => previous = actual,
+/// When folders were opened: milliseconds since the epoch, strictly increasing
+/// across every stamp one source hands out, so two folders opened in the same
+/// millisecond still have an order. The folder index manager owns the one its
+/// folders are stamped from.
+#[derive(Debug, Default)]
+pub struct OpenStamps {
+    last: AtomicI64,
+}
+
+impl OpenStamps {
+    pub fn next(&self) -> i64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut previous = self.last.load(Ordering::SeqCst);
+        loop {
+            let stamp = now.max(previous + 1);
+            match self
+                .last
+                .compare_exchange(previous, stamp, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return stamp,
+                Err(actual) => previous = actual,
+            }
         }
     }
 }

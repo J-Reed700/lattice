@@ -134,6 +134,14 @@ pub struct FunctionExecutorServices {
 impl FunctionExecutor {
     /// Create a new function executor with no custom tools
     pub fn new(services: FunctionExecutorServices) -> Self {
+        Self::new_with_custom_tools(services, HashMap::new())
+    }
+
+    /// Create a function executor that also runs the user's custom tools, by name.
+    pub fn new_with_custom_tools(
+        services: FunctionExecutorServices,
+        custom_tools: HashMap<String, CustomToolSettingsDto>,
+    ) -> Self {
         let FunctionExecutorServices {
             registry,
             embedding_service,
@@ -148,39 +156,6 @@ impl FunctionExecutor {
             file_storage,
             web_service,
         } = services;
-        Self::new_with_custom_tools(
-            registry,
-            embedding_service,
-            search_service,
-            bm25_service,
-            hybrid_search,
-            document_repository,
-            chunk_repository,
-            tag_service,
-            favorites_repository,
-            recent_documents_repository,
-            file_storage,
-            web_service,
-            HashMap::new(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_custom_tools(
-        registry: Arc<dyn FunctionRegistryTrait>,
-        embedding_service: Arc<dyn EmbeddingServiceTrait>,
-        search_service: Arc<dyn SearchServiceTrait>,
-        bm25_service: Arc<dyn BM25SearchTrait>,
-        hybrid_search: Arc<HybridSearchUseCase>,
-        document_repository: Arc<dyn DocumentRepository>,
-        chunk_repository: Arc<dyn ChunkRepositoryPort>,
-        tag_service: Arc<dyn TagServiceTrait>,
-        favorites_repository: Arc<dyn FavoritesRepositoryPort>,
-        recent_documents_repository: Arc<dyn RecentDocumentsRepositoryPort>,
-        file_storage: Arc<dyn FileStoragePort>,
-        web_service: Arc<dyn WebServiceTrait>,
-        custom_tools: HashMap<String, CustomToolSettingsDto>,
-    ) -> Self {
         Self {
             registry,
             embedding_service,

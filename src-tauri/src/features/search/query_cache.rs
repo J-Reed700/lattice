@@ -1,6 +1,7 @@
-//! The process-wide cache of search results, keyed by query and corpus
-//! generation. Indexing invalidates it; the cache commands report and clear it.
+//! The app's cache of search results, keyed by query and corpus generation.
+//! Indexing invalidates it; the cache commands report and clear it.
 
+use crate::application::ports::SearchResultCachePort;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -138,6 +139,13 @@ pub struct QueryCache {
 impl QueryCache {
     pub fn new(capacity: usize, ttl_seconds: i64) -> Self {
         Self::with_byte_budget(capacity, ttl_seconds, DEFAULT_BYTE_BUDGET)
+    }
+
+    /// The app's search cache: a thousand queries, each served for ten
+    /// minutes unless the corpus changes first. The composition root builds
+    /// one; the search commands read it and every indexer invalidates it.
+    pub fn for_search() -> Self {
+        Self::new(1000, 600)
     }
 
     fn with_byte_budget(capacity: usize, ttl_seconds: i64, byte_budget: usize) -> Self {
@@ -314,12 +322,10 @@ pub struct CacheStats {
     pub hit_rate: f64,
 }
 
-use once_cell::sync::Lazy;
-
-pub static QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| Arc::new(QueryCache::new(1000, 600)));
-
-pub fn invalidate_query_cache() {
-    QUERY_CACHE.invalidate_corpus();
+impl SearchResultCachePort for QueryCache {
+    fn invalidate_corpus(&self) {
+        QueryCache::invalidate_corpus(self);
+    }
 }
 
 #[cfg(test)]

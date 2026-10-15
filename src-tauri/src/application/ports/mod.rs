@@ -78,6 +78,7 @@ pub mod conversation_context;
 pub mod conversation_history_port;
 pub mod conversation_memory;
 pub mod conversation_repository;
+pub mod corpus_listeners;
 pub mod credentials_port;
 pub mod database_stats_port;
 pub mod document_repository_port;
@@ -125,6 +126,7 @@ pub use conversation_memory::{
     MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions, RecallCandidate,
     RecallCandidates, ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef, SummaryUpdate,
 };
+pub use corpus_listeners::{DocumentIndexObserver, SearchResultCachePort};
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;

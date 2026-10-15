@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use std::sync::Arc;
 
 /// The input budget the context assembler plans for a model of this size.
 fn input_budget(context_tokens: usize) -> usize {

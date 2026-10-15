@@ -268,7 +268,9 @@ async fn type_sizes_become_markdown_headings_for_the_chunker() {
     operations.extend(body_paragraphs(660.0));
     let path = write_pdf(dir.path(), "report.pdf", vec![TestPage::text(operations)]);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(
         extracted.text.contains("## Annual Report"),
@@ -297,7 +299,9 @@ async fn a_bold_line_at_body_size_is_a_heading_too() {
     operations.extend(body_paragraphs(660.0));
     let path = write_pdf(dir.path(), "bold.pdf", vec![TestPage::text(operations)]);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(
         extracted.text.contains("# Risk Factors"),
@@ -324,7 +328,9 @@ async fn aligned_columns_become_a_markdown_table() {
     }
     let path = write_pdf(dir.path(), "table.pdf", vec![TestPage::text(operations)]);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(
         extracted.text.contains("| Region | Revenue | Growth |"),
@@ -356,7 +362,9 @@ async fn a_scanned_page_is_reported_instead_of_failing_the_document() {
         ],
     );
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert_eq!(extracted.needs_ocr, vec![2]);
     assert_eq!(extracted.page_ranges.len(), 3);
@@ -373,12 +381,12 @@ async fn a_fully_scanned_pdf_still_asks_for_ocr() {
         vec![TestPage::scan(), TestPage::scan()],
     );
 
-    let without_provider = extract_pdf(&path, NO_SIZE_LIMIT, None)
+    let without_provider = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
         .await
         .unwrap_err()
         .to_string();
     let noop: Arc<dyn OcrPort> = Arc::new(crate::application::ports::NoopOcr);
-    let with_noop = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop))
+    let with_noop = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop), &ExtractionWorkers::new())
         .await
         .unwrap_err()
         .to_string();
@@ -401,7 +409,9 @@ async fn recognized_text_lands_inside_its_own_page_range() {
     );
     let ocr: Arc<dyn OcrPort> = Arc::new(StubOcr);
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr)).await.unwrap();
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr), &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert!(extracted.needs_ocr.is_empty());
     assert_ranges_cover(&extracted.text, &extracted.page_ranges);
@@ -430,8 +440,12 @@ async fn only_the_pages_ocr_read_are_marked_as_ocr_text() {
     );
     let ocr: Arc<dyn OcrPort> = Arc::new(StubOcr);
 
-    let read = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr)).await.unwrap();
-    let unread = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+    let read = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr), &ExtractionWorkers::new())
+        .await
+        .unwrap();
+    let unread = extract_pdf(&path, NO_SIZE_LIMIT, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert_eq!(read.ocr_pages, vec![2]);
     assert_eq!(unread.needs_ocr, vec![2]);
@@ -486,7 +500,7 @@ async fn unavailable_ocr_is_asked_once_and_named_in_the_error() {
     });
     let port: Arc<dyn OcrPort> = ocr.clone();
 
-    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port), &ExtractionWorkers::new())
         .await
         .unwrap_err()
         .to_string();
@@ -502,7 +516,7 @@ async fn a_scan_without_an_ocr_model_points_at_the_download() {
     let path = write_pdf(dir.path(), "scan.pdf", vec![TestPage::scan()]);
     let noop: Arc<dyn OcrPort> = Arc::new(crate::application::ports::NoopOcr);
 
-    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop))
+    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop), &ExtractionWorkers::new())
         .await
         .unwrap_err()
         .to_string();
@@ -534,7 +548,7 @@ async fn a_failed_page_does_not_stop_the_next_one() {
     });
     let port: Arc<dyn OcrPort> = ocr.clone();
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port), &ExtractionWorkers::new())
         .await
         .unwrap();
 
@@ -563,7 +577,7 @@ async fn a_text_pdf_never_asks_for_ocr() {
     let ocr = ScriptedOcr::new(|_| Ok("should not be asked".into()));
     let port: Arc<dyn OcrPort> = ocr.clone();
 
-    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port), &ExtractionWorkers::new())
         .await
         .unwrap();
 
@@ -661,7 +675,9 @@ fn recognized_text_is_appended_to_whatever_the_page_did_have() {
 async fn real_pdf_keeps_its_structure_and_page_ranges() {
     let path = PathBuf::from(std::env::var("LATTICE_LAYOUT_PDF").unwrap());
 
-    let extracted = extract_pdf(&path, 200 * 1024 * 1024, None).await.unwrap();
+    let extracted = extract_pdf(&path, 200 * 1024 * 1024, None, &ExtractionWorkers::new())
+        .await
+        .unwrap();
 
     assert_ranges_cover(&extracted.text, &extracted.page_ranges);
     let headings: Vec<&str> = extracted
@@ -719,5 +735,9 @@ async fn compressed_pdf_page_cannot_exceed_decoded_stream_budget() {
     document.compress();
     document.save(&path).unwrap();
     assert!(std::fs::metadata(&path).unwrap().len() < 100_000);
-    assert!(extract_pdf(&path, 50 * 1024 * 1024, None).await.is_err());
+    assert!(
+        extract_pdf(&path, 50 * 1024 * 1024, None, &ExtractionWorkers::new())
+            .await
+            .is_err()
+    );
 }

@@ -9,15 +9,12 @@ pub(super) async fn learning_memory(
     let notes_repo = crate::features::daily_notes::repository::DailyNotesRepository::new(
         container.db_pool().clone(),
     );
-    let conversations = crate::features::conversation::repository::ConversationRepository::new(
-        container.db_pool().clone(),
-    );
     let mut lesson_notes = Vec::with_capacity(state.lesson_notes.len());
     for (lesson_id, note_id) in state.lesson_notes {
         let row = notes_repo.get(&note_id).await?;
         let note = crate::features::daily_notes::commands::hydrate_workspace_note(
             &notes_repo,
-            &conversations,
+            container,
             row,
         )
         .await?;

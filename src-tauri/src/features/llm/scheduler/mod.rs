@@ -37,9 +37,7 @@ mod scheduled;
 mod tokenize;
 
 pub(crate) use estimator::TokenEstimator;
-pub(crate) use registry::{
-    cloud_scheduler, llama_server_capacity, ollama_scheduler, remote_llama_cpp_scheduler,
-};
+pub(crate) use registry::{llama_server_capacity, SchedulerRegistry};
 pub(crate) use scheduled::ScheduledLlm;
 pub(crate) use tokenize::ServerTokenizer;
 

@@ -1,13 +1,14 @@
+use crate::application::contracts::web::WebSearchResult;
 use crate::application::services::context_assembler::EvidenceBudget;
 use crate::domain::qa::hyde::QueryType;
-use crate::features::conversation::chat::ports::ChatRuntime;
+use crate::features::conversation::chat::ports::{ChatRuntime, SettingsDto};
 use crate::features::conversation::chat::router::RouterAction;
-use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
+use crate::features::function_calling::dto::WikiSearchOutput;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::settings::dto::{
-    RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
+    RetrievalTuningSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
 };
 use crate::shared::error::Result;
 use crate::shared::text::safe_truncate;
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use super::SearchFlags;
+use super::{ChatTurn, SearchFlags};
 mod conversation_helpers;
 mod corpus_plan;
 pub(super) use corpus_plan::fused_search;
@@ -312,45 +313,25 @@ struct SpaceDocumentScope {
     document_ids: HashSet<String>,
 }
 
-// This facade mirrors the implementation's complete per-turn retrieval configuration.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    request_id: &str,
-    validated_message: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-    router_settings: &RouterSettingsDto,
+    turn: ChatTurn<'_>,
+    settings: &SettingsDto,
     router_decision: &RouterDecisionOutcome,
     search_flags: SearchFlags,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
-    highlight_terms: &[String],
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
-    tool_output_settings: &ToolOutputSettingsDto,
-    search_settings: &SearchSettingsDto,
-    focus: &super::focus::FocusScope,
-    recorder: &super::turn_record::TurnRecorder,
 ) -> RetrievalPipelineOutcome {
     run_retrieval_pipeline_impl(
         container,
-        conv_service,
-        conversation_id,
-        request_id,
-        validated_message,
-        llm,
-        router_settings,
+        turn,
+        settings,
         router_decision,
         search_flags,
         conversation_document_context,
-        highlight_terms,
         evidence,
         attachment_digest,
-        tool_output_settings,
-        search_settings,
-        focus,
-        recorder,
     )
     .await
 }
@@ -359,38 +340,24 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-// This facade mirrors the knowledge-base retrieval policy inputs.
-#[allow(clippy::too_many_arguments)]
 async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    validated_message: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    turn: ChatTurn<'_>,
     search_flags: SearchFlags,
-    highlight_terms: &[String],
     kb_search_limit: usize,
     enable_reranking: bool,
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
-    focus: &super::focus::FocusScope,
-    recorder: &super::turn_record::TurnRecorder,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> KbRetrievalOutcome {
     run_kb_retrieval_impl(
         container,
-        conv_service,
-        conversation_id,
-        validated_message,
-        llm,
+        turn,
         search_flags,
-        highlight_terms,
         kb_search_limit,
         enable_reranking,
         semantic_threshold,
         tuning,
-        focus,
-        recorder,
         cancel,
     )
     .await

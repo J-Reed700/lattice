@@ -6,12 +6,18 @@ use super::*;
 /// spawns racing — chat and utility prewarm start together — were handed the
 /// same number, and the loser died with a bind error that used to be read as
 /// a GPU fault and "fixed" by dropping the whole session to CPU-only.
-pub(super) static RESERVED_PORTS: SyncMutex<BTreeSet<u16>> = SyncMutex::new(BTreeSet::new());
+///
+/// The app's [`SidecarRegistry`] holds the set every spawn reserves from.
+#[derive(Default)]
+pub(super) struct ReservedPorts {
+    pub(super) taken: SyncMutex<BTreeSet<u16>>,
+}
 
 /// A port claimed for one sidecar, released when the reservation drops.
 /// Held by the handle, so a live server's port is never handed out again.
 pub(super) struct PortReservation {
     pub(super) port: u16,
+    ports: Arc<ReservedPorts>,
 }
 
 impl PortReservation {
@@ -22,22 +28,25 @@ impl PortReservation {
 
 impl Drop for PortReservation {
     fn drop(&mut self) {
-        RESERVED_PORTS.lock().remove(&self.port);
+        self.ports.taken.lock().remove(&self.port);
     }
 }
 
 /// Reserve an ephemeral loopback port: bind `127.0.0.1:0`, read the number
-/// back, drop the listener, and claim the number process-wide. llama-server
+/// back, drop the listener, and claim the number in `ports`. llama-server
 /// still owns the real bind, so losing that race remains possible — it is
 /// classified [`AttemptFailure::Retry`] and retried with a fresh port.
-pub(super) fn reserve_free_port() -> std::io::Result<PortReservation> {
+pub(super) fn reserve_free_port(ports: &Arc<ReservedPorts>) -> std::io::Result<PortReservation> {
     const ATTEMPTS: usize = 32;
     for _ in 0..ATTEMPTS {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
         drop(listener);
-        if RESERVED_PORTS.lock().insert(port) {
-            return Ok(PortReservation { port });
+        if ports.taken.lock().insert(port) {
+            return Ok(PortReservation {
+                port,
+                ports: Arc::clone(ports),
+            });
         }
     }
     Err(std::io::Error::new(

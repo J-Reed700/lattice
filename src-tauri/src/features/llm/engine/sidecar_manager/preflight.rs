@@ -87,11 +87,17 @@ impl PreflightCache {
     }
 }
 
-/// The process-wide cache. Injectable so the policy is testable without a
-/// process-global `OnceCell` that no test can reset.
-pub(super) fn preflight_cache() -> &'static PreflightCache {
-    static CACHE: std::sync::OnceLock<PreflightCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(PreflightCache::new)
+/// The preflight for `binary`, cached in the app's [`SidecarRegistry`]. A
+/// host that manages no registry has nowhere to keep the verdict, so it runs
+/// the check every time; like sharing a server, the cache is an optimization.
+pub(super) async fn registered_preflight(
+    app: &AppHandle,
+    binary: SidecarBinary,
+) -> PreflightOutcome {
+    match app.try_state::<SidecarRegistry>() {
+        Some(registry) => preflight(app, binary, &registry.preflight).await,
+        None => run_preflight(app, binary).await,
+    }
 }
 
 /// The cached preflight for `binary`, running it on first use.
@@ -193,6 +199,8 @@ pub(super) fn preflight_attempt_failure(error: AttemptError) -> PreflightOutcome
 /// ordinary I/O errors.
 #[cfg(windows)]
 pub(super) fn suppress_loader_error_dialogs() {
+    // global-state: the error mode is a property of this process, so it is
+    // set once for the process.
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         const SEM_FAILCRITICALERRORS: u32 = 0x0001;
@@ -292,7 +300,10 @@ pub(super) async fn collect_preflight(
 /// Run the `--version` preflight for every bundled build in the background,
 /// so the log records at startup whether local models can run at all. Never
 /// blocks the caller; the result is cached for the first model load.
-pub fn spawn_binary_preflight(app: &AppHandle) {
+pub fn spawn_binary_preflight(
+    app: &AppHandle,
+    devices: Arc<crate::features::llm::engine::system::BackendDevices>,
+) {
     let app = app.clone();
     let cancellation = crate::shared::runtime::background::cancellation_token();
     let _ = crate::shared::runtime::background::spawn(async move {
@@ -300,7 +311,7 @@ pub fn spawn_binary_preflight(app: &AppHandle) {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => return,
-                _ = preflight(&app, binary, preflight_cache()) => {}
+                _ = registered_preflight(&app, binary) => {}
             }
         }
         // Warm the device probe on the same startup pass. Callers that reach
@@ -309,7 +320,7 @@ pub fn spawn_binary_preflight(app: &AppHandle) {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => {},
-            _ = crate::features::llm::engine::system::detect_backend_devices(&app) => {}
+            _ = devices.detect(&app) => {}
         }
     });
 }

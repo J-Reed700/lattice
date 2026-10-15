@@ -42,25 +42,31 @@ pub trait SnapshotEvents: Send + Sync {
 }
 
 type Emit = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
-static EMIT: OnceLock<Emit> = OnceLock::new();
 
-/// Give the feature the running app so it can emit to the main window. Until
-/// this is called — in tests, or before setup — events go nowhere.
-pub fn install<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
-    let _ = EMIT.set(Arc::new(move |event: &str, payload: serde_json::Value| {
-        use tauri::Emitter;
-        if let Err(error) = app.emit_to("main", event, payload) {
-            tracing::debug!(%error, event, "Could not publish a web snapshot event");
-        }
-    }));
+/// Emits to the main window through the app handle [`AppEvents::attach`]
+/// stored. Until then — in tests, or before setup — events go nowhere.
+#[derive(Default)]
+pub struct AppEvents {
+    emit: OnceLock<Emit>,
 }
 
-/// Emits through the app handle [`install`] stored.
-pub struct AppEvents;
+impl AppEvents {
+    /// Give the feature the running app so it can emit to the main window.
+    pub fn attach<R: tauri::Runtime>(&self, app: tauri::AppHandle<R>) {
+        let _ = self
+            .emit
+            .set(Arc::new(move |event: &str, payload: serde_json::Value| {
+                use tauri::Emitter;
+                if let Err(error) = app.emit_to("main", event, payload) {
+                    tracing::debug!(%error, event, "Could not publish a web snapshot event");
+                }
+            }));
+    }
+}
 
 impl SnapshotEvents for AppEvents {
     fn emit(&self, event: &str, payload: serde_json::Value) {
-        if let Some(emit) = EMIT.get() {
+        if let Some(emit) = self.emit.get() {
             emit(event, payload);
         }
     }

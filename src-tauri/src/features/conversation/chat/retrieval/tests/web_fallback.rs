@@ -237,22 +237,22 @@ async fn run(passages: Vec<SearchResultDto>, flags: SearchFlags, turn: &str) -> 
     };
     let outcome = run_retrieval_pipeline(
         &runtime,
-        &conversations,
-        CONVERSATION,
-        turn,
-        QUESTION,
-        &llm,
-        &RouterSettingsDto::default(),
+        ChatTurn {
+            conv_service: &conversations,
+            conversation_id: CONVERSATION,
+            request_id: turn,
+            message: QUESTION,
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &crate::features::conversation::chat::focus::FocusScope::default(),
+            recorder: &recorder,
+        },
+        &SettingsDto::default(),
         &decision,
         flags,
         &[],
-        &[],
         EvidenceBudget::new(20_000),
         None,
-        &ToolOutputSettingsDto::default(),
-        &SearchSettingsDto::default(),
-        &crate::features::conversation::chat::focus::FocusScope::default(),
-        &recorder,
     )
     .await;
     Ran {

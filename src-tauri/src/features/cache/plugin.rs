@@ -1,6 +1,6 @@
 //! Cache Plugin - Search query cache management
 //!
-//! NOTE: Cache commands are synchronous (no async) because cache is a global singleton.
+//! NOTE: Cache commands are synchronous (no async): the cache they read is in memory.
 
 use tauri::{
     plugin::{Builder, TauriPlugin},

@@ -3,24 +3,26 @@ use tauri_plugin_shell::process::TerminatedPayload;
 
 #[test]
 fn reserve_free_port_returns_nonzero_loopback_port() {
-    let reservation = reserve_free_port().expect("port allocation failed");
+    let ports = Arc::new(ReservedPorts::default());
+    let reservation = reserve_free_port(&ports).expect("port allocation failed");
     assert!(
         reservation.port() > 0,
         "expected a non-zero port, got {}",
         reservation.port()
     );
     let port = reservation.port();
-    assert!(RESERVED_PORTS.lock().contains(&port));
+    assert!(ports.taken.lock().contains(&port));
     drop(reservation);
-    assert!(!RESERVED_PORTS.lock().contains(&port));
+    assert!(!ports.taken.lock().contains(&port));
 }
 
 #[test]
 fn reserve_free_port_never_hands_out_a_live_reservation() {
     // The OS is free to hand back the same just-released ephemeral port;
     // the reservation set is what stops two sidecars sharing it.
-    let first = reserve_free_port().expect("first allocation");
-    let second = reserve_free_port().expect("second allocation");
+    let ports = Arc::new(ReservedPorts::default());
+    let first = reserve_free_port(&ports).expect("first allocation");
+    let second = reserve_free_port(&ports).expect("second allocation");
     assert_ne!(first.port(), second.port());
 }
 

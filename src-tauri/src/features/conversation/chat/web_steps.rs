@@ -6,7 +6,7 @@
 //! second, third and fourth — the ones a long research turn is mostly made of —
 //! were a bare "Searching the web" with nothing under it.
 
-use crate::features::function_calling::dto::{FetchUrlContentOutput, WebSearchOutput};
+use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
 
 use super::fetch_memory;
 use super::turn_record::{StepGuard, TurnRecorder, TurnStepKind, TurnStepLinkDto};

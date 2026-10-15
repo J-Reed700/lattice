@@ -25,7 +25,9 @@ use std::sync::Arc;
 
 use crate::application::factories::FileMetadataFactory;
 use crate::application::ports::UnitOfWorkFactory;
-use crate::application::ports::{EmbeddingPort, FileStoragePort, RepositoryPort, VectorSearchPort};
+use crate::application::ports::{
+    EmbeddingPort, FileStoragePort, RepositoryPort, SearchResultCachePort, VectorSearchPort,
+};
 use crate::domain::entities::Document;
 use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use crate::features::embedding::entity::Embedding;
@@ -70,6 +72,9 @@ pub struct ReindexDocumentUseCase {
     /// document would silently drop out of the sparse branch until it was
     /// imported again.
     sparse_term_store: Option<Arc<dyn crate::application::ports::SparseTermStorePort>>,
+    /// Search results cached against the corpus, dropped once the rebuilt
+    /// chunks are live.
+    query_cache: Option<Arc<dyn SearchResultCachePort>>,
 }
 
 impl ReindexDocumentUseCase {
@@ -89,6 +94,19 @@ impl ReindexDocumentUseCase {
     ) -> Self {
         self.content_extractor = Some(extractor);
         self
+    }
+
+    /// Invalidate `cache` whenever a document is rebuilt.
+    #[must_use]
+    pub fn with_query_cache(mut self, cache: Arc<dyn SearchResultCachePort>) -> Self {
+        self.query_cache = Some(cache);
+        self
+    }
+
+    fn invalidate_query_cache(&self) {
+        if let Some(cache) = &self.query_cache {
+            cache.invalidate_corpus();
+        }
     }
     /// The text, its page ranges, and the pages OCR read.
     async fn extract(
@@ -132,6 +150,7 @@ impl ReindexDocumentUseCase {
             uow_factory,
             vector_search,
             sparse_term_store: None,
+            query_cache: None,
         }
     }
 
@@ -398,7 +417,7 @@ impl ReindexDocumentUseCase {
         })
         .await
         .map_err(|e| AppError::Other(format!("Search indexing task failed: {e}")))?;
-        crate::features::search::query_cache::invalidate_query_cache();
+        self.invalidate_query_cache();
         publication.map_err(|e| {
             AppError::Other(format!(
                 "Document saved, but search indexing failed: {e}. Retry reindexing this document."
@@ -406,7 +425,7 @@ impl ReindexDocumentUseCase {
         })?;
 
         // The corpus changed; cached search results are stale.
-        crate::features::search::query_cache::invalidate_query_cache();
+        self.invalidate_query_cache();
 
         // 8. Build response
         let file_path_str = document

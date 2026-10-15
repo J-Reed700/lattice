@@ -165,15 +165,17 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
     let first_version = id();
     sources
         .add(
-            &id(),
-            &source_id,
-            &first_version,
-            &program.summary.id,
-            crate::features::learning::dto::LearningSourceKind::Pasted,
-            "add_text",
-            "My text",
-            None,
-            crate::features::learning::dto::LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &first_version,
+                program_id: &program.summary.id,
+                kind: crate::features::learning::dto::LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "My text",
+                requested_url: None,
+                freshness: crate::features::learning::dto::LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "Source title".into(),
                 publisher: None,

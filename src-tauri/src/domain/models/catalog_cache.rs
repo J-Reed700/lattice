@@ -7,26 +7,25 @@ use crate::domain::models::embedding_defaults::{
 };
 use crate::domain::models::metadata::ModelType;
 use std::collections::HashMap;
-use std::sync::RwLock;
 
-/// Thread-safe, lazily-initialized cache of known models and their types.
+/// The curated catalog of known models and their types, built once.
 ///
-/// Provides O(1) lookup for model type classification based on a curated catalog.
-/// Uses RwLock for concurrent read access with minimal contention.
+/// Provides O(1) lookup for model type classification. Nothing writes to it
+/// after it is built, so every thread reads it without a lock.
 pub struct ModelCatalogCache {
-    catalog: RwLock<HashMap<String, ModelType>>,
+    catalog: HashMap<String, ModelType>,
 }
 
 impl ModelCatalogCache {
     /// Get the singleton instance of the catalog cache.
     pub fn instance() -> &'static Self {
+        // global-state: a fixed lookup table, built from the curated list
+        // below on first use and never changed.
         static INSTANCE: std::sync::OnceLock<ModelCatalogCache> = std::sync::OnceLock::new();
         INSTANCE.get_or_init(|| {
             let mut catalog = HashMap::new();
             Self::populate_catalog(&mut catalog);
-            ModelCatalogCache {
-                catalog: RwLock::new(catalog),
-            }
+            ModelCatalogCache { catalog }
         })
     }
 
@@ -35,7 +34,7 @@ impl ModelCatalogCache {
     /// Returns `Some(ModelType)` if found in catalog, `None` otherwise.
     pub fn lookup(&self, model_name: &str) -> Option<ModelType> {
         let normalized = model_name.trim().to_lowercase();
-        self.catalog.read().ok()?.get(&normalized).copied()
+        self.catalog.get(&normalized).copied()
     }
 
     /// Populate the catalog with known models.

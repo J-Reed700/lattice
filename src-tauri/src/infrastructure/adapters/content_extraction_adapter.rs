@@ -59,6 +59,14 @@ impl ContentExtractionAdapter {
         }
     }
 
+    /// Extracts with `extractor`, which carries the size limit and the parser
+    /// workers it shares with the rest of the app. Call before [`Self::with_ocr`],
+    /// which configures whichever extractor is in place.
+    pub fn with_extractor(mut self, extractor: ContentExtractor) -> Self {
+        self.extractor = extractor;
+        self
+    }
+
     /// Reads scanned PDF pages through `ocr`. Without it they stay unindexed
     /// and are reported in `ExtractedContent::needs_ocr`.
     pub fn with_ocr(mut self, ocr: Arc<dyn OcrPort>) -> Self {

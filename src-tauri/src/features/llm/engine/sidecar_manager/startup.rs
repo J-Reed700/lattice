@@ -221,7 +221,7 @@ impl SidecarManager {
         //    first call per build runs `--version`; later calls reuse it.
         if let PreflightOutcome::Unusable {
             message, reason, ..
-        } = preflight(app, binary, preflight_cache()).await
+        } = registered_preflight(app, binary).await
         {
             return Err(AttemptError {
                 kind: AttemptFailure::BinaryUnusable(reason),
@@ -233,7 +233,11 @@ impl SidecarManager {
         //    concurrent spawn (chat and utility prewarm start together)
         //    cannot be handed the same number; llama-server still owns the
         //    actual bind, and losing that race is a `Retry`.
-        let reservation = reserve_free_port().map_err(|err| {
+        let ports = app
+            .try_state::<SidecarRegistry>()
+            .map(|registry| Arc::clone(&registry.ports))
+            .unwrap_or_default();
+        let reservation = reserve_free_port(&ports).map_err(|err| {
             AttemptError::fatal(format!("Failed to allocate ephemeral port: {err}"))
         })?;
         let port = reservation.port();

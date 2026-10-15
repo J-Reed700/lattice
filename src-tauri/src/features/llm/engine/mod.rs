@@ -24,7 +24,7 @@ pub mod system;
 pub use circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitState,
 };
-pub use factory::{create_llm, find_local_model, LLMConfig};
+pub use factory::{find_local_model, LLMConfig};
 pub use generation_config::{GenerationConfig, SamplingProfile};
 pub use model_catalog_adapter::HardcodedModelCatalog;
 pub use model_storage_adapter::FilesystemModelStorage;

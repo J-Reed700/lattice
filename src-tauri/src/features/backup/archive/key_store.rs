@@ -27,6 +27,8 @@ pub const KEYRING_USER: &str = "backup-master-key";
 /// File fallback name under `<app_data_dir>/backup/`.
 pub const KEY_FILE_NAME: &str = "master.key";
 
+// global-state: the warning is about this machine's keyring, so it is said
+// once per process however many key stores are built.
 static FALLBACK_WARNED: Once = Once::new();
 
 fn warn_fallback_once(reason: &str) {

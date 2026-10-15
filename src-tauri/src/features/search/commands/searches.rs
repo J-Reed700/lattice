@@ -9,7 +9,7 @@ use crate::features::search::dto::{
     CacheStatsDto, EnhancedSearchResponse, SearchOptions, SearchRequestDto, SearchResponseDto,
     SearchResultDto,
 };
-use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
+use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::AppError;
@@ -431,7 +431,8 @@ pub async fn search_documents_impl(
         .validate_search_query(&options.query)?;
 
     let limit = options.limit.unwrap_or(10);
-    let cache_generation = QUERY_CACHE.generation();
+    let query_cache = container.query_cache();
+    let cache_generation = query_cache.generation();
     let search_mode = match options.search_mode.as_deref() {
         Some("semantic") => LibraryMode::Vector,
         Some("keyword") => LibraryMode::Keyword,
@@ -452,9 +453,9 @@ pub async fn search_documents_impl(
         container.search.embedding_identity().map(str::to_owned),
     );
 
-    if let Some(cached) = QUERY_CACHE.get(&cache_key) {
+    if let Some(cached) = query_cache.get(&cache_key) {
         container.metrics().record_cache_hit();
-        let stats = QUERY_CACHE.stats();
+        let stats = query_cache.stats();
 
         let response = EnhancedSearchResponse {
             results: cached.results,
@@ -514,9 +515,9 @@ pub async fn search_documents_impl(
         cached_at: chrono::Utc::now().timestamp(),
         execution_time_ms,
     };
-    QUERY_CACHE.put_if_generation(cache_key, cached_result);
+    query_cache.put_if_generation(cache_key, cached_result);
 
-    let stats = QUERY_CACHE.stats();
+    let stats = query_cache.stats();
     let response = EnhancedSearchResponse {
         results: search_results,
         from_cache: false,

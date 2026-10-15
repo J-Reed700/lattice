@@ -98,8 +98,6 @@ pub async fn list_web_page_snapshots(
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .setup(|app, _api| {
-            // Snapshot events go to the main window through this handle.
-            crate::features::web::snapshots::install(app.clone());
             let container = app.state::<Container>().inner().clone();
             // Registration settles snapshot jobs the last process left
             // running, then starts delivering saved work.

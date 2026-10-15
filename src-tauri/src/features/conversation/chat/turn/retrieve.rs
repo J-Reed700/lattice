@@ -65,22 +65,13 @@ pub(super) async fn retrieve_evidence(
     let retrieval_start = Instant::now();
     let retrieval = run_retrieval_pipeline(
         container,
-        &turn.conv_service,
-        &turn.conv_id,
-        &turn.turn_id,
-        &turn.message,
-        &turn.llm,
-        &turn.settings.llm.router,
+        turn.chat_turn(),
+        &turn.settings,
         &route.decision,
         flags,
         &turn.document_context,
-        &turn.highlight_terms,
         evidence,
         attachment_digest.as_deref(),
-        &turn.settings.llm.tool_output,
-        &turn.settings.search,
-        &turn.focus,
-        &turn.recorder,
     )
     .await;
     metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);

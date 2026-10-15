@@ -2,23 +2,23 @@
 use super::*;
 
 impl LearningSourceLibraryRepository {
-    // Source capture owns a fixed provenance tuple plus caller-supplied stable
-    // IDs; keeping those fields explicit makes replay validation auditable.
-    #[allow(clippy::too_many_arguments)]
     pub async fn add(
         &self,
-        operation_id: &str,
-        source_id: &str,
-        version_id: &str,
-        program_id: &str,
-        kind: LearningSourceKind,
-        operation_kind: &str,
-        origin: &str,
-        requested_url: Option<&str>,
-        freshness: LearningSourcePolicy,
+        source: NewLearningSource<'_>,
         captured: CapturedLearningSource,
         payload_hash: String,
     ) -> Result<()> {
+        let NewLearningSource {
+            operation_id,
+            source_id,
+            version_id,
+            program_id,
+            kind,
+            operation_kind,
+            origin,
+            requested_url,
+            freshness,
+        } = source;
         for (v, label) in [
             (operation_id, "operation"),
             (source_id, "source"),

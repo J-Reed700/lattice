@@ -9,15 +9,16 @@ use crate::application::ports::llm_port::{
 };
 use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation;
+use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::ports::ChatTools;
 use crate::features::conversation::chat::test_runtime::FakeRuntime;
-use crate::features::conversation::chat::turn_record::{TurnStepDto, TurnStepState};
+use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepDto, TurnStepState};
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const CONVERSATION: &str = "tool-loop-conversation";
 
@@ -276,10 +277,16 @@ async fn run_on(
     let mut trace = None;
     let outcome = run_agentic_tool_loop(
         &runtime,
-        &conv_service,
-        CONVERSATION,
-        request_id,
-        &llm,
+        ChatTurn {
+            conv_service: &conv_service,
+            conversation_id: CONVERSATION,
+            request_id,
+            message: "When did the bridge open?",
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &FocusScope::default(),
+            recorder: &recorder,
+        },
         &sink,
         LoopRequest {
             input: vec![
@@ -299,14 +306,11 @@ async fn run_on(
             max_tool_rounds: rounds,
             research: None,
         },
-        &[],
         &settings,
         &mut sources,
         &mut trace,
         FetchMemory::default(),
-        &FocusScope::default(),
         None,
-        &recorder,
     )
     .await;
     Run {

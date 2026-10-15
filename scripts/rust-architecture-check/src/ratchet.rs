@@ -10,7 +10,8 @@
 //!
 //! Only production code counts: the walk follows `mod` declarations from the
 //! crate roots and skips `#[cfg(test)]` modules and items, so test files are
-//! never read.
+//! never read. File length is the exception: it reads every `.rs` file below
+//! the root and skips test-only files by name.
 use proc_macro2::{Spacing, TokenStream, TokenTree};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -32,12 +33,16 @@ pub const FEATURE_EDGE: &str = "feature-edge";
 pub const FEATURE_CYCLE: &str = "feature-cycle";
 pub const CONTAINER_IMPORT: &str = "container-import";
 pub const RAW_SPAWN: &str = "raw-spawn";
-const RULES: [&str; 5] = [
+pub const GLOBAL_STATE: &str = "global-state";
+pub const FILE_LENGTH: &str = "file-length";
+const RULES: [&str; 7] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
     FEATURE_CYCLE,
     CONTAINER_IMPORT,
     RAW_SPAWN,
+    GLOBAL_STATE,
+    FILE_LENGTH,
 ];
 
 const RAW_SPAWNS: [&[&str]; 4] = [
@@ -49,6 +54,30 @@ const RAW_SPAWNS: [&[&str]; 4] = [
 const SPAWN_MARKER: &str = "raw-spawn:";
 const SUPERVISOR: &str = "shared/runtime/";
 const CONTAINER_TARGET: &str = "interfaces::di";
+
+const STATE_MARKER: &str = "global-state:";
+/// Macros that declare statics the parser cannot see into. `task_local!` is
+/// not among them: its value is scoped to one task by whoever sets it.
+const STATE_MACROS: [&str; 2] = ["thread_local", "lazy_static"];
+/// Scalar types: a static of these (or a reference, array or tuple of them)
+/// is a constant, since only `static mut` could change it.
+const SCALARS: [&str; 17] = [
+    "bool", "char", "str", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64",
+    "i128", "isize", "f32", "f64",
+];
+/// Wrappers that build their value from the initializer written beside them.
+const LAZY_WRAPPERS: [&str; 2] = ["Lazy", "LazyLock"];
+/// Types a lazily built static may hold and still be a derived constant: a
+/// compiled pattern, a stemmer, or collections of them. Nothing here can
+/// change behind a shared reference, so `Lazy<Regex>` needs no marker.
+const IMMUTABLE_PAYLOADS: [&str; 10] = [
+    "Regex", "RegexSet", "Stemmer", "Option", "Vec", "Box", "HashMap", "HashSet", "BTreeMap",
+    "BTreeSet",
+];
+
+/// Lines a source file may have, counted like `wc -l`. Test-only files
+/// (`tests.rs`, `*_tests.rs`, anything under a `tests/` directory) may be longer.
+const MAX_LINES: usize = 800;
 
 const HEADER: &str = "\
 # Architecture ratchet baseline, read by scripts/rust-architecture-check.
@@ -64,6 +93,12 @@ const HEADER: &str = "\
 # and commit the smaller file. Do not add lines to get a change through: fix
 # the dependency, or mark a deliberate detached task with a
 # `// raw-spawn: <reason>` comment directly above the statement or its fn.
+# State a static holds belongs in a value the composition root builds and
+# passes on; only a derived constant or a hook the process owns by nature
+# (a panic hook, an OS callback target) may stay global, marked with a
+# `// global-state: <reason>` comment directly above the static.
+# Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
+# then split it by responsibility.
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another
@@ -72,6 +107,10 @@ const HEADER: &str = "\
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
 #                                                         DI, desktop, setup and interfaces files
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
+#   global-state <file> <static>                          statics that hold mutable or lazily
+#                                                         built state, unless a derived constant
+#   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
+#                                                         *_tests.rs and files under tests/
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -287,10 +326,58 @@ fn path_attribute(attrs: &[Attribute]) -> Option<String> {
 
 pub fn findings(root: &Path) -> Result<Vec<Finding>, Error> {
     let (files, modules) = production_files(root)?;
-    Ok(files
+    let mut found: Vec<Finding> = files
         .iter()
         .flat_map(|file| file_findings(file, &modules))
-        .collect())
+        .collect();
+    found.extend(length_findings(root)?);
+    Ok(found)
+}
+
+/// Every `.rs` file below the root that is too long. Unlike the other rules
+/// this reads files from disk rather than following `mod` declarations, so a
+/// file no module reaches still counts.
+pub fn length_findings(root: &Path) -> Result<Vec<Finding>, Error> {
+    let mut found = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let mut entries = fs::read_dir(&directory)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let relative = path
+                    .strip_prefix(root)?
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if !test_only_file(&relative) {
+                    found.extend(file_length(&relative, &fs::read_to_string(&path)?));
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Test-only by name: `tests.rs`, `*_tests.rs`, or a file under `tests/`.
+fn test_only_file(relative: &str) -> bool {
+    let mut parts = relative.rsplit('/');
+    let name = parts.next().unwrap_or_default();
+    name == "tests.rs" || name.ends_with("_tests.rs") || parts.any(|part| part == "tests")
+}
+
+/// One finding when a non-test file has more than `MAX_LINES` lines.
+pub fn file_length(relative: &str, source: &str) -> Option<Finding> {
+    let lines = source.matches('\n').count();
+    (lines > MAX_LINES && !test_only_file(relative)).then(|| Finding {
+        key: Key::new(FILE_LENGTH, relative, format!("max-{MAX_LINES}-lines")),
+        location: format!("{relative} ({lines} lines)"),
+    })
 }
 
 /// A path the file names, resolved to the library crate where possible.
@@ -313,6 +400,7 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
         anchors: Vec::new(),
         references: Vec::new(),
         spawns: Vec::new(),
+        statics: Vec::new(),
     };
     collector.visit_file(&file.ast);
 
@@ -356,7 +444,88 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
             });
         }
     }
+    for (name, line) in collector.statics {
+        found.push(Finding {
+            key: Key::new(GLOBAL_STATE, relative, name),
+            location: at(line),
+        });
+    }
     found
+}
+
+/// Whether a static of this type is a constant: a scalar, or a reference,
+/// array, slice or tuple of constants.
+fn plain_data(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Reference(_) => true,
+        syn::Type::Array(array) => plain_data(&array.elem),
+        syn::Type::Slice(slice) => plain_data(&slice.elem),
+        syn::Type::Tuple(tuple) => tuple.elems.iter().all(plain_data),
+        syn::Type::Paren(inner) => plain_data(&inner.elem),
+        syn::Type::Group(inner) => plain_data(&inner.elem),
+        syn::Type::Path(path) => {
+            path.qself.is_none()
+                && path.path.segments.len() == 1
+                && path.path.segments.iter().all(|segment| {
+                    segment.arguments.is_empty()
+                        && SCALARS.contains(&segment.ident.to_string().as_str())
+                })
+        }
+        _ => false,
+    }
+}
+
+/// Whether a static of this type is a derived constant: a `Lazy` or
+/// `LazyLock` whose initializer sits beside it and whose value cannot change
+/// once built.
+fn derived_constant(ty: &syn::Type) -> bool {
+    let syn::Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(wrapper) = path.path.segments.last() else {
+        return false;
+    };
+    LAZY_WRAPPERS.contains(&wrapper.ident.to_string().as_str())
+        && type_arguments(&wrapper.arguments).is_some_and(|arguments| {
+            !arguments.is_empty() && arguments.into_iter().all(immutable_payload)
+        })
+}
+
+/// The type arguments of a path segment; `None` when it takes anything else.
+fn type_arguments(arguments: &syn::PathArguments) -> Option<Vec<&syn::Type>> {
+    match arguments {
+        syn::PathArguments::None => Some(Vec::new()),
+        syn::PathArguments::AngleBracketed(bracketed) => bracketed
+            .args
+            .iter()
+            .filter(|argument| !matches!(argument, syn::GenericArgument::Lifetime(_)))
+            .map(|argument| match argument {
+                syn::GenericArgument::Type(ty) => Some(ty),
+                _ => None,
+            })
+            .collect(),
+        syn::PathArguments::Parenthesized(_) => None,
+    }
+}
+
+fn immutable_payload(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Reference(reference) => immutable_payload(&reference.elem),
+        syn::Type::Array(array) => immutable_payload(&array.elem),
+        syn::Type::Slice(slice) => immutable_payload(&slice.elem),
+        syn::Type::Tuple(tuple) => tuple.elems.iter().all(immutable_payload),
+        syn::Type::Paren(inner) => immutable_payload(&inner.elem),
+        syn::Type::Group(inner) => immutable_payload(&inner.elem),
+        syn::Type::Path(path) if path.qself.is_none() => {
+            path.path.segments.last().is_some_and(|segment| {
+                let name = segment.ident.to_string();
+                (IMMUTABLE_PAYLOADS.contains(&name.as_str()) || SCALARS.contains(&name.as_str()))
+                    && type_arguments(&segment.arguments)
+                        .is_some_and(|arguments| arguments.into_iter().all(immutable_payload))
+            })
+        }
+        _ => false,
+    }
 }
 
 fn feature_of(module: &[String]) -> Option<&String> {
@@ -480,6 +649,8 @@ struct Collector<'a> {
     anchors: Vec<usize>,
     references: Vec<Reference>,
     spawns: Vec<(String, usize)>,
+    /// Unmarked statics that hold state, by name, with their lines.
+    statics: Vec<(String, usize)>,
 }
 
 impl Collector<'_> {
@@ -543,9 +714,16 @@ impl Collector<'_> {
             .anchors
             .iter()
             .chain(std::iter::once(&line))
-            .any(|&anchor| marked_above(self.lines, anchor));
+            .any(|&anchor| marked_above(self.lines, anchor, SPAWN_MARKER));
         if !marked {
             self.spawns.push((spawn.join("::"), line));
+        }
+    }
+
+    /// A static that holds state, unless marked as deliberately global.
+    fn state(&mut self, name: String, line: usize) {
+        if !marked_above(self.lines, line, STATE_MARKER) {
+            self.statics.push((name, line));
         }
     }
 
@@ -586,8 +764,8 @@ impl Collector<'_> {
 }
 
 /// True when the comment and attribute lines directly above `line` (1-based)
-/// include `// raw-spawn: <reason>`.
-fn marked_above(lines: &[&str], line: usize) -> bool {
+/// include `// <marker> <reason>`, such as `// raw-spawn: <reason>`.
+fn marked_above(lines: &[&str], line: usize, marker: &str) -> bool {
     let mut index = line.saturating_sub(1);
     while index > 0 {
         index -= 1;
@@ -595,7 +773,7 @@ fn marked_above(lines: &[&str], line: usize) -> bool {
         if let Some(comment) = text.strip_prefix("//") {
             if comment
                 .trim_start()
-                .strip_prefix(SPAWN_MARKER)
+                .strip_prefix(marker)
                 .is_some_and(|reason| !reason.trim().is_empty())
             {
                 return true;
@@ -654,6 +832,15 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
         self.use_tree(&item.tree, Vec::new(), item.leading_colon.is_some());
     }
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        let mutable = matches!(item.mutability, syn::StaticMutability::Mut(_));
+        if mutable || !(plain_data(&item.ty) || derived_constant(&item.ty)) {
+            // The `static` keyword's line, so a marker may sit between the
+            // static and its doc comment.
+            self.state(item.ident.to_string(), item.static_token.span.start().line);
+        }
+        visit::visit_item_static(self, item);
+    }
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
         self.expression_path(
@@ -665,6 +852,15 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     }
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         visit::visit_macro(self, mac);
+        if let Some(name) = mac
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+            .filter(|name| STATE_MACROS.contains(&name.as_str()))
+        {
+            self.state(format!("{name}!"), mac.path.span().start().line);
+        }
         for (segments, leading_colon, line) in token_paths(mac.tokens.clone()) {
             self.expression_path(&segments, leading_colon, line);
         }
@@ -1273,6 +1469,174 @@ mod tests { fn run() { tokio::spawn(async {}); } }
         );
     }
 
+    fn global_state(text: &str) -> Vec<String> {
+        file_findings(
+            &source("features/x.rs", &["features", "x"], text),
+            &HashSet::new(),
+        )
+        .into_iter()
+        .filter(|finding| finding.key.rule == GLOBAL_STATE)
+        .map(|finding| format!("{} {}", finding.key.target, finding.location))
+        .collect()
+    }
+
+    #[test]
+    fn statics_that_hold_state_are_found_wherever_they_are_declared() {
+        assert_eq!(
+            global_state(
+                r#"
+static REGISTRY: Lazy<Mutex<HashMap<String, u64>>> = Lazy::new(Default::default);
+pub(crate) static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+static APP: OnceLock<AppHandle> = OnceLock::new();
+static HEALTH: PlannerHealth = PlannerHealth::new();
+static mut COUNT: u32 = 0;
+fn next_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
+"#
+            ),
+            vec![
+                "REGISTRY features/x.rs:2",
+                "SLOTS features/x.rs:3",
+                "APP features/x.rs:4",
+                "HEALTH features/x.rs:5",
+                "COUNT features/x.rs:6",
+                "NEXT features/x.rs:8",
+                "thread_local! features/x.rs:11",
+            ]
+        );
+    }
+
+    #[test]
+    fn constants_and_lazily_compiled_patterns_are_not_state() {
+        assert!(global_state(
+            r#"
+static NAMES: &[&str] = &["a", "b"];
+static TABLE: [(u8, char); 2] = [(1, 'a'), (2, 'b')];
+static LIMIT: usize = 4;
+static PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new("a").unwrap());
+static OPTIONAL: once_cell::sync::Lazy<Option<regex::Regex>> = Lazy::new(|| None);
+static WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(HashSet::new);
+fn stem() { static STEMMER: Lazy<Stemmer> = Lazy::new(stemmer); }
+#[cfg(test)]
+static FIXTURE: Mutex<u8> = Mutex::new(0);
+"#
+        )
+        .is_empty());
+        // Built lazily, but what it builds can still change or hides a handle.
+        assert_eq!(
+            global_state(
+                r#"
+static CACHE: Lazy<Mutex<Vec<u8>>> = Lazy::new(Default::default);
+static PROXIES: Lazy<Option<Vec<String>>> = Lazy::new(load);
+static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+"#
+            ),
+            vec![
+                "CACHE features/x.rs:2",
+                "PROXIES features/x.rs:3",
+                "SET features/x.rs:4",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_marker_above_the_static_keeps_it_global() {
+        assert_eq!(
+            global_state(
+                r#"
+/// The panic hook reads this; nothing can hand it state.
+// global-state: the panic hook is process-wide
+static CRASHES_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+// global-state: AppKit calls this target with no user data
+#[cfg(target_os = "macos")]
+static APP: OnceLock<AppHandle> = OnceLock::new();
+
+fn warn_once() {
+    // global-state:
+    static WARNED: Once = Once::new();
+}
+
+// raw-spawn: a different marker
+static PENDING: AtomicBool = AtomicBool::new(false);
+
+// global-state: per-thread scratch for the tokenizer
+thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
+"#
+            ),
+            vec!["WARNED features/x.rs:12", "PENDING features/x.rs:16"]
+        );
+    }
+
+    fn too_long(relative: &str, lines: usize) -> Vec<String> {
+        file_length(relative, &"fn f() {}\n".repeat(lines))
+            .into_iter()
+            .map(|finding| {
+                format!(
+                    "{} {} {}",
+                    finding.key.rule, finding.key.subject, finding.key.target
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_file_over_800_lines_is_found_and_one_at_800_is_not() {
+        assert_eq!(
+            too_long("features/x.rs", 801),
+            vec!["file-length features/x.rs max-800-lines"]
+        );
+        assert!(too_long("features/x.rs", 800).is_empty());
+        let finding = file_length("x.rs", &"\n".repeat(801)).unwrap();
+        assert_eq!(
+            counts(&[finding]).into_values().collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn test_only_files_may_be_any_length() {
+        for relative in [
+            "features/x/tests.rs",
+            "tests.rs",
+            "features/x/loop_tests.rs",
+            "features/x/tests/fixtures.rs",
+            "features/x/tests/cases/long.rs",
+        ] {
+            assert!(too_long(relative, 2000).is_empty(), "{relative}");
+        }
+        assert_eq!(too_long("features/x/contests.rs", 801).len(), 1);
+        assert_eq!(too_long("features/tests_support.rs", 801).len(), 1);
+    }
+
+    #[test]
+    fn length_walk_reads_every_rust_file_below_the_root() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "lattice-ratchet-length-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("unreached/tests")).unwrap();
+        let long = "\n".repeat(801);
+        fs::write(root.join("unreached/orphan.rs"), &long).unwrap();
+        fs::write(root.join("unreached/tests/case.rs"), &long).unwrap();
+        fs::write(root.join("unreached/notes.txt"), &long).unwrap();
+        fs::write(root.join("short.rs"), "\n".repeat(800)).unwrap();
+        let found: Vec<_> = length_findings(&root)
+            .unwrap()
+            .into_iter()
+            .map(|finding| finding.location)
+            .collect();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(found, vec!["unreached/orphan.rs (801 lines)"]);
+    }
+
     #[test]
     fn production_walk_follows_declared_modules_and_skips_test_files() {
         let unique = std::time::SystemTime::now()
@@ -1348,6 +1712,7 @@ mod tests { fn run() { tokio::spawn(async {}); } }
             anchors: Vec::new(),
             references: Vec::new(),
             spawns: Vec::new(),
+            statics: Vec::new(),
         };
         collector.visit_file(&file.ast);
         let paths: Vec<_> = collector
@@ -1575,6 +1940,13 @@ mod tests { fn run() { tokio::spawn(async {}); } }
         assert!(parse_baseline("raw-spawn features/a.rs tokio::spawn 0").is_err());
         assert!(parse_baseline("raw-spawns features/a.rs tokio::spawn 1").is_err());
         assert!(parse_baseline("raw-spawn a b 1\nraw-spawn a b 2").is_err());
+        assert_eq!(
+            parse_baseline("global-state shared/runtime/background.rs REGISTRY 1").unwrap(),
+            Counts::from([(
+                key(GLOBAL_STATE, "shared/runtime/background.rs", "REGISTRY"),
+                1
+            )])
+        );
         assert_eq!(
             parse_baseline("feature-cycle features::a features::b 2").unwrap(),
             Counts::from([(key(FEATURE_CYCLE, "features::a", "features::b"), 2)])

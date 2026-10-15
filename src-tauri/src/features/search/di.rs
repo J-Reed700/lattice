@@ -360,6 +360,12 @@ fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy)
 
 /// Search's registrar surface on `Container`.
 impl Container {
+    /// The app's search result cache: the search commands read it, the cache
+    /// commands report and clear it, and every indexer invalidates it.
+    pub fn query_cache(&self) -> &Arc<crate::features::search::query_cache::QueryCache> {
+        &self.query_cache
+    }
+
     // Search (from SearchModule)
     pub fn semantic_search_use_case(&self) -> Arc<SemanticSearchUseCase> {
         Arc::clone(self.search.semantic_search_use_case())

@@ -2076,15 +2076,17 @@ pub(crate) async fn install_source(
     let id = || uuid::Uuid::new_v4().to_string();
     LearningSourceLibraryRepository::new(pool.clone())
         .add(
-            &id(),
-            &id(),
-            &id(),
-            program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Test reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &id(),
+                version_id: &id(),
+                program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Test reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "Test reference".into(),
                 publisher: None,

@@ -109,7 +109,6 @@ fn incomplete_history(cause: Option<&AppError>) -> AppError {
 /// Propagates the assembler's budget errors — an oversized current message, an
 /// unusable model, or active requirements that do not fit. Those are reported to
 /// the user rather than resolved by dropping a constraint.
-#[allow(clippy::too_many_arguments)]
 pub async fn build_memory_plan(
     memory: &dyn ConversationMemoryPort,
     recall: &dyn ConversationMemoryReadPort,
@@ -126,11 +125,13 @@ pub async fn build_memory_plan(
         recall,
         llm,
         conversation_id,
-        system_policy,
-        current_input,
-        None,
-        tool_schema_tokens,
-        document_evidence,
+        TurnPrompt {
+            system_policy,
+            current_input,
+            inline_evidence: None,
+            tool_schema_tokens,
+            document_evidence,
+        },
         enabled,
         current_input,
         chrono::Local::now().date_naive(),
@@ -138,20 +139,27 @@ pub async fn build_memory_plan(
     .await
 }
 
-/// `current_input` is the message as it reads with none of `inline_evidence`,
-/// the evidence the caller rendered into it; the assembler cuts that evidence,
-/// lowest-ranked first, before it refuses a request that does not fit.
-#[allow(clippy::too_many_arguments)]
+/// The turn's own part of the prompt, which the memory plan is built around.
+pub struct TurnPrompt<'a> {
+    pub system_policy: &'a str,
+    /// The message as it reads with none of `inline_evidence`.
+    pub current_input: &'a str,
+    /// The evidence the caller rendered into the message; the assembler cuts
+    /// it, lowest-ranked first, before it refuses a request that does not fit.
+    pub inline_evidence: Option<InlineEvidence<'a>>,
+    /// The room the tool schemas take, which ride along with every round.
+    pub tool_schema_tokens: usize,
+    pub document_evidence: Vec<RankedEvidence>,
+}
+
+/// [`build_memory_plan`] for a message that may carry its evidence inline.
+/// `query` is the message as the user wrote it, which recall searches for.
 pub async fn build_memory_plan_for_query(
     memory: &dyn ConversationMemoryPort,
     recall: &dyn ConversationMemoryReadPort,
     llm: &Arc<dyn LLMPort>,
     conversation_id: &str,
-    system_policy: &str,
-    current_input: &str,
-    inline_evidence: Option<InlineEvidence<'_>>,
-    tool_schema_tokens: usize,
-    document_evidence: Vec<RankedEvidence>,
+    prompt: TurnPrompt<'_>,
     enabled: bool,
     query: &str,
     today: chrono::NaiveDate,
@@ -159,6 +167,13 @@ pub async fn build_memory_plan_for_query(
     if !enabled {
         return Ok(None);
     }
+    let TurnPrompt {
+        system_policy,
+        current_input,
+        inline_evidence,
+        tool_schema_tokens,
+        document_evidence,
+    } = prompt;
 
     let snapshot = memory.load_snapshot(conversation_id).await?;
 

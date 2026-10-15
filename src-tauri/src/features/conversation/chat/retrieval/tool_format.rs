@@ -1,7 +1,8 @@
+use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{
-    CustomQueryToolOutput, FetchUrlContentOutput, GetDocumentOutput, SemanticSearchOutput,
-    WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
+    CustomQueryToolOutput, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput,
+    WikiSummaryOutput,
 };
 use crate::features::settings::dto::ToolOutputSettingsDto;
 use crate::shared::text::{build_excerpt, safe_truncate};
