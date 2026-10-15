@@ -1,6 +1,8 @@
 //! Challenge a batch of provisional approvals without combining their evidence.
 use super::*;
-use crate::application::services::claim_verification::{render_batch_evidence, LocatedClaim};
+use lattice_core::application::services::claim_verification::{
+    render_batch_evidence, LocatedClaim,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,10 +39,30 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
     let ids: Vec<_> = (0..targets.len())
         .map(|index| format!("claim-{index}"))
         .collect();
-    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}});
+    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}});
+    // Claims whose pages do not fit this request's own room together are
+    // challenged one at a time, each sized to its own request.
+    if !crate::features::learning::model_call::fits(
+        llm,
+        &challenge_request(
+            &system,
+            prompt.clone(),
+            schema.clone(),
+            QUESTIONS_OUTPUT_TOKENS * targets.len(),
+        ),
+    ) {
+        let mut result = provisional;
+        for (index, target) in selected.iter().zip(&targets) {
+            if let Some(finding) = result.get_mut(*index) {
+                *finding = guard(llm, &target.claim, &target.passages, finding.clone()).await;
+            }
+        }
+        return Ok(result);
+    }
     let response = send_challenge(
         llm,
-        challenge_request(&system, prompt, schema, targets.len()),
+        |output| challenge_request(&system, prompt.clone(), schema.clone(), output),
+        targets.len(),
         "The evidence challenge batch needs a smaller context.",
     )
     .await?;

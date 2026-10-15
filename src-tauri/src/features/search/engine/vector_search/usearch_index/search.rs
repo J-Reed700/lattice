@@ -1,7 +1,7 @@
 //! Nearest-neighbour lookup: the HNSW graph walk, exact scoped scans and candidate rescoring.
 use super::{KeyState, USearchVectorIndex};
 use crate::features::search::engine::vector_ops::cosine_similarity_simd;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BinaryHeap, HashSet};
 #[cfg(test)]

@@ -2,7 +2,9 @@
 //! call stays in one step, and how a saved draft resumes.
 #![allow(clippy::indexing_slicing)]
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use std::sync::Mutex;
 
 const SYSTEM: &str = "Teach one idea to a beginner.";
@@ -225,7 +227,7 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
         dto::AcceptLearningProgramRequestDto, plan_dto::StartLearningGenerationJobRequestDto,
         repository::LearningRepository,
     };
-    use crate::shared::runtime::jobs::JobStore;
+    use lattice_core::shared::runtime::jobs::JobStore;
     let pool = crate::features::learning::tests::pool().await?;
     let programs = LearningRepository::new(pool.clone());
     let program = crate::features::learning::tests::fixture();
@@ -357,5 +359,54 @@ fn no_learning_schema_literal_exceeds_the_grammar_repetition_limit() -> Result<(
         }
     }
     assert!(scanned > 50, "the learning sources were not found");
+    Ok(())
+}
+
+/// Cuts its first structured answer off at the output limit, then answers.
+struct TruncatesOnce {
+    sent: Mutex<Vec<CompletionRequest>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for TruncatesOnce {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut sent = self.sent.lock().unwrap();
+        sent.push(request.clone());
+        let mut response = CompletionResponse::from_text(if sent.len() == 1 {
+            "{\"answer\":\"cut of"
+        } else {
+            ANSWER
+        });
+        if sent.len() == 1 {
+            response.finish_reason = "length".into();
+        }
+        Ok(response)
+    }
+    fn model_name(&self) -> &str {
+        "truncates-once"
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_answer_cut_at_its_output_limit_is_asked_for_once_more_with_twice_the_room() -> Result<()>
+{
+    let llm = TruncatesOnce {
+        sent: Mutex::new(Vec::new()),
+    };
+    let raw = complete_json(&llm, "Answer.", "Task.".into(), schema(), 1_000).await?;
+    assert_eq!(raw, ANSWER);
+    let sent = llm.sent.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    let first = sent[0].max_output_tokens.unwrap();
+    assert_eq!(sent[1].max_output_tokens.unwrap(), 2 * first);
     Ok(())
 }

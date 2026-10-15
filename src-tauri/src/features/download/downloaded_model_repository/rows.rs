@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use tracing::warn;
 
-use crate::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
-use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-use crate::domain::models::metadata::ModelType;
-use crate::domain::value_objects::ArtifactIdentity;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
+use lattice_core::domain::models::downloaded::{
+    DownloadedModel, ModelLocation, StoredDownloadedModel,
+};
+use lattice_core::domain::models::metadata::ModelType;
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Database record structure for RETURNING queries.
 ///
@@ -112,7 +114,7 @@ pub(super) fn fallback_artifact_path(location: &ModelLocation) -> Option<PathBuf
         // under a `model.safetensors` path that does not exist, and the
         // synthesized manifest row would report a zero size.
         ModelLocation::LocalDirectory { path } => Some(
-            crate::domain::models::checkpoint::weights_path(path)
+            lattice_core::domain::models::checkpoint::weights_path(path)
                 .unwrap_or_else(|| path.join(WEIGHTS_SAFETENSORS)),
         ),
         ModelLocation::RemoteOllama => None,
@@ -168,23 +170,23 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
                 ))
             })?;
 
-        Ok(DownloadedModel::from_db(
-            record.id,
-            record.model_name,
-            record.model_id,
+        Ok(DownloadedModel::from_db(StoredDownloadedModel {
+            id: record.id,
+            model_name: record.model_name,
+            model_id: record.model_id,
             location,
-            record.file_size_bytes,
-            model_type_enum,
-            record.architecture,
-            downloaded_at_dt,
-            last_used_at_dt,
-            record.use_count,
-            is_active_chat,
-            is_active_embedding,
-            metadata_val,
-            is_active_utility,
+            file_size_bytes: record.file_size_bytes,
+            model_type: model_type_enum,
+            architecture: record.architecture,
+            downloaded_at: downloaded_at_dt,
+            last_used_at: last_used_at_dt,
+            use_count: record.use_count,
+            is_active_for_chat: is_active_chat,
+            is_active_for_embedding: is_active_embedding,
+            metadata: metadata_val,
+            is_active_for_utility: is_active_utility,
             embedding_artifact_identity,
-        ))
+        }))
     }
 }
 

@@ -1,7 +1,7 @@
 //! The turn's one deadline, shared by its model rounds, its tool calls and any
 //! condensing in between.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy)]

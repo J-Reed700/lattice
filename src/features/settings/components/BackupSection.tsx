@@ -16,36 +16,32 @@
  * path argument.
  */
 
+
 import { useMemo, useState } from 'react';
 
-import { format } from 'date-fns';
 import { Archive, Download, Upload } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
-import { SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
-import { Badge } from '@/components/ui/badge';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { SettingsRow, SettingsSection } from '@/components/ui';
 import {
   isIndexingActive,
   useIndexingStatusQuery,
 } from '@/features/files/hooks/useIndexingStatusQuery';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
-import VaultAPI from '@/lib/api';
 import { toast } from '@/stores/toastStore';
-import type { ArchiveStatus, BackupInfo } from '@/types/api/backup';
+import type { BackupInfo } from '@/types/api/backup';
 
+import {
+  MIN_PASSPHRASE_LENGTH,
+  PassphraseDialog,
+  RestoreSecretDialog,
+} from './ArchiveCredentialDialogs';
 import { ArchiveSetupWizard, type ArchiveWizardMode } from './ArchiveSetupWizard';
+import { formatBackupDate, formatBytes } from './backupFormat';
+import { OffDeviceBackup } from './OffDeviceBackup';
 import {
   GHOST_BUTTON_CLASS,
-  PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS,
 } from './settingsStyles';
 import {
@@ -57,35 +53,11 @@ import {
   useSetArchiveKeepCountMutation,
   useSetArchivePassphraseMutation,
 } from '../hooks/useArchiveQuery';
+import { useBackupAndExport } from '../hooks/useBackupAndExport';
 import {
   useBackupsQuery,
-  useCreateBackupMutation,
-  useExportMutation,
   useRestoreBackupMutation,
-  type ExportFormat,
 } from '../hooks/useBackupsQuery';
-
-const KEEP_COUNT_OPTIONS = [1, 3, 5, 10, 20];
-const MIN_PASSPHRASE_LENGTH = 8;
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-}
-
-function formatBackupDate(createdAt: string): string | null {
-  if (!createdAt) return null;
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return null;
-  return format(date, "MMM d, yyyy 'at' HH:mm");
-}
 
 /**
  * `message` on a `not_hydrated` result is the provider's name, so the sentence
@@ -99,9 +71,8 @@ function hydrationMessage(provider: string | null): string {
 
 export function BackupSection() {
   const { data: backups } = useBackupsQuery();
-  const createBackup = useCreateBackupMutation();
+  const { createBackup, exportData, runBackup, runExport, showInFolder } = useBackupAndExport();
   const restoreBackup = useRestoreBackupMutation();
-  const exportData = useExportMutation();
   const { data: indexing } = useIndexingStatusQuery();
 
   const { data: archive } = useArchiveStatusQuery();
@@ -136,55 +107,6 @@ export function BackupSection() {
   const archiveConfigured = archive?.configured === true;
   const archiveReady = archiveConfigured && Boolean(archive?.destination);
 
-  const runBackup = useMemo(
-    () => () => {
-      createBackup.mutate(undefined, {
-        onSuccess: (result) => {
-          toast.success('Backup created', {
-            message: 'Saved to your backups folder.',
-            action: {
-              label: 'Show',
-              onClick: () => void VaultAPI.showInFolder(result.backupPath),
-            },
-          });
-        },
-        onError: (error) => {
-          toast.error("Couldn't back up", { message: error.message });
-        },
-      });
-    },
-    [createBackup],
-  );
-
-  const runExport = useMemo(
-    () => (exportFormat: ExportFormat) => {
-      exportData.mutate(exportFormat, {
-        onSuccess: (summary) => {
-          if (summary.count === 0) {
-            toast.info('Nothing to export yet.');
-            return;
-          }
-          toast.success(
-            `Exported ${summary.count} ${summary.count === 1 ? 'item' : 'items'}`,
-            {
-              message:
-                exportFormat === 'markdown'
-                  ? 'Markdown files are in your exports folder.'
-                  : 'The JSON file is in your exports folder.',
-              action: {
-                label: 'Show',
-                onClick: () => void VaultAPI.showInFolder(summary.outputDir),
-              },
-            },
-          );
-        },
-        onError: (error) => {
-          toast.error("Couldn't export", { message: error.message });
-        },
-      });
-    },
-    [exportData],
-  );
 
   const runArchiveNow = useMemo(
     () => () => {
@@ -449,7 +371,7 @@ export function BackupSection() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void VaultAPI.showInFolder(backup.path)}
+                    onClick={() => void showInFolder(backup.path)}
                     className={GHOST_BUTTON_CLASS}
                   >
                     Show
@@ -563,365 +485,32 @@ export function BackupSection() {
         onClose={() => setWizardMode(null)}
       />
 
-      <Dialog
+      <RestoreSecretDialog
         open={secretPrompt}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setSecretPrompt(false);
-            setSecretError(null);
-          }
+        secret={secret}
+        error={secretError}
+        isRestoring={isRestoringArchive}
+        onSecretChange={setSecret}
+        onDismiss={() => {
+          setSecretPrompt(false);
+          setSecretError(null);
         }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Unlock this backup</DialogTitle>
-            <DialogDescription>
-              This backup was made on another computer, so Lattice needs the secret it was
-              encrypted with.
-            </DialogDescription>
-          </DialogHeader>
+        onUnlock={runArchiveRestore}
+      />
 
-          <div>
-            <label htmlFor="archive-restore-secret" className="block text-xs text-text-secondary">
-              Passphrase or recovery code
-            </label>
-            <textarea
-              id="archive-restore-secret"
-              rows={3}
-              autoComplete="off"
-              spellCheck={false}
-              value={secret}
-              onChange={(event) => setSecret(event.target.value)}
-              className="mt-1 w-full rounded-sm border border-border-default bg-bg px-2.5 py-2 font-mono text-xs leading-relaxed text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-            />
-            <p className="mt-1 text-xs text-text-muted">
-              Either works. Paste the 24 recovery words with spaces between them.
-            </p>
-          </div>
-
-          {secretError ? (
-            <p role="alert" className="text-sm text-danger">
-              {secretError}
-            </p>
-          ) : null}
-
-          <DialogFooter>
-            <button
-              type="button"
-              onClick={() => {
-                setSecretPrompt(false);
-                setSecretError(null);
-              }}
-              className={GHOST_BUTTON_CLASS}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => runArchiveRestore(secret.trim())}
-              disabled={secret.trim().length === 0 || isRestoringArchive}
-              className={PRIMARY_BUTTON_CLASS}
-            >
-              {isRestoringArchive ? 'Unlocking…' : 'Unlock'}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
+      <PassphraseDialog
         open={passphraseDialogOpen}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) setPassphraseDialogOpen(false);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {archive?.hasPassphrase ? 'Change passphrase' : 'Set a passphrase'}
-            </DialogTitle>
-            <DialogDescription>
-              A passphrase is a shorter thing to remember than the 24-word recovery code. Lattice
-              cannot reset it — the recovery code is what gets you back in.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2">
-            <div>
-              <label
-                htmlFor="archive-new-passphrase"
-                className="block text-xs text-text-secondary"
-              >
-                Passphrase
-              </label>
-              <input
-                id="archive-new-passphrase"
-                type="password"
-                autoComplete="new-password"
-                value={newPassphrase}
-                onChange={(event) => setNewPassphrase(event.target.value)}
-                className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="archive-new-passphrase-again"
-                className="block text-xs text-text-secondary"
-              >
-                Passphrase again
-              </label>
-              <input
-                id="archive-new-passphrase-again"
-                type="password"
-                autoComplete="new-password"
-                value={newPassphraseAgain}
-                onChange={(event) => setNewPassphraseAgain(event.target.value)}
-                className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-              />
-            </div>
-            <p className="text-xs text-text-muted">At least {MIN_PASSPHRASE_LENGTH} characters.</p>
-          </div>
-
-          {passphraseError ? (
-            <p role="alert" className="text-sm text-danger">
-              {passphraseError}
-            </p>
-          ) : null}
-
-          <DialogFooter>
-            {archive?.hasPassphrase ? (
-              <button
-                type="button"
-                onClick={removePassphrase}
-                disabled={setPassphrase.isPending}
-                className={GHOST_BUTTON_CLASS}
-              >
-                Remove passphrase
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setPassphraseDialogOpen(false)}
-              className={GHOST_BUTTON_CLASS}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={submitPassphrase}
-              disabled={setPassphrase.isPending}
-              className={PRIMARY_BUTTON_CLASS}
-            >
-              {setPassphrase.isPending ? 'Saving…' : 'Save'}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        hasPassphrase={archive?.hasPassphrase}
+        newPassphrase={newPassphrase}
+        newPassphraseAgain={newPassphraseAgain}
+        error={passphraseError}
+        isSaving={setPassphrase.isPending}
+        onNewPassphraseChange={setNewPassphrase}
+        onNewPassphraseAgainChange={setNewPassphraseAgain}
+        onClose={() => setPassphraseDialogOpen(false)}
+        onRemove={removePassphrase}
+        onSubmit={submitPassphrase}
+      />
     </>
-  );
-}
-
-interface OffDeviceBackupProps {
-  archive: ArchiveStatus;
-  isIndexing: boolean;
-  isArchiving: boolean;
-  isRestoring: boolean;
-  isChangingDestination: boolean;
-  isSavingKeepCount: boolean;
-  hydrationNotice: string | null;
-  onSetUp: () => void;
-  onChangeDestination: () => void;
-  onKeepCountChange: (_keepCount: number) => void;
-  onBackUpNow: () => void;
-  onRestore: () => void;
-  onRetryHydration: () => void;
-  onManagePassphrase: () => void;
-  onRotateRecoveryCode: () => void;
-  onTurnOff: () => void;
-}
-
-function OffDeviceBackup({
-  archive,
-  isIndexing,
-  isArchiving,
-  isRestoring,
-  isChangingDestination,
-  isSavingKeepCount,
-  hydrationNotice,
-  onSetUp,
-  onChangeDestination,
-  onKeepCountChange,
-  onBackUpNow,
-  onRestore,
-  onRetryHydration,
-  onManagePassphrase,
-  onRotateRecoveryCode,
-  onTurnOff,
-}: OffDeviceBackupProps) {
-  const lastSuccessDate = archive.lastSuccess
-    ? formatBackupDate(archive.lastSuccess.createdAt)
-    : null;
-  const lastSuccessSize = archive.lastSuccess ? formatBytes(archive.lastSuccess.size) : '';
-  const keepCountOptions = KEEP_COUNT_OPTIONS.includes(archive.keepCount)
-    ? KEEP_COUNT_OPTIONS
-    : [...KEEP_COUNT_OPTIONS, archive.keepCount].sort((a, b) => a - b);
-
-  return (
-    <SettingsSection title="Off-device backup">
-      {archive.dataDirCloudProvider ? (
-        <div
-          role="status"
-          className="border-b border-border-subtle py-3 text-sm text-warning-fg"
-        >
-          Your Lattice database itself is inside {archive.dataDirCloudProvider}. A synced folder
-          can corrupt an open database. Move Lattice's data folder out of it and use off-device
-          backup instead — that writes one finished file at a time, which is safe to sync.
-        </div>
-      ) : null}
-
-      {!archive.configured ? (
-        <div className="border-b border-border-subtle py-3">
-          <p className="text-sm text-text-secondary">
-            Lattice can write one encrypted file of your whole library to a folder you choose — a
-            cloud folder, a NAS, or a USB stick. Setup gives you a 24-word recovery code, which is
-            the only way back in if you forget the passphrase. Lattice cannot reset it.
-          </p>
-          <button type="button" onClick={onSetUp} className={`${SECONDARY_BUTTON_CLASS} mt-3`}>
-            Set up encrypted backup
-          </button>
-        </div>
-      ) : (
-        <>
-          <SettingsRow label="Folder" stacked>
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
-                {archive.destination ?? 'No folder chosen yet.'}
-              </span>
-              {archive.destinationProvider ? (
-                <Badge variant="outline">{archive.destinationProvider}</Badge>
-              ) : null}
-              <button
-                type="button"
-                onClick={onChangeDestination}
-                disabled={isChangingDestination}
-                className={SECONDARY_BUTTON_CLASS}
-              >
-                {archive.destination ? 'Change' : 'Choose folder'}
-              </button>
-            </div>
-            {archive.destinationMissing ? (
-              <p className="mt-1.5 text-xs text-danger">
-                That folder is gone. Choose another one, or reconnect the drive.
-              </p>
-            ) : null}
-          </SettingsRow>
-
-          <SettingsRow
-            label="Archives to keep"
-            hint="Older archives in the folder are deleted after a successful backup."
-            htmlFor="archive-keep-count"
-          >
-            <select
-              id="archive-keep-count"
-              value={archive.keepCount}
-              disabled={isSavingKeepCount}
-              onChange={(event) => onKeepCountChange(Number(event.target.value))}
-              className={settingsFieldClass}
-            >
-              {keepCountOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </SettingsRow>
-
-          <SettingsRow label="Passphrase" hint="Optional. The recovery code always works.">
-            <button type="button" onClick={onManagePassphrase} className={SECONDARY_BUTTON_CLASS}>
-              {archive.hasPassphrase ? 'Change passphrase' : 'Set passphrase'}
-            </button>
-          </SettingsRow>
-
-          <div className="border-b border-border-subtle py-3">
-            <p className="text-sm text-text-primary">
-              {lastSuccessDate
-                ? `Last backup ${lastSuccessDate}${lastSuccessSize ? ` · ${lastSuccessSize}` : ''}`
-                : 'No backup written yet.'}
-            </p>
-            {archive.lastError ? (
-              <p className="mt-0.5 text-sm text-danger">
-                Last attempt failed: {archive.lastError.message}
-              </p>
-            ) : null}
-            {hydrationNotice ? (
-              <div className="mt-2 flex items-start gap-3">
-                <p role="status" className="min-w-0 flex-1 text-sm text-text-secondary">
-                  {hydrationNotice}
-                </p>
-                <button
-                  type="button"
-                  onClick={onRetryHydration}
-                  disabled={isRestoring}
-                  className={SECONDARY_BUTTON_CLASS}
-                >
-                  Try again
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          {archive.archives.length > 0 ? (
-            <div className="border-b border-border-subtle py-1">
-              {archive.archives.map((file) => {
-                const date = formatBackupDate(file.createdAt);
-                const size = formatBytes(file.size);
-                return (
-                  <div key={file.path} className="flex items-baseline gap-3 py-1.5">
-                    {date ? (
-                      <span className="truncate text-sm text-text-primary">{date}</span>
-                    ) : (
-                      <span className="truncate font-mono text-xs text-text-primary">
-                        {file.name}
-                      </span>
-                    )}
-                    {size ? (
-                      <span className="shrink-0 text-xs tabular-nums text-text-muted">{size}</span>
-                    ) : null}
-                    {file.availability === 'placeholder' ? (
-                      <span className="shrink-0 text-xs text-text-muted">not downloaded</span>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2 py-3">
-            <button
-              type="button"
-              onClick={onBackUpNow}
-              disabled={isArchiving || isIndexing || !archive.destination}
-              title={isIndexing ? 'Wait for indexing to finish before backing up.' : undefined}
-              className={SECONDARY_BUTTON_CLASS}
-            >
-              {isArchiving ? 'Backing up…' : 'Back up now'}
-            </button>
-            <button
-              type="button"
-              onClick={onRestore}
-              disabled={isRestoring}
-              className={SECONDARY_BUTTON_CLASS}
-            >
-              {isRestoring ? 'Restoring…' : 'Restore from file'}
-            </button>
-            <button type="button" onClick={onRotateRecoveryCode} className={GHOST_BUTTON_CLASS}>
-              Generate new recovery code
-            </button>
-            <button type="button" onClick={onTurnOff} className={GHOST_BUTTON_CLASS}>
-              Turn off
-            </button>
-          </div>
-        </>
-      )}
-    </SettingsSection>
   );
 }

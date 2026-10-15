@@ -5,11 +5,11 @@ use super::message::{MessageFrame, TurnMessage};
 use super::prepare::PreparedTurn;
 use super::retrieve::Retrieved;
 use super::*;
-use crate::application::ports::llm_port::CompletionInput;
-use crate::application::ports::{LLMPort, ToolDefinition};
-use crate::application::services::context_assembler::{render, InlineEvidence};
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
 use crate::features::conversation::chat::prompting::{kb_passage, kb_passages};
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::ports::{LLMPort, ToolDefinition};
+use lattice_core::application::services::context_assembler::{render, InlineEvidence};
 
 /// The rendered prompt and the numbered sources it cites.
 pub(super) struct RenderedPrompt {
@@ -98,6 +98,7 @@ pub(super) fn render_prompt(
     } = carried;
     let Retrieved {
         prior_sources,
+        prior_left_out,
         mut retrieval,
     } = retrieved;
     let llm = &turn.llm;
@@ -231,7 +232,7 @@ pub(super) fn render_prompt(
     let followup_citations = citations_of(&followup_chunks);
     let web_pages = retrieval::web_context_entries(&retrieval.web_context, &retrieval.sources);
     let prior = retrieval.sources.get(prior_start..).unwrap_or_default();
-    let prior_evidence_context = prior_evidence::render(prior);
+    let prior_evidence_context = prior_evidence::render(prior, prior_left_out);
     let prior_citations: Vec<u32> = prior
         .iter()
         .filter_map(|source| source.citation_id)
@@ -357,9 +358,6 @@ pub(super) struct PlannedRequest {
     pub(super) input_budget: usize,
     /// The memory the answer was given, recorded on it.
     pub(super) memory_usage: Option<serde_json::Value>,
-    /// The plan asking for the working summary to be refolded, because its
-    /// window had to drop turns the summary does not cover.
-    pub(super) summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
 }
 
 /// Choose the turn's tools and plan its input.
@@ -429,11 +427,13 @@ pub(super) async fn plan_request(
                 records.as_ref(),
                 &turn.llm,
                 &turn.conv_id,
-                &turn.system_prompt,
-                current_input,
-                inline_evidence,
-                tool_schema_tokens,
-                Vec::new(),
+                memory_context::TurnPrompt {
+                    system_policy: &turn.system_prompt,
+                    current_input,
+                    inline_evidence,
+                    tool_schema_tokens,
+                    document_evidence: Vec::new(),
+                },
                 turn.settings.llm.bounded_conversation_memory,
                 &turn.message,
                 today,
@@ -452,7 +452,6 @@ pub(super) async fn plan_request(
                     recall_passages = memory_turn.plan.retrieval.passages_selected,
                     recall_error = ?memory_turn.plan.retrieval.index_error,
                     compaction_required = memory_turn.plan.compaction_required,
-                    summary_refold = ?memory_turn.plan.summary_refold,
                     evicted = ?memory_turn.plan.accounting.evicted,
                     elapsed_ms = elapsed_ms(memory_plan_start),
                     "Assembled bounded conversation memory for this turn"
@@ -486,7 +485,6 @@ pub(super) async fn plan_request(
                 "revision": memory_turn.plan.memory_revision,
                 "recallPassages": memory_turn.plan.retrieval.passages_selected,
             })),
-            summary_refold: memory_turn.plan.summary_refold,
             input: memory_turn.plan.messages,
             tools,
             max_output_tokens: memory_turn.plan.max_output_tokens,
@@ -495,7 +493,7 @@ pub(super) async fn plan_request(
         None => PlannedRequest {
             // The date leads the final message here too, never the system
             // prompt: that would change the head of the request every day.
-            input: crate::application::services::completion_input::from_context(
+            input: lattice_core::application::services::completion_input::from_context(
                 &turn.prompt_settings.system_prompt,
                 &turn.context,
                 &format!(
@@ -508,7 +506,6 @@ pub(super) async fn plan_request(
             max_output_tokens: turn.budget.output_tokens,
             input_budget: turn.budget.input_budget,
             memory_usage: None,
-            summary_refold: None,
         },
     })
 }

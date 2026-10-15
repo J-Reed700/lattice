@@ -12,15 +12,15 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::application::ports::{ChunkRepositoryPort, LLMPort};
 use crate::features::corpus_shape::entity::{Cluster, ClusterRun, LabelSource};
-use crate::features::corpus_shape::labeling::{RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS};
+use crate::features::corpus_shape::labeling::RepresentativeDoc;
 use crate::features::corpus_shape::repository::{ClusterRepositoryPort, SqliteClusterRepository};
 use crate::features::corpus_shape::use_cases::{
     run_clustering::DocumentContentPreviewPort, ProgressSink, RunClusteringUseCase,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{ChunkRepositoryPort, LLMPort};
+use lattice_core::shared::error::Result;
 
 /// Summary of a cluster run for UI consumption.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -119,17 +119,18 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
     // Embedding repository is constructed directly from the pool — the
     // Container doesn't expose a port-shaped accessor for it today and the
     // underlying SQLite impl is stateless.
-    let embedding_repo: Arc<dyn crate::application::ports::EmbeddingRepositoryPort> = Arc::new(
-        crate::features::embedding::repository::EmbeddingRepository::new(
-            container.db_pool().clone(),
-        ),
-    );
+    let embedding_repo: Arc<dyn lattice_core::application::ports::EmbeddingRepositoryPort> =
+        Arc::new(
+            crate::features::embedding::repository::EmbeddingRepository::new(
+                container.db_pool().clone(),
+            ),
+        );
 
     // Container exposes the trait-object form as `Arc<dyn DocumentRepository>`
     // (= RepositoryPort<Document> + DocumentRepositoryPort). Trait upcasting
     // (stable since 1.76) narrows it to the supertrait the use case wants —
     // `DocumentRepositoryPort`, for `find_all_paginated`.
-    let document_repo_generic: Arc<dyn crate::application::ports::DocumentRepositoryPort> =
+    let document_repo_generic: Arc<dyn lattice_core::application::ports::DocumentRepositoryPort> =
         container.document_repository();
 
     Ok(RunClusteringUseCase::new(
@@ -143,7 +144,7 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
 
 async fn gather_sample_titles(
     chunk_repo: &Arc<dyn ChunkRepositoryPort>,
-    document_repo: &Arc<dyn crate::application::ports::DocumentRepository>,
+    document_repo: &Arc<dyn lattice_core::application::ports::DocumentRepository>,
     cluster: &Cluster,
 ) -> Vec<String> {
     let sample_ids: Vec<&String> = cluster.member_doc_ids.iter().take(5).collect();
@@ -192,13 +193,13 @@ fn cluster_to_dto(cluster: &Cluster, sample_titles: Vec<String>) -> ClusterDto {
 
 struct ChunkBackedContentPreview {
     chunk_repo: Arc<dyn ChunkRepositoryPort>,
-    document_repo: Arc<dyn crate::application::ports::DocumentRepository>,
+    document_repo: Arc<dyn lattice_core::application::ports::DocumentRepository>,
 }
 
 impl ChunkBackedContentPreview {
     fn new(
         chunk_repo: Arc<dyn ChunkRepositoryPort>,
-        document_repo: Arc<dyn crate::application::ports::DocumentRepository>,
+        document_repo: Arc<dyn lattice_core::application::ports::DocumentRepository>,
     ) -> Self {
         Self {
             chunk_repo,
@@ -209,17 +210,25 @@ impl ChunkBackedContentPreview {
 
 #[async_trait::async_trait]
 impl DocumentContentPreviewPort for ChunkBackedContentPreview {
-    async fn preview(&self, document_id: &str) -> Result<Option<RepresentativeDoc>> {
+    async fn preview(
+        &self,
+        document_id: &str,
+        max_chars: usize,
+    ) -> Result<Option<RepresentativeDoc>> {
         let doc = self.document_repo.find_by_id(document_id).await?;
         let Some(doc) = doc else {
             return Ok(None);
         };
 
-        // Pull up to a few chunks, concatenate up to REP_CONTENT_PREVIEW_CHARS.
+        // The document's opening, chunk by chunk, up to `max_chars`. The
+        // label is a sample of the cluster, so a long document is shown in
+        // part, and the cut is marked.
         let chunks = self.chunk_repo.find_by_document(document_id).await?;
         let mut preview = String::new();
+        let mut more = false;
         for chunk in chunks {
-            if preview.chars().count() >= REP_CONTENT_PREVIEW_CHARS {
+            if preview.chars().count() >= max_chars {
+                more = true;
                 break;
             }
             if !preview.is_empty() {
@@ -227,12 +236,19 @@ impl DocumentContentPreviewPort for ChunkBackedContentPreview {
             }
             preview.push_str(chunk.content());
         }
-
-        let trimmed: String = preview.chars().take(REP_CONTENT_PREVIEW_CHARS).collect();
+        if preview.chars().count() > max_chars {
+            preview = lattice_core::shared::text::split_into_parts(&preview, max_chars)
+                .first()
+                .map_or_else(String::new, |part| (*part).to_string());
+            more = true;
+        }
+        if more {
+            preview.push_str(" […]");
+        }
 
         Ok(Some(RepresentativeDoc {
             title: doc.file_name().to_string(),
-            content_preview: trimmed,
+            content_preview: preview,
         }))
     }
 }

@@ -1,6 +1,6 @@
 use super::ConversationRepository;
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 const TANGENT_COLUMNS: &str = "id AS conversation_id, tangent_parent_id AS parent_conversation_id,
     forked_from_conversation_id AS source_conversation_id, forked_from_message_id AS source_message_id,

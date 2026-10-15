@@ -3,10 +3,11 @@ use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
 use super::research::{self, AssembledTurn, ResearchJournal, ResearchRound, Rounds};
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
-use crate::features::conversation::mocks::MockConversationService;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
 use std::sync::Mutex;
 
 /// A model that never answers, and says when it has been asked.
@@ -56,7 +57,6 @@ fn request(turn: &PreparedTurn) -> PlannedRequest {
         max_output_tokens: turn.budget.output_tokens,
         input_budget: turn.budget.input_budget,
         memory_usage: None,
-        summary_refold: None,
     }
 }
 
@@ -75,11 +75,13 @@ async fn stopping_the_turn_ends_the_generate_stage_while_the_model_is_still_gene
     let llm = Arc::new(Unanswering {
         asked: tokio::sync::Notify::new(),
     });
+    let runtime = FakeRuntime::default();
     let turn = PreparedTurn::for_test(
         "stage-cancel-conversation",
         "stage-cancel-turn",
         llm.clone(),
-        Arc::new(MockConversationService::new()),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let (sink, events) = recording_sink();
@@ -89,12 +91,10 @@ async fn stopping_the_turn_ends_the_generate_stage_while_the_model_is_still_gene
 
     let stop = async {
         llm.asked.notified().await;
-        assert!(cancel_generation_for_conversation(
-            "stage-cancel-conversation",
-            Some("stage-cancel-turn")
-        ));
+        assert!(runtime
+            .turn_cancellation
+            .request_cancel("stage-cancel-conversation", Some("stage-cancel-turn")));
     };
-    let runtime = FakeRuntime::default();
     let generate = generate::generate_answer(
         &runtime,
         &turn,
@@ -125,11 +125,13 @@ async fn a_router_answer_skips_the_model_entirely() {
     let llm = Arc::new(Unanswering {
         asked: tokio::sync::Notify::new(),
     });
+    let runtime = FakeRuntime::default();
     let turn = PreparedTurn::for_test(
         "stage-canned-conversation",
         "stage-canned-turn",
         llm,
-        Arc::new(MockConversationService::new()),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let (sink, _) = recording_sink();
@@ -139,7 +141,7 @@ async fn a_router_answer_skips_the_model_entirely() {
     canned.short_circuit_response = Some("Hello!".into());
 
     let generated = generate::generate_answer(
-        &FakeRuntime::default(),
+        &runtime,
         &turn,
         SearchFlags::from_preferences(None),
         canned,
@@ -175,6 +177,7 @@ async fn each_turn_decides_its_own_web_fallback() {
         "intent-fallback-turn-1",
         llm.clone(),
         runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let flags = classify::classify_turn(&runtime, &first, None).await;
@@ -187,6 +190,7 @@ async fn each_turn_decides_its_own_web_fallback() {
         "intent-fallback-turn-2",
         llm.clone(),
         runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let flags = classify::classify_turn(&runtime, &second, None).await;
@@ -273,7 +277,7 @@ impl ResearchJournal for RecordingJournal {
 
 fn research_request(turn: &PreparedTurn) -> PlannedRequest {
     PlannedRequest {
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "web_search".into(),
             description: "Search the web".into(),
             parameters: serde_json::json!({
@@ -301,6 +305,7 @@ async fn a_research_turn_saves_each_round_it_finishes() {
         "research-save-turn",
         llm.clone(),
         runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let (sink, _) = recording_sink();
@@ -357,6 +362,7 @@ async fn a_resumed_research_turn_carries_on_after_its_last_saved_round() {
         "research-resume-turn",
         llm.clone(),
         runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let saved = vec![

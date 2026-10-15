@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::application::ports::DocumentRepositoryPort;
 use crate::features::file::dto::UpdateFileMetadataRequestDto;
 use crate::features::tags::TagServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::DocumentRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 
 pub struct UpdateFileMetadataUseCase {
     document_repository: Arc<dyn DocumentRepositoryPort>,

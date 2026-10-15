@@ -1,6 +1,6 @@
 //! Resume arithmetic for partial files and post-transfer file validation.
 
-use crate::domain::download::DownloadError;
+use lattice_core::domain::download::DownloadError;
 use std::path::PathBuf;
 use tracing::debug;
 

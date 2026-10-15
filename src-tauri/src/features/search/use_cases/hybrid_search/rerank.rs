@@ -5,8 +5,8 @@ use tracing::{info, warn};
 use super::HybridSearchUseCase;
 use crate::features::search::dto::SearchResponseDto;
 use crate::features::search::engine::reranker::{blend_rerank_scores, RerankResult};
-use crate::shared::error::Result;
-use crate::shared::text::safe_truncate;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::text::safe_truncate;
 
 /// How much wider than the results wanted a reranked search's fused pool is.
 const POOL_MULTIPLIER: usize = 3;
@@ -29,10 +29,14 @@ pub struct RerankOptions {
 impl RerankOptions {
     /// The fused pool to retrieve when a search will be reranked and then cut
     /// to `limit`: wider, so the cross-encoder can promote a passage fusion
-    /// left just outside the cut, and bounded, because every candidate costs
-    /// the cross-encoder a forward pass.
+    /// left just outside the cut. The widening is bounded, because the
+    /// cross-encoder costs a forward pass a candidate; the pool is never
+    /// narrower than `limit` itself, which is what the caller can use.
     pub fn candidate_pool(limit: usize) -> usize {
-        limit.saturating_mul(POOL_MULTIPLIER).min(POOL_MAX)
+        limit
+            .saturating_mul(POOL_MULTIPLIER)
+            .min(POOL_MAX)
+            .max(limit)
     }
 }
 
@@ -122,8 +126,10 @@ impl HybridSearchUseCase {
 }
 
 /// Blend the cross-encoder's scores into the leading `candidate_count`
-/// results and sort the whole list. Nothing is written unless the blend is
-/// valid for every candidate.
+/// results and order them by it; the results past them follow in their fused
+/// order. Blended and fused scores are on different scales, so sorting the
+/// whole list on them let unjudged results jump judged ones. Nothing is
+/// written unless the blend is valid for every candidate.
 fn apply_blend(
     response: &mut SearchResponseDto,
     reranked: &[RerankResult],
@@ -150,11 +156,14 @@ fn apply_blend(
         result.score = score;
     }
 
-    response.results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let judged = candidate_count.min(response.results.len());
+    if let Some(head) = response.results.get_mut(..judged) {
+        head.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
     response.total = response.results.len();
     Ok(())
 }

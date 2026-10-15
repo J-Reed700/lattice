@@ -8,9 +8,13 @@
     clippy::panic
 )]
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::llm::llama_cpp::LlamaCppLlm;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
+#[path = "live_claim_pairs_eval.rs"]
+mod claim_pairs;
+#[path = "live_course_e2e.rs"]
+mod course_e2e;
 #[path = "live_small_lesson.rs"]
 mod small;
 
@@ -23,11 +27,11 @@ struct ObservedModel {
 #[tokio::test]
 #[ignore = "compares serial and batched verification with a live model; never writes to the library"]
 async fn live_batched_verification_matches_individual_checks_and_measures_cost() -> Result<()> {
-    use crate::application::services::claim_verification::{
-        ClaimJudgment, ClaimVerdict, LocatedClaim,
-    };
     use crate::features::learning::content_verification::{
         judge_batch_for_publication, judge_for_publication,
+    };
+    use lattice_core::application::services::claim_verification::{
+        ClaimJudgment, ClaimVerdict, LocatedClaim,
     };
     use std::sync::atomic::Ordering;
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
@@ -260,7 +264,7 @@ impl LLMPort for ObservedModel {
 #[tokio::test]
 #[ignore = "requires explicit live settings, evidence cases and artifact directory"]
 async fn live_source_passage_judgments() -> Result<()> {
-    use crate::application::{
+    use lattice_core::application::{
         ports::llm_port::SamplingOverride,
         services::claim_verification::{CheckPolicy, ClaimChecker, ClaimJudgment},
     };
@@ -320,6 +324,7 @@ async fn live_source_passage_judgments() -> Result<()> {
     for case in cases {
         let passages: Vec<String> = if let Some(references) = &references {
             crate::features::learning::content_verification::live_retrieved_passages(
+                &model,
                 case["claim"].as_str().unwrap(),
                 references,
             )
@@ -369,8 +374,8 @@ async fn live_source_passage_judgments() -> Result<()> {
         let matches = if case["expected"] == "not_supported" {
             matches!(
                 outcome.verdict,
-                crate::application::services::claim_verification::ClaimVerdict::Unsupported
-                    | crate::application::services::claim_verification::ClaimVerdict::Contradicted
+                lattice_core::application::services::claim_verification::ClaimVerdict::Unsupported
+                    | lattice_core::application::services::claim_verification::ClaimVerdict::Contradicted
             )
         } else {
             verdict == case["expected"]
@@ -435,7 +440,7 @@ async fn live_reference_selection() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires explicit live settings, a recorded teaching review and artifact directory"]
 async fn live_teaching_review_evidence_scope() -> Result<()> {
-    use crate::application::ports::llm_port::CompletionInput;
+    use lattice_core::application::ports::llm_port::CompletionInput;
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
     )?)?;
@@ -754,7 +759,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         curriculum::LearningGenerationJobStatus, dto::LearningSourcePolicy,
         plan_dto::LearningGenerationJobActionRequestDto,
     };
-    let _ = tracing_subscriber::fmt().with_env_filter("lattice::features::learning=info,lattice::application::services::claim_verification=warn").try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("lattice::features::learning=info,lattice_core::application::services::claim_verification=warn").try_init();
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
     )?)?;
@@ -787,7 +792,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     // Never run this option while its original worker is still alive.
     if std::env::var("LATTICE_LESSON_RECOVER_ORPHAN").as_deref() == Ok("1") {
         assert_eq!(old.status, LearningGenerationJobStatus::Running);
-        crate::shared::runtime::jobs::JobStore::new(pool.clone())
+        lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
             .interrupt(&old.id)
             .await?;
     }
@@ -821,6 +826,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     let source_pool = pool.clone();
     let web_dir = tempfile::tempdir()?;
     let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),

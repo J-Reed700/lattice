@@ -262,6 +262,21 @@ impl LearningSourceLibraryRepository {
             .map(|row| (row.get("id"), row.get("origin")))
             .collect())
     }
+    /// The whole captured text of every version in the program, by version
+    /// ID: what a model receives in place of a stored preview.
+    pub async fn version_texts(&self, program_id: &str) -> Result<HashMap<String, String>> {
+        let rows =
+            sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
+                .bind(program_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.get("id"), r.get("full_text")))
+            .collect())
+    }
+
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
         let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")

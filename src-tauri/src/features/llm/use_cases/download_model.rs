@@ -13,7 +13,10 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! let use_case = DownloadModelUseCase::new(catalog_port, storage_port);
+//! let use_case = DownloadModelUseCase::new(
+//!     catalog, storage, download_manager, file_system, credentials,
+//!     checksum_service, file_system_access, uow_factory,
+//! );
 //! let request = DownloadModelRequestDto {
 //!     model_id: "phi-3-mini".to_string(),
 //! };
@@ -21,18 +24,18 @@
 //! println!("Downloaded to: {}", response.path);
 //! ```
 
-use crate::application::ports::credentials_port::CredentialsPort;
-use crate::application::ports::file_system_port::FileSystemPort;
-use crate::application::ports::model_catalog::ModelCatalogPort;
-use crate::application::ports::model_storage::ModelStoragePort;
-use crate::application::ports::UnitOfWorkFactory;
-use crate::domain::download::DownloadOperationState;
-use crate::domain::models::validation::ModelFileValidator;
-use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::features::download::manager::{DownloadBatchItem, DownloadManager, DownloadRequest};
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::ports::file_system_port::FileSystemPort;
+use lattice_core::application::ports::model_catalog::ModelCatalogPort;
+use lattice_core::application::ports::model_storage::ModelStoragePort;
+use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::domain::download::DownloadOperationState;
+use lattice_core::domain::models::validation::ModelFileValidator;
+use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
+use lattice_core::shared::error::AppError;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -53,7 +56,6 @@ pub struct DownloadModelUseCase {
 }
 
 impl DownloadModelUseCase {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         catalog: Arc<dyn ModelCatalogPort>,
         storage: Arc<dyn ModelStoragePort>,
@@ -84,7 +86,7 @@ impl DownloadModelUseCase {
         curated: &crate::features::model_management::domain::ModelMetadata,
         model_path: &Path,
     ) -> Result<bool, AppError> {
-        use crate::domain::models::validation::FileExpectation;
+        use lattice_core::domain::models::validation::FileExpectation;
 
         let mut expectations = Vec::new();
 

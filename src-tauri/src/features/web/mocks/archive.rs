@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::application::contracts::web::CleanArticle;
-use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::web::WebArchiveServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Mock implementation of WebArchiveServiceTrait for testing
 ///
@@ -21,7 +21,7 @@ use crate::shared::error::{AppError, Result};
 /// # Example
 /// ```rust
 /// use lattice::infrastructure::services::mocks::MockWebArchiveService;
-/// use lattice::application::dtos::function_calling_dto::CleanArticle;
+/// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
 ///
 /// let mock = MockWebArchiveService::new();
 ///

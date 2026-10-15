@@ -69,16 +69,13 @@ impl SearchFlags {
     }
 }
 
-/// Recent turns handed to the intent classifier, most recent last.
-pub(super) const INTENT_CONTEXT_TURNS: usize = 4;
-
 /// Ask the utility model what an unflagged turn needs, and fold the answer
 /// into the search flags. Skipped the moment the user said anything explicit —
 /// a toggle, a turn mode, a closed book — because inference exists to fill in
 /// defaults, not to second-guess a decision.
 pub(super) async fn infer_turn_intent_flags(
     container: &dyn ChatRuntime,
-    chat_llm: &Arc<dyn crate::application::ports::LLMPort>,
+    chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     search_flags: SearchFlags,
     validated_message: &str,
@@ -104,18 +101,14 @@ pub(super) async fn infer_turn_intent_flags(
         }
     };
 
-    let recent_context: Vec<String> = context
-        .iter()
-        .skip(context.len().saturating_sub(INTENT_CONTEXT_TURNS))
-        .cloned()
-        .collect();
-    let intent = IntentClassifier::new(classifier_llm)
+    // As much recent history as the classifier's window gives it and its
+    // model reads before the timeout, newest first, rather than a fixed
+    // number of turns.
+    let classifier = IntentClassifier::new(classifier_llm)
         .with_cancellation(cancel)
-        .classify(&IntentInput {
-            message: validated_message.to_string(),
-            recent_context,
-        })
-        .await;
+        .with_pace(container.intent_pace());
+    let input = classifier.input_for(validated_message, context);
+    let intent = classifier.classify(&input).await;
 
     let merged = apply_turn_intent(search_flags, &intent);
     // `web_fallback` is what the turn does with `needs_web`: the web is asked
@@ -184,7 +177,7 @@ pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) 
 /// router are the ones where no router ran.
 pub(super) async fn resolve_router_decision(
     container: &dyn ChatRuntime,
-    conversation_document_context: &[crate::domain::conversation::DocumentReference],
+    conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     validated_message: &str,
     search_flags: SearchFlags,
     explorer: bool,

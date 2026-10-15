@@ -12,7 +12,7 @@
 //! # Example
 //! ```rust,no_run
 //! use lattice::infrastructure::services::web_service::WebService;
-//! use lattice::application::dtos::function_calling_dto::WebSearchInput;
+//! use lattice_core::application::dtos::function_calling_dto::WebSearchInput;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let service = WebService::new(std::path::Path::new("/tmp/lattice"))?;
@@ -37,20 +37,21 @@
 //! # }
 //! ```
 
-use crate::application::contracts::web::*;
+use crate::features::web::services::browser_reader::BrowserReader;
 use crate::features::web::services::page_cache::PageCache;
 use crate::features::web::services::stealth;
 use crate::features::web::WebServiceTrait;
-use crate::shared::constants::WEB_REQUEST_TIMEOUT;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
+use lattice_core::application::contracts::web::*;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::{Client, StatusCode};
 use std::collections::HashSet;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tracing::{debug, info};
@@ -62,6 +63,7 @@ mod providers;
 mod results;
 
 pub(crate) use address_guard::is_blocked_ip;
+pub(crate) use address_guard::validate_url_resolved;
 use address_guard::{
     check_url_host, redirect_policy, refuse_blocked_addresses, PublicOnlyResolver,
 };
@@ -89,13 +91,20 @@ const SITE_SLOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Sites tracked at once before idle entries are dropped. `WebService` is a
 /// container singleton, so the map would otherwise live for the whole process.
 const MAX_TRACKED_SITES: usize = 64;
-/// Most of an article's text sits well inside this; past it a page is a
-/// dump, and the prompt has better uses for the room.
-const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
-// Reference snapshots retain all extracted text. The shared decoded HTTP-body
-// limit already bounds acquisition; a second text cap would discard a book's
-// tail after a successful, bounded download.
-const MAX_REFERENCE_PAGE_CHARS: usize = usize::MAX;
+/// What a page is read for. Either way the whole extracted text is kept: the
+/// decoded body is already bounded by [`MAX_PAGE_BODY_BYTES`], and a second
+/// cap on the text would discard a page's tail after a successful, bounded
+/// download. What the text is for decides how it is extracted and cached; how
+/// much of it a prompt carries is decided by that prompt's own budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PageRead {
+    /// A page read for a conversation: article extraction, the browser
+    /// fallback for script-built pages, and the shared page cache.
+    Chat,
+    /// A reference capture: full-document extraction, never served from or
+    /// written to the chat cache, and no browser fallback.
+    Reference,
+}
 /// Maximum decoded bytes accepted from a page before HTML parsing.
 const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
 /// Maximum decoded bytes accepted from a search provider response.
@@ -168,6 +177,10 @@ pub struct WebService {
     /// Blocking HTML parsers admitted at once. The permit lives in the
     /// blocking closure, including when its async caller is cancelled.
     html_parsers: Arc<Semaphore>,
+    /// The hidden browser a page that refuses the HTTP client is read in.
+    /// The app attaches it once it is running; until then such a page keeps
+    /// its HTTP result.
+    browser: OnceLock<Arc<BrowserReader>>,
 }
 
 /// A page read for display, which is a fetch plus the one thing the tool
@@ -189,12 +202,7 @@ impl WebService {
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration, data_dir: &Path) -> Result<Self> {
-        let client = stealth::stealth_client_builder()
-            .timeout(timeout)
-            .redirect(redirect_policy())
-            .dns_resolver(Arc::new(PublicOnlyResolver::new(stealth::proxy_hosts())))
-            .build()
-            .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
+        let client = build_public_client(timeout)?;
 
         Ok(Self {
             client,
@@ -202,8 +210,37 @@ impl WebService {
             page_cache: PageCache::new(data_dir.join(PAGE_CACHE_DIR_NAME)),
             search_cache: SearchCache::default(),
             html_parsers: Arc::new(Semaphore::new(MAX_HTML_PARSERS)),
+            browser: OnceLock::new(),
         })
     }
+
+    /// Read refused pages through `browser` from now on. The first reader
+    /// attached stays; the app has one.
+    pub fn attach_browser(&self, browser: Arc<BrowserReader>) {
+        let _ = self.browser.set(browser);
+    }
+}
+
+/// The one client for reading public web pages, with the default request
+/// timeout: stealth headers and cookies, the private-address redirect policy
+/// and the public-only resolver. The snapshot engine fetches through it.
+pub(crate) fn public_web_client() -> Result<Client> {
+    build_public_client(WEB_REQUEST_TIMEOUT)
+}
+
+/// The single builder behind [`WebService`] and [`public_web_client`].
+fn build_public_client(timeout: Duration) -> Result<Client> {
+    stealth::stealth_client_builder()
+        .timeout(timeout)
+        .redirect(redirect_policy())
+        .dns_resolver(Arc::new(PublicOnlyResolver::new(stealth::proxy_hosts())))
+        .build()
+        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+}
+
+/// Parse `url` and accept only `http`/`https`: the same check page reads use.
+pub(crate) fn fetchable_url(url: &str) -> Result<url::Url> {
+    parse_fetchable_url(url)
 }
 
 #[async_trait]
@@ -385,9 +422,7 @@ impl WebServiceTrait for WebService {
     }
 
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
-        let page = self
-            .read_page_bounded(url, MAX_REFERENCE_PAGE_CHARS)
-            .await?;
+        let page = self.read_page_as(url, PageRead::Reference).await?;
         if page.output.content.trim().len() < THIN_PAGE_CHARS {
             return Err(AppError::InvalidInput("This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text.".into()));
         }

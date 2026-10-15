@@ -325,8 +325,12 @@ async fn passages_stay_within_selected_documents_and_focus() -> anyhow::Result<(
             .await
             .is_err()
     );
+    // Without a focus every chunk is offered, the middle first and any
+    // prefix spread across the document; the deck's window decides how many.
     let sampled = service::passages(&library, std::slice::from_ref(&selected), "").await?;
-    assert!(!sampled.is_empty() && sampled.len() <= 24);
+    assert_eq!(sampled.len(), 40);
+    assert_eq!(sampled[0].excerpt, chunks[20]);
+    assert_eq!(service::spread(7), [3, 1, 5, 0, 2, 4, 6]);
     assert!(sampled.iter().all(|source| source.document_id == selected));
     assert!(
         service::passages(&library, &[uuid::Uuid::new_v4().to_string()], "")
@@ -339,10 +343,8 @@ async fn passages_stay_within_selected_documents_and_focus() -> anyhow::Result<(
 #[tokio::test]
 async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() -> anyhow::Result<()>
 {
-    use crate::{
-        application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
-        features::llm::llama_cpp::LlamaCppLlm,
-    };
+    use crate::features::llm::llama_cpp::LlamaCppLlm;
+    use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
     use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
     let dir = tempfile::tempdir()?;
     let db = DatabaseConnection::new(dir.path().join("biology.db")).await?;
@@ -423,7 +425,7 @@ fn source_budget_shares_context_between_documents_and_reserves_output_space() {
     let mut second = source();
     second.document_id = "second".into();
     let sources = vec![first.clone(), first, second];
-    let selected = super::study_generation::bounded_sources(&sources, 2, 328, |_| 50);
+    let selected = super::study_generation::bounded_sources(&sources, 328, |_| 50);
     assert_eq!(
         selected
             .iter()
@@ -431,7 +433,7 @@ fn source_budget_shares_context_between_documents_and_reserves_output_space() {
             .collect::<Vec<_>>(),
         ["first", "second"]
     );
-    assert!(super::study_generation::bounded_sources(&sources, 2, 100, |_| 50).is_empty());
+    assert!(super::study_generation::bounded_sources(&sources, 100, |_| 50).is_empty());
 }
 
 #[test]

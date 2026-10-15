@@ -4,35 +4,39 @@ use std::time::Instant;
 
 use tracing::{info, warn};
 
-use crate::application::contracts::search::CorpusDocument;
-use crate::domain::qa::hyde::QueryType;
-use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
+use crate::features::conversation::chat::turn_record::TurnStepKind;
+use crate::features::conversation::chat::ChatTurn;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::use_cases::RerankOptions;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
+use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::domain::qa::hyde::QueryType;
 
-// Retrieval policy inputs stay explicit so call sites cannot silently inherit defaults.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    validated_message: &str,
-    _llm: &Arc<dyn crate::application::ports::LLMPort>,
+    turn: ChatTurn<'_>,
     search_flags: super::SearchFlags,
-    highlight_terms: &[String],
-    kb_search_limit: usize,
+    // The turn's evidence budget in tokens, and the answering model's
+    // characters per token: together, how deep the search reads.
+    evidence_tokens: usize,
+    chars_per_token: f64,
     enable_reranking: bool,
     _semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
-    focus: &FocusScope,
-    recorder: &TurnRecorder,
     // The turn's stop button, which the planner's model calls carry.
     cancel: &tokio_util::sync::CancellationToken,
 ) -> super::KbRetrievalOutcome {
+    let ChatTurn {
+        conv_service,
+        conversation_id,
+        message: validated_message,
+        highlight_terms,
+        focus,
+        recorder,
+        ..
+    } = turn;
     let kb_start = Instant::now();
     let mut timings = super::RetrievalSubTimingMetrics::default();
 
@@ -47,7 +51,7 @@ pub(super) async fn run_kb_retrieval(
                 "Unable to resolve hard space scope; failing closed before retrieval"
             );
             return super::KbRetrievalOutcome {
-                interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+                interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
                     validated_message.to_string(),
                     QueryType::Question,
                 ),
@@ -85,7 +89,7 @@ pub(super) async fn run_kb_retrieval(
             "Focus documents are outside this conversation's space; searching nothing"
         );
         return super::KbRetrievalOutcome {
-            interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
                 validated_message.to_string(),
                 QueryType::Question,
             ),
@@ -108,7 +112,7 @@ pub(super) async fn run_kb_retrieval(
             "Space scope contains no indexed documents; skipping KB retrieval"
         );
         return super::KbRetrievalOutcome {
-            interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
                 validated_message.to_string(),
                 QueryType::Question,
             ),
@@ -128,6 +132,21 @@ pub(super) async fn run_kb_retrieval(
     }
 
     let repository = container.chat_records();
+    // How deep to read: as many passages as the evidence budget can carry, at
+    // what a passage of this library actually measures. The prompt's
+    // best-first fill decides what goes in; this only stops the search from
+    // handing it less than the budget could hold.
+    let passage_chars = match repository
+        .retrieval_mean_chunk_chars(&scope.document_ids)
+        .await
+    {
+        Ok(measured) => measured,
+        Err(error) => {
+            warn!(%error, "Could not measure passage length; assuming the chunker's target");
+            None
+        }
+    };
+    let kb_search_limit = super::retrieval_depth(evidence_tokens, passage_chars, chars_per_token);
     let summaries = summary_tier(container, validated_message, &scope).await;
     let planning_start = Instant::now();
     let plan_step = recorder.begin_guarded(
@@ -141,7 +160,8 @@ pub(super) async fn run_kb_retrieval(
     );
     // One turn's use of the planner: the shortlist search runs once, and a
     // turn that already waited out a planner timeout does not wait again.
-    let mut planner_turn = super::corpus_plan::PlannerTurn::new();
+    let planner_health = container.planner_health();
+    let mut planner_turn = super::corpus_plan::PlannerTurn::with_health(&planner_health);
     let (mut plan, catalog) = match repository.retrieval_catalog(&scope.document_ids).await {
         Ok(catalog) => {
             let plan = if let Some(plan) =
@@ -193,7 +213,7 @@ pub(super) async fn run_kb_retrieval(
     // The queries themselves: the one thing a reader can judge a search by.
     plan_step.done(Some(plan.queries.join(" · ")));
     info!(queries = ?plan.queries, opening_documents = ?plan.opening_document_ids, "Corpus retrieval plan");
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         validated_message.to_string(),
         if search_flags.force_followup_mode {
             QueryType::Followup
@@ -307,12 +327,11 @@ pub(super) async fn run_kb_retrieval(
             queries_already_tried: plan.queries.clone(),
             top_result_titles: top_result_titles(&search_response.results),
             why_insufficient: verdict.reasons.clone(),
+            more_titles_not_shown: 0,
         };
         let retry = corrective_pass(
             container,
-            conv_service,
-            conversation_id,
-            validated_message,
+            turn,
             repository.as_ref(),
             &catalog,
             &scope,
@@ -382,9 +401,7 @@ pub(super) async fn run_kb_retrieval(
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
     }
     timings.kb_sufficient = Some(verdict.sufficient);
-    search_response
-        .results
-        .truncate(kb_search_limit.max(if plan.start_at_beginning { 16 } else { 1 }));
+    search_response.results.truncate(kb_search_limit);
     if let Err(error) = super::corpus_plan::expand_evidence(
         repository.as_ref(),
         &mut search_response.results,
@@ -447,7 +464,7 @@ const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
 /// the frontend's trace schema and drop the "search unavailable" notice on
 /// exactly the turn that needs it.
 fn unavailable_reason(error: &str) -> String {
-    crate::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
+    lattice_core::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
 }
 
 fn passage_count_line(results: &[SearchResultDto]) -> String {
@@ -493,27 +510,27 @@ fn sufficiency_line(verdict: &super::SufficiencyVerdict) -> String {
     format!("not enough support: {}", reasons.join(", "))
 }
 
-/// Titles the first pass surfaced, deduplicated, so the corrective planner can
-/// see what it already reached and steer somewhere else.
+/// Titles the first pass surfaced, deduplicated and best first, so the
+/// corrective planner can see what it already reached and steer somewhere
+/// else. All of them: the planner's prompt shows what its room holds and
+/// counts the rest.
 fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
     let mut seen = HashSet::new();
     results
         .iter()
         .filter(|result| seen.insert(result.title.as_str()))
-        .take(5)
         .map(|result| result.title.clone())
         .collect()
 }
 
 /// The planner's plan for the first pass, or the local plan when the planner
 /// should not be asked or does not answer.
-#[allow(clippy::too_many_arguments)]
 async fn planned(
     container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
-    utility: &dyn crate::application::ports::LLMPort,
+    utility: &dyn lattice_core::application::ports::LLMPort,
     catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
     summaries: &std::collections::HashMap<String, String>,
@@ -528,6 +545,8 @@ async fn planned(
         conv_service,
         conversation_id,
         validated_message,
+        utility,
+        Some(planner_turn.history_tokens(utility.model_name())),
     )
     .await;
     shortlist_candidates(
@@ -579,12 +598,9 @@ async fn shortlist_candidates(
 /// The one replanned retry. Returns `None` whenever it cannot improve on the
 /// first pass — no planner, a plan that only repeats failed queries, or a
 /// failed search — so the caller keeps the evidence it already has.
-#[allow(clippy::too_many_arguments)]
 async fn corrective_pass(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    validated_message: &str,
+    turn: ChatTurn<'_>,
     repository: &dyn ChatRecords,
     catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
@@ -593,6 +609,7 @@ async fn corrective_pass(
     planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<(SearchResponseDto, Vec<String>)> {
+    let validated_message = turn.message;
     let Ok(Some(utility)) = (container.utility_llm_loader())().await else {
         info!("Corrective retrieval skipped: no utility planner is available");
         return None;
@@ -602,9 +619,11 @@ async fn corrective_pass(
         return None;
     }
     let history = super::build_hyde_context_window_for_conversation(
-        conv_service,
-        conversation_id,
+        turn.conv_service,
+        turn.conversation_id,
         validated_message,
+        utility.as_ref(),
+        Some(planner_turn.history_tokens(utility.model_name())),
     )
     .await;
     shortlist_candidates(

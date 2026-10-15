@@ -1,6 +1,6 @@
 //! Learning command orchestration and boundary validation.
-use super::{dto::*, repository::LearningRepository};
-use crate::{
+use super::{dto::*, outline_draft::DraftRunRegistry, repository::LearningRepository};
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -56,15 +56,17 @@ pub fn validate_request(request: &GenerateLearningProgramRequestDto) -> Result<(
 
 pub async fn generate(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
 ) -> Result<LearningProgramDto> {
-    generate_with_references(repo, llm, request, sources, &[]).await
+    generate_with_references(repo, drafts, llm, request, sources, &[]).await
 }
 
 pub async fn generate_with_references(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
@@ -72,6 +74,7 @@ pub async fn generate_with_references(
 ) -> Result<LearningProgramDto> {
     generate_with_references_and_progress(
         repo,
+        drafts,
         llm,
         request,
         sources,
@@ -84,6 +87,7 @@ pub async fn generate_with_references(
 
 pub async fn generate_with_references_and_progress(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
@@ -103,24 +107,57 @@ pub async fn generate_with_references_and_progress(
     // time available to the final review. Cancellation and transport failures still apply.
     // Library previews are display data. Authoring must be able to retrieve
     // evidence from anywhere in each immutable capture, including later chapters.
-    let authoring_sources: Vec<_> = sources
+    let mut sources = sources;
+    let mut references = references.to_vec();
+    let mut authoring_sources: Vec<_> = sources
         .iter()
-        .map(|source| {
-            let mut source = source.clone();
-            if let Some(reference) = references.iter().find(|r| r.source_id == source.id) {
-                source.excerpt = reference.captured.text.clone();
-            }
-            source
-        })
+        .map(
+            |source| match references.iter().find(|r| r.source_id == source.id) {
+                Some(reference) => super::outline_references::authoring_copy(source, reference),
+                None => source.clone(),
+            },
+        )
         .collect();
+    // References are planned and gathered before drafting, from public
+    // subject searches, and supplement whatever the learner supplied.
+    let mut plan = None;
+    let mut gathered = 0;
+    if let Some(web) = web {
+        progress.stage(super::outline_progress::OutlineStage::GatheringReferences);
+        let planned =
+            super::outline_references::plan(llm, &request, &authoring_sources, progress).await?;
+        let found =
+            super::outline_references::gather(llm, web, &planned, &authoring_sources, progress)
+                .await?;
+        for (source, reference) in found.sources.iter().zip(&found.references) {
+            authoring_sources.push(super::outline_references::authoring_copy(source, reference));
+        }
+        gathered = found.sources.len() as u32;
+        sources.extend(found.sources);
+        references.extend(found.references);
+        plan = Some(planned);
+    }
+    let subtopics = plan
+        .as_ref()
+        .map(super::outline_references::ReferencePlan::subtopic_titles)
+        .unwrap_or_default();
     let (raw, _, _) =
-        super::generation::draft_outline(llm, &request, &authoring_sources, progress).await?;
-    let modules = super::generation::decode_outline(&raw, &request, &authoring_sources, false)?;
-    let draft = super::outline_draft::OutlineDraft::new(
-        request.clone(),
-        super::generation::parse_json(&raw)?,
-        &authoring_sources,
-    );
+        super::generation::draft_outline(llm, &request, &authoring_sources, &subtopics, progress)
+            .await?;
+    // The author's citations are provisional. Restore typography and drop any
+    // quote that does not match its source before the outline is decoded; a
+    // bad quote costs the citation, never the draft. Evidence is linked in
+    // `finish`, once the program row exists to hold the receipts.
+    let mut candidate: serde_json::Value = super::generation::parse_json(&raw)?;
+    super::outline_citations::restore_source_quotes(&mut candidate, &authoring_sources);
+    let removed = super::outline_linking::strip_unmatched(&mut candidate, &authoring_sources, None);
+    let modules =
+        super::generation::decode_outline(&candidate.to_string(), &request, &authoring_sources)?;
+    let mut draft =
+        super::outline_draft::OutlineDraft::new(request.clone(), candidate, &authoring_sources);
+    draft.reference_plan = plan;
+    draft.review.references_gathered = gathered;
+    draft.review.citations_removed = removed;
     validate_outline(&modules, &sources)?;
     let first = modules
         .first()
@@ -148,11 +185,21 @@ pub async fn generate_with_references_and_progress(
         attempts: vec![],
     };
     progress.check_cancelled()?;
-    let _run = super::outline_draft::DraftRun::acquire(&program.summary.id)?;
-    repo.create_outline_draft(&program, references, Some(&draft))
+    let _run = drafts.acquire(&program.summary.id)?;
+    repo.create_outline_draft(&program, &references, Some(&draft))
         .await?;
     progress.saved(&program.summary.id);
-    super::outline_draft::finish(repo, llm, program, draft, authoring_sources, progress, web).await
+    super::outline_draft::finish(
+        repo,
+        llm,
+        program,
+        draft,
+        authoring_sources,
+        progress,
+        web,
+        false,
+    )
+    .await
 }
 
 fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]) -> Result<()> {
@@ -218,17 +265,19 @@ fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]
 
 pub async fn accept(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     request: AcceptLearningProgramRequestDto,
 ) -> Result<LearningProgramDto> {
     uuid(&request.program_id, "program")?;
     bounded(&request.title, "Program title", 120, true)?;
-    let _run = super::outline_draft::DraftRun::acquire(&request.program_id)?;
+    let _run = drafts.acquire(&request.program_id)?;
     repo.accept(&request).await?;
     repo.get(&request.program_id).await
 }
 pub async fn prepare(
     repo: &LearningRepository,
     llm: &dyn LLMPort,
+    runtimes: &super::embedded_runtime::BuiltinRuntimes,
     request: PrepareLearningLessonRequestDto,
 ) -> Result<LearningProgramDto> {
     uuid(&request.program_id, "program")?;
@@ -262,7 +311,7 @@ pub async fn prepare(
             "Ready lessons are immutable.".into(),
         ));
     }
-    let prepared = super::generation::prepare_lesson(llm, &program, lesson).await?;
+    let prepared = super::generation::prepare_lesson(llm, runtimes, &program, lesson).await?;
     validate_prepared(&prepared, &program)?;
     repo.prepare(
         &request.program_id,

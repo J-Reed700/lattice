@@ -41,9 +41,25 @@ const PAGE_TTL_SECONDS: i64 = 24 * 60 * 60;
 /// comes back, a block is lifted.
 const REFUSAL_TTL_SECONDS: i64 = 60 * 60;
 
-/// Most entries kept on disk. Pages are capped at tens of kilobytes each, so
-/// this is a few tens of megabytes at worst.
+/// Most entries kept on disk.
 const MAX_ENTRIES: usize = 500;
+
+/// Most bytes kept on disk. Pages are stored whole, up to the fetcher's
+/// decoded-body limit each, so a count alone could hold gigabytes. This is an
+/// eviction bound: an evicted page is fetched again, nothing is cut.
+const MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// How much the directory may hold before the oldest entries go.
+#[derive(Debug, Clone, Copy)]
+struct Bounds {
+    entries: usize,
+    bytes: u64,
+}
+
+const BOUNDS: Bounds = Bounds {
+    entries: MAX_ENTRIES,
+    bytes: MAX_BYTES,
+};
 
 /// The statuses worth remembering: the site answered, and it will answer the
 /// same way if we ask again straight away. Everything else — timeouts,
@@ -233,15 +249,16 @@ impl PageCache {
     async fn prune(&self, just_written: &Path) {
         let dir = self.dir.clone();
         let just_written = just_written.to_path_buf();
-        let swept = tokio::task::spawn_blocking(move || sweep(&dir, &just_written)).await;
+        let swept = tokio::task::spawn_blocking(move || sweep(&dir, &just_written, BOUNDS)).await;
         if let Err(error) = swept {
             debug!(%error, "The page cache prune did not run");
         }
     }
 }
 
-/// Delete the oldest entries in `dir` until it holds at most [`MAX_ENTRIES`].
-fn sweep(dir: &Path, just_written: &Path) {
+/// Delete the oldest entries in `dir` until it holds at most `bounds.entries`
+/// entries and `bounds.bytes` bytes.
+fn sweep(dir: &Path, just_written: &Path, bounds: Bounds) {
     let listing = match std::fs::read_dir(dir) {
         Ok(listing) => listing,
         Err(error) => {
@@ -250,29 +267,39 @@ fn sweep(dir: &Path, just_written: &Path) {
         }
     };
 
-    let mut ages: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    let mut ages: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    // The just-written entry is not in the list but does occupy a slot.
+    let mut count = 1usize;
+    let mut bytes = std::fs::metadata(just_written).map_or(0, |meta| meta.len());
     for entry in listing.flatten() {
         let path = entry.path();
         if path == just_written {
             continue;
         }
-        let modified = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
+        let meta = entry.metadata().ok();
+        let modified = meta
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
             .unwrap_or(std::time::UNIX_EPOCH);
-        ages.push((modified, path));
+        let size = meta.map_or(0, |meta| meta.len());
+        count += 1;
+        bytes = bytes.saturating_add(size);
+        ages.push((modified, size, path));
     }
-
-    // The just-written entry is not in the list but does occupy a slot.
-    let over = (ages.len() + 1).saturating_sub(MAX_ENTRIES);
-    if over == 0 {
+    if count <= bounds.entries && bytes <= bounds.bytes {
         return;
     }
-    ages.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    for (_, path) in ages.into_iter().take(over) {
+    ages.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.2.cmp(&right.2)));
+    for (_, size, path) in ages {
+        if count <= bounds.entries && bytes <= bounds.bytes {
+            break;
+        }
         if let Err(error) = std::fs::remove_file(&path) {
             debug!(path = %path.display(), %error, "Could not drop a page cache entry");
+            continue;
         }
+        count -= 1;
+        bytes = bytes.saturating_sub(size);
     }
 }
 
@@ -285,7 +312,7 @@ async fn remove_quietly(path: &Path) {
 }
 
 fn normalize(url: &str) -> String {
-    crate::shared::http::url_identity::identity(url)
+    lattice_core::shared::http::url_identity::identity(url)
 }
 
 #[cfg(test)]
@@ -583,5 +610,39 @@ mod tests {
         // The most recent write survived the prune it triggered.
         let newest = format!("https://example.test/{}", MAX_ENTRIES + 19);
         assert!(cache.get(&newest).await.is_some());
+    }
+
+    /// Pages are stored whole now, so a count alone let the cache hold
+    /// gigabytes. The oldest entries go until the bytes fit too.
+    #[tokio::test]
+    async fn the_cache_stops_growing_at_its_byte_bound() {
+        let dir = TempDir::new().unwrap();
+        let clock = TestClock::new();
+        let cache = cache(&dir, &clock);
+        let mut big = page("https://example.test/big", &clock);
+        big.content = "x".repeat(10_000);
+        for index in 0..10 {
+            let url = format!("https://example.test/{index}");
+            cache.remember_page(&url, &big).await;
+        }
+        let newest = cache.path_for("https://example.test/9");
+        sweep(
+            &cache.dir,
+            &newest,
+            Bounds {
+                entries: MAX_ENTRIES,
+                bytes: 35_000,
+            },
+        );
+        let mut count = 0usize;
+        let mut bytes = 0u64;
+        let mut entries = tokio::fs::read_dir(cache.dir.clone()).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            count += 1;
+            bytes += entry.metadata().await.unwrap().len();
+        }
+        assert!(bytes <= 35_000, "{bytes} bytes in {count} entries");
+        assert!(count >= 3, "only the oldest go: {count} left");
+        assert!(cache.get("https://example.test/9").await.is_some());
     }
 }

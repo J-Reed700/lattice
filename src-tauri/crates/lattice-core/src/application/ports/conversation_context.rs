@@ -1,0 +1,28 @@
+//! Supplemental persisted context used when assembling a chat prompt.
+
+use crate::shared::error::Result;
+
+#[derive(Debug, Clone)]
+pub struct LinkedConversationSource {
+    pub title: Option<String>,
+    pub url: String,
+    pub excerpt: Option<String>,
+}
+
+#[async_trait::async_trait]
+pub trait ConversationContextPort: Send + Sync {
+    /// The prompt the conversation's surroundings give it: an Explorer
+    /// thread's folder instructions when the folder has some, otherwise its
+    /// space's prompt. A conversation's own prompt still wins over either.
+    async fn space_prompt(&self, conversation_id: &str) -> Result<Option<String>>;
+    /// Up to `limit` of the sources linked to the conversation, most recently
+    /// added first, starting `offset` rows in.
+    async fn linked_sources(
+        &self,
+        conversation_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<LinkedConversationSource>>;
+    /// How many sources are linked to the conversation.
+    async fn linked_source_count(&self, conversation_id: &str) -> Result<usize>;
+}

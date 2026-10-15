@@ -11,7 +11,7 @@ use crate::features::learning::{
     outline_draft::{LearningOutlineReviewStatus, OutlineDraft},
     repository::LearningRepository,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;

@@ -1,35 +1,31 @@
-import { type FC, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 
-import { useQueryClient } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { X, Download, ExternalLink, Loader2, Maximize2, Minimize2, PanelRightClose } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import { DialogClose, DialogTitle } from '@/components/ui/dialog';
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
 import { CitationRail } from '@/features/reading/components/CitationRail';
-import { HTMLViewer } from '@/features/reading/components/ContentViewer/renderers/HTMLViewer';
+import { ImportScopeSelect } from '@/features/reading/components/ImportScopeSelect';
 import { JournalCapturePreview } from '@/features/reading/components/JournalCapturePreview';
-import { AudioViewer, audioViewerPropsFromSource } from '@/features/reading/components/viewers/AudioViewer';
-import { ImageViewer } from '@/features/reading/components/viewers/ImageViewer';
-import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
-import { PDFViewer } from '@/features/reading/components/viewers/PDFViewer';
-import { TextViewer } from '@/features/reading/components/viewers/TextViewer';
-import { WebArticleView } from '@/features/reading/components/WebArticleView';
+import { SourceReaderFooter } from '@/features/reading/components/SourceReaderFooter';
+import { SourceReaderHeader } from '@/features/reading/components/SourceReaderHeader';
+import { SourceViewer } from '@/features/reading/components/SourceViewer';
+import { WebSourceView } from '@/features/reading/components/WebSourceView';
+import { useCitationTravel } from '@/features/reading/hooks/useCitationTravel';
 import { useFileContent } from '@/features/reading/hooks/useFileContent';
-import { PASSAGE_REFERENCES_QUERY_KEY } from '@/features/reading/hooks/usePassageReferencesQuery';
+import { usePassageCapture } from '@/features/reading/hooks/usePassageCapture';
+import { useSourceUrlImport } from '@/features/reading/hooks/useSourceUrlImport';
 import { passageMatchNotice, sourceHeaderMeta } from '@/features/reading/model/filePreviewMeta';
 import { textFragmentUrl } from '@/features/reading/model/textFragment';
+import { useWebPageMode } from '@/features/reading/snapshot';
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
-import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import { toast } from '@/stores/toastStore';
 import type {
   PassageLocator,
   PassageMatchTier,
   SourceWithMetadata,
 } from '@/types/conversation';
-import { formatFileSize, getLanguageFromFileName } from '@/utils/files';
 import { sanitizeFileName } from '@/utils/sanitize';
 import {
   getSourceExternalUrl,
@@ -63,10 +59,6 @@ const normalizeCategory = (category: string): string =>
   category.toLowerCase().replace(/[_-]+/g, ' ').trim();
 
 const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value.trim());
-const TITLE_CLASS =
-  'wrap-break-word text-xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]';
-const CLOSE_CLASS =
-  'rounded-sm p-2 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]';
 
 export interface SourceReaderBodyProps {
   presentation: ReaderPresentation;
@@ -122,23 +114,15 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onMinimize,
 }) => {
   const navigate = useNavigate();
-  const [captureDraft, setCaptureDraft] = useState<string | null>(null);
   /** The marked passage the web article has in view, if it has one. */
   const [activePassage, setActivePassage] = useState<string | null>(null);
   const isCompact = presentation !== 'dialog';
   const isDocked = presentation === 'docked';
-  const queryClient = useQueryClient();
   const viewerColumnRef = useRef<HTMLDivElement | null>(null);
   const selection = useTextSelection(viewerColumnRef);
   const [matchTier, setMatchTier] = useState<PassageMatchTier>('exact');
   const [resolvedLabel, setResolvedLabel] = useState<string | undefined>(undefined);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
-  const conversations = useConversationsStore((state) => state.conversations);
-  const spaces = useConversationsStore((state) => state.spaces);
-  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
-  const loadConversationLinkedDocuments = useConversationsStore(
-    (state) => state.loadConversationLinkedDocuments
-  );
 
   // File size limits (10MB backend limit)
   const MAX_PREVIEW_SIZE = 10 * 1024 * 1024; // 10MB
@@ -175,6 +159,10 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
   /** A web citation rendered from its saved page text or saved excerpt. */
   const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
+  // A frozen copy belongs to a conversation, so the Page view needs one.
+  const snapshotConversationId = showsWebArticle && openableUrl ? activeConversationId : null;
+  const snapshotUrl = snapshotConversationId ? openableUrl : null;
+  const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
   // highlighter would both be fighting it.
@@ -188,42 +176,6 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     (!isWebSourceLike || (!externalSourceUrl && !isWebArchiveArticle));
   const [resolvedPreviewPath, setResolvedPreviewPath] = useState<string | undefined>(undefined);
   const [isResolvingPreviewPath, setIsResolvingPreviewPath] = useState(false);
-  const [isImportingUrl, setIsImportingUrl] = useState(false);
-  const activeConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
-    [conversations, activeConversationId]
-  );
-  const defaultImportSpaceId = activeConversation?.spaceId ?? selectedSpaceId ?? null;
-  const [targetImportSpaceId, setTargetImportSpaceId] = useState<string>('');
-  const allowUnscopedImport = !activeConversationId;
-  const spaceNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const space of spaces) {
-      map.set(space.id, space.name);
-    }
-    return map;
-  }, [spaces]);
-
-  const renderImportScopeSelect = (extraClassName = '') => (
-    <label
-      className={`inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))] ${extraClassName}`.trim()}
-    >
-      <span className="text-[hsl(var(--text-muted))]">Scope</span>
-      <select
-        value={targetImportSpaceId}
-        onChange={(event) => setTargetImportSpaceId(event.target.value)}
-        className="min-w-48 rounded-sm border border-border-default bg-surface-raised px-2 py-1 text-sm text-[hsl(var(--text-primary))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
-      >
-        {allowUnscopedImport && <option value="">Unscoped</option>}
-        {spaces.map((space) => (
-          <option key={space.id} value={space.id}>
-            {space.name}
-            {space.isArchived ? ' (archived)' : ''}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
 
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
 
@@ -263,17 +215,24 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     };
   }, [source.documentId, source.filePath, shouldResolveDocumentPath, hasDocumentId]);
 
-  useEffect(() => {
-    if (defaultImportSpaceId) {
-      setTargetImportSpaceId(defaultImportSpaceId);
-      return;
-    }
-    if (!allowUnscopedImport && spaces.length > 0) {
-      setTargetImportSpaceId(spaces[0].id);
-      return;
-    }
-    setTargetImportSpaceId('');
-  }, [allowUnscopedImport, defaultImportSpaceId, spaces]);
+  const {
+    spaces,
+    targetImportSpaceId,
+    setTargetImportSpaceId,
+    allowUnscopedImport,
+    isImportingUrl,
+    handleImportSourceUrl,
+  } = useSourceUrlImport(importableUrl, activeConversationId);
+
+  const renderImportScopeSelect = (extraClassName = '') => (
+    <ImportScopeSelect
+      value={targetImportSpaceId}
+      onChange={setTargetImportSpaceId}
+      spaces={spaces}
+      allowUnscoped={allowUnscopedImport}
+      className={extraClassName}
+    />
+  );
 
   const { content, isLoading, error } = useFileContent(
     shouldFetchContent ? (resolvedPreviewPath ?? (shouldResolveDocumentPath ? undefined : source.filePath)) : undefined,
@@ -301,96 +260,10 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     [locatorChunkId, onLocationResolved]
   );
 
-  const total = citations?.length ?? 0;
-  const canTravel = Boolean(onCitationIndexChange) && total > 1 && typeof citationIndex === 'number';
+  const { canTravel, goToCitation } = useCitationTravel(citations, citationIndex, onCitationIndexChange);
 
-  const goToCitation = useCallback(
-    (next: number) => {
-      if (!onCitationIndexChange || total === 0) return;
-      onCitationIndexChange(Math.min(total - 1, Math.max(0, next)));
-    },
-    [onCitationIndexChange, total]
-  );
-
-  useEffect(() => {
-    if (!canTravel) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== '[' && event.key !== ']') return;
-      // ⌘[ and ⌘] belong to the Explorer's Back and Forward.
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (
-        target?.closest('input, textarea, select, [contenteditable="true"]')
-      ) {
-        return;
-      }
-      event.preventDefault();
-      goToCitation((citationIndex ?? 0) + (event.key === ']' ? 1 : -1));
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [canTravel, citationIndex, goToCitation]);
-
-  const captureLocator = useCallback(
-    (text: string) => text.trim().slice(0, 4000),
-    []
-  );
-
-  const handleReference = useCallback(
-    async (text: string) => {
-      const trimmed = captureLocator(text);
-      if (!trimmed) return;
-      const result = await VaultAPI.createPassageReference({
-        documentId: source.documentId,
-        chunkId: initialLocator?.chunkId ?? source.chunkId,
-        filePath: source.filePath,
-        fileName: source.fileName,
-        locator: resolvedLabel ?? formatSourceLocation(source) ?? undefined,
-        text: trimmed,
-      });
-      if (!result.ok) {
-        // Say what actually went wrong. "Not available yet" was true while the
-        // slice was unbuilt and is a lie now that it ships.
-        toast.error("Couldn't save this reference", { message: result.error });
-        return;
-      }
-      await queryClient.invalidateQueries({ queryKey: PASSAGE_REFERENCES_QUERY_KEY });
-      toast.success('Saved to references', {
-        message: 'Lattice will use this in future answers.',
-      });
-    },
-    [source, captureLocator, initialLocator?.chunkId, resolvedLabel, queryClient]
-  );
-
-  const handleAddToJournal = useCallback(
-    async (text: string) => {
-      const trimmed = captureLocator(text);
-      if (!trimmed) return;
-      const location = resolvedLabel ?? formatSourceLocation(source);
-      const attribution = location
-        ? `— ${source.fileName}, ${location}`
-        : `— ${source.fileName}`;
-      const quoted = trimmed
-        .split('\n')
-        .map((line) => `> ${line}`)
-        .join('\n');
-      setCaptureDraft(`${quoted}\n${attribution}`);
-    },
-    [source, captureLocator, resolvedLabel]
-  );
-
-  const handleAskAbout = useCallback(
-    (text: string) => {
-      const trimmed = captureLocator(text);
-      if (!trimmed) return;
-      onClose();
-      navigate(
-        `/chat?new=1&documentId=${encodeURIComponent(source.documentId)}` +
-          `&quote=${encodeURIComponent(trimmed)}`
-      );
-    },
-    [source, captureLocator, navigate, onClose]
-  );
+  const { captureDraft, setCaptureDraft, handleReference, handleAddToJournal, handleAskAbout } =
+    usePassageCapture({ source, initialLocator, resolvedLabel, onClose });
 
   const sanitizedFileName = sanitizeFileName(source.fileName);
   const headerMeta = sourceHeaderMeta(source);
@@ -481,242 +354,60 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
   };
 
-  const handleImportSourceUrl = async () => {
-    if (!importableUrl || isImportingUrl) {
-      return;
-    }
-
-    const scopeId = targetImportSpaceId.trim() || undefined;
-    const conversationId = activeConversationId ?? undefined;
-    const scopedSpaceName =
-      (scopeId && spaceNameById.get(scopeId)) ||
-      (defaultImportSpaceId ? spaceNameById.get(defaultImportSpaceId) : undefined);
-
-    setIsImportingUrl(true);
-    try {
-      const result = await VaultAPI.ingestWebUrl(importableUrl, {
-        spaceId: scopeId,
-        conversationId,
-      });
-      if (!result.ok) {
-        toast.error("Couldn't import URL", { message: result.error });
-        return;
+  const renderViewer = () => (
+    <SourceViewer
+      source={source}
+      mimeType={mimeType}
+      isFileTooLarge={isFileTooLarge}
+      isFileLarge={isFileLarge}
+      maxPreviewSize={MAX_PREVIEW_SIZE}
+      isLoading={isLoading || isResolvingPreviewPath}
+      content={content}
+      error={error}
+      savedCitationText={savedCitationText}
+      previewFilePath={previewFilePath}
+      initialLocator={initialLocator}
+      onLocationResolved={handleLocationResolved}
+      onMatch={setMatchTier}
+      isWebArchiveArticle={isWebArchiveArticle}
+      webArchiveHtmlPath={webArchiveHtmlPath}
+      webArticle={
+        showsWebArticle ? (
+          <WebSourceView
+            source={source}
+            url={openableUrl}
+            ownerKey={ownerKey}
+            citationContent={citationContent}
+            occurrence={occurrence}
+            onActivePassageChange={setActivePassage}
+            compact={isCompact}
+            importableUrl={importableUrl}
+            importScopeSelect={renderImportScopeSelect()}
+            isImportingUrl={isImportingUrl}
+            onImportUrl={handleImportSourceUrl}
+            onOpenUrl={handleOpenPrimary}
+            snapshotConversationId={snapshotConversationId}
+            snapshotUrl={snapshotUrl}
+            webPageMode={webPageMode}
+          />
+        ) : null
       }
-
-      const imported = result.data;
-      toast.success('Source imported', {
-        message: `${imported.title} (${imported.wordCount.toLocaleString()} words)${scopedSpaceName ? ` · ${scopedSpaceName}` : ''}`,
-        action: {
-          label: 'Open',
-          onClick: () => {
-            void (async () => {
-              const openResult = await VaultAPI.openFileById(imported.documentId);
-              if (!openResult.ok) {
-                toast.error("Saved, but couldn't open", {
-                  message: openResult.error,
-                });
-              }
-            })();
-          },
-        },
-      });
-      if (conversationId) {
-        void loadConversationLinkedDocuments(conversationId);
-      }
-    } finally {
-      setIsImportingUrl(false);
-    }
-  };
-
-  const renderViewer = () => {
-    // File too large - show error message
-    if (isFileTooLarge) {
-      return (
-        <div className="flex flex-col items-center justify-center h-64 text-center px-6">
-          <div className="text-[hsl(var(--warning-fg))] mb-4">
-            <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <p className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
-            File too large to preview
-          </p>
-          <p className="text-sm text-[hsl(var(--text-secondary))] mb-4">
-            This file is {formatFileSize(source.fileSizeBytes)}. Preview limit is {formatFileSize(MAX_PREVIEW_SIZE)}.
-          </p>
-          <button
-            onClick={handleOpenPrimary}
-            className="rounded-md bg-[hsl(var(--accent))] px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))]"
-          >
-            Open externally
-          </button>
-        </div>
-      );
-    }
-
-    if (isLoading || isResolvingPreviewPath) {
-      return (
-        <div className="flex flex-col items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[hsl(var(--accent))] mb-4" />
-          {isFileLarge && (
-            <p className="text-sm text-[hsl(var(--text-tertiary))]">
-              Loading large file ({formatFileSize(source.fileSizeBytes)})...
-            </p>
-          )}
-        </div>
-      );
-    }
-
-    if (showsWebArticle) {
-      return (
-        <WebArticleView
-          url={openableUrl}
-          source={source}
-          ownerKey={ownerKey}
-          citationContent={citationContent}
-          occurrence={occurrence}
-          onActivePassageChange={setActivePassage}
-          actions={
-            openableUrl && !isCompact ? (
-              <div className="inline-flex shrink-0 items-center gap-2">
-                {importableUrl && renderImportScopeSelect()}
-                {importableUrl && (
-                  <button
-                    type="button"
-                    onClick={handleImportSourceUrl}
-                    disabled={isImportingUrl}
-                    className="inline-flex items-center gap-2 rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm font-medium text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isImportingUrl ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Download size={14} />
-                    )}
-                    Import
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleOpenPrimary}
-                  className="inline-flex items-center gap-2 rounded-md bg-[hsl(var(--accent))] px-3 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))]"
-                >
-                  <ExternalLink size={14} />
-                  Open URL
-                </button>
-              </div>
-            ) : null
-          }
-        />
-      );
-    }
-
-    if (error) {
-      if (savedCitationText) {
-        return (
-          <div className="flex min-h-full flex-col">
-            <p role="status" className="mb-4 rounded-md border border-subtle bg-surface-raised px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
-              The original file is unavailable. Showing saved citation text; this is not a full file snapshot.
-            </p>
-            <TextViewer content={savedCitationText} language="text" />
-          </div>
-        );
-      }
-      return (
-        <div className="flex flex-col items-center justify-center h-64 text-center">
-          <p className="text-[hsl(var(--danger-fg))] mb-2">Couldn't load file</p>
-          <p className="text-sm text-[hsl(var(--text-muted))]">{error}</p>
-        </div>
-      );
-    }
-
-    // Web archive articles should render from captured HTML snapshot, not raw markdown text.
-    if (isWebArchiveArticle && webArchiveHtmlPath) {
-      return <HTMLViewer htmlPath={webArchiveHtmlPath} />;
-    }
-
-    // Route to appropriate viewer based on MIME type
-    if (mimeType === 'application/pdf') {
-      return (
-        <PDFViewer
-          filePath={previewFilePath}
-          highlight={initialLocator}
-          onLocationResolved={handleLocationResolved}
-          onMatch={setMatchTier}
-        />
-      );
-    }
-
-    if (mimeType.startsWith('text/x-') || mimeType === 'application/javascript') {
-      const language = getLanguageFromFileName(source.fileName);
-      return <TextViewer content={content} language={language} />;
-    }
-
-    if (mimeType === 'text/markdown' || source.fileName.endsWith('.md')) {
-      return <MarkdownViewer content={content} />;
-    }
-
-    if (mimeType.startsWith('audio/')) {
-      return <AudioViewer filePath={previewFilePath} {...audioViewerPropsFromSource(source)} />;
-    }
-
-    if (mimeType.startsWith('image/')) {
-      return <ImageViewer filePath={previewFilePath} />;
-    }
-
-    // Fallback: plain text
-    return <TextViewer content={content} language="text" />;
-  };
+      onOpenPrimary={handleOpenPrimary}
+    />
+  );
 
   return (
     <>
       {/* Header */}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-subtle px-6 py-5">
-        <div className="min-w-0 flex-1">
-          <p className="mb-1 text-xs text-text-muted">Source reader</p>
-          {isDocked ? (
-            <h2 className={TITLE_CLASS}>{sanitizedFileName}</h2>
-          ) : (
-            <DialogTitle asChild><h2 className={TITLE_CLASS}>{sanitizedFileName}</h2></DialogTitle>
-          )}
-          {headerMeta.length > 0 && (
-            <p className="mt-2 text-sm text-[hsl(var(--text-muted))]">
-              {headerMeta.join(' · ')}
-            </p>
-          )}
-        </div>
-
-        {onToggleFocus && (
-          <button type="button" className="rounded-md p-2 text-text-secondary hover:bg-surface-raised"
-            aria-label={isFocused ? 'Return to reading pane' : 'Expand reader'}
-            title={isFocused ? 'Return to reading pane' : 'Expand reader'}
-            onClick={onToggleFocus}>
-            {isFocused ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-          </button>
-        )}
-        {onMinimize && (
-          <button type="button" className="rounded-md p-2 text-text-secondary hover:bg-surface-raised"
-            aria-label="Minimize reader"
-            title="Minimize reader"
-            onClick={onMinimize}>
-            <PanelRightClose size={18} />
-          </button>
-        )}
-        {isDocked ? (
-          <button
-            type="button"
-            onClick={onClose}
-            className={CLOSE_CLASS}
-            aria-label="Close"
-            title="Close · Esc"
-          >
-            <X size={20} />
-          </button>
-        ) : (
-          <DialogClose className={CLOSE_CLASS} aria-label="Close" title="Close · Esc">
-            <X size={20} />
-          </DialogClose>
-        )}
-      </div>
+      <SourceReaderHeader
+        isDocked={isDocked}
+        title={sanitizedFileName}
+        meta={headerMeta}
+        isFocused={isFocused}
+        onToggleFocus={onToggleFocus}
+        onMinimize={onMinimize}
+        onClose={onClose}
+      />
 
       {/* Content */}
       <div
@@ -783,40 +474,17 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       />}
 
       {/* Footer */}
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-subtle px-5 py-3">
-        {canShowInFolder && (
-          <button
-            onClick={handleShowInFolder}
-            className="flex items-center gap-2 rounded-md border border-border-default bg-surface px-4 py-2 text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised"
-          >
-            <ExternalLink size={16} />
-            <span>{platformRevealLabel}</span>
-          </button>
-        )}
-
-        {shouldUseUrlActions && importableUrl && (
-          renderImportScopeSelect('mr-1')
-        )}
-
-        {shouldUseUrlActions && importableUrl && (
-          <button
-            onClick={handleImportSourceUrl}
-            disabled={isImportingUrl}
-            className="flex items-center gap-2 rounded-md border border-border-default bg-surface px-4 py-2 text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isImportingUrl ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            <span>Import</span>
-          </button>
-        )}
-
-        <button
-          onClick={handleOpenPrimary}
-          className="flex items-center gap-2 rounded-md bg-[hsl(var(--accent))] px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))]"
-        >
-          <Download size={16} />
-          <span>{primaryActionLabel}</span>
-        </button>
-      </div>
+      <SourceReaderFooter
+        canShowInFolder={canShowInFolder}
+        onShowInFolder={handleShowInFolder}
+        platformRevealLabel={platformRevealLabel}
+        canImportUrl={shouldUseUrlActions && Boolean(importableUrl)}
+        importScopeSelect={renderImportScopeSelect('mr-1')}
+        isImportingUrl={isImportingUrl}
+        onImportUrl={handleImportSourceUrl}
+        primaryActionLabel={primaryActionLabel}
+        onOpenPrimary={handleOpenPrimary}
+      />
       {captureDraft !== null && (
         <JournalCapturePreview content={captureDraft} onClose={() => setCaptureDraft(null)}
           onOpenNote={(noteId) => { setCaptureDraft(null); onClose(); navigate(`/journals?noteId=${encodeURIComponent(noteId)}`); }} />

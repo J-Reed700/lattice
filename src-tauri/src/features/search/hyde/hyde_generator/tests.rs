@@ -1,9 +1,9 @@
 //! Tests for HyDE rewriting, follow-up classification and web-query cleanup.
 
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::domain::qa::hyde::SearchStrategy;
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::domain::qa::hyde::SearchStrategy;
 
 /// A small model numbers its lines, quotes some, repeats the main search
 /// and wanders into prose; only the usable, distinct queries survive.
@@ -98,13 +98,15 @@ impl LLMPort for TypedLLM {
     async fn complete(
         &self,
         request: &CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         self.requests.lock().unwrap().push(request.clone());
-        Ok(crate::application::ports::llm_port::CompletionResponse {
-            text: self.response.clone(),
-            finish_reason: self.finish_reason.clone(),
-            ..Default::default()
-        })
+        Ok(
+            lattice_core::application::ports::llm_port::CompletionResponse {
+                text: self.response.clone(),
+                finish_reason: self.finish_reason.clone(),
+                ..Default::default()
+            },
+        )
     }
 
     fn model_name(&self) -> &str {

@@ -3,11 +3,11 @@
 
 use super::files::{candidate, prepare, walk, Candidate, Prepared, Walked};
 use super::{per_second, Indexer, Outcome};
-use crate::application::ports::vector_search_port::VectorSearchPort;
 use crate::features::explorer::fs;
 use crate::features::explorer::index::dto::FolderIndexState;
 use crate::features::explorer::index::store::{self, FileRow, TooLarge};
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::shared::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,31 +32,35 @@ impl Indexer {
         let max_files = self.limits.max_files;
         let cancel = self.cancel.clone();
         let status = Arc::clone(&self.status);
+        // Read before the walk, so a folder past the bound keeps the files it
+        // already indexed rather than whichever the disk lists first.
+        let existing = self.store.files_under(&self.prefix).await?;
+        let indexed: HashSet<String> = existing.keys().cloned().collect();
         let walked = tokio::task::spawn_blocking(move || {
-            walk(&scope, &prefix, max_files, &cancel, Some(&status))
+            walk(&scope, &prefix, max_files, &indexed, &cancel, Some(&status))
         })
         .await
         .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
         // Only a run over the whole index speaks for it; a sub-folder's run
         // leaves the parent's markers alone.
         let whole = self.prefix.is_empty();
-        let candidates = match walked {
-            Walked::TooLarge { count, capped } => {
-                if whole {
-                    let found = TooLarge { count, capped };
-                    self.store
-                        .set_meta(store::META_TOO_LARGE, &found.encode())
-                        .await?;
-                }
-                return Ok(Outcome::TooLarge { count, capped });
-            }
+        let (candidates, skipped) = match walked {
             Walked::Cancelled => return Ok(Outcome::Cancelled),
-            Walked::Files(files) => files,
+            Walked::Files { files, skipped } => (files, skipped),
         };
+        // A folder past the bound is indexed up to it, and how many files were
+        // left to text search is recorded, not dropped without a word.
+        let found = candidates.len() + skipped;
         if whole {
-            self.store.delete_meta(store::META_TOO_LARGE).await?;
+            if skipped > 0 {
+                let found = TooLarge { count: found };
+                self.store
+                    .set_meta(store::META_TOO_LARGE, &found.encode())
+                    .await?;
+            } else {
+                self.store.delete_meta(store::META_TOO_LARGE).await?;
+            }
         }
-        let existing = self.store.files_under(&self.prefix).await?;
         let total = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
         self.status.update(|status| status.files_total = total);
 
@@ -108,7 +112,11 @@ impl Indexer {
             ),
             "Folder index ready"
         );
-        Ok(Outcome::Done)
+        Ok(if skipped > 0 {
+            Outcome::TooLarge { count: found }
+        } else {
+            Outcome::Done
+        })
     }
 
     /// Brings the rows for `paths` (relative to the index root, as the
@@ -179,18 +187,17 @@ impl Indexer {
         let start = relative.to_string();
         let max_files = self.limits.max_files;
         let cancel = self.cancel.clone();
-        let walked =
-            tokio::task::spawn_blocking(move || walk(&scope, &start, max_files, &cancel, None))
-                .await
-                .map_err(|error| {
-                    AppError::InternalError(format!("Folder walk failed: {error}"))
-                })??;
+        let walked = tokio::task::spawn_blocking(move || {
+            walk(&scope, &start, max_files, &HashSet::new(), &cancel, None)
+        })
+        .await
+        .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
         let candidates = match walked {
-            Walked::Files(files) => files,
+            Walked::Files { files, skipped: 0 } => files,
             Walked::Cancelled => return Ok(Outcome::Cancelled),
-            // A single new directory over the whole cap is left to the next
-            // full run to judge.
-            Walked::TooLarge { .. } => return Ok(Outcome::Done),
+            // A single new directory over the whole bound is left to the next
+            // full run, which indexes up to the bound and counts the rest.
+            Walked::Files { .. } => return Ok(Outcome::Done),
         };
         let existing = self.store.files_under(relative).await?;
         let seen: HashSet<String> = candidates

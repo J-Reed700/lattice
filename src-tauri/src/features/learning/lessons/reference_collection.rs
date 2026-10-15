@@ -5,18 +5,27 @@
 //! documents. Web pages and pasted text have no library copy, so they are
 //! ranked by keyword alone. Every hit is mapped back onto the snapshot's
 //! bytes, so evidence is always an exact substring of what was captured.
-use crate::application::ports::{LibraryChunk, LibraryPassagesPort};
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{LibraryChunk, LibraryPassagesPort};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
 const CHUNK_CHARS: usize = 1200;
+/// How far `retrieve` widens a ranked chunk on each side, toward paragraph
+/// edges.
+const WIDEN_BYTES: usize = 300;
+/// About the longest passage `retrieve` returns: one chunk widened on both
+/// sides. Callers size retrieval to a token budget with it.
+pub(in crate::features::learning) const PASSAGE_CHARS: usize = CHUNK_CHARS + 2 * WIDEN_BYTES;
 const STEP_CHARS: usize = 900;
 /// Reciprocal-rank constant for merging library and keyword rankings.
 const RANK_K: usize = 60;
+/// How many passages a filled retrieval asks for first; it pages deeper,
+/// doubling, while everything found still fits.
+const FIRST_PAGE: usize = 16;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReferencePassage {
@@ -50,6 +59,11 @@ pub struct ReferenceCollection<'a> {
     pub sources: Vec<LearningSourceDto>,
     chunks: Vec<Chunk>,
     frequencies: HashMap<String, usize>,
+    /// How many passages of the whole collection, library-ranked snapshots
+    /// included, contain each term.
+    subject_frequencies: HashMap<String, usize>,
+    /// How many passages the whole collection has.
+    subject_passages: usize,
     average_length: f64,
     library: Option<&'a dyn LibraryPassagesPort>,
     /// Library chunk ID to its bytes in a snapshot.
@@ -61,6 +75,46 @@ pub struct ReferenceCollection<'a> {
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
+/// The longest prefix of `passages` that `fits` accepts; `fits` holds for
+/// every shorter prefix of one it accepts.
+fn longest_fitting_prefix(
+    passages: &[ReferencePassage],
+    fits: &impl Fn(&[ReferencePassage]) -> bool,
+) -> usize {
+    let (mut low, mut high) = (0, passages.len());
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if fits(passages.get(..middle).unwrap_or_default()) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    low
+}
+
+/// Function words that match nearly every passage; never a content term.
+const FUNCTION_WORDS: &[&str] = &[
+    "a", "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "been",
+    "before", "but", "by", "can", "could", "did", "do", "does", "each", "for", "from", "had",
+    "has", "have", "how", "if", "in", "into", "is", "it", "its", "may", "more", "most", "must",
+    "no", "not", "of", "on", "only", "or", "other", "should", "so", "some", "such", "than", "that",
+    "the", "their", "them", "then", "there", "these", "they", "this", "those", "to", "under", "up",
+    "use", "used", "uses", "using", "was", "we", "were", "what", "when", "where", "which", "while",
+    "who", "will", "with", "without", "would", "you", "your",
+];
+
+/// The words of `text` a keyword match should rest on: not function words.
+fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
+    terms_iter(text).filter(|word| !FUNCTION_WORDS.contains(&word.as_str()))
+}
+
+fn terms_iter(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+}
+
 fn terms(text: &str) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for word in text
@@ -126,12 +180,20 @@ impl<'a> ReferenceCollection<'a> {
     fn keyword(sources: &[LearningSourceDto], ranked_by_library: &HashSet<usize>) -> Self {
         let mut chunks = Vec::new();
         let mut frequencies = HashMap::new();
+        let mut subject_frequencies: HashMap<String, usize> = HashMap::new();
+        let mut subject_passages = 0;
         for (source, value) in sources.iter().enumerate() {
-            if ranked_by_library.contains(&source) {
-                continue;
-            }
             for (start, end) in spans(&value.excerpt) {
+                subject_passages += 1;
                 let counts = terms(&value.excerpt[start..end]);
+                for term in counts.keys() {
+                    *subject_frequencies.entry(term.clone()).or_default() += 1;
+                }
+                // The library ranks its own snapshots; only the rest are
+                // keyword passages.
+                if ranked_by_library.contains(&source) {
+                    continue;
+                }
                 for term in counts.keys() {
                     *frequencies.entry(term.clone()).or_default() += 1;
                 }
@@ -151,6 +213,8 @@ impl<'a> ReferenceCollection<'a> {
             sources: sources.to_vec(),
             chunks,
             frequencies,
+            subject_frequencies,
+            subject_passages,
             average_length,
             library: None,
             library_spans: HashMap::new(),
@@ -243,31 +307,50 @@ impl<'a> ReferenceCollection<'a> {
 
     /// Library hits and keyword hits come from disjoint sources, so they are
     /// merged by rank, each list contributing equally. Scores rank evidence
-    /// only; they are never a factual-correctness confidence.
+    /// only; they are never a factual-correctness confidence. The library is
+    /// asked for more hits while overlaps keep `limit` from being reached.
     pub async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<ReferencePassage>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let limit = limit.clamp(1, 50);
-        let mut ranked: Vec<(Span, f64, &'static str)> = Vec::new();
-        if let Some(library) = self.library.filter(|_| !self.library_documents.is_empty()) {
-            let hits = library
-                .search(query, &self.library_documents, limit * 3)
-                .await?;
-            let spans = hits
-                .iter()
-                .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied());
-            for (rank, span) in spans.enumerate() {
-                ranked.push((span, 1.0 / (RANK_K + rank + 1) as f64, "hybrid"));
+        let limit = limit.max(1);
+        let keyword = self.keyword_ranking(query);
+        let mut fetch = limit;
+        loop {
+            let mut library_spans = Vec::new();
+            let mut exhausted = true;
+            if let Some(library) = self.library.filter(|_| !self.library_documents.is_empty()) {
+                let hits = library
+                    .search(query, &self.library_documents, fetch)
+                    .await?;
+                exhausted = hits.len() < fetch;
+                library_spans.extend(
+                    hits.iter()
+                        .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied()),
+                );
             }
+            let selected = self.merge(&library_spans, &keyword, limit)?;
+            if selected.len() >= limit || exhausted {
+                return Ok(selected);
+            }
+            fetch = fetch.saturating_mul(2);
         }
-        for (rank, span) in self
-            .keyword_ranking(query)
-            .into_iter()
-            .take(100)
-            .enumerate()
-        {
-            ranked.push((span, 1.0 / (RANK_K + rank + 1) as f64, "lexical_fallback"));
+    }
+
+    /// Merge library and keyword rankings by rank and widen each hit to
+    /// paragraph edges, each source byte at most once, up to `limit`.
+    fn merge(
+        &self,
+        library: &[Span],
+        keyword: &[Span],
+        limit: usize,
+    ) -> Result<Vec<ReferencePassage>> {
+        let mut ranked: Vec<(Span, f64, &'static str)> = Vec::new();
+        for (rank, span) in library.iter().enumerate() {
+            ranked.push((*span, 1.0 / (RANK_K + rank + 1) as f64, "hybrid"));
+        }
+        for (rank, span) in keyword.iter().enumerate() {
+            ranked.push((*span, 1.0 / (RANK_K + rank + 1) as f64, "lexical_fallback"));
         }
         // Equal ranks keep library hits ahead; the sort is stable.
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -279,11 +362,11 @@ impl<'a> ReferenceCollection<'a> {
                 .ok_or_else(|| invalid("Reference index contains an unknown source."))?;
             // Expand to adjacent paragraph boundaries where practical. Evidence
             // is always an exact substring, including significant whitespace.
-            let mut start = chunk.start.saturating_sub(300);
+            let mut start = chunk.start.saturating_sub(WIDEN_BYTES);
             while !source.excerpt.is_char_boundary(start) {
                 start += 1;
             }
-            let mut end = (chunk.end + 300).min(source.excerpt.len());
+            let mut end = (chunk.end + WIDEN_BYTES).min(source.excerpt.len());
             while !source.excerpt.is_char_boundary(end) {
                 end -= 1;
             }
@@ -312,6 +395,106 @@ impl<'a> ReferenceCollection<'a> {
             }
         }
         Ok(selected)
+    }
+
+    /// Passages for `query`, best first, for as long as `fits` accepts them:
+    /// the caller's window decides how many, not a count. Retrieval pages
+    /// deeper while every passage found so far still fits.
+    pub(in crate::features::learning) async fn retrieve_within(
+        &self,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
+        self.fill(query, fits).await
+    }
+
+    /// The next page of verification evidence for `query`: ranked passages,
+    /// each widened to its surrounding source text (see
+    /// `verification_context`), that overlap none of `shown`, best first,
+    /// while `fits` accepts them. Also returns the ranked hits the page was
+    /// built from, so a quote can be located inside a widened passage.
+    pub(in crate::features::learning) async fn verification_page(
+        &self,
+        query: &str,
+        shown: &[ReferencePassage],
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<(Vec<ReferencePassage>, Vec<ReferencePassage>)> {
+        let mut depth = FIRST_PAGE;
+        loop {
+            let hits = self.retrieve(query, depth).await?;
+            let exhausted = hits.len() < depth;
+            let mut page: Vec<_> = self
+                .verification_context(hits.clone())?
+                .into_iter()
+                .filter(|passage| {
+                    !shown.iter().any(|seen| {
+                        seen.source_id == passage.source_id
+                            && seen.start_byte < passage.end_byte
+                            && passage.start_byte < seen.end_byte
+                    })
+                })
+                .collect();
+            let fitting = longest_fitting_prefix(&page, &fits);
+            if fitting < page.len() || exhausted {
+                page.truncate(fitting);
+                return Ok((page, hits));
+            }
+            depth = depth.saturating_mul(2);
+        }
+    }
+
+    /// Whether `text` mentions what `query` is about: one of the query's
+    /// distinctive content terms, those no more common across this
+    /// collection's passages than the median of the query's own content
+    /// terms. Words the whole subject shares (in a .NET collection, "net" or
+    /// "core") do not count, so a walk through deeper evidence ends once only
+    /// the subject's common vocabulary is left. Vector neighbours alone never
+    /// count. Before the median is taken, two kinds of query term are left
+    /// out because no page can tell anything by them: a term in no passage of
+    /// the collection, such as a name a lesson invented for its example (no
+    /// page can contain it, so it neither keeps a walk going nor lowers the
+    /// bar the real terms must meet), and a term in every passage.
+    pub(in crate::features::learning) fn mentions_subject_of(
+        &self,
+        query: &str,
+        text: &str,
+    ) -> bool {
+        let mut wanted: Vec<(usize, String)> = content_terms(query)
+            .filter_map(|term| {
+                let frequency = self.subject_frequencies.get(&term).copied().unwrap_or(0);
+                (frequency > 0 && frequency < self.subject_passages).then_some((frequency, term))
+            })
+            .collect();
+        wanted.sort();
+        wanted.dedup();
+        let Some(&(median, _)) = wanted.get(wanted.len().saturating_sub(1) / 2) else {
+            return false;
+        };
+        let distinctive: HashSet<&str> = wanted
+            .iter()
+            .filter(|(frequency, _)| *frequency <= median)
+            .map(|(_, term)| term.as_str())
+            .collect();
+        content_terms(text).any(|term| distinctive.contains(term.as_str()))
+    }
+
+    async fn fill(
+        &self,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
+        let mut depth = FIRST_PAGE;
+        loop {
+            let found = self.retrieve(query, depth).await?;
+            let exhausted = found.len() < depth;
+            let mut passages = found;
+            let fitting = longest_fitting_prefix(&passages, &fits);
+            if fitting < passages.len() || exhausted {
+                passages.truncate(fitting);
+                return Ok(passages);
+            }
+            depth = depth.saturating_mul(2);
+        }
     }
 
     /// BM25 over the keyword passages, best first.
@@ -348,17 +531,54 @@ impl<'a> ReferenceCollection<'a> {
             .collect()
     }
 
+    /// The source passages `quotes` copy, in quote order: each quote's span
+    /// in the first snapshot that contains it, exactly or apart from
+    /// typography and spacing, widened as verification widens a retrieved
+    /// passage. A quote no snapshot contains is skipped.
+    pub(in crate::features::learning) fn cited_passages(
+        &self,
+        quotes: &[&str],
+    ) -> Result<Vec<ReferencePassage>> {
+        let span = |source: &LearningSourceDto, start: usize, end: usize| ReferencePassage {
+            source_id: source.id.clone(),
+            text: source
+                .excerpt
+                .get(start..end)
+                .unwrap_or_default()
+                .to_owned(),
+            start_byte: start,
+            end_byte: end,
+            retrieval_kind: "cited".into(),
+            score: 0.0,
+        };
+        let mut found = Vec::new();
+        for quote in quotes
+            .iter()
+            .map(|quote| quote.trim())
+            .filter(|q| !q.is_empty())
+        {
+            let exact = self.sources.iter().find_map(|source| {
+                let start = source.excerpt.find(quote)?;
+                Some(span(source, start, start + quote.len()))
+            });
+            let restored = || {
+                self.sources.iter().find_map(|source| {
+                    let copied = crate::features::learning::outline_citations::exact_source_quote(
+                        &source.excerpt,
+                        quote,
+                    )?;
+                    let start = source.excerpt.find(copied)?;
+                    Some(span(source, start, start + copied.len()))
+                })
+            };
+            found.extend(exact.or_else(restored));
+        }
+        self.verification_context(found)
+    }
+
     /// Verification needs nearby conditions as well as the matching paragraph.
     /// Keep retrieval ranking unchanged, then restore surrounding source bytes
     /// and remove overlapping windows so repeated hits do not crowd out sources.
-    pub(in crate::features::learning) async fn retrieve_for_verification(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<ReferencePassage>> {
-        self.verification_context(self.retrieve(query, limit).await?)
-    }
-
     fn verification_context(
         &self,
         passages: Vec<ReferencePassage>,
@@ -424,7 +644,10 @@ impl<'a> ReferenceCollection<'a> {
 
     /// A bounded structural view is supplied alongside passages, so the writer
     /// can see which books/sections exist without treating it as factual evidence.
-    pub fn catalog(&self, llm: &dyn crate::application::ports::LLMPort) -> serde_json::Value {
+    pub fn catalog(
+        &self,
+        llm: &dyn lattice_core::application::ports::LLMPort,
+    ) -> serde_json::Value {
         let budget = llm.max_context_tokens() / 16;
         let mut entries = Vec::new();
         let mut used = 64;
@@ -445,9 +668,10 @@ impl<'a> ReferenceCollection<'a> {
                 .lines()
                 .filter(|line| line.trim_start().starts_with('#'))
             {
-                let title: String = line.chars().take(120).collect();
+                // Whole headings, as many as the catalog's share of the window holds.
+                let title = line.trim().to_owned();
                 let cost = llm.count_tokens(&serde_json::json!(title).to_string()) + 1;
-                if used + base + cost > budget || headings.len() >= 40 {
+                if used + base + cost > budget {
                     omitted = true;
                     continue;
                 }
@@ -468,28 +692,94 @@ impl<'a> ReferenceCollection<'a> {
             "omittedFromThisPrompt":self.sources.len()-entries.len(),"sources":entries,
             "scope":"A partial catalog for orientation. Retrieval searches all saved sources."})
     }
+}
 
-    pub async fn author_sources(&self, query: &str) -> Result<Vec<LearningSourceDto>> {
-        let passages = self.retrieve(query, 12).await?;
-        let mut seen = HashSet::new();
-        let mut result = Vec::new();
-        for passage in &passages {
-            if !seen.insert(&passage.source_id) {
-                continue;
-            }
-            if let Some(source) = self.sources.iter().find(|s| s.id == passage.source_id) {
-                let mut source = source.clone();
-                source.excerpt = passages
-                    .iter()
-                    .filter(|p| p.source_id == source.id)
-                    .map(|p| p.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                result.push(source);
-            }
+/// The room a request built with an empty snapshot list leaves for passages.
+pub(in crate::features::learning) fn snapshot_room(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    system: &str,
+    skeleton: &serde_json::Value,
+    output_tokens: usize,
+) -> usize {
+    let mut request =
+        lattice_core::application::services::grounded_generation::GroundedRequest::new(
+            system,
+            skeleton.to_string(),
+        );
+    request.output_tokens = output_tokens;
+    crate::features::learning::model_call::source_room(llm, &request, usize::MAX)
+}
+
+/// The passages of full source snapshots that `query` retrieves, grouped per
+/// snapshot, as many as `room` tokens hold. Requests that cite snapshots
+/// carry these instead of a character prefix of each text; a quote is still
+/// checked against the whole snapshot.
+pub(in crate::features::learning) async fn snapshot_passages(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    sources: &[crate::features::learning::dto::LearningSourceVersionDto],
+    query: &str,
+    room: usize,
+) -> Result<serde_json::Value> {
+    let documents: Vec<LearningSourceDto> = sources
+        .iter()
+        .map(|source| LearningSourceDto {
+            id: source.version.id.clone(),
+            title: source.version.title.clone(),
+            url: None,
+            excerpt: source.full_text.clone(),
+            acquired_at: 0,
+        })
+        .collect();
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let entry = |source: &crate::features::learning::dto::LearningSourceVersionDto,
+                 passages: &[&str]| {
+        serde_json::json!({"sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,"passages":passages})
+    };
+    let snapshot = |passage: &ReferencePassage| {
+        sources
+            .iter()
+            .find(|source| source.version.id == passage.source_id)
+    };
+    let passages = collection
+        .retrieve_within(query, |passages| {
+            let mut seen = HashSet::new();
+            passages
+                .iter()
+                .map(|passage| {
+                    llm.count_tokens(&serde_json::json!(passage.text).to_string())
+                        + 2
+                        + snapshot(passage)
+                            .filter(|source| seen.insert(source.version.id.as_str()))
+                            .map_or(0, |source| {
+                                llm.count_tokens(&entry(source, &[]).to_string()) + 2
+                            })
+                })
+                .sum::<usize>()
+                <= room
+        })
+        .await?;
+    let mut grouped: Vec<(
+        &crate::features::learning::dto::LearningSourceVersionDto,
+        Vec<&str>,
+    )> = Vec::new();
+    for passage in &passages {
+        let Some(source) = snapshot(passage) else {
+            continue;
+        };
+        match grouped
+            .iter_mut()
+            .find(|(known, _)| known.version.id == source.version.id)
+        {
+            Some((_, texts)) => texts.push(passage.text.as_str()),
+            None => grouped.push((source, vec![passage.text.as_str()])),
         }
-        Ok(result)
     }
+    Ok(serde_json::Value::Array(
+        grouped
+            .iter()
+            .map(|(source, texts)| entry(source, texts))
+            .collect(),
+    ))
 }
 
 #[cfg(test)]

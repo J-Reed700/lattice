@@ -10,7 +10,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use crate::shared::runtime::jobs::RecoveryPolicy;
+use lattice_core::shared::runtime::jobs::RecoveryPolicy;
 
 async fn active_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
     let repo = LearningRepository::new(pool.clone());

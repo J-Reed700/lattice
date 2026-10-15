@@ -9,7 +9,7 @@
 use super::super::embedded_runtime::BuiltinLabExecutionSpec;
 use super::super::lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus};
 use super::super::python_runtime::{self, PythonBundle, WASM_NAME};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -17,7 +17,7 @@ use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
@@ -34,9 +34,6 @@ const WASM_FUEL_PER_CPU_MILLISECOND: u64 = 2_000_000;
 const FUEL_EXHAUSTED_MARKER: &str = "__LATTICE_PYTHON_FUEL_EXHAUSTED__";
 const MAX_TEMP_INPUT_BYTES: usize = 2 * 1024 * 1024;
 const COMPILED_EXTENSION: &str = "cwasm";
-
-static WASM_ENGINE: OnceLock<std::result::Result<Engine, String>> = OnceLock::new();
-static WASM_MODULE: OnceLock<std::result::Result<Module, String>> = OnceLock::new();
 
 /// Execute a protected `checks.py` entry point under Wasmtime. `ready` is
 /// called once the interpreter module is loaded, when the lab's clock starts.
@@ -62,7 +59,7 @@ pub(super) async fn execute(
     let worker_stop = worker_token.clone();
     let worker = tokio::task::spawn_blocking(move || {
         let engine = engine().map_err(|error| AppError::InternalError(error.to_string()))?;
-        let module = module(&engine, &worker_bundle).map_err(|error| {
+        let module = load_module(&engine, &worker_bundle).map_err(|error| {
             AppError::InternalError(format!(
                 "The bundled Python module could not be loaded: {error}"
             ))
@@ -78,7 +75,7 @@ pub(super) async fn execute(
             ));
         }
         // Compiling the trusted, bundled interpreter module is one-time setup,
-        // not learner CPU. Begin lab time only once the shared module is ready.
+        // not learner CPU. Begin lab time only once the module is ready.
         ready();
         let started = Instant::now();
         tokio::runtime::Handle::current().block_on(execute_python_guest(
@@ -264,24 +261,17 @@ fn materialize_lab_files(workspace: &Path, spec: &BuiltinLabExecutionSpec) -> Re
     Ok(())
 }
 
+/// The engine for one run. A runner process serves a single run, so the
+/// engine and the module below are built per run; the compiled module cached
+/// on disk is what spares a run the compile.
 fn engine() -> std::result::Result<Engine, String> {
-    WASM_ENGINE
-        .get_or_init(|| {
-            let mut config = Config::new();
-            config
-                .consume_fuel(true)
-                .epoch_interruption(true)
-                .cranelift_opt_level(wasmtime::OptLevel::None)
-                .max_wasm_stack(1_048_576);
-            Engine::new(&config).map_err(|error| error.to_string())
-        })
-        .clone()
-}
-
-fn module(engine: &Engine, bundle: &PythonBundle) -> std::result::Result<Module, String> {
-    WASM_MODULE
-        .get_or_init(|| load_module(engine, bundle))
-        .clone()
+    let mut config = Config::new();
+    config
+        .consume_fuel(true)
+        .epoch_interruption(true)
+        .cranelift_opt_level(wasmtime::OptLevel::None)
+        .max_wasm_stack(1_048_576);
+    Engine::new(&config).map_err(|error| error.to_string())
 }
 
 /// The compiled interpreter: from the cache when an artifact for this exact

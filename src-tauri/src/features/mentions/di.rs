@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::MentionRepositoryPort;
 use crate::features::mentions::mapper::MentionMapper;
 use crate::features::mentions::repository::MentionRepository;
 use crate::features::mentions::use_cases::{
@@ -12,6 +11,7 @@ use crate::features::mentions::use_cases::{
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::MentionRepositoryPort;
 
 #[derive(Clone)]
 pub struct MentionsDi {

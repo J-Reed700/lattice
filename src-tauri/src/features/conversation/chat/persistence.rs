@@ -1,10 +1,10 @@
 use crate::features::conversation::chat::ports::{ChatRuntime, MemoryVector};
 use crate::features::qa::dto::SourceDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-use super::{ChatResponse, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
+use super::{ChatResponse, ChatTurn, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
 
 #[derive(Debug, Clone)]
 struct MemoryToIndex {
@@ -13,7 +13,6 @@ struct MemoryToIndex {
     content: String,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn persist_user_message_pending(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
@@ -21,7 +20,7 @@ pub(super) async fn persist_user_message_pending(
     user_message: &str,
     attachment_names: &[String],
     attachment_document_ids: &[String],
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
 ) -> Result<(String, usize)> {
     let message_tokens = llm.count_tokens(user_message);
     // The files this turn brought into the conversation, stamped on the message
@@ -46,7 +45,7 @@ pub(super) async fn persist_user_message_pending(
     let user_msg = conv_service
         .add_message_with_metadata(
             conversation_id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             user_message.to_string(),
             message_tokens as i64,
             "pending".to_string(),
@@ -57,25 +56,42 @@ pub(super) async fn persist_user_message_pending(
     Ok((user_msg.id, message_tokens))
 }
 
-// Turn finalization deliberately keeps its persisted inputs explicit at this boundary.
-#[allow(clippy::too_many_arguments)]
+/// The answer as it is saved: its text, the sources it cites, and what the
+/// message's metadata carries beside them.
+pub(super) struct FinishedAnswer {
+    pub(super) response: String,
+    pub(super) sources: Vec<SourceDto>,
+    pub(super) verification: Option<serde_json::Value>,
+    pub(super) memory_usage: Option<serde_json::Value>,
+    pub(super) retrieval_trace: Option<RetrievalTraceDto>,
+    pub(super) turn_record: Option<TurnRecordDto>,
+}
+
+/// Save `answer` against the question saved as `user_message_id`, and return
+/// the turn's response with the answer's message id.
 pub(super) async fn finalize_successful_turn(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
+    turn: ChatTurn<'_>,
     user_message_id: &str,
-    user_message: &str,
-    assistant_response: String,
-    context_len: usize,
-    mut sources: Vec<SourceDto>,
-    verification_metadata: Option<serde_json::Value>,
-    memory_usage: Option<serde_json::Value>,
-    summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
-    retrieval_trace: Option<RetrievalTraceDto>,
-    turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    context_len: usize,
+    answer: FinishedAnswer,
 ) -> Result<(ChatResponse, String)> {
+    let ChatTurn {
+        conv_service,
+        conversation_id,
+        message: user_message,
+        llm,
+        ..
+    } = turn;
+    let FinishedAnswer {
+        response: assistant_response,
+        mut sources,
+        verification: verification_metadata,
+        memory_usage,
+        retrieval_trace,
+        turn_record,
+    } = answer;
     super::source_snapshots::attach_cited_web_snapshots(
         container,
         conversation_id,
@@ -124,7 +140,7 @@ pub(super) async fn finalize_successful_turn(
     .await?;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
-    container.consolidate_after_turn(conversation_id.to_string(), summary_refold);
+    container.consolidate_after_turn(conversation_id.to_string());
 
     spawn_memory_indexing(
         container.share(),
@@ -157,17 +173,6 @@ pub(super) async fn finalize_successful_turn(
         message_tokens,
         &assistant_msg,
     );
-    let logger = crate::infrastructure::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::infrastructure::audit::AuditAction::QuestionAnswered,
-        conversation_id,
-        "context_messages" => context_len.to_string().as_str(),
-        "message_tokens" => message_tokens.to_string().as_str(),
-        "response_tokens" => response_tokens.to_string().as_str()
-    )
-    .await
-    .ok();
 
     Ok((
         ChatResponse {
@@ -195,7 +200,7 @@ async fn commit_turn(
     content: String,
     tokens: i64,
     metadata: Option<String>,
-) -> Result<crate::domain::conversation::ConversationMessage> {
+) -> Result<lattice_core::domain::conversation::ConversationMessage> {
     match conv_service
         .complete_turn(conversation_id, user_message_id, content, tokens, metadata)
         .await
@@ -208,15 +213,17 @@ async fn commit_turn(
     }
 }
 
-fn message_dto(message: &crate::domain::conversation::ConversationMessage) -> ConversationMessage {
+fn message_dto(
+    message: &lattice_core::domain::conversation::ConversationMessage,
+) -> ConversationMessage {
     ConversationMessage {
         id: message.id.clone(),
         conversation_id: message.conversation_id.as_str().to_string(),
         tokens: message.tokens,
         role: match message.role {
-            crate::domain::conversation::MessageRole::User => "user".to_string(),
-            crate::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
-            crate::domain::conversation::MessageRole::System => "system".to_string(),
+            lattice_core::domain::conversation::MessageRole::User => "user".to_string(),
+            lattice_core::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
+            lattice_core::domain::conversation::MessageRole::System => "system".to_string(),
         },
         content: message.content.clone(),
         status: message.status.clone(),
@@ -232,11 +239,11 @@ fn message_dto(message: &crate::domain::conversation::ConversationMessage) -> Co
 /// user will find on reload, and would skip the grounding check. What the turn
 /// itself wrote is known without the read, so that is returned instead.
 fn turn_transcript(
-    read: Result<crate::domain::conversation::ConversationAggregate>,
+    read: Result<lattice_core::domain::conversation::ConversationAggregate>,
     user_message_id: &str,
     user_message: &str,
     message_tokens: usize,
-    answer: &crate::domain::conversation::ConversationMessage,
+    answer: &lattice_core::domain::conversation::ConversationMessage,
 ) -> Vec<ConversationMessage> {
     match read {
         Ok(aggregate) => aggregate.messages().iter().map(message_dto).collect(),
@@ -256,14 +263,6 @@ fn turn_transcript(
         }
     }
 }
-
-/// How many of a turn's web citations are kept as conversation context.
-///
-/// The prompt side already takes only the ten most recent and truncates their
-/// excerpts, so a larger number here buys nothing for the next turn. It only
-/// governs how fast one long research turn can push earlier rounds out of that
-/// window, which is why it is smaller than a full result page.
-const CITED_WEB_SOURCES_KEPT_PER_TURN: usize = 8;
 
 /// Keep the pages a turn cited as context for the turns that follow.
 ///
@@ -333,10 +332,10 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut keepable: Vec<CitedWebSource> = Vec::new();
+    // Every cited page is kept: a source the answer cited is evidence the next
+    // turn may need, and what the next prompt has room for is decided where
+    // that prompt is assembled, not by a count here.
     for source in sources {
-        if keepable.len() >= CITED_WEB_SOURCES_KEPT_PER_TURN {
-            break;
-        }
         // `file_path` holds the page URL for a web source; `document_id` is the
         // same URL behind a prefix and is what marks it as one.
         if !source.document_id.starts_with(WEB_SOURCE_PREFIX) {
@@ -353,8 +352,17 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
             title: Some(source.file_name.trim())
                 .filter(|value| !value.is_empty() && *value != url)
                 .map(ToOwned::to_owned),
-            excerpt: Some(source.content.trim())
+            // The pointer the sources panel shows, not the page: a page the
+            // turn read is archived whole beside this row (`content`), and
+            // storing it again here doubled it on disk and had every later
+            // turn load it to list a link. A search result's pointer is its
+            // snippet.
+            excerpt: source
+                .excerpt
+                .as_deref()
+                .map(str::trim)
                 .filter(|value| !value.is_empty())
+                .or_else(|| Some(source.content.trim()).filter(|value| !value.is_empty()))
                 .map(ToOwned::to_owned),
             score: source.score,
         });
@@ -378,8 +386,9 @@ fn spawn_memory_indexing(
     conversation_id: String,
     memories: Vec<MemoryToIndex>,
 ) {
-    let cancel = crate::shared::runtime::background::cancellation_token();
-    crate::shared::runtime::background::spawn(async move {
+    let background = container.background();
+    let cancel = background.token();
+    background.spawn(async move {
         let loaded = tokio::select! {
             biased;
             _ = cancel.cancelled() => return,
@@ -461,7 +470,7 @@ fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
 /// Keep the per-message vector while respecting the active model's token budget.
 /// Every passage contributes; long answers are never silently truncated.
 async fn embed_memory(
-    service: &dyn crate::application::ports::EmbeddingPort,
+    service: &dyn lattice_core::application::ports::EmbeddingPort,
     content: &str,
 ) -> Result<Vec<f32>> {
     let chunks = service.split_text(content, "")?;
@@ -497,195 +506,11 @@ async fn embed_memory(
 }
 
 #[cfg(test)]
-mod memory_embedding_tests {
-    use super::*;
-    use crate::application::ports::{embedding_port::EmbeddingTextChunk, EmbeddingPort};
-
-    struct LimitedEmbedder;
-
-    #[async_trait::async_trait]
-    impl EmbeddingPort for LimitedEmbedder {
-        fn dimension(&self) -> usize {
-            2
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-        fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
-            Ok(text
-                .split_whitespace()
-                .map(|word| EmbeddingTextChunk {
-                    text: word.into(),
-                    start: 0,
-                    end: word.len(),
-                    token_count: 1,
-                })
-                .collect())
-        }
-        async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
-            if text.split_whitespace().count() > 1 {
-                return Err(AppError::InvalidInput("Model token limit exceeded".into()));
-            }
-            Ok(if text == "first" {
-                vec![1.0, 0.0]
-            } else {
-                vec![0.0, 1.0]
-            })
-        }
-        async fn embed_batch(&self, _: &[String]) -> Result<Vec<Vec<f32>>> {
-            unreachable!()
-        }
-    }
-
-    #[tokio::test]
-    async fn long_memory_embeds_all_passages_within_budget() {
-        assert!(LimitedEmbedder.embed_single("first last").await.is_err());
-        let vector = embed_memory(&LimitedEmbedder, "first last").await.unwrap();
-        let expected = std::f32::consts::FRAC_1_SQRT_2;
-        assert!((vector[0] - expected).abs() < 1e-6);
-        assert!((vector[1] - expected).abs() < 1e-6);
-    }
-
-    #[tokio::test]
-    async fn short_memory_retains_original_vector() {
-        assert_eq!(
-            embed_memory(&LimitedEmbedder, "first").await.unwrap(),
-            vec![1.0, 0.0]
-        );
-    }
-
-    #[tokio::test]
-    async fn empty_memory_is_rejected() {
-        assert!(embed_memory(&LimitedEmbedder, "").await.is_err());
-    }
-}
+mod memory_embedding_tests;
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod cited_web_source_tests {
-    use super::*;
-    use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
-
-    fn web(url: &str, title: &str, excerpt: &str) -> SourceDto {
-        SourceDto {
-            document_id: format!("{WEB_SOURCE_PREFIX}{url}"),
-            chunk_id: "web-result-1".to_string(),
-            content: excerpt.to_string(),
-            score: 0.5,
-            path: Some(url.to_string()),
-            position: Some(1),
-            file_name: title.to_string(),
-            file_path: url.to_string(),
-            mime_type: "text/html".to_string(),
-            category: "Web Article".to_string(),
-            file_size_bytes: 0,
-            modified_at: "2026-09-21T00:00:00Z".to_string(),
-            excerpt: None,
-            highlights: None,
-            section: None,
-            chunk_index: None,
-            page_number: None,
-            from_ocr: false,
-            chunk_excerpts: None,
-            citation_id: None,
-
-            web_snapshot: None,
-        }
-    }
-
-    fn document(id: &str) -> SourceDto {
-        SourceDto {
-            document_id: id.to_string(),
-            chunk_id: format!("{id}-c1"),
-            content: "A passage from a file on disk.".to_string(),
-            score: 0.9,
-            path: Some(format!("/vault/{id}.md")),
-            position: Some(1),
-            file_name: format!("{id}.md"),
-            file_path: format!("/vault/{id}.md"),
-            mime_type: "text/markdown".to_string(),
-            category: "Markdown".to_string(),
-            file_size_bytes: 0,
-            modified_at: "2026-09-21T00:00:00Z".to_string(),
-            excerpt: None,
-            highlights: None,
-            section: None,
-            chunk_index: None,
-            page_number: None,
-            from_ocr: false,
-            chunk_excerpts: None,
-            citation_id: None,
-
-            web_snapshot: None,
-        }
-    }
-
-    #[test]
-    fn a_turns_web_citations_are_what_gets_kept() {
-        let kept = cited_web_sources(&[
-            document("doc-1"),
-            web(
-                "https://example.com/broccolini",
-                "Growing broccolini",
-                "Broccolini tolerates light frost.",
-            ),
-            document("doc-2"),
-        ]);
-
-        assert_eq!(kept.len(), 1, "{kept:?}");
-        assert_eq!(kept[0].url, "https://example.com/broccolini");
-        assert_eq!(kept[0].title.as_deref(), Some("Growing broccolini"));
-        assert_eq!(
-            kept[0].excerpt.as_deref(),
-            Some("Broccolini tolerates light frost.")
-        );
-    }
-
-    /// The store is keyed by URL, so a second row for a page the turn cited
-    /// twice would only overwrite the first.
-    #[test]
-    fn one_page_cited_twice_is_kept_once() {
-        let kept = cited_web_sources(&[
-            web("https://example.com/a", "A", "first"),
-            web("https://EXAMPLE.com/a", "A again", "second"),
-        ]);
-
-        assert_eq!(kept.len(), 1, "{kept:?}");
-        assert_eq!(kept[0].excerpt.as_deref(), Some("first"));
-    }
-
-    /// A deep-research turn can cite dozens of pages. The prompt window that
-    /// reads these takes ten, so one turn must not fill it on its own and push
-    /// every earlier round of the conversation out.
-    #[test]
-    fn one_turn_cannot_crowd_out_every_earlier_round() {
-        let sources: Vec<SourceDto> = (0..40)
-            .map(|i| web(&format!("https://example.com/{i}"), "Page", "text"))
-            .collect();
-
-        assert_eq!(
-            cited_web_sources(&sources).len(),
-            CITED_WEB_SOURCES_KEPT_PER_TURN
-        );
-    }
-
-    /// A result with no title carries its URL as its file name. Stored as a
-    /// title, the prompt entry would read `- <url> (<url>)`.
-    #[test]
-    fn a_url_standing_in_for_a_missing_title_is_not_stored_as_one() {
-        let url = "https://example.com/untitled";
-        let kept = cited_web_sources(&[web(url, url, "")]);
-
-        assert_eq!(kept[0].title, None, "{kept:?}");
-        assert_eq!(kept[0].excerpt, None, "{kept:?}");
-    }
-
-    #[test]
-    fn a_turn_that_cited_no_web_page_stores_nothing() {
-        assert!(cited_web_sources(&[document("doc-1")]).is_empty());
-        assert!(cited_web_sources(&[]).is_empty());
-    }
-}
+mod cited_web_source_tests;
 
 /// Explicit user memory notes use the same embedding writer as chat turns.
 pub(crate) fn index_memory_note(
@@ -707,115 +532,4 @@ pub(crate) fn index_memory_note(
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod turn_commit_tests {
-    use super::*;
-    use crate::domain::conversation::MessageRole;
-    use crate::features::conversation::{
-        repository::ConversationRepository, service::ConversationService, ConversationServiceTrait,
-    };
-
-    async fn service_with_pending_question() -> (
-        Arc<dyn ConversationServiceTrait>,
-        sqlx::SqlitePool,
-        String,
-        String,
-    ) {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(
-            Arc::new(ConversationRepository::new(pool.clone())),
-        ));
-        let conversation = service
-            .create_conversation("Chat".into(), "model".into(), None)
-            .await
-            .unwrap();
-        let id = conversation.id.to_string();
-        let user = service
-            .add_message_with_status(
-                &id,
-                MessageRole::User,
-                "question".into(),
-                2,
-                "pending".into(),
-            )
-            .await
-            .unwrap();
-        (service, pool, id, user.id)
-    }
-
-    async fn status_of(pool: &sqlx::SqlitePool, id: &str) -> String {
-        sqlx::query_scalar("SELECT status FROM conversation_messages WHERE id=?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn failed_question_retains_request_identity_and_attachments() {
-        let (service, pool, id, _) = service_with_pending_question().await;
-        let llm: Arc<dyn crate::application::ports::LLMPort> =
-            Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
-        let (user_id, _) = persist_user_message_pending(
-            &service,
-            &id,
-            "request-one",
-            "same question",
-            &["notes.pdf".into()],
-            &["document-one".into()],
-            &llm,
-        )
-        .await
-        .unwrap();
-        mark_user_message_failed(&service, &user_id).await;
-        let raw: String =
-            sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
-                .bind(&user_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(metadata["requestId"], "request-one");
-        assert_eq!(metadata["attachments"], serde_json::json!(["notes.pdf"]));
-        assert_eq!(
-            metadata["attachmentDocumentIds"],
-            serde_json::json!(["document-one"])
-        );
-        assert_eq!(status_of(&pool, &user_id).await, "failed");
-    }
-
-    #[tokio::test]
-    async fn a_commit_that_fails_leaves_the_question_failed_not_pending() {
-        let (service, pool, id, user_id) = service_with_pending_question().await;
-        sqlx::query("CREATE TRIGGER fail_assistant BEFORE INSERT ON conversation_messages WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
-            .execute(&pool).await.unwrap();
-
-        let result = commit_turn(&service, &id, &user_id, "answer".into(), 3, None).await;
-
-        assert!(result.is_err());
-        assert_eq!(status_of(&pool, &user_id).await, "failed");
-    }
-
-    #[tokio::test]
-    async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
-        let (service, pool, id, user_id) = service_with_pending_question().await;
-        let answer = commit_turn(&service, &id, &user_id, "answer".into(), 3, None)
-            .await
-            .unwrap();
-
-        let messages = turn_transcript(
-            Err(AppError::Database("database is locked".into())),
-            &user_id,
-            "question",
-            2,
-            &answer,
-        );
-
-        assert_eq!(status_of(&pool, &user_id).await, "completed");
-        let roles: Vec<_> = messages.iter().map(|m| m.role.as_str()).collect();
-        assert_eq!(roles, ["user", "assistant"]);
-        assert_eq!(messages[1].id, answer.id);
-        assert_eq!(messages[1].content, "answer");
-        assert_eq!(messages[0].status, "completed");
-    }
-}
+mod turn_commit_tests;

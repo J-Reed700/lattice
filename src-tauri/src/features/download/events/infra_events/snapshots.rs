@@ -1,6 +1,6 @@
 //! Turning download-manager events into the single-file and batch snapshots the UI shows.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 use super::{DownloadEvent, DownloadEventBridge};
 
@@ -41,8 +41,8 @@ impl DownloadEventBridge {
     async fn create_batch_snapshot(
         &self,
         model_id: &str,
-    ) -> Result<crate::domain::download::snapshot::BatchSnapshot> {
-        use crate::domain::download::snapshot::{
+    ) -> Result<lattice_core::domain::download::snapshot::BatchSnapshot> {
+        use lattice_core::domain::download::snapshot::{
             BatchSnapshot, DownloadStatus, FileSnapshot, FileStatus,
         };
 
@@ -88,15 +88,17 @@ impl DownloadEventBridge {
                 .to_string();
 
             let file_status = match session.state() {
-                crate::domain::download::DownloadState::Pending => FileStatus::Pending,
-                crate::domain::download::DownloadState::Downloading => FileStatus::Downloading,
-                crate::domain::download::DownloadState::Completed => {
+                lattice_core::domain::download::DownloadState::Pending => FileStatus::Pending,
+                lattice_core::domain::download::DownloadState::Downloading => {
+                    FileStatus::Downloading
+                }
+                lattice_core::domain::download::DownloadState::Completed => {
                     completed_files += 1;
                     FileStatus::Completed
                 }
-                crate::domain::download::DownloadState::Failed => FileStatus::Error,
-                crate::domain::download::DownloadState::Cancelled => FileStatus::Error,
-                crate::domain::download::DownloadState::Paused => FileStatus::Pending,
+                lattice_core::domain::download::DownloadState::Failed => FileStatus::Error,
+                lattice_core::domain::download::DownloadState::Cancelled => FileStatus::Error,
+                lattice_core::domain::download::DownloadState::Paused => FileStatus::Pending,
             };
 
             files.push(FileSnapshot {
@@ -117,12 +119,12 @@ impl DownloadEventBridge {
             overall_status = DownloadStatus::Completed;
         } else if model_sessions
             .iter()
-            .any(|s| s.state() == &crate::domain::download::DownloadState::Failed)
+            .any(|s| s.state() == &lattice_core::domain::download::DownloadState::Failed)
         {
             overall_status = DownloadStatus::Error;
         } else if model_sessions
             .iter()
-            .any(|s| s.state() == &crate::domain::download::DownloadState::Paused)
+            .any(|s| s.state() == &lattice_core::domain::download::DownloadState::Paused)
         {
             overall_status = DownloadStatus::Paused;
         }
@@ -163,8 +165,8 @@ impl DownloadEventBridge {
         &self,
         event: crate::features::download::manager::DownloadEvent,
     ) -> Result<DownloadEvent> {
-        use crate::domain::download::snapshot::{DownloadStatus, SingleFileSnapshot};
         use crate::features::download::manager::DownloadEvent as ME;
+        use lattice_core::domain::download::snapshot::{DownloadStatus, SingleFileSnapshot};
 
         match event {
             ME::Started { id } => {

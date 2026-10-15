@@ -102,6 +102,45 @@ export namespace EventSchemas {
       noteId: z.string(),
     });
   }
+
+  export namespace WebPageSnapshot {
+    /// One frozen copy of a cited page, as `WebPageSnapshotDto` in the bindings.
+    export const Snapshot = z.object({
+      id: z.string(),
+      conversationId: z.string(),
+      requestedUrl: z.string(),
+      finalUrl: z.string().nullable(),
+      normalizedUrl: z.string(),
+      title: z.string().nullable(),
+      status: z.enum(['pending', 'ready', 'failed']),
+      method: z.string().nullable(),
+      capturedAt: z.string().nullable(),
+      byteSize: z.number().nullable(),
+      sha256: z.string().nullable(),
+      resourceCount: z.number(),
+      missingResourceCount: z.number(),
+      partial: z.boolean(),
+      partialReasons: z.array(z.string()),
+      errorCode: z.string().nullable(),
+      errorMessage: z.string().nullable(),
+      faviconDataUrl: z.string().nullable(),
+      progressMessage: z.string().nullable(),
+      verified: z.boolean().nullable(),
+    });
+
+    /// Every status flip and progress step of a capture, debounced by the backend.
+    export const Changed = z.object({
+      conversationId: z.string(),
+      url: z.string(),
+      snapshot: Snapshot,
+    });
+
+    /// A link clicked inside a frozen page. The page itself never navigates.
+    export const Link = z.object({
+      snapshotId: z.string(),
+      url: z.string(),
+    });
+  }
 }
 
 
@@ -194,6 +233,12 @@ export namespace TauriEvents {
       error: string;
     }
   }
+
+  export namespace WebPageSnapshot {
+    export type Snapshot = z.infer<typeof EventSchemas.WebPageSnapshot.Snapshot>;
+    export type Changed = z.infer<typeof EventSchemas.WebPageSnapshot.Changed>;
+    export type Link = z.infer<typeof EventSchemas.WebPageSnapshot.Link>;
+  }
 }
 
 
@@ -235,6 +280,10 @@ export const TauriEventNames = {
   Vault: {
     WriteError: 'vault:write-error' as const,
     NoteImported: 'vault:note-imported' as const,
+  },
+  WebPageSnapshot: {
+    Changed: 'web-page-snapshot:changed' as const,
+    Link: 'web-page-snapshot:link' as const,
   },
 } as const;
 

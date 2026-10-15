@@ -44,6 +44,8 @@ TAGS = frozenset({
 # the claim unsupported. A clause the passage rules out makes it contradicted
 # instead, and that case is tagged "multi_clause".
 PARTIAL_LABELS = frozenset({'supported', 'unsupported'})
+# Optional pair fields reported separately when a dataset has them.
+BREAKDOWN_FIELDS = ('subject', 'origin')
 BOOTSTRAP_RESAMPLES = 2000
 BOOTSTRAP_SEED = 20261012
 
@@ -130,6 +132,10 @@ def binary_metrics(gold_supported, predicted_supported):
         'recall_supported': recall_supported,
         'f1_supported': f1_supported,
         'macro_f1': sum(f1s) / len(f1s) if f1s else None,
+        # The two errors a gate makes: passing a claim the passage does not
+        # back, and stopping one it does.
+        'false_approvals': fp, 'false_approval_rate': _ratio(fp, fp + tn),
+        'false_blocks': fn, 'false_block_rate': _ratio(fn, tp + fn),
     }
 
 
@@ -230,6 +236,21 @@ def score_checker(pairs_by_id, rows):
     if any(isinstance(score, (int, float)) for score in scores):
         result['best_threshold'] = best_threshold(gold_supported, scores)
 
+    for field in BREAKDOWN_FIELDS:
+        groups = {}
+        for pair_id, g, pred in zip(ids, gold_supported, predicted_supported):
+            value = pairs_by_id[pair_id].get(field)
+            if value is not None:
+                groups.setdefault(value, ([], []))
+                groups[value][0].append(g)
+                groups[value][1].append(pred)
+        if groups:
+            result[f'by_{field}'] = {
+                value: {'pairs': len(golds), **{key: metric for key, metric in
+                                                binary_metrics(golds, preds).items()
+                                                if key.startswith(('false_', 'accuracy'))}}
+                for value, (golds, preds) in sorted(groups.items())}
+
     by_tag = {}
     for pair_id, g, pred in zip(ids, gold_supported, predicted_supported):
         for tag in pairs_by_id[pair_id]['difficulty']:
@@ -239,6 +260,22 @@ def score_checker(pairs_by_id, rows):
     result['by_tag'] = {tag: {'correct': c, 'pairs': n, 'accuracy': c / n}
                         for tag, (c, n) in sorted(by_tag.items())}
     return result
+
+
+def both_approve(name, first, second):
+    """Rows for a gate that passes a claim only when both checkers support it."""
+    second_by_id = {row['id']: row for row in second}
+    combined = []
+    for row in first:
+        other = second_by_id.get(row['id'])
+        if other is None:
+            continue
+        verdict = 'supported' if is_supported(row['verdict']) and is_supported(other['verdict']) \
+            else 'not_supported'
+        latencies = [r.get('latency_ms') for r in (row, other) if isinstance(r.get('latency_ms'), (int, float))]
+        combined.append({'id': row['id'], 'checker': name, 'verdict': verdict,
+                         'latency_ms': sum(latencies) if latencies else None})
+    return combined
 
 
 def group_by_checker(rows):
@@ -267,6 +304,24 @@ def markdown(scores):
             f"{_fmt(s['recall_unsupported'])} | {_fmt(s['recall_contradicted'])} | "
             f"{_fmt(s['macro_f1'])} | {_fmt(s.get('three_way_accuracy'))} | {s['unverified']} | "
             f"{_fmt(latency.get('median'), 0)} | {_fmt(latency.get('p95'), 0)} |")
+    lines += ['', '| checker | false approvals | false-approval rate | false blocks | false-block rate |',
+              '| --- | --- | --- | --- | --- |']
+    for name, s in scores.items():
+        lines.append(f"| {name} | {s['false_approvals']} | {_fmt(s['false_approval_rate'])} | "
+                     f"{s['false_blocks']} | {_fmt(s['false_block_rate'])} |")
+    for field in BREAKDOWN_FIELDS:
+        values = sorted({value for s in scores.values() for value in s.get(f'by_{field}', {})})
+        if not values:
+            continue
+        lines += ['', f'| checker | ' + ' | '.join(f'{field}={value} (FA / FB)' for value in values) + ' |',
+                  '|' + ' --- |' * (len(values) + 1)]
+        for name, s in scores.items():
+            cells = []
+            for value in values:
+                cell = s.get(f'by_{field}', {}).get(value)
+                cells.append('-' if cell is None else f"{cell['false_approvals']} / {cell['false_blocks']}"
+                             f" of {cell['pairs']}")
+            lines.append(f'| {name} | ' + ' | '.join(cells) + ' |')
     lines += ['', '| checker | best macro-F1 threshold | macro-F1 | bal. acc | prec. supported |',
               '| --- | --- | --- | --- | --- |']
     for name, s in scores.items():
@@ -283,6 +338,8 @@ def main(argv=None):
     parser.add_argument('--dataset', default=str(DEFAULT_DATASET))
     parser.add_argument('--library', help='synthetic library JSON; checks every passage is verbatim')
     parser.add_argument('--json-out', help='write every metric here')
+    parser.add_argument('--both', action='append', default=[], metavar='A,B',
+                        help='also score a gate that needs checkers A and B to agree on "supported"')
     args = parser.parse_args(argv)
 
     documents = None
@@ -292,8 +349,12 @@ def main(argv=None):
     pairs_by_id = validate_dataset(load_jsonl(args.dataset), documents)
 
     rows = [row for path in args.results for row in load_jsonl(path)]
+    grouped = group_by_checker(rows)
+    for spec in args.both:
+        first, second = spec.split(',')
+        grouped[f'{first} AND {second}'] = both_approve(f'{first} AND {second}', grouped[first], grouped[second])
     scores = {name: score_checker(pairs_by_id, checker_rows)
-              for name, checker_rows in group_by_checker(rows).items()}
+              for name, checker_rows in grouped.items()}
     print(markdown(scores))
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(scores, indent=2) + '\n', encoding='utf-8')

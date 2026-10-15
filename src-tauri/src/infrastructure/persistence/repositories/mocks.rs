@@ -29,9 +29,9 @@ use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapp
 use crate::features::embedding::repository::Embedding;
 use crate::features::mentions::entity::Mention;
 // Tag removed - migrated to DDD (MockTagRepository now in shared/traits.rs)
-// Chunk removed - migrated to DDD (use crate::domain::entities::chunk::Chunk)
-// Document removed - migrated to DDD (use crate::domain::entities::Document at line ~380)
-// Mention types removed - migrated to DDD (use crate::application::ports::mention_repository_port)
+// Chunk removed - migrated to DDD (use lattice_core::domain::entities::chunk::Chunk)
+// Document removed - migrated to DDD (use lattice_core::domain::entities::Document at line ~380)
+// Mention types removed - migrated to DDD (use lattice_core::application::ports::mention_repository_port)
 // use crate::infrastructure::persistence::repositories::mention_repository::{DocumentMention, Mention, MentionWithContext};
 
 mod chunk;
@@ -48,7 +48,7 @@ pub use mention::MockMentionRepository;
 // The old MockTagRepository using crate::models::tag::Tag has been removed.
 // Use the DDD version instead:
 // - Location: src/shared/traits.rs
-// - Uses: crate::domain::entities::tag::Tag (domain entity)
-// - Trait: crate::shared::traits::TagRepositoryTrait
+// - Uses: lattice_core::domain::entities::tag::Tag (domain entity)
+// - Trait: lattice_core::shared::traits::TagRepositoryTrait
 // Migration note: This mock was obsolete and using the old Tag model.
 // The canonical mock is in shared/traits.rs with proper DDD structure.

@@ -38,7 +38,7 @@
 
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use tauri::State;
 use tracing::{debug, error, info};
 

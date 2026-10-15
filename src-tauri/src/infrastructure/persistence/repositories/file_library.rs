@@ -1,7 +1,7 @@
 //! Document-repository schema persistence for the indexed-folder library.
-use crate::application::contracts::file_library::{IndexedFolder, IndexingActivity};
-use crate::application::ports::file_library::FileLibraryPort;
-use crate::shared::{error::Result, persistence::sql_like::directory_prefix_pattern};
+use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
+use lattice_core::application::ports::file_library::FileLibraryPort;
+use lattice_core::shared::{error::Result, persistence::sql_like::directory_prefix_pattern};
 use sqlx::SqlitePool;
 
 pub struct SqliteFileLibrary {
@@ -83,7 +83,7 @@ mod tests {
     // `std::path::MAIN_SEPARATOR` — a backslash on Windows — so POSIX-spelled
     // fixture rows would be asked to match `\`-separated children and count
     // zero documents.
-    use crate::shared::testing::paths::abs_str;
+    use lattice_core::shared::testing::paths::abs_str;
 
     async fn fixture() -> (SqlitePool, SqliteFileLibrary) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

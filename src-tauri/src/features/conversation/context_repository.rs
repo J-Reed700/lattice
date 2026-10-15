@@ -1,9 +1,9 @@
 //! SQLite adapter for supplemental chat context.
 
-use crate::application::ports::conversation_context::{
+use lattice_core::application::ports::conversation_context::{
     ConversationContextPort, LinkedConversationSource,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 pub struct SqliteConversationContext {
@@ -43,15 +43,24 @@ impl ConversationContextPort for SqliteConversationContext {
     async fn linked_sources(
         &self,
         conversation_id: &str,
-        limit: i64,
+        offset: usize,
+        limit: usize,
     ) -> Result<Vec<LinkedConversationSource>> {
-        if limit <= 0 {
-            return Ok(Vec::new());
-        }
         let rows = sqlx::query_as::<_, SourceRow>(
-            "SELECT title, url, excerpt FROM conversation_web_sources WHERE conversation_id = ? ORDER BY added_at DESC LIMIT ?"
-        ).bind(conversation_id).bind(limit).fetch_all(&self.pool).await
-            .map_err(|e| AppError::Database(format!("Failed to load linked web sources for conversation context: {}", e)))?;
+            "SELECT title, url, excerpt FROM conversation_web_sources WHERE conversation_id = ? \
+             ORDER BY added_at DESC, rowid DESC LIMIT ? OFFSET ?",
+        )
+        .bind(conversation_id)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .bind(i64::try_from(offset).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to load linked web sources for conversation context: {}",
+                e
+            ))
+        })?;
         Ok(rows
             .into_iter()
             .map(|row| LinkedConversationSource {
@@ -60,6 +69,17 @@ impl ConversationContextPort for SqliteConversationContext {
                 excerpt: row.excerpt,
             })
             .collect())
+    }
+
+    async fn linked_source_count(&self, conversation_id: &str) -> Result<usize> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM conversation_web_sources WHERE conversation_id = ?",
+        )
+        .bind(conversation_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to count linked web sources: {e}")))?;
+        Ok(usize::try_from(count).unwrap_or(0))
     }
 }
 
@@ -99,14 +119,18 @@ mod tests {
                 Some("prompt")
             );
         }
-        let rows = adapter.linked_sources("chat", 1).await.unwrap();
-        assert_eq!(rows.len(), 1);
+        let rows = adapter.linked_sources("chat", 0, 10).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(adapter.linked_source_count("chat").await.unwrap(), 2);
+        let second = adapter.linked_sources("chat", 1, 10).await.unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].url, "old-url");
         assert_eq!(rows[0].url, "new-url");
         assert_eq!(rows[0].title, None);
         assert_eq!(rows[0].excerpt.as_deref(), Some("excerpt"));
-        assert!(adapter.linked_sources("chat", 0).await.unwrap().is_empty());
+        assert_eq!(rows[1].url, "old-url");
         assert!(adapter
-            .linked_sources("missing", 10)
+            .linked_sources("missing", 0, 10)
             .await
             .unwrap()
             .is_empty());
@@ -121,7 +145,7 @@ mod tests {
             Err(AppError::Database(_))
         ));
         assert!(matches!(
-            adapter.linked_sources("chat", 10).await,
+            adapter.linked_sources("chat", 0, 10).await,
             Err(AppError::Database(_))
         ));
     }

@@ -6,8 +6,8 @@ use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
 };
 use crate::features::settings::dto::CustomToolSettingsDto;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 use std::collections::HashMap;
 
 #[async_trait]

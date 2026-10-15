@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Generates tags for a document using LLM analysis
 ///
@@ -79,7 +79,6 @@ use crate::shared::error::{AppError, Result};
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Strict rate limiting on LLM calls (expensive operations)
-/// - **Audit Logging (CWE-778)**: Logs tag generation with success/failure and tag count
 /// - **Resource Protection**: LLM operations are costly - rate limiter prevents abuse
 ///
 /// # LLM Tag Generation Process
@@ -117,7 +116,6 @@ use crate::shared::error::{AppError, Result};
 /// This command is a **thin controller** that:
 /// 1. Applies strict LLM rate limiting
 /// 2. Delegates to `GenerateTagsUseCase` (LLM prompting, tag extraction)
-/// 3. Logs audit event (success/failure, tag count)
 ///
 /// # Command Flow
 ///
@@ -128,8 +126,7 @@ use crate::shared::error::{AppError, Result};
 ///    - Call LLM API
 ///    - Parse and validate tags
 ///    - Score confidence
-/// 3. Log audit event (tags_generated, count)
-/// 4. Return generated tags with metadata
+/// 3. Return generated tags with metadata
 ///
 /// # Performance
 ///
@@ -161,34 +158,7 @@ pub async fn generate_tags_impl(
     container.get_or_load_llm().await?;
 
     let use_case = container.generate_tags_use_case();
-    let response = use_case.execute(request.clone()).await;
-
-    // Audit logging
-    let logger = crate::audit::get_audit_logger();
-    match &response {
-        Ok(resp) => {
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::Custom("tags_generated".to_string()),
-                request.document_id.as_str(),
-                "tags_count" => resp.tags.len().to_string().as_str()
-            )
-            .await
-            .ok();
-        }
-        Err(e) => {
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::Custom("tags_generated".to_string()),
-                request.document_id.as_str(),
-                e.to_string().as_str()
-            )
-            .await
-            .ok();
-        }
-    }
-
-    response
+    use_case.execute(request).await
 }
 
 /// ## Tauri Command Layer (Thin Wrapper)
@@ -263,7 +233,6 @@ pub async fn generate_tags_ddd(
 /// - **Rate Limiting (CWE-770)**: Strict LLM rate limiting prevents resource exhaustion
 /// - **Hard Batch Limit (CWE-770)**: Maximum 100 documents per batch (DoS prevention)
 /// - **Input Validation**: Batch size validated before processing
-/// - **Audit Logging (CWE-778)**: Logs bulk operations with statistics
 ///
 /// # Hard Limits (DoS Prevention)
 ///
@@ -317,7 +286,6 @@ pub async fn generate_tags_ddd(
 /// 1. Applies strict LLM rate limiting
 /// 2. Validates batch size (hard limit enforcement)
 /// 3. Delegates to `AutoTagDocumentsUseCase` (batch processing, throttling, error handling)
-/// 4. Logs audit event with statistics
 ///
 /// # Command Flow
 ///
@@ -330,8 +298,7 @@ pub async fn generate_tags_ddd(
 ///      - Apply tags to document
 ///      - Handle errors gracefully
 ///      - Throttle between documents
-/// 4. Log audit event (bulk operation stats)
-/// 5. Return statistics
+/// 4. Return statistics
 ///
 /// # Use Cases
 ///
@@ -373,17 +340,6 @@ pub async fn auto_tag_all_documents_ddd(
 
     let use_case = container.auto_tag_all_documents_use_case();
     let response = use_case.execute(request).await?;
-
-    // Audit
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::Custom("auto_tag_all".to_string()),
-        "batch",
-        "tagged_count" => response.tagged_count.to_string().as_str()
-    )
-    .await
-    .ok();
 
     Ok(response)
 }

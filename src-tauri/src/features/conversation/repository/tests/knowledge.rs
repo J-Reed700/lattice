@@ -196,11 +196,14 @@ async fn invalid_dates_and_missing_evidence_fail_without_mutation() {
 
 struct Embedder;
 #[async_trait::async_trait]
-impl crate::application::ports::EmbeddingPort for Embedder {
-    async fn embed_single(&self, _: &str) -> crate::shared::error::Result<Vec<f32>> {
+impl lattice_core::application::ports::EmbeddingPort for Embedder {
+    async fn embed_single(&self, _: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         Ok(vec![1.0, 0.0])
     }
-    async fn embed_batch(&self, texts: &[String]) -> crate::shared::error::Result<Vec<Vec<f32>>> {
+    async fn embed_batch(
+        &self,
+        texts: &[String],
+    ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
         Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
     }
     fn dimension(&self) -> usize {
@@ -209,13 +212,13 @@ impl crate::application::ports::EmbeddingPort for Embedder {
     fn model_identity(&self) -> String {
         "test-space".into()
     }
-    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
     }
 }
 #[tokio::test]
 async fn semantic_recall_finds_paraphrases_but_never_foreign_or_incompatible_vectors() {
-    use crate::application::ports::conversation_memory::ConversationMemoryReadPort;
+    use lattice_core::application::ports::conversation_memory::ConversationMemoryReadPort;
     let (pool, repo) = setup().await;
     for (id, conversation, model, text) in [
         ("dog", "one", "test-space", "The dog likes the park."),

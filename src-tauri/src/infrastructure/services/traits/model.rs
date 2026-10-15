@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 #[async_trait]
 pub trait ModelManagerTrait: Send + Sync {

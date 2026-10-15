@@ -9,7 +9,7 @@ use crate::features::explorer::index::search::FolderSearch;
 use crate::features::explorer::index::store;
 use crate::features::explorer::index::watcher::{self, Change, FolderWatcher};
 use crate::features::explorer::scope::Scope;
-use crate::shared::{runtime::jobs::JobStatus, Result};
+use lattice_core::shared::{runtime::jobs::JobStatus, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -83,7 +83,7 @@ impl FolderIndexManager {
                 .store
                 .set_meta(
                     store::META_LAST_OPENED,
-                    &store::next_open_stamp().to_string(),
+                    &self.open_stamps.next().to_string(),
                 )
                 .await?;
             index.store.counts(&prefix).await
@@ -109,7 +109,7 @@ impl FolderIndexManager {
 
         // Watching starts before the build, so a save made during a long
         // build is picked up after it rather than missed.
-        let cancel = crate::shared::runtime::background::cancellation_token().child_token();
+        let cancel = self.background.token().child_token();
         let watching = match watcher::watch(&root, self.config.debounce) {
             Ok((watcher, changes)) => {
                 let task = WatchTask {
@@ -122,7 +122,7 @@ impl FolderIndexManager {
                     cancel: cancel.clone(),
                     limits: self.config.limits,
                 };
-                crate::shared::runtime::background::spawn(task.run(watcher, changes))
+                self.background.spawn(task.run(watcher, changes))
             }
             Err(error) => {
                 warn!(%error, "Folder index runs without a watcher");
@@ -236,11 +236,11 @@ impl FolderIndexManager {
             if current.root != root {
                 return None;
             }
+            // A folder past the file bound is indexed up to it, so its index
+            // is searched for what it holds.
             if matches!(
                 current.status.get().state,
-                FolderIndexState::TooLarge
-                    | FolderIndexState::Refused
-                    | FolderIndexState::Unavailable
+                FolderIndexState::Refused | FolderIndexState::Unavailable
             ) {
                 return None;
             }

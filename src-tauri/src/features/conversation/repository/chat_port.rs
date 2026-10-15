@@ -1,11 +1,11 @@
 //! The chat turn's records port over this repository.
 use super::ConversationRepository;
-use crate::application::contracts::search::{CorpusDocument, CorpusPassage};
-use crate::application::ports::EmbeddingPort;
 use crate::features::conversation::chat::ports::{ChatRecords, MemoryVector};
 use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -23,6 +23,13 @@ impl ChatRecords for ConversationRepository {
         allowed_ids: &HashSet<String>,
     ) -> Result<Vec<CorpusDocument>> {
         ConversationRepository::retrieval_catalog(self, allowed_ids).await
+    }
+
+    async fn retrieval_mean_chunk_chars(
+        &self,
+        allowed_ids: &HashSet<String>,
+    ) -> Result<Option<usize>> {
+        ConversationRepository::retrieval_mean_chunk_chars(self, allowed_ids).await
     }
 
     async fn retrieval_openings(

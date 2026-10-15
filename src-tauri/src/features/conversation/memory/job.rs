@@ -6,6 +6,7 @@
 //! selection, the batch loop, the candidate ledger a run builds before it is
 //! allowed to write anything, and the single commit that publishes it.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,27 +15,22 @@ use parking_lot::Mutex as SyncMutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
-use crate::application::ports::conversation_memory::{
-    ConversationMemoryPort, MemoryCommitCandidate, MemoryCommitPreconditions, SourceReadLimits,
-    SourceSpanRef, SummaryUpdate,
+use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
+    MemoryCommit, MemoryItem, MemorySnapshot, MemoryState, SourceMessage, SuppressedSpan,
+    SuppressionsByMessage,
 };
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{
-    apply_patch, EvidenceSpan, MemoryCommit, MemoryItem, MemoryKind, MemoryState,
-    MemoryValidationError, SemanticVerdict, SourceMessage, ValidatedPatch,
-    ValidatedTransitionTarget,
-};
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
-use super::prompts::{EXTRACTOR_PROMPT_VERSION, VALIDATOR_VERSION};
 use super::segment::SourceSegment;
-use super::selection::{adjacent_context, quotable_messages, render_context, select_boundary};
-use super::verify::EvidenceText;
 use super::{
-    extract, segment, summarize, verify, CompactionConfig, CompactionError, CompactionOutcome,
-    CompactionRequest, CompactionStatus, CompactionTrigger, Deadline, TokenCounter,
-    MAX_COMMIT_CONFLICT_RETRIES,
+    CompactionConfig, CompactionError, CompactionOutcome, CompactionRequest, CompactionStatus,
+    CompactionTrigger, Deadline, TokenCounter, MAX_COMMIT_CONFLICT_RETRIES,
 };
+
+mod attempt;
+mod reads;
 
 /// Extraction and compaction for one application.
 ///
@@ -195,7 +191,7 @@ impl CompactionJob {
                     let deadline =
                         Deadline::new(self.config.deadline, request.cancellation.clone())
                             .for_conversation(request.trigger.priority(), conversation_id);
-                    self.run_with_retry(conversation_id, &request, &operation_id, &deadline)
+                    self.run_pages(conversation_id, &request, &operation_id, &deadline)
                         .await
                 }
             }
@@ -247,6 +243,59 @@ impl CompactionJob {
         drop(slot);
     }
 
+    /// [`Self::run_with_retry`], again for each further page of a dropped
+    /// summary while consolidation's deadline has room for one.
+    ///
+    /// Only consolidation keeps going: it runs after an answer with no one
+    /// waiting, while a `/compact` or the compaction a turn waits on takes one
+    /// page as before. Each page commits on its own, so stopping early loses
+    /// nothing and the next run resumes from the summary's boundary. A page
+    /// needs room for twice what the last one took; one the deadline or a
+    /// cancellation cuts short anyway commits nothing, and the run reports
+    /// the pages before it rather than a failure.
+    async fn run_pages(
+        &self,
+        conversation_id: &str,
+        request: &CompactionRequest,
+        operation_id: &str,
+        deadline: &Deadline,
+    ) -> std::result::Result<CompactionOutcome, CompactionError> {
+        let started = Instant::now();
+        let mut outcome = self
+            .run_with_retry(conversation_id, request, operation_id, deadline)
+            .await?;
+        let mut last_page = started.elapsed();
+        let mut page = 1usize;
+        while request.trigger == CompactionTrigger::Maintenance
+            && outcome.refold_pending
+            && deadline.left() >= last_page.saturating_mul(2)
+        {
+            page += 1;
+            let started = Instant::now();
+            // Its own idempotency key: under the run's, the commit would be
+            // taken for a retry of the first page and not applied.
+            let page_operation = format!("{operation_id}/refold-{page}");
+            let next = match self
+                .run_with_retry(conversation_id, request, &page_operation, deadline)
+                .await
+            {
+                Ok(next) => next,
+                Err(CompactionError::DeadlineExceeded(_) | CompactionError::Cancelled) => break,
+                Err(other) => return Err(other),
+            };
+            // A page that ends where the last one did made no progress, and
+            // asking again would only repeat it.
+            if next.status == CompactionStatus::NothingToCompact
+                || next.boundary_message_id == outcome.boundary_message_id
+            {
+                break;
+            }
+            outcome = next;
+            last_page = started.elapsed();
+        }
+        Ok(outcome)
+    }
+
     /// One fresh-snapshot retry after a commit conflict (§11.2).
     async fn run_with_retry(
         &self,
@@ -276,582 +325,107 @@ impl CompactionJob {
             }
         }
     }
+}
 
-    /// One whole attempt, from snapshot to commit.
-    async fn attempt(
-        &self,
-        conversation_id: &str,
-        request: &CompactionRequest,
-        operation_id: &str,
-        deadline: &Deadline,
-        commit_conflict_retries: usize,
-    ) -> std::result::Result<CompactionOutcome, CompactionError> {
-        deadline.check()?;
-        let snapshot_phase = PhaseTiming::start(conversation_id, "load_snapshot");
-        let snapshot = self.memory.load_snapshot(conversation_id).await;
-        snapshot_phase.finish(if snapshot.is_ok() {
-            "completed"
-        } else {
-            "error"
-        });
-        let snapshot = snapshot?;
+// ---------------------------------------------------------------------------
+// Summary refold
+// ---------------------------------------------------------------------------
 
-        // An unsupported schema or an invalidating edit means the stored ledger
-        // cannot be trusted, so this run rebuilds from sequence zero rather than
-        // appending to state it cannot read (invariant 14).
-        let rebuild = !snapshot.is_usable();
-        let start_after = if rebuild {
-            0
-        } else {
-            snapshot.state.processed_through_sequence
-        };
-        let operation = match (rebuild, request.trigger) {
-            (true, _) => "rebuild",
-            (false, CompactionTrigger::Automatic) => "auto_compact",
-            (false, CompactionTrigger::Manual) => "compact",
-            (false, CompactionTrigger::Maintenance) => "consolidate",
-        };
-        if snapshot.latest_sequence <= start_after {
-            return Ok(CompactionOutcome::nothing(&snapshot));
-        }
+/// Where the working summary's coverage ends, never past the watermark.
+///
+/// Normally that is the watermark itself: every commit ends the summary on the
+/// last message it processed. But a delete drops a summary whose boundary is at
+/// or after the deleted message (by trigger, or by its `up_to_message_id`
+/// cascade), and a user correction clears it, while the ledger stays usable and
+/// the watermark stays put. With no summary every eligible message at or below
+/// the watermark is then covered by extraction and by no summary, so it is
+/// folded again from the start. A summary whose boundary cannot be placed is
+/// trusted to reach the watermark, as it always was.
+fn summary_resume_point(snapshot: &MemorySnapshot, start_after: i64) -> i64 {
+    match (&snapshot.summary, snapshot.summary_through_sequence) {
+        (None, _) => 0,
+        (Some(_), Some(through)) => through.min(start_after),
+        (Some(_), None) => start_after,
+    }
+}
 
-        let source_phase = PhaseTiming::start(conversation_id, "read_source_window");
-        let source_window = self
-            .read_window(conversation_id, start_after, snapshot.latest_sequence)
-            .await;
-        source_phase.finish(if source_window.is_ok() {
-            "completed"
-        } else {
-            "error"
-        });
-        let (window, reached_end) = source_window?;
-        let keep_recent = request
-            .keep_recent_messages
-            .unwrap_or(self.config.keep_recent_messages)
-            .max(1);
-        let boundary = if request.trigger == CompactionTrigger::Maintenance {
-            // Only completed turns: never extract a pending user turn while its
-            // answer is being generated. Recent messages remain available raw.
-            window
-                .iter()
-                .rposition(|m| {
-                    m.role == crate::domain::conversation::memory::SourceRole::Assistant
-                        && m.status == "completed"
-                })
-                .map(|index| index + 1)
-        } else {
-            select_boundary(&window, reached_end, keep_recent)
-        };
-        let Some(prefix_len) = boundary else {
-            return Ok(CompactionOutcome::nothing(&snapshot));
-        };
-        let prefix = window.get(..prefix_len).unwrap_or(&window);
-        let Some(boundary) = prefix.last() else {
-            return Ok(CompactionOutcome::nothing(&snapshot));
-        };
-        let boundary_sequence = boundary.sequence;
-
-        // A failed assistant output is not shown at all. It cannot be evidence
-        // (§6.2 rule 8), and offering it as context invites a quote that the
-        // validator would then reject, taking the whole batch with it. The
-        // watermark still covers it: it was considered, not skipped.
-        let eligible: Vec<SourceMessage> = prefix
-            .iter()
-            .filter(|message| message.is_eligible_source())
-            .cloned()
-            .collect();
-        let segments = segment::segment_messages(
-            &eligible,
-            self.config.segment_max_bytes,
-            self.config.segment_overlap_chars,
-        );
-        let segments_submitted = segments.len();
-        let batches = segment::plan_batches(
-            segments,
-            self.config.max_segments_per_batch,
-            self.config.max_batch_bytes,
-        );
-
-        let mut ledger = CandidateLedger::new(snapshot.active_items.clone());
-        let next_revision = snapshot.state.memory_revision + 1;
-        let mut accepted_through = boundary_sequence;
-        let mut segments_rejected: Vec<String> = Vec::new();
-        let mut rejection: Option<MemoryValidationError> = None;
-        let mut halt: Option<&'static str> = None;
-        let mut extraction_calls = 0usize;
-        let mut repaired_batches = 0usize;
-        let mut review_calls = 0usize;
-        let mut review_degraded = false;
-        let mut conflicts_recorded = 0usize;
-
-        for batch in &batches {
-            let context = adjacent_context(&eligible, batch);
-            let quotable = quotable_messages(&eligible, batch, &context);
-            let rendered = render_context(&context);
-
-            let extraction_phase = PhaseTiming::start(conversation_id, "extract");
-            let outcome = extract::extract_segments(
-                self.utility_llm.as_ref(),
-                deadline,
-                batch,
-                &quotable,
-                &rendered,
-                ledger.active(),
-            )
-            .await;
-            extraction_phase.finish(if outcome.is_ok() {
-                "completed"
-            } else {
-                "error"
-            });
-            let outcome = match outcome {
-                Ok(outcome) => outcome,
-                Err(CompactionError::Rejected(error)) => {
-                    // Everything from this batch onward stays unprocessed, so
-                    // the same source is offered again next time (§6.2).
-                    segments_rejected.extend(extract::segment_ids(batch));
-                    accepted_through = hold_before(batch, start_after, accepted_through);
-                    rejection = Some(error);
-                    break;
-                }
-                Err(other) => return Err(other),
-            };
-            extraction_calls += outcome.attempts;
-            if outcome.repaired {
-                repaired_batches += 1;
+/// `messages` with every span the user forgot replaced by a marker.
+///
+/// Only the copies handed to the summariser change; the transcript and the ids
+/// recorded on the commit do not.
+fn redact_forgotten(
+    messages: Vec<SourceMessage>,
+    suppressed: &[SuppressedSpan],
+) -> Vec<SourceMessage> {
+    if suppressed.is_empty() {
+        return messages;
+    }
+    let forgotten = SuppressionsByMessage::new(suppressed);
+    messages
+        .into_iter()
+        .map(|mut message| {
+            if let Cow::Owned(redacted) = forgotten.redact(&message.id, &message.content) {
+                message.content = redacted;
             }
-
-            let evidence_phase = PhaseTiming::start(conversation_id, "resolve_review_evidence");
-            let evidence = self
-                .resolve_review_evidence(
-                    conversation_id,
-                    &outcome.patch,
-                    &eligible,
-                    ledger.active(),
-                )
-                .await;
-            evidence_phase.finish(if evidence.is_ok() {
-                "completed"
-            } else {
-                "error"
-            });
-            let evidence = evidence?;
-            let review_phase = PhaseTiming::start(conversation_id, "review");
-            let review = verify::review_patch(
-                self.utility_llm.as_ref(),
-                deadline,
-                &outcome.patch,
-                ledger.active(),
-                &eligible,
-                &evidence,
-            )
-            .await;
-            review_phase.finish(if review.is_ok() { "completed" } else { "error" });
-            let review = review?;
-            review_calls += review.calls;
-            review_degraded |= review.degraded;
-
-            // §6.3: confidently unsupported operations are filtered by
-            // `apply_patch`. They must not poison supported operations from the
-            // same batch or stall the watermark forever when an extractor keeps
-            // proposing the same assistant-derived detail. The source is still
-            // covered by the working summary. An *ambiguous* optional addition
-            // remains different: dropping it after a reviewer outage or genuine
-            // uncertainty could silently lose user memory, so that case retries.
-            if outcome.patch.additions.iter().any(|addition| {
-                !addition.kind.is_mandatory()
-                    && !matches!(
-                        review.addition_verdicts.get(&addition.candidate_id),
-                        Some(SemanticVerdict::Supported | SemanticVerdict::Unsupported)
-                    )
-            }) {
-                segments_rejected.extend(extract::segment_ids(batch));
-                accepted_through = hold_before(batch, start_after, accepted_through);
-                halt = Some("ambiguous_optional_addition");
-                break;
-            }
-            let commit = apply_patch(
-                conversation_id,
-                &outcome.patch,
-                ledger.active(),
-                &review.addition_verdicts,
-                &review.transition_verdicts,
-                next_revision,
-                accepted_through,
-            );
-            conflicts_recorded += commit
-                .inserts
-                .iter()
-                .filter(|item| item.kind == MemoryKind::UnresolvedChange)
-                .count();
-            ledger.absorb(commit);
-        }
-
-        // Nothing was accepted: there is no watermark to advance and no summary
-        // worth writing, so this attempt commits nothing at all.
-        if accepted_through <= start_after {
-            if let Some(error) = rejection {
-                return Err(CompactionError::Rejected(error));
-            }
-            if let Some(code) = halt {
-                return Err(CompactionError::ReviewUnresolved(code));
-            }
-            return Ok(CompactionOutcome::nothing(&snapshot));
-        }
-
-        // What this run processed, recorded on the commit's event.
-        let processed: Vec<&SourceMessage> = eligible
-            .iter()
-            .filter(|message| message.sequence <= accepted_through)
-            .collect();
-
-        // The summary starts where the last one ended, which is usually behind
-        // the watermark: extraction ran on every answer since, the summary
-        // only when a prompt's window had to move. A rebuild starts both from
-        // nothing and must not fold the earlier summary back in, since it was
-        // written against a boundary this run is discarding (§7.2).
-        let (summary_after, previous_summary) = if rebuild {
-            (0, None)
-        } else {
-            (
-                snapshot.summary_through_sequence,
-                snapshot.summary.as_deref(),
-            )
-        };
-        let fold_through = fold_target(request, summary_after, accepted_through);
-        let fold_window = match fold_through {
-            Some(through) => {
-                self.fold_source(conversation_id, summary_after, start_after, through, prefix)
-                    .await?
-            }
-            None => Vec::new(),
-        };
-        // Only eligible text is folded: a failed assistant output is not part of
-        // the conversation's progress. The *display* boundary below still points
-        // at the last message folded over, eligible or not, because that is
-        // where the summary ends and where the divider belongs.
-        let folded: Vec<SourceMessage> = fold_window
-            .iter()
-            .filter(|message| message.is_eligible_source())
-            .cloned()
-            .collect();
-        let display_boundary = fold_window.last();
-        let summary = match fold_through {
-            Some(_) => {
-                let summary_phase = PhaseTiming::start(conversation_id, "summary");
-                let summary = summarize::fold_summary(
-                    self.utility_llm.as_ref(),
-                    deadline,
-                    previous_summary,
-                    &folded,
-                    &ledger.mandatory_labels(),
-                    self.config.summary_token_budget,
-                    self.count_tokens.as_ref(),
-                )
-                .await;
-                summary_phase.finish(if summary.is_ok() {
-                    "completed"
-                } else {
-                    "error"
-                });
-                Some(summary?)
-            }
-            None => None,
-        };
-
-        let summary_text = summary
-            .as_ref()
-            .map(|summary| summary.text.clone())
-            .filter(|text| !text.is_empty());
-        let (inserts, updates) = ledger.into_changes();
-        let commit = MemoryCommit {
-            inserts,
-            updates,
-            summary: summary_text.clone(),
-            processed_through_sequence: accepted_through,
-        };
-        let summary_update = match (summary_text, display_boundary, &summary) {
-            (Some(text), Some(last), Some(summary)) => Some(SummaryUpdate {
-                summary_text: text,
-                up_to_message_id: last.id.clone(),
-                original_message_count: folded.len() as i64,
-                original_tokens: folded
-                    .iter()
-                    .map(|message| (self.count_tokens)(&message.content) as i64)
-                    .sum(),
-                summary_tokens: summary.tokens as i64,
-            }),
-            _ => None,
-        };
-
-        let candidate = MemoryCommitCandidate {
-            commit: commit.clone(),
-            summary: summary_update,
-            source_message_ids: processed.iter().map(|message| message.id.clone()).collect(),
-            transcript_revision: snapshot.transcript_revision,
-            extractor_model_identity: Some(self.utility_llm.model_name().to_string()),
-            extractor_prompt_version: Some(EXTRACTOR_PROMPT_VERSION.to_string()),
-            validator_version: Some(VALIDATOR_VERSION.to_string()),
-            operation: operation.to_string(),
-        };
-        let preconditions = MemoryCommitPreconditions {
-            conversation_id: conversation_id.to_string(),
-            expected_transcript_revision: snapshot.transcript_revision,
-            expected_memory_revision: snapshot.state.memory_revision,
-            operation_id: operation_id.to_string(),
-        };
-        let commit_phase = PhaseTiming::start(conversation_id, "commit");
-        let committed = self.memory.commit_memory(&preconditions, &candidate).await;
-        commit_phase.finish(if committed.is_ok() {
-            "completed"
-        } else {
-            "error"
-        });
-        let committed = committed.map_err(CompactionError::Commit)?;
-
-        // Retaining the recent tail is the design, not unfinished work. This run
-        // is incomplete only when the work cap stopped the read short of the
-        // transcript, or a batch was rejected and the watermark stayed behind it.
-        let incomplete = !reached_end || rejection.is_some() || halt.is_some();
-        info!(
-            conversation_id,
-            operation,
-            memory_revision = committed.memory_revision,
-            processed_through = committed.processed_through_sequence,
-            mandatory = committed.active_mandatory_count,
-            conflicts = conflicts_recorded,
-            rejected_segments = segments_rejected.len(),
-            incomplete,
-            summary_through = ?display_boundary.map(|message| message.sequence),
-            "Conversation memory committed"
-        );
-
-        Ok(CompactionOutcome {
-            status: if incomplete {
-                CompactionStatus::Partial
-            } else {
-                CompactionStatus::Committed
-            },
-            memory_revision: committed.memory_revision,
-            transcript_revision: committed.transcript_revision,
-            processed_through_sequence: committed.processed_through_sequence,
-            boundary_message_id: display_boundary.map(|message| message.id.clone()),
-            active_mandatory_count: committed.active_mandatory_count,
-            active_optional_count: committed.active_optional_count,
-            // The summary in force after this run: the refolded one, or the
-            // one it left as it was.
-            summary: commit
-                .summary
-                .clone()
-                .or_else(|| previous_summary.map(str::to_owned)),
-            summary_tokens: summary.as_ref().map_or(0, |summary| summary.tokens),
-            summary_regenerated: summary.as_ref().is_some_and(|summary| summary.regenerated),
-            commit,
-            source_messages_read: window.len(),
-            segments_submitted,
-            segments_rejected,
-            rejection_code: rejection
-                .map(|error| error.code().to_string())
-                .or_else(|| halt.map(str::to_string)),
-            extraction_calls,
-            repaired_batches,
-            review_calls,
-            review_degraded,
-            conflicts_recorded,
-            commit_conflict_retries,
-            resume_after_sequence: incomplete.then_some(accepted_through),
-            was_already_committed: committed.was_already_committed,
+            message
         })
-    }
+        .collect()
+}
 
-    /// Page the unprocessed range up to this attempt's work cap.
-    ///
-    /// Returns the messages read and whether they reach the end of the
-    /// transcript. Stopping short is reported, never silently absorbed: the
-    /// caller turns it into resumable progress (§7.5).
-    async fn read_window(
-        &self,
-        conversation_id: &str,
-        start_after: i64,
-        latest_sequence: i64,
-    ) -> std::result::Result<(Vec<SourceMessage>, bool), CompactionError> {
-        let mut window: Vec<SourceMessage> = Vec::new();
-        let mut bytes = 0usize;
-        let mut cursor = start_after;
+/// One page of `(summary boundary, watermark]`: source the ledger covers and
+/// the summary must cover again. It is folded, never re-extracted.
+struct Refold {
+    /// Everything read, eligible or not. The last message is where the new
+    /// summary ends, so the next refold starts after it.
+    read: Vec<SourceMessage>,
+    /// The read reached the watermark, so fresh source can follow it into the
+    /// same fold without leaving a gap.
+    finished: bool,
+    /// There is something to write: eligible source, or an earlier summary to
+    /// carry forward to a later boundary. Without either the range holds only
+    /// failed outputs, and a conversation in that state does not refold.
+    foldable: bool,
+}
 
-        while cursor < latest_sequence {
-            let message_room = self
-                .config
-                .max_source_messages_per_attempt
-                .saturating_sub(window.len());
-            let byte_room = self
-                .config
-                .max_source_bytes_per_attempt
-                .saturating_sub(bytes);
-            if message_room == 0 || byte_room == 0 {
-                break;
-            }
-            let limits = SourceReadLimits::new(
-                self.config
-                    .source_read_limits
-                    .max_messages
-                    .min(message_room),
-                self.config.source_read_limits.max_bytes.min(byte_room),
-            );
-            let page = self
-                .memory
-                .page_source_messages(conversation_id, cursor, latest_sequence, limits)
-                .await?;
-            if page.messages.is_empty() || page.next_after_sequence <= cursor {
-                break;
-            }
-            bytes = bytes.saturating_add(
-                page.messages
-                    .iter()
-                    .map(|message| message.content.len())
-                    .sum(),
-            );
-            cursor = page.next_after_sequence;
-            window.extend(page.messages);
-            if !page.has_more {
-                break;
-            }
+impl Refold {
+    fn none() -> Self {
+        Self {
+            read: Vec::new(),
+            finished: true,
+            foldable: false,
         }
-        Ok((window, cursor >= latest_sequence))
     }
 
-    /// The messages a refold covers: after `summary_after`, through `through`.
-    ///
-    /// Those at or below the watermark were extracted by earlier runs and are
-    /// read again here; the rest are this run's own window. A read the work
-    /// cap stops short folds what it got, and the summary ends there: the
-    /// next prompt whose window still has to move asks for the rest.
-    async fn fold_source(
-        &self,
-        conversation_id: &str,
-        summary_after: i64,
-        start_after: i64,
-        through: i64,
-        window: &[SourceMessage],
-    ) -> std::result::Result<Vec<SourceMessage>, CompactionError> {
-        let mut source = Vec::new();
-        if summary_after < start_after {
-            let (older, reached) = self
-                .read_window(conversation_id, summary_after, start_after.min(through))
-                .await?;
-            source = older;
-            if !reached {
-                return Ok(source);
-            }
+    /// The message the refolded summary ends on, when there is one to write.
+    fn boundary(&self) -> Option<&SourceMessage> {
+        if self.foldable {
+            self.read.last()
+        } else {
+            None
         }
-        source.extend(
-            window
-                .iter()
-                .filter(|message| {
-                    message.sequence > summary_after.max(start_after) && message.sequence <= through
-                })
-                .cloned(),
-        );
-        Ok(source)
     }
 
-    /// Exact text for every span a review will read.
-    ///
-    /// Spans inside this attempt's window resolve locally. An existing item's
-    /// evidence usually does not — it quotes a message from before the watermark
-    /// — so those go through the port, which resolves them against live content
-    /// and returns absence rather than a cached quotation.
-    async fn resolve_review_evidence(
-        &self,
-        conversation_id: &str,
-        patch: &ValidatedPatch,
-        window: &[SourceMessage],
-        active_items: &[MemoryItem],
-    ) -> std::result::Result<EvidenceText, CompactionError> {
-        let mut evidence = EvidenceText::new();
-        evidence.learn_from(
-            window,
-            patch
-                .additions
-                .iter()
-                .flat_map(|addition| addition.evidence.iter())
-                .chain(
-                    patch
-                        .transitions
-                        .iter()
-                        .flat_map(|transition| transition.evidence.iter()),
-                ),
-        );
-
-        let targeted: Vec<&MemoryItem> = patch
-            .transitions
+    fn eligible(&self) -> Vec<SourceMessage> {
+        self.read
             .iter()
-            .filter_map(|transition| {
-                let ValidatedTransitionTarget::Existing(id) = &transition.target else {
-                    return None;
-                };
-                active_items.iter().find(|item| item.id == *id)
-            })
-            .collect();
-        evidence.learn_from(
-            window,
-            targeted.iter().flat_map(|item| item.evidence.iter()),
-        );
-
-        let outstanding: Vec<&EvidenceSpan> = targeted
-            .iter()
-            .flat_map(|item| item.evidence.iter())
-            .filter(|span| evidence.text(span).is_none())
-            .collect();
-        if outstanding.is_empty() {
-            return Ok(evidence);
-        }
-        let refs: Vec<SourceSpanRef> = outstanding
-            .iter()
-            .map(|span| SourceSpanRef {
-                message_id: span.message_id.clone(),
-                start_byte: span.start_byte,
-                end_byte: span.end_byte,
-            })
-            .collect();
-        let resolved = self
-            .memory
-            .read_source_spans(conversation_id, &refs, self.config.source_read_limits)
-            .await?;
-        // The port answers one resolved span per request, in request order.
-        for (span, resolution) in outstanding.iter().zip(resolved) {
-            if let Some(text) = resolution.text {
-                evidence.insert(span, text);
-            }
-        }
-        Ok(evidence)
+            .filter(|message| message.is_eligible_source())
+            .cloned()
+            .collect()
     }
+}
+
+/// What one paged read returned.
+struct RangeRead {
+    messages: Vec<SourceMessage>,
+    /// Sequence the read got through.
+    cursor: i64,
+    /// The work cap stopped the read, rather than the range running out.
+    capped: bool,
 }
 
 // ---------------------------------------------------------------------------
 // Candidate ledger
 // ---------------------------------------------------------------------------
-
-/// Where this run's working summary should end, or `None` to leave it as it is.
-///
-/// Consolidation after an answer refolds only when that turn's prompt asked:
-/// its window had to drop turns the summary does not cover. A request a
-/// refold since then already satisfied is not repeated. `/compact` and the
-/// compaction a turn waits on fold everything they extracted, as they always
-/// have. The summary never runs past the watermark: a message beyond it has
-/// no memory record, and the window has to keep carrying it verbatim.
-fn fold_target(
-    request: &CompactionRequest,
-    summary_after: i64,
-    accepted_through: i64,
-) -> Option<i64> {
-    let through = match (request.summary_refold, request.trigger) {
-        (Some(refold), _) if refold.is_needed(summary_after) => refold.through_sequence,
-        (Some(_), _) | (None, CompactionTrigger::Maintenance) => return None,
-        (None, CompactionTrigger::Manual | CompactionTrigger::Automatic) => accepted_through,
-    };
-    Some(through.min(accepted_through)).filter(|through| *through > summary_after)
-}
 
 /// Keep the watermark before everything in `batch`.
 ///

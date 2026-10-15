@@ -220,7 +220,7 @@ pub struct OllamaChatStreamResponse {
     pub eval_count: Option<u32>,
 }
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 /// Auto-convert from LLMError to AppError
 impl From<crate::features::llm::engine::types::LLMError> for AppError {

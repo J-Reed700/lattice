@@ -1,11 +1,22 @@
 //! Retrieve and restore individual comparisons, then batch only unfinished ones.
 //! Every decision retains its own evidence binding and durable receipt.
+//!
+//! Evidence is paged. A claim is first checked against its top-ranked
+//! passages, an equal share of its batch call's room. A claim that page
+//! leaves unsupported is checked again against its next page, passages it has
+//! not been shown, batched with the other claims still looking; the walk ends
+//! at the first supported or contradicted verdict, or when the next page has
+//! no passage mentioning the claim's subject (vector neighbours alone do not
+//! continue it). Deepening rounds continue only while the last round settled
+//! at least one claim as supported or contradicted. Each page's check has its
+//! own receipt.
 use super::*;
-use crate::application::services::claim_verification::LocatedClaim;
+use lattice_core::application::services::claim_verification::LocatedClaim;
+use std::collections::BTreeMap;
 
 const BATCH_SIZE: usize = 8;
 const PROVISIONAL_BATCH_POLICY: &str =
-    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY;
+    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY;
 
 struct PendingClaim {
     ordinal: usize,
@@ -116,7 +127,9 @@ impl ProvisionalBatchReceipt {
 }
 
 enum PreparedClaim {
-    Complete(CheckedClaim),
+    /// A finished decision: `true` when it is a retained final decision that
+    /// already walked its pages, `false` for a first-page result.
+    Complete(CheckedClaim, bool),
     Pending(PendingClaim),
 }
 
@@ -128,14 +141,17 @@ async fn prepare(
     retained: &ClaimChecks,
     ordinal: usize,
     located_claim: (usize, Claim),
+    sharing: usize,
+    cited: &[EvidencePassage],
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
-    let evidence =
-        evidence_selection::select(llm, &claim, unit, references, sources, executions, retained)
-            .await?;
+    let evidence = evidence_selection::select(
+        llm, &claim, unit, references, sources, executions, retained, sharing, cited,
+    )
+    .await?;
     let key = ClaimChecks::key(unit, &claim, &evidence);
     if let Some(finding) = retained.get(&key, unit, &claim, &evidence) {
-        return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+        return Ok(PreparedClaim::Complete((ordinal, key, finding, true), true));
     }
     let receipt_key = claim_receipt_key(llm, &key);
     if let Some(finding) = crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
@@ -143,7 +159,10 @@ async fn prepare(
         .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
         .and_then(|receipt| receipt.finding(unit, &claim, &evidence))
     {
-        return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+        return Ok(PreparedClaim::Complete(
+            (ordinal, key, finding, true),
+            false,
+        ));
     }
     if let Some(receipt) =
         claim_reuse::legacy_receipt(llm, retained, unit, &claim, &evidence).await?
@@ -152,7 +171,10 @@ async fn prepare(
         if let Some(finding) = receipt.finding(unit, &claim, &evidence) {
             crate::features::learning::lesson_drafts::record_checkpoint(&receipt_key, saved)
                 .await?;
-            return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+            return Ok(PreparedClaim::Complete(
+                (ordinal, key, finding, true),
+                false,
+            ));
         }
     }
     let text = evidence
@@ -183,7 +205,10 @@ async fn prepare(
         evidence,
     };
     if let Some(judgment) = local {
-        return Ok(PreparedClaim::Complete(finish(pending, judgment).await?));
+        return Ok(PreparedClaim::Complete(
+            finish(pending, judgment).await?,
+            false,
+        ));
     }
     Ok(PreparedClaim::Pending(pending))
 }
@@ -196,14 +221,16 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
             outcome.reason.unwrap_or_default(),
             outcome.quote,
         ),
-        ClaimJudgment::OutOfTime => (
-            ClaimVerdict::Unverified,
-            "The claim checking deadline expired.".into(),
-            None,
-        ),
+        // Running out of time is an outage the job waits out, not a finding.
+        ClaimJudgment::OutOfTime => {
+            return Err(AppError::ServiceNotAvailable(
+                "The claim checking deadline expired.".into(),
+            ))
+        }
+        // Every unverified finding is deterministic: its reason is the cause.
         ClaimJudgment::Unusable => (
             ClaimVerdict::Unverified,
-            "Missing evidence or a failed, incomplete, or uncertain checker response.".into(),
+            "The checker's answer was unusable after its correction and its retry alone.".into(),
             None,
         ),
     };
@@ -233,7 +260,7 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
                 reason: finding.reason.clone(),
                 supporting_quote: finding.supporting_quote.clone(),
                 interpretation_policy: Some(
-                    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
                         .into(),
                 ),
             })?,
@@ -402,12 +429,34 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
     Ok(results)
 }
 
+#[cfg(test)]
 pub(super) async fn check(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
     inventory: &Inventory,
     executions: &[execution::Observation],
     retained: &ClaimChecks,
+) -> Result<Vec<CheckedClaim>> {
+    check_with_citations(
+        llm,
+        references,
+        inventory,
+        executions,
+        retained,
+        &Citations::new(),
+    )
+    .await
+}
+
+/// Check every claim of `inventory`, each first against the passages its
+/// own section cites (`citations`, by unit) and then retrieved ones.
+pub(super) async fn check_with_citations(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    inventory: &Inventory,
+    executions: &[execution::Observation],
+    retained: &ClaimChecks,
+    citations: &Citations,
 ) -> Result<Vec<CheckedClaim>> {
     let entries: Vec<_> = inventory
         .units
@@ -434,6 +483,9 @@ pub(super) async fn check(
     let mut results = Vec::new();
     let mut pending = Vec::new();
     let mut reused = 0;
+    // Claims share a batch call's room equally; one checked alone has it all.
+    let sharing = BATCH_SIZE.min(total);
+    let mut decided = HashSet::new();
     let mut entries = futures::stream::iter(entries.into_iter().enumerate()).chunks(BATCH_SIZE);
     while let Some(entries) = entries.next().await {
         // Drain the reads before any subsequent model work/checkpoint writes.
@@ -448,6 +500,8 @@ pub(super) async fn check(
                     retained,
                     ordinal,
                     (unit, claim),
+                    sharing,
+                    citations.get(&unit).map_or(&[][..], Vec::as_slice),
                 )
             })
             .buffered(BATCH_SIZE)
@@ -455,8 +509,11 @@ pub(super) async fn check(
             .await?;
         for item in prepared {
             match item {
-                PreparedClaim::Complete(result) => {
+                PreparedClaim::Complete(result, final_decision) => {
                     reused += usize::from(result.3);
+                    if final_decision {
+                        decided.insert(result.0);
+                    }
                     completed(&mut results, result);
                 }
                 PreparedClaim::Pending(item) => pending.push(item),
@@ -493,6 +550,162 @@ pub(super) async fn check(
             results.len() - resolved
         ));
     }
+    deepen(llm, references, &mut results, &decided, citations).await?;
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
     Ok(results)
+}
+
+/// A claim still looking for evidence: what it has been shown so far.
+struct Walk {
+    unit: usize,
+    claim: Claim,
+    shown: Vec<EvidencePassage>,
+}
+
+/// Check every first-page result that is unsupported against its next pages
+/// until a page decides it or no page with a matching content term is left.
+/// A deciding page's finding replaces the first page's; the first page's key
+/// still names the decision, so a later pass on the same evidence reuses it.
+async fn deepen(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    results: &mut [CheckedClaim],
+    decided: &HashSet<usize>,
+    citations: &Citations,
+) -> Result<()> {
+    let mut walks: BTreeMap<usize, Walk> = results
+        .iter()
+        .filter(|(ordinal, _, finding, _)| {
+            !decided.contains(ordinal) && finding.verdict == ClaimVerdict::Unsupported
+        })
+        .map(|(ordinal, _, finding, _)| {
+            (
+                *ordinal,
+                Walk {
+                    unit: finding.unit,
+                    claim: Claim {
+                        quote: finding.quote.clone(),
+                        statement: finding.statement.clone(),
+                    },
+                    shown: finding
+                        .evidence
+                        .iter()
+                        .filter(|passage| passage.retrieval_kind != "execution")
+                        .cloned()
+                        .collect(),
+                },
+            )
+        })
+        .collect();
+    let mut round = 0;
+    while !walks.is_empty() {
+        round += 1;
+        let sharing = BATCH_SIZE.min(walks.len());
+        let mut pending = Vec::new();
+        let mut outcomes = Vec::new();
+        for (ordinal, walk) in std::mem::take(&mut walks) {
+            let share = claim_share(llm, &walk.claim.statement, sharing);
+            // Cited passages of the section that did not fit an earlier page
+            // lead this one; retrieved passages not yet shown fill the rest.
+            let mut page: Vec<EvidencePassage> = Vec::new();
+            for passage in citations.get(&walk.unit).into_iter().flatten() {
+                if walk
+                    .shown
+                    .iter()
+                    .chain(&page)
+                    .any(|seen| overlaps(seen, passage))
+                {
+                    continue;
+                }
+                if !within_share(llm, share, page.iter().chain(std::iter::once(passage))) {
+                    break;
+                }
+                page.push(passage.clone());
+            }
+            let cited_left = !page.is_empty();
+            let shown: Vec<_> = walk.shown.iter().chain(&page).cloned().collect();
+            let (retrieved, _) = references
+                .verification_page(&walk.claim.statement, &shown, |passages| {
+                    within_share(llm, share, page.iter().chain(passages))
+                })
+                .await?;
+            page.extend(retrieved);
+            // A page that only shares the subject's common words, or only
+            // vector neighbours, ends the walk; the section's own citations
+            // never do.
+            if !cited_left
+                && !page.iter().any(|passage| {
+                    references.mentions_subject_of(&walk.claim.statement, &passage.text)
+                })
+            {
+                continue;
+            }
+            canonicalize_evidence(&mut page);
+            let key = ClaimChecks::key(walk.unit, &walk.claim, &page);
+            let receipt_key = claim_receipt_key(llm, &key);
+            if let Some(finding) =
+                crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
+                    .await?
+                    .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
+                    .and_then(|receipt| receipt.finding(walk.unit, &walk.claim, &page))
+            {
+                outcomes.push((ordinal, finding));
+            } else {
+                pending.push(PendingClaim {
+                    ordinal,
+                    key,
+                    receipt_key,
+                    unit: walk.unit,
+                    claim: walk.claim.clone(),
+                    evidence: page.clone(),
+                });
+            }
+            let mut shown = walk.shown;
+            shown.extend(page);
+            walks.insert(ordinal, Walk { shown, ..walk });
+        }
+        if !pending.is_empty() {
+            crate::features::learning::lesson_progress::stage(format!(
+                "Checking {} unsupported claims against their next page of evidence (page {})",
+                pending.len(),
+                round + 1
+            ));
+            let mut batches = futures::stream::iter(pending)
+                .chunks(BATCH_SIZE)
+                .map(|pending| group(llm, pending))
+                .buffer_unordered(1);
+            while let Some(batch) = batches.next().await {
+                outcomes.extend(
+                    batch?
+                        .into_iter()
+                        .map(|(ordinal, _, finding, _)| (ordinal, finding)),
+                );
+            }
+        }
+        let mut settled = 0;
+        for (ordinal, finding) in outcomes {
+            if finding.verdict == ClaimVerdict::Unsupported {
+                continue;
+            }
+            settled += usize::from(matches!(
+                finding.verdict,
+                ClaimVerdict::Supported | ClaimVerdict::Contradicted
+            ));
+            walks.remove(&ordinal);
+            if let Some(result) = results.iter_mut().find(|result| result.0 == ordinal) {
+                result.2 = finding;
+            }
+        }
+        tracing::info!(
+            round,
+            settled,
+            looking = walks.len(),
+            "Deepened the evidence of unsupported claims"
+        );
+        // Another round runs only while the last one settled a claim.
+        if settled == 0 {
+            break;
+        }
+    }
+    Ok(())
 }

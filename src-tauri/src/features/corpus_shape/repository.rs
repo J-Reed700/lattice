@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
 use crate::features::corpus_shape::entity::{Cluster, ClusterMember, ClusterRun, LabelSource};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Port for persisting cluster runs + clusters. Kept narrow — `corpus_shape`
 /// is the only feature that writes this, so the contract stays here.

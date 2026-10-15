@@ -12,7 +12,7 @@
 //!
 //! Validation. Every rule about whether a quote is real, whether a source
 //! belongs to this conversation, and what a transition may do lives in
-//! [`crate::domain::conversation::memory`], and the atomic write lives behind
+//! [`lattice_core::domain::conversation::memory`], and the atomic write lives behind
 //! [`ConversationMemoryPort`]. This module calls them; it never re-decides them.
 //!
 //! ## The shape of a run
@@ -22,15 +22,15 @@
 //! committed state exactly as it was, and leaves the watermark where it was, so
 //! the same source is offered again next time (§12).
 //!
-//! Extraction and the working summary move separately. Extraction advances the
-//! watermark on every run; the summary is refolded only when a run is asked to,
-//! because the prompt opens its window where the summary ends and a summary
-//! that changed after every answer would change the head of every request.
-//!
 //! A run is bounded twice over — a five-minute deadline shared by every call,
 //! and a work cap of 256 messages or 1 MiB of source per attempt. Hitting the
 //! work cap returns [`CompactionStatus::Partial`] with the sequence to resume
 //! from. It never skips the remainder (§7.5).
+//!
+//! A delete or a user correction can drop the working summary while the ledger
+//! and its watermark stand. A run then folds the source between the summary's
+//! boundary and the watermark back in — summary only, never re-extracted —
+//! a bounded slice at a time, resuming from wherever the last summary ended.
 
 pub mod extract;
 pub mod prompts;
@@ -52,15 +52,15 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
-use crate::application::ports::llm_port::{
+use lattice_core::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
+use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{
-    MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
+    MemoryCommit, MemorySnapshot, MemoryValidationError,
 };
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 // ---------------------------------------------------------------------------
 // Limits (§7.5). Named so tests assert the contract rather than a literal.
@@ -87,6 +87,12 @@ pub const MAX_SOURCE_MESSAGES_PER_ATTEMPT: usize = 256;
 /// Source bytes processed in one foreground attempt.
 pub const MAX_SOURCE_BYTES_PER_ATTEMPT: usize = 1024 * 1024;
 
+/// Source bytes one attempt folds back into a dropped summary, so one page adds
+/// a bounded amount of summariser work to the attempt it rides on. A page, not
+/// a cut: consolidation folds page after page while its deadline lasts, and
+/// the next run resumes where this one stopped.
+pub const MAX_REFOLD_BYTES_PER_ATTEMPT: usize = 32 * 1024;
+
 /// Complete turns kept out of the compacted prefix (§7.2). The current pending
 /// user message is retained on top of these.
 pub const MIN_RETAINED_TURNS: usize = 2;
@@ -97,8 +103,24 @@ pub const DEFAULT_KEEP_RECENT_MESSAGES: usize = 6;
 /// Do not start a model call that cannot plausibly finish in what is left.
 const MIN_CALL_SLICE: Duration = Duration::from_millis(500);
 
-/// Characters of an adjacent message shown beside a batch.
-const MAX_CONTEXT_PASSAGE_CHARS: usize = 1_000;
+/// Provider-side answer caps for the utility calls. They stop a runaway
+/// response; the deterministic parsers apply the real bounds after it.
+const EXTRACTOR_OUTPUT_TOKENS: usize = 8_192;
+const VERIFIER_OUTPUT_TOKENS: usize = 4_096;
+
+/// Characters a utility call has for its material in the utility model's own
+/// window: what is left after the answer room (`output_tokens`, never more
+/// than a quarter of the window), a 5% margin, the system prompt and
+/// `framing`, the request text the material is set into.
+fn call_room_chars(llm: &dyn LLMPort, system: &str, output_tokens: usize, framing: &str) -> usize {
+    let window = llm.max_context_tokens();
+    let room = window
+        .saturating_sub(output_tokens.min(window / 4))
+        .saturating_sub(window / 20)
+        .saturating_sub(llm.count_tokens(system))
+        .saturating_sub(llm.count_tokens(framing));
+    lattice_core::application::ports::llm_port::chars_within_tokens(room, llm.chars_per_token())
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -268,12 +290,27 @@ async fn complete_json(
     prompt: String,
     schema: Option<serde_json::Value>,
 ) -> std::result::Result<String, CompactionError> {
+    complete_json_within(llm, deadline, system, prompt, schema, 0).await
+}
+
+/// [`complete_json`] with room for at least `min_output_tokens` of answer:
+/// a summary sized from a large window must not be cut off by the provider
+/// cap that stops a runaway response.
+async fn complete_json_within(
+    llm: &dyn LLMPort,
+    deadline: &Deadline,
+    system: &str,
+    prompt: String,
+    schema: Option<serde_json::Value>,
+    min_output_tokens: usize,
+) -> std::result::Result<String, CompactionError> {
     let remaining = deadline.slice()?;
     let max_output_tokens = if system == prompts::VERIFIER_SYSTEM {
-        4_096
+        VERIFIER_OUTPUT_TOKENS
     } else {
-        8_192
-    };
+        EXTRACTOR_OUTPUT_TOKENS
+    }
+    .max(min_output_tokens);
     let phase = if system == prompts::EXTRACTOR_SYSTEM {
         "extractor_model_call"
     } else if system == prompts::VERIFIER_SYSTEM {
@@ -313,7 +350,7 @@ async fn complete_json(
         // operation bounds after generation. This provider-side cap
         // prevents a malformed or uncooperative response from using
         // the model's much larger configured chat-output allowance.
-        max_output_tokens: Some(max_output_tokens),
+        max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX)),
         time_budget: Some(remaining),
         priority: deadline.priority,
         cancel: deadline.cancellation.clone(),
@@ -381,6 +418,11 @@ pub struct CompactionConfig {
     /// Work cap for one attempt (§7.5).
     pub max_source_messages_per_attempt: usize,
     pub max_source_bytes_per_attempt: usize,
+    /// Source bytes one attempt may fold back into a summary that a delete or a
+    /// user correction dropped. Smaller than the work cap on purpose: each page
+    /// commits on its own, so consolidation can stop between pages when its
+    /// deadline nears, and a later run picks up where it stopped.
+    pub max_refold_bytes_per_attempt: usize,
     pub segment_max_bytes: usize,
     pub segment_overlap_chars: usize,
     pub max_segments_per_batch: usize,
@@ -397,6 +439,7 @@ impl Default for CompactionConfig {
             source_read_limits: SourceReadLimits::DEFAULT,
             max_source_messages_per_attempt: MAX_SOURCE_MESSAGES_PER_ATTEMPT,
             max_source_bytes_per_attempt: MAX_SOURCE_BYTES_PER_ATTEMPT,
+            max_refold_bytes_per_attempt: MAX_REFOLD_BYTES_PER_ATTEMPT,
             segment_max_bytes: segment::SEGMENT_MAX_BYTES,
             segment_overlap_chars: segment::SEGMENT_OVERLAP_CHARS,
             max_segments_per_batch: segment::MAX_SEGMENTS_PER_BATCH,
@@ -442,11 +485,6 @@ pub struct CompactionRequest {
     /// Minimum raw messages to retain, adjusted outward to a turn boundary.
     pub keep_recent_messages: Option<usize>,
     pub cancellation: Option<CancellationToken>,
-    /// The refold a turn's prompt asked for, when its window had to drop
-    /// turns the working summary does not cover. Consolidation refolds only
-    /// on this; `/compact` and the compaction a turn waits on fold everything
-    /// they extract without it.
-    pub summary_refold: Option<SummaryRefold>,
 }
 
 /// How far a run got.
@@ -494,6 +532,9 @@ pub struct CompactionOutcome {
     pub commit_conflict_retries: usize,
     /// Sequence to resume from when `status` is [`CompactionStatus::Partial`].
     pub resume_after_sequence: Option<i64>,
+    /// A summary a delete or a correction dropped still trails the watermark:
+    /// this run folded a page of it back in, and more remain.
+    pub refold_pending: bool,
     pub was_already_committed: bool,
 }
 
@@ -523,6 +564,7 @@ impl CompactionOutcome {
             conflicts_recorded: 0,
             commit_conflict_retries: 0,
             resume_after_sequence: None,
+            refold_pending: false,
             was_already_committed: false,
         }
     }

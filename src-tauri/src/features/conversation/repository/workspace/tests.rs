@@ -231,7 +231,7 @@ async fn deleting_another_conversations_message_is_rejected_without_changing_tot
     let message = repo
         .add_message(
             &first.id.to_string(),
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             "Keep this",
             7,
             None,

@@ -4,7 +4,7 @@
 //! learner- or model-provided image names or commands are accepted here.
 
 use crate::features::learning::lab_runtime::{LearningContainerEngine, LearningLabLimits};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::path::PathBuf;

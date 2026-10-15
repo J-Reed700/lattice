@@ -12,8 +12,29 @@
 //! effect should say so, which means the frontend needs to see the same two
 //! facts the retrieval path does: is it switched on, and is it installed.
 
-use crate::interfaces::di::container::Container;
-use crate::shared::error::{AppError, Result};
+use crate::infrastructure::services::traits::ModelManagerTrait;
+use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
+use std::sync::Arc;
+
+/// The one settings value reranker setup reads: the user's reranking
+/// toggle. Defined here so search never names the settings feature; the
+/// composition root implements it over the settings use case.
+#[async_trait]
+pub trait RerankingToggle: Send + Sync {
+    /// Whether the user has switched reranking on.
+    async fn enabled(&self) -> Result<bool>;
+}
+
+/// The two things reranker setup needs: the model manager that can fetch the
+/// cross-encoder, and the settings toggle that says whether to use it. Kept as
+/// a small named bundle so the command layer hands over exactly this and the
+/// setup code never sees the whole container.
+#[derive(Clone)]
+pub struct RerankerSetup {
+    pub model_manager: Arc<dyn ModelManagerTrait>,
+    pub toggle: Arc<dyn RerankingToggle>,
+}
 
 /// What the reranker download costs: the pinned revision's weights, tokenizer
 /// and config added up.
@@ -58,9 +79,9 @@ impl RerankerStatusDto {
 }
 
 /// Report whether reranking is on and whether the model is present.
-pub async fn reranker_status_impl(container: &Container) -> Result<RerankerStatusDto> {
-    let installed = container.model_manager().is_reranker_ready().await;
-    let enabled = reranking_enabled(container).await?;
+pub async fn reranker_status_impl(setup: &RerankerSetup) -> Result<RerankerStatusDto> {
+    let installed = setup.model_manager.is_reranker_ready().await;
+    let enabled = reranking_enabled(setup).await?;
     Ok(RerankerStatusDto::new(installed, enabled))
 }
 
@@ -69,10 +90,10 @@ pub async fn reranker_status_impl(container: &Container) -> Result<RerankerStatu
 /// Downloading does not switch reranking on. Acquiring the model and choosing
 /// to use it are separate decisions, and conflating them would turn a download
 /// button into a settings change the user did not ask for.
-pub async fn download_reranker_impl(container: &Container) -> Result<RerankerStatusDto> {
-    let manager = container.model_manager();
+pub async fn download_reranker_impl(setup: &RerankerSetup) -> Result<RerankerStatusDto> {
+    let manager = &setup.model_manager;
     if manager.is_reranker_ready().await {
-        let enabled = reranking_enabled(container).await?;
+        let enabled = reranking_enabled(setup).await?;
         return Ok(RerankerStatusDto::new(true, enabled));
     }
 
@@ -84,17 +105,16 @@ pub async fn download_reranker_impl(container: &Container) -> Result<RerankerSta
     // partial write leaves the toggle claiming a capability that still is not
     // there, which is the failure this module exists to prevent.
     let installed = manager.is_reranker_ready().await;
-    let enabled = reranking_enabled(container).await?;
+    let enabled = reranking_enabled(setup).await?;
     Ok(RerankerStatusDto::new(installed, enabled))
 }
 
-async fn reranking_enabled(container: &Container) -> Result<bool> {
-    let settings = container
-        .get_settings_use_case()
-        .execute()
+async fn reranking_enabled(setup: &RerankerSetup) -> Result<bool> {
+    setup
+        .toggle
+        .enabled()
         .await
-        .map_err(|error| AppError::Other(format!("Could not read settings: {error}")))?;
-    Ok(settings.search.enable_reranking)
+        .map_err(|error| AppError::Other(format!("Could not read settings: {error}")))
 }
 
 #[cfg(test)]

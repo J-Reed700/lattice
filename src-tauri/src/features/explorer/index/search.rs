@@ -12,15 +12,16 @@ use super::chunker;
 use super::dto::FolderIndexStatusDto;
 use super::run::StatusCell;
 use super::store::FolderStore;
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::EmbeddingPort;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::shared::Result;
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::warn;
 
-/// Candidates each half contributes before fusion.
+/// Candidates each half contributes before fusion, or the search's depth when
+/// that is deeper, so fusion never caps what a caller asked for.
 pub const DENSE_CANDIDATES: usize = 40;
 pub const LEXICAL_CANDIDATES: usize = 40;
 /// The usual constant: it keeps one list's first place from drowning out a
@@ -151,14 +152,17 @@ impl FolderSearch {
         let prefix = join_relative(&self.offset, &tidy_prefix(path_prefix.unwrap_or("")));
         // Either half can fail on its own (no embedder warmed up, an odd
         // query); the other still answers.
-        let dense = self.dense(query, &prefix).await.unwrap_or_else(|error| {
-            warn!(%error, "Folder index: dense search failed; using full text only");
-            Vec::new()
-        });
+        let dense = self
+            .dense(query, &prefix, top_k)
+            .await
+            .unwrap_or_else(|error| {
+                warn!(%error, "Folder index: dense search failed; using full text only");
+                Vec::new()
+            });
         let lexical = match match_expression(query) {
             Some(expression) => self
                 .store
-                .full_text(&expression, &prefix, LEXICAL_CANDIDATES)
+                .full_text(&expression, &prefix, LEXICAL_CANDIDATES.max(top_k))
                 .await
                 .unwrap_or_else(|error| {
                     warn!(%error, "Folder index: full-text search failed");
@@ -198,7 +202,7 @@ impl FolderSearch {
     }
 
     /// Chunk ids nearest the query, confined to `prefix` inside USearch.
-    async fn dense(&self, query: &str, prefix: &str) -> Result<Vec<i64>> {
+    async fn dense(&self, query: &str, prefix: &str, top_k: usize) -> Result<Vec<i64>> {
         if self.vectors.count() == 0 {
             return Ok(Vec::new());
         }
@@ -208,9 +212,12 @@ impl FolderSearch {
         } else {
             Some(self.store.paths_under(prefix).await?.into_iter().collect())
         };
-        let results =
-            self.vectors
-                .search_scoped(&embedding, DENSE_CANDIDATES, 0.0, scope.as_ref())?;
+        let results = self.vectors.search_scoped(
+            &embedding,
+            DENSE_CANDIDATES.max(top_k),
+            0.0,
+            scope.as_ref(),
+        )?;
         Ok(results
             .into_iter()
             .filter_map(|result| result.chunk_id.parse().ok())

@@ -20,8 +20,6 @@ use tracing::warn;
 
 /// Top-level entries named in the block before the rest are counted instead.
 const TOP_LEVEL_ENTRIES: usize = 40;
-/// Passages the folder index puts in the block before generation.
-pub const FIRST_STEP_PASSAGES: usize = 5;
 
 /// What the folder index found for the question before generation.
 #[derive(Debug, Clone, Default)]
@@ -108,13 +106,15 @@ impl ExplorerTurn {
         self.index.is_some()
     }
 
-    /// What the folder index finds for `question`, before generation. Empty
-    /// when there is no index or the search fails; the turn goes on without.
-    pub async fn first_step_passages(&self, question: &str) -> FolderPassages {
+    /// What the folder index finds for `question`, before generation: as
+    /// many passages as `room_chars` can show. Empty when there is no index
+    /// or the search fails; the turn goes on without.
+    pub async fn first_step_passages(&self, question: &str, room_chars: usize) -> FolderPassages {
         let Some(index) = &self.index else {
             return FolderPassages::default();
         };
-        match index.search(question, None, FIRST_STEP_PASSAGES).await {
+        let depth = folder_index_tool::hits_for(room_chars);
+        match index.search(question, None, depth).await {
             Ok(hits) => FolderPassages {
                 progress: (!hits.is_empty())
                     .then(|| folder_index_tool::progress_note(index))
@@ -139,7 +139,8 @@ impl ExplorerTurn {
         question: Option<&str>,
     ) -> String {
         let passages = match question {
-            Some(question) => self.first_step_passages(question).await,
+            // Passages take at most half the block (see `render_context`).
+            Some(question) => self.first_step_passages(question, max_chars / 2).await,
             None => FolderPassages::default(),
         };
         let scope = self.scope.clone();
@@ -165,7 +166,7 @@ impl ExplorerTurn {
         &self,
         call: FunctionCall,
         max_chars: usize,
-    ) -> crate::shared::Result<FunctionResult> {
+    ) -> lattice_core::shared::Result<FunctionResult> {
         if call.name != TOOL_SEARCH_FOLDER {
             return tools::execute(&self.scope, call, max_chars).await;
         }

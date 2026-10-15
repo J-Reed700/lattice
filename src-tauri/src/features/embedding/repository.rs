@@ -10,12 +10,12 @@
 //! - EmbeddingRepositoryTrait (legacy)
 //! - EmbeddingRepositoryPort (DDD)
 
-use crate::application::ports::EmbeddingRepositoryPort;
 use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapper};
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use lattice_core::application::ports::EmbeddingRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 // Database row struct for embedding queries
@@ -195,7 +195,7 @@ impl EmbeddingRepositoryTrait for EmbeddingRepository {
 #[async_trait]
 impl EmbeddingRepositoryPort for EmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
-        use crate::shared::types::ChunkId;
+        use lattice_core::shared::types::ChunkId;
         let chunk_id_typed = ChunkId::from(chunk_id.to_string());
         let embedding = DomainEmbedding::new(chunk_id_typed, model.to_string(), vector.len());
         self.save(&embedding, vector.to_vec()).await?;

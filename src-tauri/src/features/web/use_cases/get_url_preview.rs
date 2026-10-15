@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
-//! use lattice::application::dtos::web_dto::GetUrlPreviewRequestDto;
+//! use lattice_core::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
+//! use lattice_core::application::dtos::web_dto::GetUrlPreviewRequestDto;
 //!
 //! # async fn example(use_case: GetUrlPreviewUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = GetUrlPreviewRequestDto {
@@ -28,10 +28,10 @@
 
 use std::sync::Arc;
 
-use crate::application::contracts::web::UrlPreview;
 use crate::features::web::dto::{GetUrlPreviewRequestDto, UrlPreviewDto};
 use crate::features::web::WebCaptureServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::UrlPreview;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Get URL preview use case.
 ///
@@ -80,8 +80,8 @@ impl GetUrlPreviewUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
-    /// # use lattice::application::dtos::web_dto::GetUrlPreviewRequestDto;
+    /// # use lattice_core::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
+    /// # use lattice_core::application::dtos::web_dto::GetUrlPreviewRequestDto;
     /// # async fn example(use_case: GetUrlPreviewUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = GetUrlPreviewRequestDto {
     ///     url: "https://blog.example.com/article".to_string(),

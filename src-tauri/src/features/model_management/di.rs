@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::{ModelCatalogPort, SystemInfoPort};
 use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{ModelCatalogPort, SystemInfoPort};
+use lattice_core::shared::error::Result;
 
 /// Model management's registrar surface on `Container`.
 impl Container {

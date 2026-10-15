@@ -2,9 +2,9 @@
 //!
 //! Records a model download completion in the models table.
 
-use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::Result;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::shared::error::Result;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use tracing::info;
@@ -62,7 +62,7 @@ impl TrackDownloadUseCase {
             architecture,
             metadata,
             |identifier| {
-                crate::domain::models::catalog_cache::ModelCatalogCache::instance()
+                lattice_core::domain::models::catalog_cache::ModelCatalogCache::instance()
                     .lookup(identifier)
             },
         )?;

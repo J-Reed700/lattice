@@ -24,7 +24,7 @@ pub mod system;
 pub use circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitState,
 };
-pub use factory::{create_llm, find_local_model, LLMConfig};
+pub use factory::{find_local_model, LLMConfig};
 pub use generation_config::{GenerationConfig, SamplingProfile};
 pub use model_catalog_adapter::HardcodedModelCatalog;
 pub use model_storage_adapter::FilesystemModelStorage;
@@ -38,10 +38,10 @@ pub use sidecar_pool::{Liveness, Origin, SharedProcesses};
 pub use system::{detect_capabilities, GPUInfo, GPUVendor, Platform, SystemCapabilities};
 pub use types::*;
 
-use crate::application::ports::model_storage::ModelStoragePort;
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::features::llm::use_cases::DownloadModelUseCase;
-use crate::shared::error::Result;
+use lattice_core::application::ports::model_storage::ModelStoragePort;
+use lattice_core::shared::error::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -94,4 +94,4 @@ impl ModelDownloader {
 }
 
 /// Download progress tracking.
-pub type DownloadProgress = crate::domain::DownloadProgress;
+pub type DownloadProgress = lattice_core::domain::DownloadProgress;

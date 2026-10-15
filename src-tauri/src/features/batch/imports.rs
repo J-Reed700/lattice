@@ -6,8 +6,8 @@ use super::dto::{
 };
 use super::file_job::FileImportRequest;
 use super::items::{BatchItem, BatchItems, ItemCounts};
-use crate::application::ports::document_scope::DocumentScopePort;
-use crate::shared::{
+use lattice_core::application::ports::document_scope::DocumentScopePort;
+use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
     types::ValidatedFilePath,
@@ -31,7 +31,7 @@ fn job_type(kind: &str) -> &str {
 
 fn timestamp(millis: i64) -> String {
     chrono::DateTime::from_timestamp_millis(millis)
-        .map(crate::shared::persistence::timestamps::format_db_timestamp)
+        .map(lattice_core::shared::persistence::timestamps::format_db_timestamp)
         .unwrap_or_default()
 }
 

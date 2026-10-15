@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::SettingsRepositoryPort;
 use crate::features::settings::repository::SettingsRepository;
 use crate::features::settings::use_cases::{
     ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::error::Result;
 use std::path::Path;
 
 #[derive(Clone)]
@@ -89,6 +89,3 @@ impl Container {
         Arc::clone(self.system.validate_settings_use_case())
     }
 }
-
-// immaculate-phase-2: drop once interfaces/di/container.rs imports crate::interfaces::settings_side_effects::ContainerSettingsSideEffects
-pub(crate) use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;

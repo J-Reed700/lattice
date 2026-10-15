@@ -13,8 +13,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-//! use lattice::application::dtos::web_dto::IngestWebUrlRequestDto;
+//! use lattice_core::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
+//! use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
 //!
 //! # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IngestWebUrlRequestDto {
@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use crate::features::web::dto::{IngestWebUrlRequestDto, IngestWebUrlResponseDto};
 use crate::features::web::WebIngestionServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Ingest web URL use case.
 ///
@@ -81,8 +81,8 @@ impl IngestWebUrlUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-    /// # use lattice::application::dtos::web_dto::IngestWebUrlRequestDto;
+    /// # use lattice_core::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
+    /// # use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
     /// # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = IngestWebUrlRequestDto {
     ///     url: "https://blog.example.com/article".to_string(),

@@ -6,7 +6,7 @@
 //! Callers look up and record inside their own transaction, so the ledger row
 //! commits or rolls back with the work it describes.
 use super::persistence::{db, decode, encode, now};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, Sqlite};
 
@@ -111,6 +111,24 @@ impl Operation<'_> {
             .map_err(db)?;
         Ok(())
     }
+
+    /// Drop this identical request's row once what it produced is gone, so
+    /// the same ID can do the work again inside the caller's transaction. A
+    /// row recorded for any other request is left alone.
+    pub(crate) async fn forget<'e, E>(&self, executor: E) -> Result<()>
+    where
+        E: sqlx::Executor<'e, Database = Sqlite>,
+    {
+        sqlx::query("DELETE FROM learning_operations WHERE operation_id=? AND scope=? AND kind=? AND payload_hash=?")
+            .bind(self.id)
+            .bind(self.scope)
+            .bind(self.kind)
+            .bind(self.payload_hash)
+            .execute(executor)
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
 }
 
 async fn find<'e, E>(executor: E, operation_id: &str) -> Result<Option<RecordedOperation>>
@@ -190,6 +208,20 @@ mod tests {
         assert!(first.seen(&pool).await?);
         let reused = operation("save", "b").replay::<i64, _>(&pool).await;
         assert!(matches!(reused, Err(AppError::InvalidInput(message)) if message == CONFLICT));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forgetting_frees_the_id_for_the_same_request_only() -> Result<()> {
+        let pool = pool().await?;
+        let first = operation("save", "a");
+        first.record(&pool, &1_i64).await?;
+        operation("save", "b").forget(&pool).await?;
+        assert_eq!(first.replay::<i64, _>(&pool).await?, Some(1));
+        first.forget(&pool).await?;
+        assert!(!first.seen(&pool).await?);
+        first.record(&pool, &2_i64).await?;
+        assert_eq!(first.replay::<i64, _>(&pool).await?, Some(2));
         Ok(())
     }
 

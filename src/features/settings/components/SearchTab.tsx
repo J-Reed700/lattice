@@ -151,6 +151,26 @@ export function SearchTab() {
           </div>
         </SettingsRow>
 
+        <SettingsRow
+          label="Read web pages"
+          hint="Open web search results and read the pages; off, answers use the search snippets only"
+          htmlFor="search-read-web-pages"
+        >
+          <Switch
+            id="search-read-web-pages"
+            checked={searchSettings.retrievalTuning.readWebPages}
+            onCheckedChange={(checked) =>
+              saveSearchUpdates({
+                retrievalTuning: {
+                  ...searchSettings.retrievalTuning,
+                  readWebPages: checked,
+                },
+              })
+            }
+            className={SWITCH_CLASS}
+          />
+        </SettingsRow>
+
         <SettingsRow label="Corrective retry" htmlFor="search-corrective-retry">
           <Switch
             id="search-corrective-retry"

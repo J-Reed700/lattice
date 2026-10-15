@@ -1,6 +1,6 @@
 //! Persistence owner for `daily_notes_workspace`.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{FromRow, SqlitePool};
 
 const NOTE_COLUMNS: &str = r#"

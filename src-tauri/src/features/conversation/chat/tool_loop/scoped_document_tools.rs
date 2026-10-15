@@ -6,7 +6,7 @@ use crate::features::function_calling::dto::{
     SemanticSearchOutput,
 };
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Tools that can reach the user's own documents, and therefore may only run
 /// through this module's scope check. Anything else — web and wiki lookups —
@@ -73,7 +73,8 @@ pub(super) async fn execute(
         return container.tools().execute(call).await;
     }
     let input: SemanticSearchInput = serde_json::from_value(call.arguments.clone())?;
-    let limit = input.limit.clamp(1, 50);
+    // A page of at most 50; `offset` reaches the pages after it.
+    let limit = input.offset.saturating_add(input.limit.clamp(1, 50));
     let (hits, query_time_ms) = match input.search_mode {
         // The default mode, and the one the model almost always sends: searched
         // with first-pass retrieval's own branches and fusion, so a follow-up
@@ -125,8 +126,9 @@ pub(super) async fn execute(
         .into_iter()
         .map(|doc| (doc.id().as_str().to_owned(), doc))
         .collect();
+    let next_offset = (hits.len() >= limit).then_some(limit);
     let mut results = Vec::new();
-    for result in hits {
+    for result in hits.into_iter().skip(input.offset) {
         let Some(doc) = result
             .document_id
             .as_deref()
@@ -174,6 +176,7 @@ pub(super) async fn execute(
         documents: vec![],
         search_time_ms: query_time_ms as f64,
         query: input.query,
+        next_offset,
     };
     Ok(FunctionResult::success(serde_json::to_value(output)?))
 }

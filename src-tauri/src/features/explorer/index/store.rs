@@ -12,7 +12,7 @@
 //! `lattice.db` names the folders; these directories hold what each index is.
 
 use super::chunker::Chunk;
-use crate::shared::{AppError, Result};
+use lattice_core::shared::{AppError, Result};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
@@ -94,17 +94,28 @@ pub fn vectors_path(dir: &Path, identity: &str) -> PathBuf {
     ))
 }
 
-/// Milliseconds since the epoch, strictly increasing within the process, so
-/// two folders opened in the same millisecond still have an order.
-pub fn next_open_stamp() -> i64 {
-    static LAST: AtomicI64 = AtomicI64::new(0);
-    let now = chrono::Utc::now().timestamp_millis();
-    let mut previous = LAST.load(Ordering::SeqCst);
-    loop {
-        let stamp = now.max(previous + 1);
-        match LAST.compare_exchange(previous, stamp, Ordering::SeqCst, Ordering::SeqCst) {
-            Ok(_) => return stamp,
-            Err(actual) => previous = actual,
+/// When folders were opened: milliseconds since the epoch, strictly increasing
+/// across every stamp one source hands out, so two folders opened in the same
+/// millisecond still have an order. The folder index manager owns the one its
+/// folders are stamped from.
+#[derive(Debug, Default)]
+pub struct OpenStamps {
+    last: AtomicI64,
+}
+
+impl OpenStamps {
+    pub fn next(&self) -> i64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut previous = self.last.load(Ordering::SeqCst);
+        loop {
+            let stamp = now.max(previous + 1);
+            match self
+                .last
+                .compare_exchange(previous, stamp, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return stamp,
+                Err(actual) => previous = actual,
+            }
         }
     }
 }
@@ -136,24 +147,22 @@ pub struct Counts {
     pub passages_embedded: u32,
 }
 
-/// What a too-large walk found, as [`META_TOO_LARGE`] records it.
+/// What a walk past the file bound found, as [`META_TOO_LARGE`] records it:
+/// every indexable file, counted in full, of which the first up to the bound
+/// are indexed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TooLarge {
     pub count: usize,
-    /// The walk stopped counting at `count`.
-    pub capped: bool,
 }
 
 impl TooLarge {
     pub fn encode(&self) -> String {
-        format!("{}{}", self.count, if self.capped { "+" } else { "" })
+        self.count.to_string()
     }
 
     pub fn decode(value: &str) -> Option<Self> {
-        let count = value.trim_end_matches('+').parse().ok()?;
         Some(Self {
-            count,
-            capped: value.ends_with('+'),
+            count: value.parse().ok()?,
         })
     }
 }

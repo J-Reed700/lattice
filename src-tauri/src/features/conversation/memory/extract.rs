@@ -11,8 +11,8 @@
 
 use tracing::{debug, warn};
 
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::memory::{
     parse_patch, validate_patch, MemoryItem, SourceIndex, SourceMessage, ValidatedPatch,
 };
 

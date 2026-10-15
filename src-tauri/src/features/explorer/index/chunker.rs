@@ -15,11 +15,6 @@ pub const SOFT_MAX_LINES: usize = 80;
 pub const MAX_CHUNK_LINES: usize = 120;
 /// Characters a chunk grows to before it is cut.
 pub const MAX_CHUNK_CHARS: usize = 1_500;
-/// A longer line is clipped. A minified bundle can put a whole file on one
-/// line, and one line must not become one huge passage.
-pub const MAX_LINE_CHARS: usize = 500;
-/// Files over this are not indexed, the bound `search_files` reads to.
-pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Average line length past which a file is taken as generated or minified.
 const MAX_AVERAGE_LINE_CHARS: usize = 300;
 
@@ -30,7 +25,8 @@ pub struct Chunk {
     pub start_line: u32,
     /// 1-based, inclusive.
     pub end_line: u32,
-    /// The lines themselves, joined with `\n`, overlong ones clipped.
+    /// The lines themselves, joined with `\n`. A line longer than a whole
+    /// chunk is its own run of chunks, one part each.
     pub body: String,
 }
 
@@ -66,15 +62,13 @@ pub fn skipped_by_name(relative: &str) -> bool {
 
 /// Generated or minified text: lines that average past what people write.
 pub fn looks_minified(text: &str) -> bool {
-    let lines = text.lines().count().max(1);
-    text.len() / lines > MAX_AVERAGE_LINE_CHARS
+    is_minified(text.len(), text.lines().count())
 }
 
-fn clip(line: &str) -> String {
-    match line.char_indices().nth(MAX_LINE_CHARS) {
-        Some((cut, _)) => format!("{}…", line.get(..cut).unwrap_or(line)),
-        None => line.to_string(),
-    }
+/// Whether a file of `bytes` over `lines` lines averages lines too long to be
+/// written by hand.
+pub fn is_minified(bytes: usize, lines: usize) -> bool {
+    bytes / lines.max(1) > MAX_AVERAGE_LINE_CHARS
 }
 
 fn is_blank(line: &str) -> bool {
@@ -155,48 +149,108 @@ fn cut_before(lines: &[String], at: usize) -> Cut {
 
 /// The passages of `text`, in order. Blank-only stretches are left out.
 pub fn chunk_text(text: &str) -> Vec<Chunk> {
-    let lines: Vec<String> = text.lines().map(clip).collect();
-    let mut chunks = Vec::new();
-    let mut start = 0usize;
-    while start < lines.len() {
-        // Grow as far as the caps allow, stopping early at a boundary only
-        // once the chunk is past the soft line cap.
-        let mut end = start;
-        let mut chars = 0usize;
-        while let Some(line) = lines.get(end) {
-            let taken = end - start;
-            if taken >= MAX_CHUNK_LINES
-                || (taken > 0 && chars + line.len() + 1 > MAX_CHUNK_CHARS)
-                || (taken >= SOFT_MAX_LINES && cut_before(&lines, end) != Cut::None)
-            {
-                break;
-            }
-            chars += line.len() + 1;
-            end += 1;
-        }
-        // Cut short of the cap at the best boundary in the back half, so a
-        // definition that starts near the end moves whole into the next chunk.
-        if end < lines.len() {
-            let earliest = start + ((end - start) / 2).max(1);
-            // `max_by_key` keeps the last of equals: the latest cut of the
-            // best kind, so the chunk stays as long as it can.
-            let best = (earliest..=end)
-                .map(|at| (cut_before(&lines, at), at))
-                .max_by_key(|(cut, _)| *cut)
-                .filter(|(cut, _)| *cut != Cut::None);
-            if let Some((_, at)) = best {
-                end = at;
-            }
-        }
-        let body = lines.get(start..end).unwrap_or_default().join("\n");
-        if !body.trim().is_empty() {
-            chunks.push(Chunk {
-                start_line: start as u32 + 1,
-                end_line: end as u32,
-                body,
-            });
-        }
-        start = end;
+    let mut chunker = LineChunker::default();
+    for (index, line) in text.lines().enumerate() {
+        chunker.push(
+            u32::try_from(index + 1).unwrap_or(u32::MAX),
+            line.to_string(),
+        );
     }
-    chunks
+    chunker.finish()
+}
+
+/// Lines a chunk decision can depend on: a chunk never runs past
+/// [`MAX_CHUNK_LINES`], and the cut before its end looks one line beyond.
+const HELD_LINES: usize = MAX_CHUNK_LINES + 2;
+
+/// Builds passages from lines as they are read, holding only the lines a
+/// boundary can still depend on, so a file is chunked as it streams rather
+/// than loaded whole. Each line carries its number: the pieces of one line
+/// too long to read at once share it.
+#[derive(Default)]
+pub struct LineChunker {
+    lines: Vec<String>,
+    numbers: Vec<u32>,
+    chunks: Vec<Chunk>,
+}
+
+impl LineChunker {
+    pub fn push(&mut self, number: u32, line: String) {
+        self.lines.push(line);
+        self.numbers.push(number);
+        if self.lines.len() >= 2 * HELD_LINES {
+            self.cut(false);
+        }
+    }
+
+    pub fn finish(mut self) -> Vec<Chunk> {
+        self.cut(true);
+        self.chunks
+    }
+
+    /// Chunks the held lines, all of them at the end of the file, otherwise
+    /// while enough follow the next chunk's start to decide where it ends.
+    fn cut(&mut self, at_end: bool) {
+        let lines = &self.lines;
+        let numbers = &self.numbers;
+        let mut start = 0usize;
+        while start < lines.len() && (at_end || lines.len() - start > HELD_LINES) {
+            // A line longer than a whole chunk is indexed in parts, each a
+            // chunk pointing at that line, so none of it falls out of the index.
+            if let Some(line) = lines.get(start).filter(|line| line.len() > MAX_CHUNK_CHARS) {
+                let number = numbers.get(start).copied().unwrap_or_default();
+                for part in lattice_core::shared::text::split_into_parts(line, MAX_CHUNK_CHARS) {
+                    if !part.trim().is_empty() {
+                        self.chunks.push(Chunk {
+                            start_line: number,
+                            end_line: number,
+                            body: part.to_string(),
+                        });
+                    }
+                }
+                start += 1;
+                continue;
+            }
+            // Grow as far as the caps allow, stopping early at a boundary only
+            // once the chunk is past the soft line cap.
+            let mut end = start;
+            let mut chars = 0usize;
+            while let Some(line) = lines.get(end) {
+                let taken = end - start;
+                if taken >= MAX_CHUNK_LINES
+                    || (taken > 0 && chars + line.len() + 1 > MAX_CHUNK_CHARS)
+                    || (taken >= SOFT_MAX_LINES && cut_before(lines, end) != Cut::None)
+                {
+                    break;
+                }
+                chars += line.len() + 1;
+                end += 1;
+            }
+            // Cut short of the cap at the best boundary in the back half, so a
+            // definition that starts near the end moves whole into the next chunk.
+            if end < lines.len() {
+                let earliest = start + ((end - start) / 2).max(1);
+                // `max_by_key` keeps the last of equals: the latest cut of the
+                // best kind, so the chunk stays as long as it can.
+                let best = (earliest..=end)
+                    .map(|at| (cut_before(lines, at), at))
+                    .max_by_key(|(cut, _)| *cut)
+                    .filter(|(cut, _)| *cut != Cut::None);
+                if let Some((_, at)) = best {
+                    end = at;
+                }
+            }
+            let body = lines.get(start..end).unwrap_or_default().join("\n");
+            if !body.trim().is_empty() {
+                self.chunks.push(Chunk {
+                    start_line: numbers.get(start).copied().unwrap_or_default(),
+                    end_line: numbers.get(end - 1).copied().unwrap_or_default(),
+                    body,
+                });
+            }
+            start = end;
+        }
+        self.lines.drain(..start);
+        self.numbers.drain(..start);
+    }
 }

@@ -5,8 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::application::ports::{EmbeddingPort, LoadedEmbeddingModelPort};
-use crate::shared::error::{AppError, Result};
+use crate::features::embedding::loading::EmbeddingLoader;
+use lattice_core::application::ports::{EmbeddingPort, LoadedEmbeddingModelPort};
+use lattice_core::shared::error::{AppError, Result};
 
 use crate::infrastructure::ml::model_cache::ModelCache;
 
@@ -84,6 +85,27 @@ impl EmbeddingRuntime {
             };
             Ok((Some(model), cacheable))
         }).await?.ok_or_else(|| AppError::InternalError("Embedding loader returned no model".into()))
+    }
+}
+
+/// The process's embedding runtime paired with the loader it falls back to:
+/// everything `Container::get_or_load_embedding` uses, as a value that can be
+/// held without the container. The vault note sink holds one, because the
+/// vault writer is owned by the container and must not point back at it.
+pub(crate) struct ActiveEmbedding {
+    runtime: Arc<EmbeddingRuntime>,
+    loader: EmbeddingLoader,
+}
+
+impl ActiveEmbedding {
+    pub(crate) fn new(runtime: Arc<EmbeddingRuntime>, loader: EmbeddingLoader) -> Self {
+        Self { runtime, loader }
+    }
+
+    /// A ready cached model, or a single-flight load through the loader,
+    /// subject to the runtime's retry cooldown.
+    pub(crate) async fn get_or_load(&self) -> Result<Arc<dyn EmbeddingPort>> {
+        self.runtime.get_or_load(|| self.loader.load()).await
     }
 }
 

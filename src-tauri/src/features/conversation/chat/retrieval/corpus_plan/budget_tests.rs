@@ -9,10 +9,17 @@ use super::health::{
     PlannerHealth, PLANNER_PROMPT_FLOOR, PLANNER_PROMPT_TOKENS, PLANNER_STAND_DOWN,
 };
 use super::prompt::PLANNER_OUTPUT_TOKENS;
-use super::shortlist::{shortlist, SHORTLIST_CAP};
+use super::shortlist::shortlist;
 use super::*;
-use crate::application::ports::llm_port::CompletionResponse;
-use crate::domain::value_objects::source_context::{SourceContext, SourceGroup, StructureMode};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, PrefillTiming,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::value_objects::source_context::{
+    SourceContext, SourceGroup, StructureMode,
+};
+use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
 
 const PLAN: &str =
     r#"{"queries":["garden leave notice"],"opening_document_ids":[],"start_at_beginning":false}"#;
@@ -137,6 +144,9 @@ fn vault() -> Vec<CorpusDocument> {
         .collect()
 }
 
+/// The model the utility stub reports; the planner's pace is kept per model.
+const MODEL: &str = "utility-stub";
+
 fn turn_with(health: &PlannerHealth, candidates: Vec<String>) -> PlannerTurn<'_> {
     let mut turn = PlannerTurn::with_health(health);
     turn.candidates = Some(candidates);
@@ -180,13 +190,16 @@ async fn a_large_vault_is_shown_as_a_shortlist_inside_the_prompt_target() {
     for shown in ["Record 200", "Record 199", "Record 201", "Record 305"] {
         assert!(prompt.contains(shown), "{shown} missing from the shortlist");
     }
-    assert!(!prompt.contains("Record 000"), "{prompt}");
+    // There is no fixed row cap: the rest of the vault follows the hits and
+    // fills what the prompt target leaves, so the prompt is at the target
+    // rather than at a twenty-row ceiling below it.
+    assert!(used * 10 >= PLANNER_PROMPT_TOKENS * 8, "{used} tokens");
     // Documents are named by handles, never by their UUIDs.
     assert!(!prompt.contains("9c262a35"), "{prompt}");
     assert!(prompt.contains(r#""catalog_total":379"#), "{prompt}");
 }
 
-/// A model whose every text costs one token, so only the row cap can bind.
+/// A model whose every text costs one token, so the budget never binds.
 struct OneTokenStub;
 
 #[async_trait::async_trait]
@@ -213,7 +226,7 @@ impl LLMPort for OneTokenStub {
 }
 
 #[tokio::test]
-async fn the_shortlist_takes_hits_then_neighbours_and_is_capped() {
+async fn the_shortlist_takes_hits_then_neighbours_and_the_budget_alone_bounds_it() {
     let catalog = vault();
     let candidates: Vec<String> = (100..160).map(uuid).collect();
     let ranked = shortlist(&catalog, &candidates, "where is the spare key kept?");
@@ -221,7 +234,10 @@ async fn the_shortlist_takes_hits_then_neighbours_and_is_capped() {
     assert_eq!(ids.first().copied(), Some(uuid(100).as_str()));
     // The first hit brings the documents either side of it in its series.
     assert!(ids.iter().take(3).any(|id| *id == uuid(99)));
-    assert!(!ids.contains(&uuid(0).as_str()));
+    // The rest of the catalog follows the hits and their neighbours.
+    let position = |id: &str| ids.iter().position(|shown| *shown == id).unwrap();
+    assert!(position(&uuid(0)) > position(&uuid(159)));
+    assert_eq!(ids.len(), catalog.len());
 
     let parts = prompt::PromptParts {
         question: "where is the spare key kept?",
@@ -239,7 +255,9 @@ async fn the_shortlist_takes_hits_then_neighbours_and_is_capped() {
     )
     .await
     .unwrap();
-    assert_eq!(built.shown, SHORTLIST_CAP);
+    // The old cap showed twenty rows whatever the budget. A budget with room
+    // shows every document, so the planner can open any of them.
+    assert_eq!(built.shown, catalog.len());
 }
 
 #[test]
@@ -270,8 +288,11 @@ async fn the_plan_names_documents_by_handle_and_gets_their_real_ids_back() {
     )
     .await
     .unwrap();
-    // Handles are numbered in reading order: 41, 42, 43.
-    assert_eq!(plan.opening_document_ids, [uuid(42), uuid(41)]);
+    // Handles are numbered in reading order over every row shown. The hit
+    // and its neighbours (41, 42, 43) come first in the shortlist, and the
+    // rest of the vault fills what the budget leaves, so the vault's first
+    // documents are shown too and take the first handles.
+    assert_eq!(plan.opening_document_ids, [uuid(1), uuid(0)]);
 }
 
 /// A book split into files, with front matter, among unrelated documents.
@@ -337,11 +358,36 @@ async fn a_learning_request_sees_its_books_front_matter_and_opens_it_in_order() 
     }
 
     // The planner picks one chapter it was shown; validation still reads the
-    // whole book to find where it begins.
+    // whole book to find where it begins. Rows are handled in reading order
+    // over everything the budget shows, so the chapter's handle is read off
+    // the same prompt the planner gets.
+    let parts = prompt::PromptParts {
+        question,
+        history: "",
+        catalog_total: catalog.len(),
+        correction: None,
+        summaries: &HashMap::new(),
+    };
+    let built = prompt::build(
+        &UtilityStub::new(16_384, true),
+        &parts,
+        &ranked,
+        &catalog,
+        PLANNER_PROMPT_TOKENS,
+    )
+    .await
+    .unwrap();
+    let chapter = built
+        .handles
+        .iter()
+        .find(|(_, id)| id.as_str() == "book-10")
+        .map(|(handle, _)| handle.clone())
+        .expect("the hit is shown");
     let stub = UtilityStub::new(16_384, true).then(
         Duration::ZERO,
-        Ok(r#"{"queries":["examining manual introduction"],"opening_document_ids":["d1"],"start_at_beginning":true}"#
-            .into()),
+        Ok(format!(
+            r#"{{"queries":["examining manual introduction"],"opening_document_ids":["{chapter}"],"start_at_beginning":true}}"#
+        )),
     );
     let plan = plan(
         &stub,
@@ -403,7 +449,7 @@ async fn a_prompt_that_cannot_fit_the_window_is_never_sent() {
     assert!(result.is_err());
     assert_eq!(stub.calls(), 0);
     // Not sending is not a timeout: nothing about the planner's speed is learned.
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS);
 }
 
 #[tokio::test(start_paused = true)]
@@ -427,7 +473,7 @@ async fn a_timeout_halves_the_next_prompt_instead_of_standing_the_planner_down()
     .await;
     assert!(timed_out.is_err());
     let sent = stub.last_request_tokens();
-    let next = health.prompt_tokens();
+    let next = health.prompt_tokens(MODEL);
     assert!((PLANNER_PROMPT_FLOOR..PLANNER_PROMPT_TOKENS).contains(&next));
     assert!(health.standing_down().is_none());
 
@@ -463,6 +509,7 @@ async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_o
         queries_already_tried: vec!["spare key".into()],
         top_result_titles: Vec::new(),
         why_insufficient: vec!["low_top_score"],
+        more_titles_not_shown: 0,
     };
 
     let turn = turn_with(&health, vec![uuid(5)]);
@@ -512,13 +559,13 @@ async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_o
 async fn only_a_timeout_at_the_smallest_prompt_stands_the_planner_down_and_only_briefly() {
     let health = PlannerHealth::new();
     let mut timeouts = 0;
-    while health.prompt_tokens() > PLANNER_PROMPT_FLOOR {
-        health.timed_out(health.prompt_tokens());
+    while health.prompt_tokens(MODEL) > PLANNER_PROMPT_FLOOR {
+        health.timed_out(MODEL, health.prompt_tokens(MODEL));
         assert!(health.standing_down().is_none());
         timeouts += 1;
     }
     assert_eq!(timeouts, 2, "2560 -> 1280 -> 1024");
-    health.timed_out(PLANNER_PROMPT_FLOOR);
+    health.timed_out(MODEL, PLANNER_PROMPT_FLOOR);
     let remaining = health.standing_down().expect("standing down");
     assert!(remaining <= PLANNER_STAND_DOWN);
     assert!(PlannerTurn::with_health(&health).unavailable().is_some());
@@ -528,17 +575,55 @@ async fn only_a_timeout_at_the_smallest_prompt_stands_the_planner_down_and_only_
     assert!(PlannerTurn::with_health(&health).unavailable().is_none());
 }
 
+fn read_in(tokens: usize, time: Duration) -> Option<PrefillTiming> {
+    Some(PrefillTiming {
+        tokens: tokens as u64,
+        seconds: time.as_secs_f64(),
+    })
+}
+
+/// The prompt follows the planner's measured prefill speed: what it reads in
+/// the critical path's share of the timeout. There is no ceiling: a fast
+/// planner keeps earning room, at most a doubling an answer.
 #[test]
-fn a_quick_answer_earns_back_prompt_room_and_a_slow_one_keeps_it() {
+fn the_prompt_size_follows_the_measured_planner_speed() {
     let health = PlannerHealth::new();
-    health.timed_out(PLANNER_PROMPT_TOKENS);
-    let shrunk = health.prompt_tokens();
-    health.answered(PLANNER_TIMEOUT * 3 / 4);
-    assert_eq!(health.prompt_tokens(), shrunk);
-    health.answered(Duration::from_secs(4));
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
-    health.answered(Duration::from_secs(1));
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
+    // 2,560 tokens read in a sixteenth of the timeout: more than twice what
+    // the target needs, so the prompt doubles (the most one answer earns).
+    health.answered(
+        MODEL,
+        read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT / 16),
+        PLANNER_PROMPT_TOKENS,
+    );
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS * 2);
+    health.answered(
+        MODEL,
+        read_in(PLANNER_PROMPT_TOKENS * 2, PLANNER_TIMEOUT / 16),
+        PLANNER_PROMPT_TOKENS * 2,
+    );
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS * 4);
+}
+
+/// An answer in time never shrinks the prompt. The reported case: a 9B
+/// planner answered in time, but most of that time went to writing the plan
+/// and waiting in the queue; measured end to end it read as slow prefill and
+/// shrank the prompt from 2,560 tokens to the floor over a few turns.
+#[test]
+fn an_answer_in_time_keeps_its_room() {
+    let health = PlannerHealth::new();
+    for _ in 0..4 {
+        health.answered(
+            MODEL,
+            read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT * 9 / 10),
+            PLANNER_PROMPT_TOKENS,
+        );
+    }
+    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS);
+    health.timed_out(MODEL, PLANNER_PROMPT_TOKENS);
+    let shrunk = health.prompt_tokens(MODEL);
+    assert!(shrunk < PLANNER_PROMPT_TOKENS);
+    health.answered(MODEL, None, shrunk / 4);
+    assert_eq!(health.prompt_tokens(MODEL), shrunk);
 }
 
 #[tokio::test]
@@ -561,7 +646,7 @@ async fn a_window_refusal_shrinks_the_prompt_without_standing_down() {
     )
     .await;
     assert!(result.is_err());
-    assert!(health.prompt_tokens() < PLANNER_PROMPT_TOKENS);
+    assert!(health.prompt_tokens(MODEL) < PLANNER_PROMPT_TOKENS);
     assert!(health.standing_down().is_none());
     assert!(PlannerTurn::with_health(&health).unavailable().is_none());
 }
@@ -584,6 +669,37 @@ async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     .await
     .unwrap_or_else(|_| fallback_with_catalog(question, &catalog));
     assert_eq!(planned.queries, [question]);
-    // A bad answer is still an answer in time.
-    assert_eq!(health.prompt_tokens(), PLANNER_PROMPT_TOKENS);
+    // A bad answer is still an answer in time: it never shrinks the prompt.
+    assert!(health.prompt_tokens(MODEL) >= PLANNER_PROMPT_TOKENS);
+}
+
+/// The planner's excerpt of the conversation was cut by characters from its
+/// start, mid-message and without a word. It keeps whole lines, newest
+/// first, and counts the ones left out.
+#[test]
+fn the_planners_history_is_whole_lines_with_the_rest_counted() {
+    let stub = UtilityStub::new(16_384, true);
+    let history = (0..400)
+        .map(|n| format!("user: question number {n} about the spare key"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let kept = super::prompt::recent_history(&stub, Some(&history), PLANNER_PROMPT_TOKENS);
+    let mut lines = kept.lines();
+    assert!(lines
+        .next()
+        .unwrap()
+        .contains("earlier lines of the conversation not shown"));
+    assert!(lines.all(|line| line.starts_with("user: question number ")));
+    assert!(kept.ends_with("question number 399 about the spare key"));
+}
+
+/// The planner's share of the conversation follows the prompt it reads in
+/// time, not a quarter of its window: a timeout shrinks both.
+#[test]
+fn the_planners_history_follows_what_it_reads_in_time() {
+    let health = PlannerHealth::new();
+    let before = PlannerTurn::with_health(&health).history_tokens(MODEL);
+    assert_eq!(before, PLANNER_PROMPT_TOKENS / 5);
+    health.timed_out(MODEL, PLANNER_PROMPT_TOKENS);
+    assert!(PlannerTurn::with_health(&health).history_tokens(MODEL) < before);
 }

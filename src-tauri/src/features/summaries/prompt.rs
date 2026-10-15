@@ -14,36 +14,27 @@
 
 use serde::Deserialize;
 
-/// Ceiling on the opening a document summary reads, even when the window holds
-/// more: summaries are upkeep, and three sentences do not need a whole book.
-pub const DOCUMENT_BODY_TOKENS: usize = 3000;
-
-/// The same ceiling per section. Sections are numerous; the upkeep pays for
-/// all of them.
-pub const SECTION_BODY_TOKENS: usize = 1500;
-
-/// Largest piece the source text is cut into. The model reads whole pieces
-/// from the start until its window or the ceiling is reached, so this is also
-/// how far short of either the opening may stop.
+/// Largest piece the source text is cut into before the pieces are grouped
+/// into parts the window holds. Pieces are kept whole, in order.
 pub const BODY_PASSAGE_CHARS: usize = 800;
 
-/// Heading the document's opening is written under.
-pub const DOCUMENT_BODY_HEADING: &str = "Beginning of the document:";
+/// Heading the document's text is written under.
+pub const DOCUMENT_BODY_HEADING: &str = "Document text:";
+
+/// Heading the summaries of a long text's parts are written under, when the
+/// whole is summarized from them.
+pub const PART_SUMMARIES_HEADING: &str = "Summaries of the text's parts, in order:";
 
 /// Heading a section's text is written under.
 pub const SECTION_BODY_HEADING: &str = "Section text:";
 
+/// Evidence heading for a long document summarized from its sections.
+pub const SECTION_SUMMARIES_HEADING: &str =
+    "Summaries of the document's sections, in order, then any text under no heading:";
+
 /// A document with fewer top-level sections than this gets no section
 /// summaries — its document summary already covers the same ground.
 pub const MIN_SECTIONS: usize = 3;
-
-/// Hard cap on section summaries per document, so one 400-heading manual
-/// cannot monopolise the utility model.
-pub const MAX_SECTION_SUMMARIES: usize = 12;
-
-/// Headings listed in the document prompt. Enough to show the shape of the
-/// document without turning the prompt into a table of contents.
-const MAX_LISTED_HEADINGS: usize = 24;
 
 /// Upper bound on a stored summary, after which the model is simply running on.
 const MAX_SUMMARY_CHARS: usize = 900;
@@ -119,7 +110,6 @@ pub fn render_document_task(input: &DocumentPromptInput<'_>) -> String {
         .iter()
         .map(|h| h.trim())
         .filter(|h| !h.is_empty())
-        .take(MAX_LISTED_HEADINGS)
         .collect();
     if !headings.is_empty() {
         out.push_str(&format!("Section headings: {}\n", headings.join(" | ")));
@@ -253,8 +243,9 @@ mod tests {
         assert!(!prompt.contains("Section headings"));
     }
 
+    /// The list used to stop at 24 headings. Every heading is listed.
     #[test]
-    fn document_prompt_caps_the_heading_list() {
+    fn document_prompt_lists_every_heading() {
         let many: Vec<String> = (0..80).map(|i| format!("Heading {i}")).collect();
         let prompt = render_document_task(&DocumentPromptInput {
             title: "Manual",
@@ -262,7 +253,7 @@ mod tests {
             section_headings: &many,
         });
         assert!(prompt.contains("Heading 23"));
-        assert!(!prompt.contains("Heading 24"));
+        assert!(prompt.contains("Heading 79"));
     }
 
     #[test]

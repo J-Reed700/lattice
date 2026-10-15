@@ -1,12 +1,14 @@
 //! Opens local, Ollama, and explicit cloud models; fallback policy belongs to the application.
 use std::sync::Arc;
 
-use crate::application::contracts::settings::LLMSettingsDto;
-use crate::application::ports::LLMPort;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::engine::factory::LocalServerOptions;
+use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
-use crate::shared::error::{AppError, Result};
+use crate::features::llm::scheduler::SchedulerRegistry;
+use lattice_core::application::contracts::settings::LLMSettingsDto;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 
 /// A bundled llama-server that cannot execute is an install problem, not a
 /// model problem. It must not be reported as a corrupt model (a failed chat
@@ -32,9 +34,31 @@ fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
 /// The stamp is what allows recovery without a restart: a re-downloaded or
 /// repaired file has a different size or mtime, so it is a different key and
 /// gets a fresh attempt.
-static UNLOADABLE_ARTIFACTS: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, (ArtifactStamp, String)>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+#[derive(Default)]
+pub(crate) struct UnloadableArtifacts {
+    known: std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, (ArtifactStamp, String)>>,
+}
+
+/// What every model load in one app shares: the per-backend schedulers, the
+/// artifacts known not to start, and the probe of the devices a local server
+/// can offload to. The container owns one and hands it to each loader, so two
+/// containers never share any of it.
+#[derive(Clone, Default)]
+pub(crate) struct LlmRuntime {
+    pub(crate) schedulers: Arc<SchedulerRegistry>,
+    pub(crate) unloadable: Arc<UnloadableArtifacts>,
+    pub(crate) devices: Arc<BackendDevices>,
+}
+
+impl LlmRuntime {
+    /// The runtime for an app whose device probe is `devices`.
+    pub(crate) fn new(devices: Arc<BackendDevices>) -> Self {
+        Self {
+            devices,
+            ..Self::default()
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct ArtifactStamp {
@@ -50,67 +74,87 @@ fn artifact_stamp(path: &std::path::Path) -> Option<ArtifactStamp> {
     })
 }
 
-/// Preserve the failure as well as avoiding another expensive load. Returning
-/// `None` from the loader means no model was selected, which makes warmup claim
-/// success and hides the reason the selected utility model is not being used.
-fn known_load_failure(path: &std::path::Path) -> Option<String> {
-    let stamp = artifact_stamp(path)?;
-    let mut known = match UNLOADABLE_ARTIFACTS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    match known.get(path) {
-        Some((recorded, error)) if *recorded == stamp => Some(error.clone()),
-        // The file changed since it failed. Drop the stale entry so the new
-        // bytes are judged on their own.
-        Some(_) => {
-            known.remove(path);
-            None
+impl UnloadableArtifacts {
+    /// Preserve the failure as well as avoiding another expensive load.
+    /// Returning `None` from the loader means no model was selected, which
+    /// makes warmup claim success and hides the reason the selected utility
+    /// model is not being used.
+    fn known_failure(&self, path: &std::path::Path) -> Option<String> {
+        let stamp = artifact_stamp(path)?;
+        let mut known = match self.known.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        match known.get(path) {
+            Some((recorded, error)) if *recorded == stamp => Some(error.clone()),
+            // The file changed since it failed. Drop the stale entry so the new
+            // bytes are judged on their own.
+            Some(_) => {
+                known.remove(path);
+                None
+            }
+            None => None,
         }
-        None => None,
     }
-}
 
-fn remember_unloadable(path: &std::path::Path, error: String) {
-    let Some(stamp) = artifact_stamp(path) else {
-        return;
-    };
-    let mut known = match UNLOADABLE_ARTIFACTS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    known.insert(path.to_path_buf(), (stamp, error));
+    fn remember(&self, path: &std::path::Path, error: String) {
+        let Some(stamp) = artifact_stamp(path) else {
+            return;
+        };
+        let mut known = match self.known.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        known.insert(path.to_path_buf(), (stamp, error));
+    }
 }
 
 pub(crate) struct ModelLoader {
     downloaded_models: Arc<DownloadedModelRepository>,
     app_handle: Option<tauri::AppHandle>,
+    runtime: LlmRuntime,
 }
 
 impl ModelLoader {
     pub(crate) fn new(
         downloaded_models: Arc<DownloadedModelRepository>,
         app_handle: Option<tauri::AppHandle>,
+        runtime: LlmRuntime,
     ) -> Self {
         Self {
             downloaded_models,
             app_handle,
+            runtime,
         }
     }
 
+    async fn create_llm(
+        &self,
+        config: crate::features::llm::engine::factory::LLMConfig,
+    ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
+        crate::features::llm::engine::factory::create_llm(
+            config,
+            &self.runtime.schedulers,
+            &self.runtime.devices,
+        )
+        .await
+    }
+
     pub(crate) async fn load(&self, settings: &LLMSettingsDto) -> Result<Arc<dyn LLMPort>> {
-        if settings.provider == crate::application::contracts::settings::LLMProvider::Llamacpp {
+        if settings.provider
+            == lattice_core::application::contracts::settings::LLMProvider::Llamacpp
+        {
             return Ok(crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?
-                .schedule()
+                .schedule(&self.runtime.schedulers)
                 .await);
         }
         if matches!(
             settings.provider,
-            crate::application::contracts::settings::LLMProvider::Openai
-                | crate::application::contracts::settings::LLMProvider::Anthropic
+            lattice_core::application::contracts::settings::LLMProvider::Openai
+                | lattice_core::application::contracts::settings::LLMProvider::Anthropic
         ) {
             let name = if settings.provider
-                == crate::application::contracts::settings::LLMProvider::Openai
+                == lattice_core::application::contracts::settings::LLMProvider::Openai
             {
                 "openai"
             } else {
@@ -125,10 +169,11 @@ impl ModelLoader {
             .ok_or_else(|| {
                 AppError::InvalidConfig(format!("Configure the {name} API key in Chat settings"))
             })?;
-            return Ok(crate::features::llm::cloud::CloudLlm::new(settings, key)?.schedule());
+            return Ok(crate::features::llm::cloud::CloudLlm::new(settings, key)?
+                .schedule(&self.runtime.schedulers));
         }
         let config = Self::generation_config_from_settings(settings);
-        crate::application::services::model_selection::select_model(
+        lattice_core::application::services::model_selection::select_model(
             settings.provider,
             || {
                 self.try_load_active_model(
@@ -151,7 +196,7 @@ impl ModelLoader {
         }
         let llm = crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?;
         if llm.is_ready().await? {
-            Ok(Some(llm.schedule().await))
+            Ok(Some(llm.schedule(&self.runtime.schedulers).await))
         } else {
             Ok(None)
         }
@@ -159,7 +204,7 @@ impl ModelLoader {
 
     pub(crate) async fn load_router_llm(
         &self,
-        settings: &crate::application::contracts::settings::LLMSettingsDto,
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
         model_name: &str,
     ) -> Result<Arc<dyn LLMPort>> {
         let router_settings = &settings.router;
@@ -183,33 +228,33 @@ impl ModelLoader {
 
         // 2) If no local router exists, use the explicitly configured provider.
         let loaded = match settings.provider {
-            crate::application::contracts::settings::LLMProvider::Llamacpp => {
+            lattice_core::application::contracts::settings::LLMProvider::Llamacpp => {
                 let mut router = settings.clone();
                 router.llama_cpp.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
                 router.temperature = router_settings.temperature;
                 return self.load(&router).await;
             }
-            crate::application::contracts::settings::LLMProvider::Openai
-            | crate::application::contracts::settings::LLMProvider::Anthropic => {
+            lattice_core::application::contracts::settings::LLMProvider::Openai
+            | lattice_core::application::contracts::settings::LLMProvider::Anthropic => {
                 let mut router = settings.clone();
                 router.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
                 router.temperature = router_settings.temperature;
                 return self.load(&router).await;
             }
-            crate::application::contracts::settings::LLMProvider::Local => {
+            lattice_core::application::contracts::settings::LLMProvider::Local => {
                 return Err(AppError::AiModelsNotInstalled(format!(
                     "Router model '{}' is not downloaded. Download it in Settings → Model Catalog.",
                     model_name
                 )));
             }
-            crate::application::contracts::settings::LLMProvider::Auto => {
+            lattice_core::application::contracts::settings::LLMProvider::Auto => {
                 let mut router = settings.clone();
                 router.llama_cpp.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
                 router.temperature = router_settings.temperature;
-                crate::application::services::model_selection::select_model(
+                lattice_core::application::services::model_selection::select_model(
                     settings.provider,
                     || async { Ok(None) }, // Local router lookup already ran above.
                     || async {
@@ -221,7 +266,7 @@ impl ModelLoader {
                     || self.try_load_ollama_with_model(settings, model_name, generation_config),
                 ).await?
             }
-            crate::application::contracts::settings::LLMProvider::Ollama => {
+            lattice_core::application::contracts::settings::LLMProvider::Ollama => {
                 self.try_load_ollama_with_model(settings, model_name, generation_config)
                     .await
                     .map_err(|e| {
@@ -243,7 +288,7 @@ impl ModelLoader {
         generation_config: crate::features::llm::engine::GenerationConfig,
         server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
-        use crate::features::llm::engine::factory::{create_llm, LLMConfig};
+        use crate::features::llm::engine::factory::LLMConfig;
 
         let maybe_model = self.downloaded_models.find_by_model_id(model_id).await?;
 
@@ -278,7 +323,7 @@ impl ModelLoader {
             server,
         };
 
-        match create_llm(llm_config).await {
+        match self.create_llm(llm_config).await {
             Ok(llm) => Ok(Some(llm)),
             Err(e) => Err(unusable_sidecar(&e).unwrap_or_else(|| {
                 AppError::ModelLoadFailed(format!(
@@ -292,7 +337,7 @@ impl ModelLoader {
 
     pub(crate) async fn load_utility_local(
         &self,
-        active: &crate::domain::DownloadedModel,
+        active: &lattice_core::domain::DownloadedModel,
         generation_config: crate::features::llm::engine::GenerationConfig,
         server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
@@ -322,7 +367,7 @@ impl ModelLoader {
             )));
         }
 
-        if let Some(error) = known_load_failure(&model_path) {
+        if let Some(error) = self.runtime.unloadable.known_failure(&model_path) {
             tracing::debug!(
                 model_id = %model_id,
                 path = %model_path.display(),
@@ -345,7 +390,7 @@ impl ModelLoader {
             "Loading utility LLM"
         );
 
-        match crate::features::llm::engine::factory::create_llm(llm_config).await {
+        match self.create_llm(llm_config).await {
             Ok(llm) => Ok(Some(llm)),
             Err(e) => match unusable_sidecar(&e) {
                 // Surfaced as an error so warmup reports it on the model's
@@ -371,7 +416,7 @@ impl ModelLoader {
                          utility model or update Lattice's local model engine.",
                         active.model_name()
                     );
-                    remember_unloadable(&model_path, error.clone());
+                    self.runtime.unloadable.remember(&model_path, error.clone());
                     tracing::warn!(
                         model_id = %model_id,
                         path = %model_path.display(),
@@ -396,7 +441,7 @@ impl ModelLoader {
         model: &str,
         generation_config: crate::features::llm::engine::GenerationConfig,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
-        use crate::application::contracts::settings::LLMProvider;
+        use lattice_core::application::contracts::settings::LLMProvider;
 
         let mut utility = settings.clone();
         utility.model = model.to_owned();
@@ -445,7 +490,7 @@ impl ModelLoader {
         generation_config: crate::features::llm::engine::GenerationConfig,
         server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
-        use crate::features::llm::engine::factory::{create_llm, LLMConfig};
+        use crate::features::llm::engine::factory::LLMConfig;
 
         let active_model = match self.downloaded_models.get_active_chat_model().await {
             Ok(Some(model)) => model,
@@ -491,7 +536,7 @@ impl ModelLoader {
             server,
         };
 
-        match create_llm(llm_config).await {
+        match self.create_llm(llm_config).await {
             Ok(llm) => {
                 tracing::info!(
                     "✅ Successfully loaded active model: {}",
@@ -554,7 +599,15 @@ impl ModelLoader {
         );
 
         // Try to create Ollama client (includes health check)
-        match create_ollama_llm(&endpoint, &model, auth_header, generation_config).await {
+        match create_ollama_llm(
+            &endpoint,
+            &model,
+            auth_header,
+            generation_config,
+            &self.runtime.schedulers,
+        )
+        .await
+        {
             Ok(llm) => {
                 tracing::info!("✅ Successfully connected to Ollama server");
                 Ok(llm)
@@ -600,7 +653,15 @@ impl ModelLoader {
             model
         );
 
-        match create_ollama_llm(&endpoint, model, auth_header, generation_config).await {
+        match create_ollama_llm(
+            &endpoint,
+            model,
+            auth_header,
+            generation_config,
+            &self.runtime.schedulers,
+        )
+        .await
+        {
             Ok(llm) => {
                 tracing::info!("✅ Successfully connected to Ollama router model");
                 Ok(llm)
@@ -617,321 +678,4 @@ impl ModelLoader {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generation_settings_are_preserved() {
-        let settings = LLMSettingsDto {
-            temperature: 0.25,
-            top_p: 0.8,
-            top_k: 17,
-            max_tokens: 731,
-            repeat_penalty: 1.2,
-            ..Default::default()
-        };
-        let config = ModelLoader::generation_config_from_settings(&settings);
-        assert_eq!(config.temperature, settings.temperature);
-        assert_eq!(config.top_p, settings.top_p);
-        assert_eq!(config.top_k, settings.top_k);
-        assert_eq!(config.max_tokens, settings.max_tokens as usize);
-        assert_eq!(config.repeat_penalty, settings.repeat_penalty);
-        assert_eq!(config.presence_penalty, settings.presence_penalty);
-        assert_eq!(
-            config.thinking,
-            crate::features::llm::engine::SamplingProfile::from(settings.thinking_sampling)
-        );
-    }
-
-    #[test]
-    fn a_file_that_failed_to_start_is_retried_only_after_it_changes() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("model.gguf");
-        std::fs::write(&path, b"broken").expect("write");
-
-        assert_eq!(known_load_failure(&path), None);
-        remember_unloadable(&path, "unsupported architecture".into());
-        assert_eq!(
-            known_load_failure(&path).as_deref(),
-            Some("unsupported architecture")
-        );
-
-        // A repaired or re-downloaded file is different bytes, so the memo
-        // must not keep a working model from ever being tried again.
-        std::fs::write(&path, b"repaired and longer").expect("rewrite");
-        assert_eq!(known_load_failure(&path), None);
-    }
-
-    #[tokio::test]
-    async fn a_cached_utility_failure_is_an_error_not_a_successful_no_op() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test-model.gguf");
-        std::fs::write(&path, b"model fixture").unwrap();
-        let active = crate::domain::DownloadedModel::new(
-            "test-id".into(),
-            "Test utility".into(),
-            "test-model".into(),
-            crate::domain::models::downloaded::ModelLocation::LocalFile { path: path.clone() },
-            13,
-            "GGUF".into(),
-            None,
-        )
-        .unwrap();
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_lazy("sqlite::memory:")
-            .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
-        remember_unloadable(
-            &path,
-            "This engine does not support the architecture".into(),
-        );
-
-        for _ in 0..2 {
-            let result = loader
-                .load_utility_local(
-                    &active,
-                    crate::features::llm::engine::GenerationConfig::default(),
-                    LocalServerOptions::default(),
-                )
-                .await;
-            assert!(matches!(result, Err(AppError::ModelLoadFailed(message))
-                if message == "This engine does not support the architecture"));
-        }
-        std::fs::remove_file(&path).unwrap();
-        let result = loader
-            .load_utility_local(
-                &active,
-                crate::features::llm::engine::GenerationConfig::default(),
-                LocalServerOptions::default(),
-            )
-            .await;
-        assert!(matches!(result, Err(AppError::ModelLoadFailed(message))
-            if message.contains("missing from disk")));
-    }
-
-    #[test]
-    fn unusable_sidecar_is_not_reported_as_a_model_failure() {
-        let mapped = unusable_sidecar(&LLMError::SidecarBinaryUnusable("broken".into()));
-        assert!(matches!(mapped, Some(AppError::ServiceNotAvailable(m)) if m == "broken"));
-        assert!(unusable_sidecar(&LLMError::GenerationFailed("bad gguf".into())).is_none());
-        assert!(unusable_sidecar(&LLMError::Timeout).is_none());
-    }
-
-    #[tokio::test]
-    async fn auto_and_explicit_llamacpp_use_their_connection_despite_stale_ollama_and_local_selections(
-    ) {
-        use crate::application::{
-            contracts::settings::{LLMProvider, LlamaCppSettingsDto},
-            ports::llm_port::{CompletionInput, CompletionRequest},
-        };
-        use wiremock::{
-            matchers::{header, method, path},
-            Mock, MockServer, ResponseTemplate,
-        };
-
-        for provider in [LLMProvider::Auto, LLMProvider::Llamacpp] {
-            let server = MockServer::start().await;
-            Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .and(header("authorization", "Basic test-credential"))
-            .respond_with(ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_string(concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}\n\n",
-                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-                    "data: [DONE]\n\n"
-                )))
-            .expect(1)
-            .mount(&server).await;
-            Mock::given(method("GET"))
-                .and(path("/v1/models"))
-                .and(header("authorization", "Basic test-credential"))
-                .respond_with(
-                    ResponseTemplate::new(200)
-                        .set_body_json(serde_json::json!({"data":[{"id":"test-model"}]})),
-                )
-                .expect(if provider == LLMProvider::Auto { 1 } else { 0 })
-                .mount(&server)
-                .await;
-            // The server's scheduler is sized from its `/props`, once, when the
-            // connection is first loaded.
-            Mock::given(method("GET"))
-                .and(path("/props"))
-                .and(header("authorization", "Basic test-credential"))
-                .respond_with(
-                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"total_slots": 1})),
-                )
-                .expect(1)
-                .mount(&server)
-                .await;
-            // An uninitialized DB must never be queried for an explicit remote provider.
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                .connect_lazy("sqlite::memory:")
-                .unwrap();
-            let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
-            let settings = LLMSettingsDto {
-                provider,
-                ollama_url: server.uri(),
-                model: "stale-ollama-model".into(),
-                llama_cpp: LlamaCppSettingsDto {
-                    url: server.uri(),
-                    model: "test-model".into(),
-                    auth_header_name: "Authorization".into(),
-                    auth_header_value: "Basic test-credential".into(),
-                },
-                ..Default::default()
-            };
-            let llm = loader.load(&settings).await.unwrap();
-            assert_eq!(llm.provider_name(), "llamacpp");
-            assert_eq!(llm.model_name(), "test-model");
-            let response = llm
-                .complete(&CompletionRequest {
-                    input: vec![CompletionInput::Message {
-                        role: "user".into(),
-                        content: "Hi".into(),
-                    }],
-                    ..Default::default()
-                })
-                .await
-                .unwrap();
-            assert_eq!(response.text, "OK");
-            assert_eq!(
-                server.received_requests().await.unwrap().len(),
-                if provider == LLMProvider::Auto { 3 } else { 2 }
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn utility_role_follows_the_chat_provider_policy_on_a_shared_host() {
-        // One llama.cpp server is configured both as the llama.cpp connection
-        // and as the "Ollama" URL. Under Auto the utility role must speak the
-        // protocol chat speaks; llama.cpp serves none of Ollama's routes.
-        use crate::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
-        use wiremock::{
-            matchers::{method, path},
-            Mock, MockServer, ResponseTemplate,
-        };
-
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({"data":[{"id":"chat-model"},{"id":"utility-model"}]}),
-            ))
-            .expect(1)
-            .mount(&server)
-            .await;
-        for route in ["/api/tags", "/api/generate", "/api/chat"] {
-            Mock::given(path(route))
-                .respond_with(ResponseTemplate::new(404))
-                .expect(0)
-                .mount(&server)
-                .await;
-        }
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_lazy("sqlite::memory:")
-            .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
-        let settings = LLMSettingsDto {
-            provider: LLMProvider::Auto,
-            ollama_url: server.uri(),
-            model: "chat-model".into(),
-            max_tokens: 512,
-            llama_cpp: LlamaCppSettingsDto {
-                url: server.uri(),
-                model: "chat-model".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let llm = loader
-            .load_utility_remote(
-                &settings,
-                "utility-model",
-                ModelLoader::generation_config_from_settings(&settings),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(llm.provider_name(), "llamacpp");
-        assert_eq!(llm.model_name(), "utility-model");
-    }
-
-    #[tokio::test]
-    async fn utility_role_uses_ollama_only_when_ollama_is_the_provider() {
-        use crate::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
-        use wiremock::{
-            matchers::{method, path},
-            Mock, MockServer, ResponseTemplate,
-        };
-
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/tags"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({"models":[]})),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(404))
-            .expect(0)
-            .mount(&server)
-            .await;
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_lazy("sqlite::memory:")
-            .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
-        let settings = LLMSettingsDto {
-            provider: LLMProvider::Ollama,
-            ollama_url: server.uri(),
-            model: "chat-model".into(),
-            llama_cpp: LlamaCppSettingsDto {
-                url: server.uri(),
-                model: "chat-model".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let llm = loader
-            .load_utility_remote(
-                &settings,
-                "utility-model",
-                ModelLoader::generation_config_from_settings(&settings),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_ne!(llm.provider_name(), "llamacpp");
-        assert_eq!(llm.model_name(), "utility-model");
-    }
-
-    #[tokio::test]
-    async fn missing_ollama_configuration_fails_before_network_access() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_lazy("sqlite::memory:")
-            .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
-        let settings = LLMSettingsDto {
-            provider: crate::application::contracts::settings::LLMProvider::Ollama,
-            ollama_url: String::new(),
-            ..Default::default()
-        };
-        assert!(matches!(
-            loader.load(&settings).await,
-            Err(AppError::InvalidConfig(_))
-        ));
-        assert!(matches!(
-            loader
-                .try_load_ollama_with_model(
-                    &settings,
-                    "router",
-                    ModelLoader::generation_config_from_settings(&settings),
-                )
-                .await,
-            Err(AppError::InvalidConfig(_))
-        ));
-    }
-}
+mod tests;

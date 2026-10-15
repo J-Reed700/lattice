@@ -11,7 +11,7 @@
 //! - `crate::features::qa::plugin::init()` — Tauri plugin
 //!
 //! Domain types (HyDEInterpretation, QueryType, ChatResponse, ...) live in
-//! `crate::domain::qa` because the application layer depends on them.
+//! `lattice_core::domain::qa` because the application layer depends on them.
 
 pub mod commands;
 pub mod dto;

@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 use super::embedded_runtime::BuiltinLabExecutionSpec;
 use super::lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus};
 use super::python_runtime::PythonBundle;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// The argument that makes this executable a lab runner instead of the app.
 pub const LAB_RUNNER_ARG: &str = "--lattice-lab-runner";
@@ -248,25 +248,15 @@ impl Deadlines {
     }
 }
 
-/// Only one Python run loads the interpreter at a time, so a cold cache is
-/// compiled once and every other run waits to load the result.
-static PYTHON_WARMUP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// Run `spec` in a fresh runner process, killing it on cancellation or when it
-/// outlives its deadlines.
+/// outlives its deadlines. `warmup`, held by a Python run, is released once
+/// the child has loaded the interpreter.
 pub(crate) async fn run(
     spec: BuiltinLabExecutionSpec,
     python: Option<PythonBundle>,
+    warmup: Option<tokio::sync::MutexGuard<'_, ()>>,
     cancellation: CancellationToken,
 ) -> Result<LearningLabExecutionResult> {
-    let warmup = if python.is_some() {
-        tokio::select! {
-            guard = PYTHON_WARMUP.lock() => Some(guard),
-            _ = cancellation.cancelled() => return Ok(super::embedded_runtime::cancelled()),
-        }
-    } else {
-        None
-    };
     let scratch = tempfile::tempdir().map_err(|error| AppError::FileSystem(error.to_string()))?;
     let deadlines = Deadlines::for_run(&spec);
     let request = RunRequest { spec, python };
@@ -351,7 +341,7 @@ async fn supervise(
     request: &RunRequest,
     cancellation: &CancellationToken,
     deadlines: Deadlines,
-    mut warmup: Option<tokio::sync::MutexGuard<'static, ()>>,
+    mut warmup: Option<tokio::sync::MutexGuard<'_, ()>>,
 ) -> Result<LearningLabExecutionResult> {
     let started = Instant::now();
     let missing = || AppError::InternalError("The lab runner's pipes are missing.".into());
@@ -422,7 +412,7 @@ async fn exchange<W, R>(
     stdout: R,
     request: &RunRequest,
     deadlines: Deadlines,
-    warmup: &mut Option<tokio::sync::MutexGuard<'static, ()>>,
+    warmup: &mut Option<tokio::sync::MutexGuard<'_, ()>>,
 ) -> Outcome
 where
     W: AsyncWrite + Unpin,
@@ -675,6 +665,7 @@ pub(super) mod tests {
     async fn a_lab_runs_in_a_child_process() -> Result<()> {
         let result = run(
             javascript_spec("console.log('from the child')", 5),
+            None,
             None,
             CancellationToken::new(),
         )

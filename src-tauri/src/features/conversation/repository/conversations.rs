@@ -1,13 +1,13 @@
 //! Conversation rows: create, read, list, update and delete.
 
 use super::ConversationRepository;
-use crate::domain::conversation::{CompactionRecord, Conversation, ConversationAggregate};
 use crate::features::conversation::persistence_mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::ConversationId;
 use chrono::Utc;
+use lattice_core::domain::conversation::{CompactionRecord, Conversation, ConversationAggregate};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::ConversationId;
 
 impl ConversationRepository {
     /// Alias for create_conversation with no system prompt

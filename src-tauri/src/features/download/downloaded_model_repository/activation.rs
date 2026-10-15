@@ -2,9 +2,9 @@
 
 use tracing::{error, info, warn};
 
-use crate::domain::models::downloaded::DownloadedModel;
-use crate::domain::value_objects::ArtifactIdentity;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::value_objects::ArtifactIdentity;
+use lattice_core::shared::error::{AppError, Result};
 
 use super::rows::{build_model_select_query, DownloadedModelRecord};
 use super::DownloadedModelRepository;

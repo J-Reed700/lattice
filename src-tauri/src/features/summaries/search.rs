@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::EmbeddingPort;
 use crate::features::summaries::entity::SummaryHit;
 use crate::features::summaries::repository::SummaryRepositoryPort;
-use crate::shared::error::Result;
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::Result;
 
 /// Over-fetch factor: scoped search filters after retrieval, and one document
 /// can own several section summaries, so the window has to be wider than the

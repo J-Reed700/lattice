@@ -7,15 +7,15 @@ use super::dto::{FolderIndexState, FolderIndexStatusDto};
 use super::manager::{relative_below, root_string, too_large_message, FolderIndexManager};
 use super::run::{Indexer, Outcome, StatusCell};
 use super::store::{self, Counts, FolderStore, TooLarge};
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::scope::Scope;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::shared::{
+use async_trait::async_trait;
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::{
     runtime::jobs::{JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy},
     AppError, Result,
 };
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -189,7 +189,7 @@ fn progress_message(state: FolderIndexState) -> &'static str {
         FolderIndexState::Scanning => "Scanning the folder",
         FolderIndexState::Indexing => "Embedding passages",
         FolderIndexState::Ready => "Ready",
-        FolderIndexState::TooLarge => "Too large to index",
+        FolderIndexState::TooLarge => "Partly indexed",
         FolderIndexState::Refused => "Not indexed",
         FolderIndexState::Unavailable => "No embedding model",
         FolderIndexState::Error => "Failed",
@@ -407,16 +407,15 @@ impl Build<'_> {
                     message: progress_message(FolderIndexState::Ready).into(),
                 })
             }
-            Ok(Outcome::TooLarge { count, capped }) => {
-                let message = too_large_message(
-                    TooLarge { count, capped },
-                    self.manager.config().limits.max_files,
-                );
+            Ok(Outcome::TooLarge { count }) => {
+                let message =
+                    too_large_message(TooLarge { count }, self.manager.config().limits.max_files);
                 status.update(|status| {
                     status.state = FolderIndexState::TooLarge;
                     status.files_total = u32::try_from(count).unwrap_or(u32::MAX);
-                    status.files_indexed = 0;
                     status.message = Some(message);
+                    status.passages_per_second = None;
+                    status.eta_seconds = None;
                 });
                 progress.save(&status.get(), true).await?;
                 Ok(JobOutcome::Completed {

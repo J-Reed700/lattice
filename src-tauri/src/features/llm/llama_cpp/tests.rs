@@ -29,7 +29,7 @@ fn assistant(response: &CompletionResponse) -> Value {
 
 /// Plain text through the typed path, as string-only callers make it.
 async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
-    crate::application::services::completion_input::complete_text(
+    lattice_core::application::services::completion_input::complete_text(
         client,
         prompt,
         context,
@@ -298,7 +298,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
                 role: "user".into(),
                 content: "Find rust".into(),
             }],
-            tools: vec![crate::application::ports::ToolDefinition {
+            tools: vec![lattice_core::application::ports::ToolDefinition {
                 name: "search".into(),
                 description: "Search".into(),
                 parameters: json!({"type":"object"}),
@@ -319,9 +319,19 @@ async fn tools_and_native_assistant_messages_survive_followup() {
         input,
         ..Default::default()
     };
-    Mock::given(path("/v1/chat/completions")).and(body_partial_json(json!({"messages":[message,{"role":"tool","tool_call_id":"call_1","content":"Found Rust docs"}]})))
+    let mut replayed = message.clone();
+    replayed
+        .as_object_mut()
+        .unwrap()
+        .remove("reasoning_content");
+    Mock::given(path("/v1/chat/completions")).and(body_partial_json(json!({"messages":[replayed,{"role":"tool","tool_call_id":"call_1","content":"Found Rust docs"}]})))
         .respond_with(ResponseTemplate::new(200).set_body_string(stream_reply(json!({"role":"assistant","content":"Hello"}), "stop"))).expect(1).mount(&server).await;
     assert_eq!(client.complete(&followup).await.unwrap().text, "Hello");
+    // The reasoning reached the caller for display but did not go back.
+    assert_eq!(response.reasoning.as_deref(), Some("retained reasoning"));
+    let requests = server.received_requests().await.unwrap();
+    let sent: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert!(sent["messages"][0].get("reasoning_content").is_none());
 }
 
 #[tokio::test]
@@ -516,7 +526,10 @@ fn streamed_tool_arguments_reasoning_and_usage_survive_fragmentation() {
     assert_eq!(response.finish_reason, "tool_calls");
     assert_eq!(response.input_tokens, 20);
     assert_eq!(response.output_tokens, 30);
-    assert_eq!(assistant(&response)["reasoning_content"], "Look here");
+    assert!(
+        assistant(&response).get("reasoning_content").is_none(),
+        "reasoning is displayed, not replayed"
+    );
     assert_eq!(response.reasoning.as_deref(), Some("Look here"));
     assert!(matches!(&response.tool_calls[0], CompletionInput::ToolCall {id, ..} if id == "first"));
     assert!(
@@ -1366,7 +1379,7 @@ async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
 
     let llm = LlamaCppLlm::new(&settings(server.uri()))
         .unwrap()
-        .schedule()
+        .schedule(&SchedulerRegistry::default())
         .await;
     assert!(llm.counts_tokens_exactly());
     assert_eq!(llm.count_tokens_exact("four tokens here").await.unwrap(), 4);
@@ -1431,14 +1444,16 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
                 output: "Found Rust docs".into(),
             },
         ],
-        tools: vec![crate::application::ports::ToolDefinition {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search".into(),
             parameters: json!({"type":"object"}),
         }],
         json_schema: Some(json!({"type":"object"})),
         reasoning_effort: Some("low".into()),
-        sampling: Some(crate::application::ports::llm_port::SamplingOverride::deterministic()),
+        sampling: Some(
+            lattice_core::application::ports::llm_port::SamplingOverride::deterministic(),
+        ),
         max_output_tokens: Some(512),
         want_logprobs: true,
         assigned_slot: Some(2),

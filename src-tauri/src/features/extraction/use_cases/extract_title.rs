@@ -22,7 +22,7 @@ use crate::features::extraction::dto::{
     ExtractTitleRequestDto, ExtractTitleResponseDto, TitleExtractionStrategy,
 };
 use crate::infrastructure::extraction::LinkParser;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 pub struct ExtractDocumentTitleUseCase {
     link_parser: LinkParser,

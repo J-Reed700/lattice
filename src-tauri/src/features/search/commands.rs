@@ -17,15 +17,14 @@
 //! - Validate inputs (security)
 //! - Delegate to use cases (business logic)
 //! - Handle caching (performance)
-//! - Log audit events (CWE-778 mitigation)
 
 use crate::features::search::dto::{
     EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };
 use crate::interfaces::di::container::Container;
-use crate::shared::error::AppError;
-use crate::shared::ipc::ApiError;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::ipc::ApiError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -35,7 +34,7 @@ mod searches;
 
 use enrichment::{enrich_hybrid_results, enrich_vector_results, LibraryMode};
 pub use recency::search_with_recency_impl;
-use searches::{audit_search, search_fast_impl};
+use searches::search_fast_impl;
 pub use searches::{
     find_similar_impl, hybrid_search_impl, search_documents_impl, semantic_search_impl,
 };
@@ -93,7 +92,6 @@ pub use searches::{
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks via excessive searches
 /// - **Input Validation**: Sanitizes query to prevent injection attacks
-/// - **Audit Logging (CWE-778)**: Logs all searches with result count and cache status
 /// - **Access Tracking**: Records document access asynchronously for usage analytics
 ///
 /// # Search Modes
@@ -120,7 +118,6 @@ pub use searches::{
 /// 7. Enrich results with document metadata and snippets
 /// 8. Store results in cache for future requests
 /// 9. Track document access asynchronously
-/// 10. Log audit event with query and result count
 #[tauri::command]
 #[specta::specta]
 pub async fn search_documents(
@@ -169,7 +166,6 @@ pub async fn search_documents(
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query
-/// - **Audit Logging (CWE-778)**: Logs searches with result count
 ///
 /// # Performance
 ///
@@ -269,7 +265,6 @@ pub async fn hybrid_search(
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
-/// - **Audit Logging (CWE-778)**: Logs similarity searches with chunk ID
 ///
 /// # Algorithm
 ///
@@ -297,8 +292,7 @@ pub async fn hybrid_search(
 /// 6. Filter out source chunk
 /// 7. Take top `limit` results
 /// 8. Enrich with metadata
-/// 9. Log audit event with "similar:{chunk_id}" query
-/// 10. Return similar documents
+/// 9. Return similar documents
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(chunk_id = %chunk_id))]
@@ -343,7 +337,6 @@ pub async fn find_similar(
 
     let similar = enrich_vector_results(filtered, enrichment_service).await?;
 
-    audit_search(&format!("similar:{}", chunk_id), similar.len(), false).await?;
     Ok(similar)
 }
 
@@ -401,7 +394,6 @@ pub async fn find_similar(
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
-/// - **Audit Logging (CWE-778)**: Logs searches with result count
 ///
 /// # Recency Scoring
 ///
@@ -439,8 +431,7 @@ pub async fn find_similar(
 /// 6. Run the library search orchestrator
 /// 7. Enrich results with metadata
 /// 8. Boost recently updated documents
-/// 9. Log audit event
-/// 10. Return time-boosted results
+/// 9. Return time-boosted results
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(query = %options.query))]
@@ -557,7 +548,6 @@ pub async fn find_similar_documents(
 ///
 /// - Rate limiting applied once for the batch
 /// - Each query validated individually
-/// - Audit logged as batch operation
 ///
 /// ## Example
 ///
@@ -617,15 +607,6 @@ pub async fn batch_search(
         let enriched = enrich_hybrid_results(response.results, enrichment_service.clone()).await?;
         all_enriched_results.push(enriched);
     }
-
-    // Audit the batch search
-    let total_results: usize = all_enriched_results.iter().map(|r| r.len()).sum();
-    audit_search(
-        &format!("batch_search_{}_queries", queries.len()),
-        total_results,
-        false,
-    )
-    .await?;
 
     Ok(all_enriched_results)
 }

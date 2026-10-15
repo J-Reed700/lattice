@@ -1,5 +1,5 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -14,7 +14,8 @@ pub(crate) struct Decoder {
     content: String,
     reasoning: BTreeMap<String, String>,
     /// Reasoning received since the caller last drained it. The aggregate
-    /// above is retained for native replay; this buffer is only UI progress.
+    /// above becomes the response's displayable reasoning (it is not
+    /// replayed); this buffer is only UI progress.
     reasoning_delta: String,
     tool_calls: BTreeMap<u64, Value>,
     usage: Value,
@@ -204,7 +205,7 @@ impl Decoder {
                     self.content.push_str(content);
                     text.push(content.into());
                 }
-                // Retain native reasoning alongside tool calls for the next request.
+                // Keep the reasoning for display; the replayed turn drops it.
                 for key in ["reasoning_content", "reasoning"] {
                     if let Some(value) = choice
                         .get("delta")
@@ -299,7 +300,9 @@ impl Decoder {
             ))
         }
     }
-    pub fn into_response(self) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+    pub fn into_response(
+        self,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         self.finish()?;
         let mut message = serde_json::Map::from_iter([
             ("role".into(), json!("assistant")),
@@ -318,7 +321,7 @@ impl Decoder {
         let public_logprobs = self
             .first_logprobs
             .as_ref()
-            .and_then(crate::application::ports::llm_port::first_token_logprobs);
+            .and_then(lattice_core::application::ports::llm_port::first_token_logprobs);
         let mut response = super::parse_completion(json!({
             "choices": [{
                 "message": message,

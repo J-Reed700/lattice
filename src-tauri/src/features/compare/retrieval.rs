@@ -12,11 +12,8 @@ use std::collections::HashSet;
 
 use tracing::{debug, warn};
 
-use crate::features::search::dto::SearchRequestDto;
-use crate::interfaces::di::Container;
-use crate::shared::error::Result;
-
-use super::use_case::{CHUNKS_PER_COLUMN, MAX_CHUNKS_PER_DOCUMENT};
+use crate::features::compare::di::CompareDeps;
+use lattice_core::shared::error::Result;
 
 #[derive(Debug, Clone)]
 pub struct RetrievedChunk {
@@ -40,25 +37,15 @@ pub struct DocumentChunks {
 pub(super) const DEGRADED_NOTE: &str =
     "Search failed for this document, so these values come from its opening passages.";
 
-/// Char-safe truncation with a trailing ellipsis.
-pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut output = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    output.push('…');
-    output
-}
-
 /// Chunks worth showing the model for one document across all columns,
-/// best first: ordered by first appearance, deduped by chunk id, capped.
+/// best first: ordered by first appearance, deduped by chunk id.
+/// `per_column` is how deep each column's search reads, sized by the caller
+/// from the row call's room; the call's best-first fill decides what goes in.
 pub async fn retrieve_for_document(
-    container: &Container,
+    deps: &CompareDeps,
     document_id: &str,
     columns: &[String],
+    per_column: usize,
 ) -> Result<DocumentChunks> {
     let mut scope: HashSet<String> = HashSet::new();
     scope.insert(document_id.to_string());
@@ -67,20 +54,22 @@ pub async fn retrieve_for_document(
     let mut chunks: Vec<RetrievedChunk> = Vec::new();
 
     let mut search_failed = false;
-    let search = container.hybrid_search_use_case();
+    let search = &deps.search;
     for column in columns {
-        let request = SearchRequestDto::hybrid(column, CHUNKS_PER_COLUMN);
-        match search.execute_scoped(request, None, Some(&scope)).await {
-            Ok(response) => {
-                for result in response.results {
-                    if !seen.insert(result.id.clone()) {
+        match search
+            .search_column(column, &scope, per_column.max(1))
+            .await
+        {
+            Ok(hits) => {
+                for hit in hits {
+                    if !seen.insert(hit.id.clone()) {
                         continue;
                     }
                     chunks.push(RetrievedChunk {
-                        chunk_id: result.id,
-                        content: result.content,
+                        chunk_id: hit.id,
+                        content: hit.content,
                         section: None,
-                        index: result.position.unwrap_or(chunks.len()),
+                        index: hit.position.unwrap_or(chunks.len()),
                     });
                 }
             }
@@ -113,9 +102,9 @@ pub async fn retrieve_for_document(
                 "compare: the search found nothing; using the opening chunks"
             );
         }
-        let stored = container
-            .chunk_repository()
-            .find_first_by_document(document_id, MAX_CHUNKS_PER_DOCUMENT)
+        let stored = deps
+            .chunks
+            .find_first_by_document(document_id, per_column.max(1) * columns.len().max(1))
             .await?;
         for chunk in stored {
             chunks.push(RetrievedChunk {
@@ -126,8 +115,6 @@ pub async fn retrieve_for_document(
             });
         }
     }
-
-    chunks.truncate(MAX_CHUNKS_PER_DOCUMENT);
 
     Ok(DocumentChunks { chunks, degraded })
 }

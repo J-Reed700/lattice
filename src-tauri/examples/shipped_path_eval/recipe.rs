@@ -8,8 +8,8 @@
 //! no-op, so a renamed setting cannot quietly drop out of a recipe.
 
 use crate::Res;
-use lattice::application::contracts::settings::SettingsDto;
 use lattice::features::conversation::chat::ToolPreferences;
+use lattice_core::application::contracts::settings::SettingsDto;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};

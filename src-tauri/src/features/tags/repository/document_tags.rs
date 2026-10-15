@@ -4,8 +4,8 @@ use sqlx::Row;
 
 use crate::features::tags::entity::Tag as TagEntity;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::TagName;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::TagName;
 
 use super::TagRepository;
 

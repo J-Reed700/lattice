@@ -14,7 +14,7 @@
 //! boundary — the boundary is deterministic validation in
 //! `domain::conversation::memory`.
 
-use crate::domain::conversation::memory::{
+use lattice_core::domain::conversation::memory::{
     MemoryItem, MAX_EVIDENCE_PER_ITEM, MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE,
     MAX_QUOTE_BYTES, MEMORY_SCHEMA_VERSION,
 };
@@ -70,7 +70,7 @@ pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-13.13";
 /// Identity of the semantic-review contract.
 pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-10-13.8";
 /// Identity of the summariser contract.
-pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-09-19.1";
+pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-13.1";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
 pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-10-13.8";
@@ -378,14 +378,21 @@ pub struct SummaryPassage<'a> {
 }
 
 /// Render one fold step: prior summary plus a bounded slice of new passages.
+///
+/// `forgotten_labels` names what the user asked memory to forget. The passages
+/// arrive with the forgotten spans already cut out, but a later message can
+/// repeat or correct a forgotten value in words no span marks, so the
+/// summariser is told to leave those facts out too. Without any, the payload
+/// carries no such field.
 pub fn render_summary_prompt(
     previous_summary: Option<&str>,
     passages: &[SummaryPassage<'_>],
     mandatory_labels: &[String],
+    forgotten_labels: &[String],
     budget_tokens: usize,
     is_final_step: bool,
 ) -> String {
-    to_payload(&serde_json::json!({
+    let mut payload = serde_json::json!({
         "task": "update_working_summary",
         "previous_summary": previous_summary,
         "new_passages": passages
@@ -400,8 +407,22 @@ pub fn render_summary_prompt(
         "budget_tokens": budget_tokens,
         "more_passages_follow": !is_final_step,
         "instructions": "Rewrite the working summary so it covers the previous summary and these new passages together. Do not re-author the active requirements listed above; they reach later turns with their own exact quotations.",
-    }))
+    });
+    if let (false, Some(fields)) = (forgotten_labels.is_empty(), payload.as_object_mut()) {
+        fields.insert(
+            "forgotten_by_user".to_string(),
+            serde_json::json!(forgotten_labels),
+        );
+        fields.insert(
+            "forgotten_instructions".to_string(),
+            serde_json::json!(FORGOTTEN_INSTRUCTIONS),
+        );
+    }
+    to_payload(&payload)
 }
+
+/// How the summariser treats `forgotten_by_user`.
+const FORGOTTEN_INSTRUCTIONS: &str = "The user asked memory to forget the facts in forgotten_by_user. Leave each of them out of the summary, with any value, name or number it gives, even where a passage or the previous summary repeats or corrects it. [forgotten] marks text already removed: do not guess what it was.";
 
 /// Render the one permitted shrink request (§7.3 step 9).
 pub fn render_summary_shrink_prompt(

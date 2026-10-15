@@ -238,6 +238,22 @@ async cancelLearningPackImportPreview(request: CancelLearningPackImportPreviewRe
     else return { status: "error", error: e  as any };
 }
 },
+async saveLearningPackAs(request: ExportLearningPackRequestDto) : Promise<Result<SaveLearningPackAsResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_pack_as", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async exportAllLearningPacks(request: ExportAllLearningPacksRequestDto) : Promise<Result<ExportAllLearningPacksResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|export_all_learning_packs", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewLearningCurriculumRevision(request: PreviewLearningCurriculumRevisionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|preview_learning_curriculum_revision", { request }) };
@@ -1388,7 +1404,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks via excessive searches
  * - **Input Validation**: Sanitizes query to prevent injection attacks
- * - **Audit Logging (CWE-778)**: Logs all searches with result count and cache status
  * - **Access Tracking**: Records document access asynchronously for usage analytics
  *
  * # Search Modes
@@ -1415,7 +1430,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * 7. Enrich results with document metadata and snippets
  * 8. Store results in cache for future requests
  * 9. Track document access asynchronously
- * 10. Log audit event with query and result count
  */
 async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
@@ -1463,7 +1477,6 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query
- * - **Audit Logging (CWE-778)**: Logs searches with result count
  *
  * # Performance
  *
@@ -1547,7 +1560,6 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * # Security
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
- * - **Audit Logging (CWE-778)**: Logs similarity searches with chunk ID
  *
  * # Algorithm
  *
@@ -1575,8 +1587,7 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * 6. Filter out source chunk
  * 7. Take top `limit` results
  * 8. Enrich with metadata
- * 9. Log audit event with "similar:{chunk_id}" query
- * 10. Return similar documents
+ * 9. Return similar documents
  */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1656,7 +1667,6 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
- * - **Audit Logging (CWE-778)**: Logs searches with result count
  *
  * # Recency Scoring
  *
@@ -1694,8 +1704,7 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * 6. Run the library search orchestrator
  * 7. Enrich results with metadata
  * 8. Boost recently updated documents
- * 9. Log audit event
- * 10. Return time-boosted results
+ * 9. Return time-boosted results
  */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1728,7 +1737,6 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
  *
  * - Rate limiting applied once for the batch
  * - Each query validated individually
- * - Audit logged as batch operation
  *
  * ## Example
  *
@@ -2366,6 +2374,18 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The newest lines of the backend's log file, oldest first. `limit` defaults
+ * to 300 and is capped at 1000; no log file yet gives an empty list.
+ */
+async getBackendLogs(limit: number | null) : Promise<Result<BackendLogEntry[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|get_backend_logs", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAllTagsWithCounts() : Promise<Result<TagWithCountDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:tags|get_all_tags_with_counts") };
@@ -2541,7 +2561,7 @@ async clearCache() : Promise<Result<null, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton statistics
+ * Reads the statistics of the app's query cache, which the container holds
  */
 async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
     try {
@@ -2615,7 +2635,7 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton metrics
+ * Reads the metrics of the app's query cache, which the container holds
  */
 async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
     try {
@@ -2682,7 +2702,7 @@ async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton
+ * Clears the app's query cache, which the container holds
  */
 async clearSearchCache() : Promise<Result<null, AppError>> {
     try {
@@ -3760,6 +3780,39 @@ async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The frozen copy of `url` in this conversation, if one was ever requested.
+ */
+async getWebPageSnapshot(conversationId: string, url: string) : Promise<Result<WebPageSnapshotDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|get_web_page_snapshot", { conversationId, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Capture a frozen copy now, or try a failed one again.
+ */
+async captureWebPageSnapshot(conversationId: string, url: string) : Promise<Result<WebPageSnapshotDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|capture_web_page_snapshot", { conversationId, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every frozen copy this conversation has.
+ */
+async listWebPageSnapshots(conversationId: string) : Promise<Result<WebPageSnapshotDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|list_web_page_snapshots", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
@@ -3916,7 +3969,7 @@ export type AdoptLearningSourceVersionRequestDto = { operationId: string; progra
  * # Examples
  *
  * ```rust
- * # use lattice::shared::ipc::{ApiError, ErrorCode};
+ * # use lattice_core::shared::ipc::{ApiError, ErrorCode};
  * let error = ApiError {
  * code: ErrorCode::NotFound,
  * message: "Document not found".to_string(),
@@ -4127,8 +4180,8 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::DomainError;
  * let domain_err = DomainError::EntityNotFound {
  * entity_type: "Document".to_string(),
  * identifier: "doc-123".to_string(),
@@ -4144,7 +4197,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::InvalidConfig {
  * details: "Missing required field 'api_key'".to_string(),
  * };
@@ -4159,7 +4212,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::ServiceNotAvailable {
  * service: "EmbeddingService".to_string(),
  * reason: "Model not loaded".to_string(),
@@ -4175,7 +4228,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::QueueFull {
  * queue_name: "indexing_queue".to_string(),
  * };
@@ -4190,7 +4243,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::SerializationFailed {
  * context: "DocumentDTO".to_string(),
  * reason: "Invalid UTF-8 in field 'content'".to_string(),
@@ -4205,7 +4258,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::DeserializationFailed {
  * context: "SearchRequest".to_string(),
  * reason: "Missing required field 'query'".to_string(),
@@ -4220,7 +4273,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::JsonError {
  * message: "Expected comma".to_string(),
  * line: 42,
@@ -4237,7 +4290,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::ParsingError {
  * context: "CSV file".to_string(),
  * reason: "Unexpected end of file".to_string(),
@@ -4252,7 +4305,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::UseCaseFailed {
  * use_case: "IndexDocumentUseCase".to_string(),
  * reason: "Embedding generation timed out".to_string(),
@@ -4267,7 +4320,7 @@ export type ApplicationError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::ApplicationError;
  * let error = ApplicationError::MappingError {
  * context: "Document -> DocumentDTO".to_string(),
  * reason: "Missing required field".to_string(),
@@ -4347,6 +4400,12 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
+/**
+ * One line of the backend's file log. Lines that do not match the log format
+ * carry only `message` (the raw line) and an `Unknown` level.
+ */
+export type BackendLogEntry = { timestamp: string | null; level: BackendLogLevel; target: string | null; message: string }
+export type BackendLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "unknown"
 export type BacklinksResultDto = { documentIds: string[] }
 export type BackupInfoDto = { path: string; name: string; createdAt: string; version: string; fileCount: number; size: number }
 /**
@@ -4378,7 +4437,7 @@ compressBackups: boolean }
  *
  * # Example
  * ```rust
- * use lattice::application::dtos::batch_dto::BatchImportOptionsDto;
+ * use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
  *
  * let options = BatchImportOptionsDto {
  * extract_article: Some(true),
@@ -4759,7 +4818,8 @@ export type CompareRowDto = { documentId: string; title: string; filePath: strin
 cells: CompareCellDto[];
 /**
  * Set when this document could not be processed (timeout, no chunks, LLM
- * unavailable). Cells are all-null in that case. Rendered as a muted row note.
+ * unavailable), in whole or in part. Cells filled before the failure are
+ * kept; the rest are null. Rendered as a muted row note.
  */
 error: string | null;
 /**
@@ -5211,7 +5271,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::EntityNotFound {
  * entity_type: "Document".to_string(),
  * identifier: "doc-123".to_string(),
@@ -5227,7 +5287,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::InvalidState {
  * details: "Document is archived and cannot be modified".to_string(),
  * };
@@ -5241,7 +5301,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ValidationFailed {
  * field: "email".to_string(),
  * reason: "Invalid email format".to_string(),
@@ -5257,7 +5317,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * # use std::path::PathBuf;
  * let error = DomainError::UnsupportedFileType {
  * path: PathBuf::from("/path/to/file.xyz"),
@@ -5273,7 +5333,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * # use std::path::PathBuf;
  * let error = DomainError::FileTooLarge {
  * path: PathBuf::from("/path/to/huge.pdf"),
@@ -5291,7 +5351,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ConcurrentModification {
  * resource: "Document doc-123".to_string(),
  * details: "Version mismatch: expected v2, found v3".to_string(),
@@ -5307,7 +5367,7 @@ export type DomainError =
  * # Examples
  *
  * ```rust
- * # use lattice::shared::error::DomainError;
+ * # use lattice_core::shared::error::DomainError;
  * let error = DomainError::ConstraintViolation {
  * constraint: "A document must have at least one chunk".to_string(),
  * };
@@ -5387,7 +5447,7 @@ export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: 
  * # Examples
  *
  * ```rust
- * # use lattice::shared::ipc::ErrorCode;
+ * # use lattice_core::shared::ipc::ErrorCode;
  * let code = ErrorCode::NotFound;
  * let json = serde_json::to_string(&code).unwrap();
  * assert_eq!(json, "\"NOT_FOUND\"");
@@ -5657,12 +5717,22 @@ export type ExplorerSearchResultDto = { matches: ExplorerSearchMatchDto[];
  * A bound was hit (results, files, bytes or time), so there may be more.
  */
 truncated: boolean; filesScanned: number }
+export type ExportAllLearningPacksRequestDto = { operationId: string; options: LearningPackExportOptionsDto }
+/**
+ * A dismissed folder dialog writes and records nothing; a chosen folder
+ * gets every course that could be exported, and says which could not.
+ */
+export type ExportAllLearningPacksResultDto = { outcome: "cancelled" } | { outcome: "exported"; destinationDir: string; exported: ExportedLearningPackDto[]; failed: FailedLearningPackExportDto[] }
 export type ExportJsonRequestDto = {
 /**
  * `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
  */
 outputPath?: string | null; pretty: boolean }
-export type ExportLearningPackRequestDto = { operationId: string; programId: string; fileName: string; includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
+/**
+ * One course's export. Rust names the file from the course title; the
+ * renderer never sends a file name.
+ */
+export type ExportLearningPackRequestDto = { operationId: string; programId: string; options: LearningPackExportOptionsDto }
 export type ExportMarkdownRequestDto = {
 /**
  * `None` means the app's exports folder, which is the only place the
@@ -5675,8 +5745,10 @@ export type ExportResultDto = { count: number;
  * guessing.
  */
 outputDir: string }
+export type ExportedLearningPackDto = { programId: string; title: string; path: string }
 export type ExtractAndResolveResponseDto = { links: ResolvedLinkDto[] }
 export type ExtractMentionsResultDto = { mentions: MentionWithContextDto[]; count: number }
+export type FailedLearningPackExportDto = { programId: string; title: string; error: string }
 /**
  * Favorite document with metadata
  */
@@ -5737,7 +5809,8 @@ export type FolderIndexState =
  */
 "indexing" | "ready" |
 /**
- * More indexable files than the cap; nothing was embedded.
+ * More indexable files than the bound: the first up to it are indexed,
+ * and the message says how many more are found by text matching only.
  */
 "tooLarge" |
 /**
@@ -6415,7 +6488,13 @@ export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
 export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; available: boolean; version: string | null; reason: string | null }
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
-export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
+/**
+ * Of `claim_count`, the claims kept as general knowledge: no saved
+ * reference supports or contradicts them, and they were not checked
+ * against a source.
+ */
+generalKnowledgeCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
@@ -6430,30 +6509,182 @@ export type LearningOutlineEvidenceDto = { reviewStatus: LearningOutlineReviewSt
 unavailableCount: number }
 export type LearningOutlineIssueDto = {
 /**
+ * Stable identity assigned by code when the finding is first raised.
+ */
+id: string;
+/**
  * JSON pointer into the saved candidate. Empty means the entire curriculum.
  */
-path: string; kind: LearningOutlineIssueKind; claim: string; quote: string; sourceId: string | null; message: string }
-export type LearningOutlineIssueKind = "quote" | "content"
-export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
-export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string }
+path: string; kind: LearningOutlineIssueKind;
+/**
+ * The item text at `path` as of the last review, refreshed by code.
+ */
+claim: string;
+/**
+ * The reviewer's current reason, refreshed on each unresolved verdict.
+ */
+message: string;
+/**
+ * Repair attempts spent on this finding in the current operation.
+ */
+attempts: number;
+/**
+ * The attempt limit or the module's rewrite budget is spent; waits for the user.
+ */
+exhausted: boolean;
+/**
+ * Evidence shown to the user: the contradicting or best passage found.
+ */
+quote: string; sourceId: string | null;
+/**
+ * Public searches already run for this finding.
+ */
+searched: string[] }
+export type LearningOutlineIssueKind =
+/**
+ * An assertion about the world stated as true (a version, behaviour,
+ * number, date, API fact) that the reviewer believes is wrong or unsupported.
+ */
+"factual" |
+/**
+ * Sequencing, prerequisites, duplication, scope, session fit, project
+ * progression or a contradictory requirement.
+ */
+"plan" |
+/**
+ * Course-wide: no references could be gathered, so lessons cannot be prepared.
+ */
+"references"
+export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage;
+/**
+ * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
+ * dive's gathering and evidence linking are never a silent spinner.
+ */
+detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
+/**
+ * Outline items whose citation is verified: chosen by evidence linking or
+ * attached by a supported factual repair.
+ */
+citationsVerified: number;
+/**
+ * Author citations removed in this operation because they did not match
+ * their source exactly or evidence linking did not choose them.
+ */
+citationsRemoved: number;
+/**
+ * Reference pages gathered automatically for this program.
+ */
+referencesGathered: number }
 export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
-export type LearningPackConflictDto = { entityKind: string; incomingId: string; incomingTitle: string; existingId: string; existingTitle: string; resolution: string }
+export type LearningPackConflictDto = { kind: LearningPackConflictKind;
+/**
+ * The local record's ID, when the conflict is about one.
+ */
+existingId: string | null;
+/**
+ * The local record's title, when it has one.
+ */
+existingTitle: string | null;
+/**
+ * The backend's explanation, when the kind alone does not say enough.
+ */
+reason: string | null;
+/**
+ * The policies under which this conflict goes away, most preferred
+ * first. Empty when no choice gets past it.
+ */
+clearsWith: LearningPackConflictPolicy[] }
+/**
+ * Why a preview cannot go ahead, or what it will do with a record that is
+ * already on this computer. The renderer words each kind; `reason` carries
+ * only the backend's own explanation when it has one.
+ */
+export type LearningPackConflictKind =
+/**
+ * The pack was written by a different build of Lattice.
+ */
+"pack_schema" |
+/**
+ * The course itself is already on this computer.
+ */
+"program" |
+/**
+ * The copy here has history no pack can restore, so it cannot be replaced.
+ */
+"program_history" |
+/**
+ * The copy here is still being prepared.
+ */
+"program_jobs" |
+/**
+ * A module another course on this computer owns.
+ */
+"module" |
+/**
+ * A lesson another course on this computer owns.
+ */
+"lesson" |
+/**
+ * A question another course on this computer owns.
+ */
+"question" |
+/**
+ * A submitted assessment another course on this computer owns.
+ */
+"attempt" |
+/**
+ * Any other record another course on this computer owns.
+ */
+"record"
 export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
 export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "attempt" | "evidence" | "practical_activity" | "practical_artifact"
 export type LearningPackExportDto = { id: string; programId: string; destinationPath: string; manifest: LearningPackManifest; createdAt: number }
+/**
+ * What an export of this course cannot carry, shown before exporting. The
+ * renderer words both lists.
+ */
+export type LearningPackExportNoticeDto = {
+/**
+ * Local data the pack leaves on this computer; only kinds that have any.
+ */
+staysBehind: LearningPackStaysBehindDto[];
+/**
+ * Why an export would be refused right now. The same conflict a replace
+ * preview reports, so one fact has one shape.
+ */
+blockers: LearningPackConflictKind[] }
+/**
+ * What one export carries. The panel, save-as and export-all share it.
+ */
+export type LearningPackExportOptionsDto = { includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
 export type LearningPackImportPreviewDto = { id: string; sourcePath: string; manifest: LearningPackManifest; incomingProgramId: string; incomingProgramTitle: string; conflictPolicy: LearningPackConflictPolicy; conflicts: LearningPackConflictDto[]; changes: LearningPackChangeDto[]; warnings: string[]; status: LearningPackPreviewStatus; canApply: boolean; createdAt: number; decidedAt: number | null }
 export type LearningPackImportResultDto = { id: string; previewId: string; importedProgramId: string; backupId: string | null; appliedChanges: LearningPackChangeDto[]; importedAt: number }
-export type LearningPackManifest = { format: string; version: number; packId: string; title: string; createdAt: number; applicationVersion: string; rootSha256: string; privacy: LearningPackPrivacyManifest; entries: LearningPackManifestEntry[] }
+export type LearningPackManifest = { format: string; version: number;
+/**
+ * Highest applied database migration on the exporting computer.
+ */
+schemaVersion: number; packId: string; title: string; createdAt: number; applicationVersion: string; rootSha256: string; privacy: LearningPackPrivacyManifest; entries: LearningPackManifestEntry[] }
 export type LearningPackManifestEntry = { path: string; kind: LearningPackEntryKind; sha256: string; bytes: number }
 export type LearningPackPreviewStatus = "pending" | "applied" | "cancelled" | "stale"
 export type LearningPackPrivacyManifest = { includesPrivateChat: boolean; includesCredentials: boolean; includesFullSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean; includesAnswerKeys: boolean; includesHiddenEvaluators: boolean; includesLearnerEvidence: boolean; includesPracticalArtifacts: boolean; omittedItems: string[] }
+export type LearningPackStaysBehindDto = { kind: LearningPackStaysBehindKind; count: number }
+export type LearningPackStaysBehindKind =
+/**
+ * Lesson notes, which live in the user's notebook.
+ */
+"notebook_notes" |
+/**
+ * Unsaved lab drafts.
+ */
+"practical_drafts"
 export type LearningPlanDto = { programId: string;
 /**
  * Concurrency token for program mutations; independent of curriculum revision numbers.
  */
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
-export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto }
+export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; revision: number; createdAt: number; updatedAt: number }
 export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
@@ -6905,7 +7136,7 @@ contentPath: string;
  */
 title?: string | null }
 export type OpenLearningPracticeSourceRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; sourceId: string; versionId: string }
-export type OutlineStage = "reading_sources" | "loading_model" | "drafting" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
+export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */
@@ -7206,10 +7437,6 @@ focusedDocuments?: number | null }
  */
 export type RetrievalTuningSettingsDto = {
 /**
- * Min and max KB candidate limits derived from tool output max_results
- */
-kbSearchMinLimit: number; kbSearchMaxLimit: number;
-/**
  * Min and max limits for document shortlist candidate collection
  */
 docShortlistCandidateMin: number; docShortlistCandidateMax: number;
@@ -7222,22 +7449,17 @@ docShortlistDocMin: number; docShortlistDocMax: number;
  */
 shortlistGateMinCandidates: number; shortlistGateMinDocs: number;
 /**
- * External source retrieval limits and snippet shaping
+ * How many results a wiki or web search asks for. Every result a search
+ * returns reaches the turn with its whole snippet; how many the prompt
+ * shows is the turn's budget's to decide.
  */
-wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number;
+wikiSearchMaxResults: number; webSearchMaxResults: number;
 /**
- * How many of the top web results are opened and read in full for the
- * prompt. Search engines return a headline and roughly one sentence; a
- * question about what a page actually says cannot be answered from that.
- * 0 disables page reading and falls back to snippets alone.
+ * Whether a web search opens its results and reads the pages. Off, a
+ * search answers from the results' snippets alone. How many pages are
+ * read, and how much of each, follows the model's window.
  */
-webFetchPageCount: number;
-/**
- * Ceiling on any one fetched page's text in the prompt. The room a page
- * actually gets is its share of the turn's page budget, which is derived
- * from the model's context window; this only caps that share.
- */
-webPageMaxChars: number;
+readWebPages: boolean;
 /**
  * Seconds any one page fetch may take before it is abandoned and the
  * result falls back to its snippet.
@@ -7340,6 +7562,11 @@ repeatPenalty: number }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
+/**
+ * A save dialog either names a file or is dismissed; a dismissed dialog
+ * writes and records nothing.
+ */
+export type SaveLearningPackAsResultDto = { outcome: "cancelled" } | { outcome: "saved"; export: LearningPackExportDto }
 export type SaveLearningPracticalDraftRequestDto = { operationId: string; programId: string; activityId: string; activityRevision: number; expectedDraftRevision: number; files: LearningLabFile[] }
 export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
@@ -7791,7 +8018,7 @@ jobId: string }
  *
  * # Example
  * ```rust,no_run
- * use lattice::application::dtos::batch_dto::{
+ * use lattice_core::application::dtos::batch_dto::{
  * StartBatchUrlImportRequestDto, BatchImportOptionsDto
  * };
  *
@@ -7912,7 +8139,7 @@ export type SynthesisDestinationDto =
  */
 { kind: "week"; title: string }
 export type SynthesisStage = "gathering" | "reading" | "writing"
-export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
+export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null }
 export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];
 /**
  * Source passages from the conversations and journal notes, numbered to
@@ -8043,17 +8270,11 @@ export type ToolLoopTimingMetrics = { totalMs: number; iterations: number; llmSt
  */
 export type ToolOutputSettingsDto = {
 /**
- * Maximum characters to include for a tool result in the LLM context
- */
-maxChars: number;
-/**
- * Excerpt length for document/tool content
+ * Length of the excerpt a source card shows for a document or tool
+ * result. Display only: what a tool result carries into the model's
+ * context is decided by the window (see the tool loop's allowance).
  */
 excerptChars: number;
-/**
- * Maximum search results to summarize from a tool call
- */
-maxResults: number;
 /**
  * Maximum highlight terms extracted from the user query
  */
@@ -8459,6 +8680,28 @@ fetchedAt: string;
  * True when this came out of the page cache rather than off the network.
  */
 fromCache: boolean }
+/**
+ * Payload of [`CHANGED_EVENT`].
+ */
+export type WebPageSnapshotChangedEvent = { conversationId: string; url: string; snapshot: WebPageSnapshotDto }
+export type WebPageSnapshotDto = { id: string; conversationId: string; requestedUrl: string; finalUrl: string | null; normalizedUrl: string; title: string | null; status: WebPageSnapshotStatus;
+/**
+ * "http" | "browser"
+ */
+method: string | null; capturedAt: string | null; byteSize: number | null; sha256: string | null; resourceCount: number; missingResourceCount: number; partial: boolean; partialReasons: string[]; errorCode: string | null; errorMessage: string | null; faviconDataUrl: string | null;
+/**
+ * While pending.
+ */
+progressMessage: string | null;
+/**
+ * Ready rows: whether the file's hash was re-checked when this DTO was built.
+ */
+verified: boolean | null }
+/**
+ * Payload of [`LINK_EVENT`].
+ */
+export type WebPageSnapshotLinkEvent = { snapshotId: string; url: string }
+export type WebPageSnapshotStatus = "pending" | "ready" | "failed"
 /**
  * Page evidence captured for a web citation, independent of the live site.
  */

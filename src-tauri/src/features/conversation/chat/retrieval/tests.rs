@@ -68,7 +68,7 @@ fn followup_with_forced_web_prefers_kb_first_without_external_intent() {
         force_followup_mode: false,
         closed_book: false,
     };
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "Right, I am talking about a scenario with my company",
         QueryType::Followup,
     );
@@ -88,7 +88,7 @@ fn question_with_forced_web_keeps_web_enabled() {
         force_followup_mode: false,
         closed_book: false,
     };
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "latest updates?",
         QueryType::Question,
     );
@@ -154,7 +154,7 @@ fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
             QueryType::Question
         };
         let kb_interpretation =
-            crate::domain::qa::hyde::HyDEInterpretation::raw_only("q", kb_query_type);
+            lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only("q", kb_query_type);
         if kb_can_run_alongside_external(flags) {
             assert!(
                 !should_use_external_as_fallback(flags, &kb_interpretation),
@@ -167,7 +167,7 @@ fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
 fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
     RetrievalPipelineOutcome {
         short_circuit_response: None,
-        interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+        interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
             "q",
             QueryType::Question,
         ),
@@ -240,7 +240,9 @@ fn what_the_web_phase_read_reaches_the_outcome_the_tool_loop_starts_from() {
         Some("HTTP 403 Forbidden")
     );
     assert_eq!(
-        outcome.pages_read.recall("https://read.test/recap"),
+        outcome
+            .pages_read
+            .recall("https://read.test/recap", None, 100),
         Some(Recall::AlreadyWhole { word_count: 3 })
     );
 }
@@ -313,7 +315,7 @@ fn empty_wiki_search_leaves_web_context_alone() {
 
 #[test]
 fn web_query_prefers_raw_user_text_for_followups_when_specific() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::hybrid(
         "What health benefits do those compounds provide?",
         "What health benefits are linked to glucosinolate-derived isothiocyanates in arugula?",
         QueryType::Followup,
@@ -327,7 +329,7 @@ fn web_query_prefers_raw_user_text_for_followups_when_specific() {
 
 #[test]
 fn web_query_prefers_raw_user_text_for_questions() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::for_question(
         "is the bitterness in arugula from nitric oxide?",
         "Investigate nitric oxide and glucosinolate pathways in arugula.",
     );
@@ -339,7 +341,7 @@ fn web_query_prefers_raw_user_text_for_questions() {
 
 #[test]
 fn web_query_prefers_raw_user_text_for_non_followup_questions() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::for_question(
         "What are the health benefits though?",
         "What health benefits are associated with glucosinolates and isothiocyanates in arugula?",
     );
@@ -355,7 +357,7 @@ fn web_query_condenses_a_rambling_message_instead_of_searching_it_verbatim() {
                apple tv. I watched it but need a deep recap. Season 1 and 2, really in \
                depth recap. I've watched both but I just need a very deep deep deep in \
                depth refresher";
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::for_question(
         raw,
         "Episode-by-episode recaps of Silo seasons 1 and 2 on Apple TV+, covering plot, \
          character arcs and the finale twists.",
@@ -376,7 +378,7 @@ fn web_query_condenses_a_rambling_message_instead_of_searching_it_verbatim() {
 
 #[test]
 fn web_query_falls_back_to_terms_for_generic_search_command() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(
+    let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::hybrid(
         "search web",
         "Search for the SAVE America Act bill text and Senate status updates.",
         QueryType::Command,
@@ -421,15 +423,17 @@ fn turn_anchor_terms_drop_generic_shared_words() {
     assert!(!anchors.is_empty());
 }
 
-fn skip_catalog() -> Vec<crate::application::contracts::search::CorpusDocument> {
-    vec![crate::application::contracts::search::CorpusDocument {
-        sections: Vec::new(),
-        source_context: None,
-        id: "handbook".into(),
-        name: "Employment handbook".into(),
-        opening: "Introduction".into(),
-        chapter_number: None,
-    }]
+fn skip_catalog() -> Vec<lattice_core::application::contracts::search::CorpusDocument> {
+    vec![
+        lattice_core::application::contracts::search::CorpusDocument {
+            sections: Vec::new(),
+            source_context: None,
+            id: "handbook".into(),
+            name: "Employment handbook".into(),
+            opening: "Introduction".into(),
+            chapter_number: None,
+        },
+    ]
 }
 
 fn anchors(terms: &[&str]) -> HashSet<String> {
@@ -545,7 +549,7 @@ fn public_sufficiency_facade_reports_the_pipelines_own_verdict() {
 /// stale one put a document the space no longer holds straight into the prompt.
 #[test]
 fn a_remembered_document_outside_the_space_is_forgotten() {
-    let reference = |id: &str| crate::domain::conversation::DocumentReference {
+    let reference = |id: &str| lattice_core::domain::conversation::DocumentReference {
         document_id: id.to_string(),
         chunk_id: None,
         relevance_score: None,
@@ -573,7 +577,7 @@ fn web_query_timeout_keeps_grow_light_subject_and_discards_tracking_ids() {
 
 Grow light: https://www.sansiled.com/products/br30-36w-led-grow-light-bulb?currency=USD&country=US&variant=43716789043426&utm_source=google&utm_medium=cpc&utm_campaign=Google%20Shopping&stkn=e3067c49e087&gad_source=1&gad_campaignid=23836680380&gbraid=0AAAAAoPQO5oRdg3iBkBYv0p1o7_GLgAIW&gclid=Cj0KCQjw8c3VBhCsARIsAA_xJ91otG_q8tN8C19x05OVlvViMxInRhI3QZk187rS3Tk1DtDU4XJBxj8aAoPqEALw_wcB"#;
     let interpretation =
-        crate::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Followup);
+        lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Followup);
     let anchors = ["research", "smaller", "sunlight"]
         .into_iter()
         .map(str::to_string)
@@ -595,7 +599,7 @@ Grow light: https://www.sansiled.com/products/br30-36w-led-grow-light-bulb?curre
 fn web_query_strips_tracking_even_for_a_short_product_link() {
     let raw = "https://example.com/products/36w-grow-light?gclid=opaqueidentifier&utm_campaign=unrelated#tracking";
     let interpretation =
-        crate::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Question);
+        lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Question);
     let query = select_web_search_query(raw, &interpretation, None);
     assert!(query.contains("grow light"), "{query}");
     assert!(!query.contains("opaqueidentifier"), "{query}");
@@ -641,7 +645,8 @@ fn a_web_search_the_user_asked_for_still_runs_beside_the_vault() {
 
     assert!(kb_can_run_alongside_external(toggled));
     assert!(kb_can_run_alongside_external(query_turn));
-    let question = crate::domain::qa::hyde::HyDEInterpretation::raw_only("q", QueryType::Question);
+    let question =
+        lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only("q", QueryType::Question);
     assert!(!should_use_external_as_fallback(toggled, &question));
 }
 
@@ -717,4 +722,22 @@ fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
     let web = plan(flags(false, true, false, false));
     assert!(web.should_search_kb);
     assert!(web.should_search_web);
+}
+
+/// KB retrieval used to clamp every turn to 16 passages, so a 128k window
+/// carried about as much of the vault as an 8k one. The depth now comes from
+/// the evidence budget and what a passage of the library measures.
+#[test]
+fn retrieval_depth_follows_the_evidence_budget() {
+    // 90k evidence tokens, 2,000-character passages at four characters a
+    // token: 500 tokens a passage, 180 passages.
+    assert_eq!(retrieval_depth(90_000, Some(2_000), 4.0), 180);
+    // A small window is not handed passages it would only throw away.
+    assert_eq!(retrieval_depth(3_000, Some(2_000), 4.0), 6);
+    // Rounded up, so the budget is filled rather than left short.
+    assert_eq!(retrieval_depth(3_001, Some(2_000), 4.0), 7);
+    // Always at least one.
+    assert_eq!(retrieval_depth(0, Some(2_000), 4.0), 1);
+    // A library that cannot be measured falls back to the chunker's target.
+    assert_eq!(retrieval_depth(4_800, None, 4.0), 10);
 }

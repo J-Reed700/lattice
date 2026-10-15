@@ -19,11 +19,12 @@ use candle_transformers::models::whisper::{quantized_model, Config};
 use tokenizers::Tokenizer;
 use tracing::info;
 
-use crate::application::ports::transcription_port::{Transcript, TranscriptionPort};
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
-use crate::shared::error::AppError;
-use crate::shared::runtime::with_autorelease_pool;
+use lattice_core::application::ports::transcription_port::{Transcript, TranscriptionPort};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::with_autorelease_pool;
 
 mod decode;
 mod load;
@@ -127,13 +128,16 @@ pub struct WhisperTranscriptionService {
     loaded: Arc<parking_lot::Mutex<Option<LoadedWhisper>>>,
     last_used: Arc<parking_lot::Mutex<Instant>>,
     idle_timer_active: Arc<AtomicBool>,
+    /// Where the idle-unload timer runs, so shutdown stops it.
+    background: Arc<BackgroundTasks>,
 }
 
 impl WhisperTranscriptionService {
     /// Build the service. Cheap: no file I/O, no model load.
-    pub fn new(models: DownloadedModelRepository) -> Self {
+    pub fn new(models: DownloadedModelRepository, background: Arc<BackgroundTasks>) -> Self {
         Self {
             models,
+            background,
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             loaded: Arc::new(parking_lot::Mutex::new(None)),
             last_used: Arc::new(parking_lot::Mutex::new(Instant::now())),
@@ -151,7 +155,7 @@ impl WhisperTranscriptionService {
     async fn resolve_model(&self) -> Result<Option<ResolvedModel>, AppError> {
         let mut best: Option<(chrono::DateTime<chrono::Utc>, ResolvedModel)> = None;
 
-        for meta in crate::domain::models::curated::get_curated_transcription_models() {
+        for meta in lattice_core::domain::models::curated::get_curated_transcription_models() {
             if !self.models.is_downloaded(&meta.id).await? {
                 continue;
             }
@@ -189,7 +193,7 @@ impl WhisperTranscriptionService {
         let last_used = Arc::clone(&self.last_used);
         let permits = Arc::clone(&self.permits);
         let idle_timer_active = Arc::clone(&self.idle_timer_active);
-        let cancel = crate::shared::runtime::background::cancellation_token();
+        let cancel = self.background.token();
 
         let task = async move {
             loop {
@@ -238,7 +242,7 @@ impl WhisperTranscriptionService {
                 return;
             }
         };
-        if crate::shared::runtime::background::spawn(task).is_none() {
+        if self.background.spawn(task).is_none() {
             self.idle_timer_active.store(false, Ordering::Release);
         }
     }

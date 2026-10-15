@@ -18,6 +18,37 @@ pub enum LearningPackConflictPolicy {
     ReplaceAfterBackup,
 }
 
+/// What an import does to a course that is already on this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExistingAction {
+    /// The import stops: the course here stays as it is.
+    Block,
+    /// The course here stays, and the import lands beside it.
+    Keep,
+    /// The course here is backed up and replaced.
+    Replace,
+}
+
+impl LearningPackConflictPolicy {
+    /// Every policy, most preferred first: moving keeps the most, a copy
+    /// keeps the least of the pack's identity.
+    pub const ALL: [Self; 3] = [Self::MergeSafe, Self::ReplaceAfterBackup, Self::CreateCopy];
+
+    pub fn on_existing(self) -> ExistingAction {
+        match self {
+            Self::MergeSafe => ExistingAction::Block,
+            Self::CreateCopy => ExistingAction::Keep,
+            Self::ReplaceAfterBackup => ExistingAction::Replace,
+        }
+    }
+
+    /// A copy gives every imported record a fresh identifier, so no record
+    /// another course owns can collide with it.
+    pub fn remaps_ids(self) -> bool {
+        matches!(self, Self::CreateCopy)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningPackPreviewStatus {
@@ -27,15 +58,45 @@ pub enum LearningPackPreviewStatus {
     Stale,
 }
 
+/// Why a preview cannot go ahead, or what it will do with a record that is
+/// already on this computer. The renderer words each kind; `reason` carries
+/// only the backend's own explanation when it has one.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningPackConflictKind {
+    /// The pack was written by a different build of Lattice.
+    PackSchema,
+    /// The course itself is already on this computer.
+    Program,
+    /// The copy here has history no pack can restore, so it cannot be replaced.
+    ProgramHistory,
+    /// The copy here is still being prepared.
+    ProgramJobs,
+    /// A module another course on this computer owns.
+    Module,
+    /// A lesson another course on this computer owns.
+    Lesson,
+    /// A question another course on this computer owns.
+    Question,
+    /// A submitted assessment another course on this computer owns.
+    Attempt,
+    /// Any other record another course on this computer owns.
+    Record,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningPackConflictDto {
-    pub entity_kind: String,
-    pub incoming_id: String,
-    pub incoming_title: String,
-    pub existing_id: String,
-    pub existing_title: String,
-    pub resolution: String,
+    pub kind: LearningPackConflictKind,
+    /// The local record's ID, when the conflict is about one.
+    pub existing_id: Option<String>,
+    /// The local record's title, when it has one.
+    pub existing_title: Option<String>,
+    /// The backend's explanation, when the kind alone does not say enough.
+    pub reason: Option<String>,
+    /// The policies under which this conflict goes away, most preferred
+    /// first. Empty when no choice gets past it.
+    pub clears_with: Vec<LearningPackConflictPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -94,18 +155,101 @@ pub struct LearningPortabilityWorkspaceDto {
     pub import_previews: Vec<LearningPackImportPreviewDto>,
     pub imports: Vec<LearningPackImportResultDto>,
     pub source_workspace: LearningSourceWorkspaceDto,
+    pub export_notice: LearningPackExportNoticeDto,
 }
 
+/// What an export of this course cannot carry, shown before exporting. The
+/// renderer words both lists.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningPackExportNoticeDto {
+    /// Local data the pack leaves on this computer; only kinds that have any.
+    pub stays_behind: Vec<LearningPackStaysBehindDto>,
+    /// Why an export would be refused right now. The same conflict a replace
+    /// preview reports, so one fact has one shape.
+    pub blockers: Vec<LearningPackConflictKind>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningPackStaysBehindKind {
+    /// Lesson notes, which live in the user's notebook.
+    NotebookNotes,
+    /// Unsaved lab drafts.
+    PracticalDrafts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningPackStaysBehindDto {
+    pub kind: LearningPackStaysBehindKind,
+    pub count: u32,
+}
+
+/// What one export carries. The panel, save-as and export-all share it.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningPackExportOptionsDto {
+    pub include_evidence: bool,
+    pub include_practical_artifacts: bool,
+    pub include_source_bodies: bool,
+    pub source_body_redistribution_confirmed: bool,
+}
+
+/// A save dialog either names a file or is dismissed; a dismissed dialog
+/// writes and records nothing.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SaveLearningPackAsResultDto {
+    Cancelled,
+    Saved { export: Box<LearningPackExportDto> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAllLearningPacksRequestDto {
+    pub operation_id: String,
+    pub options: LearningPackExportOptionsDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedLearningPackDto {
+    pub program_id: String,
+    pub title: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedLearningPackExportDto {
+    pub program_id: String,
+    pub title: String,
+    pub error: String,
+}
+
+/// A dismissed folder dialog writes and records nothing; a chosen folder
+/// gets every course that could be exported, and says which could not.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ExportAllLearningPacksResultDto {
+    Cancelled,
+    Exported {
+        #[serde(rename = "destinationDir")]
+        destination_dir: String,
+        exported: Vec<ExportedLearningPackDto>,
+        failed: Vec<FailedLearningPackExportDto>,
+    },
+}
+
+/// One course's export. Rust names the file from the course title; the
+/// renderer never sends a file name.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportLearningPackRequestDto {
     pub operation_id: String,
     pub program_id: String,
-    pub file_name: String,
-    pub include_evidence: bool,
-    pub include_practical_artifacts: bool,
-    pub include_source_bodies: bool,
-    pub source_body_redistribution_confirmed: bool,
+    pub options: LearningPackExportOptionsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

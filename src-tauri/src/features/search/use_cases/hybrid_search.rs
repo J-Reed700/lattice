@@ -59,9 +59,6 @@ pub use rerank::{RerankOptions, Reranked};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::application::ports::{
-    ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
-};
 use crate::features::search::dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
 };
@@ -69,8 +66,11 @@ use crate::features::search::engine::fusion::{ReciprocalRankFusion, WeightedRank
 use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::mapper::SearchMapper;
 use crate::features::search::SparseSearchTrait;
-use crate::shared::error::{AppError, Result};
-use crate::shared::text::safe_truncate;
+use lattice_core::application::ports::{
+    ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
+};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::safe_truncate;
 use tracing::{debug, info, warn};
 
 /// Candidates each branch is asked for, per fused result wanted. Fusion can
@@ -162,7 +162,7 @@ impl HybridSearchUseCase {
             sparse_enabled: false,
             chunk_repository: None,
             reranker: None,
-            rrf_k: crate::shared::constants::DEFAULT_RRF_K,
+            rrf_k: lattice_core::shared::constants::DEFAULT_RRF_K,
         }
     }
 
@@ -199,7 +199,7 @@ impl HybridSearchUseCase {
     }
 
     /// Override the reciprocal-rank-fusion constant. The application keeps
-    /// [`DEFAULT_RRF_K`](crate::shared::constants::DEFAULT_RRF_K); the
+    /// [`DEFAULT_RRF_K`](lattice_core::shared::constants::DEFAULT_RRF_K); the
     /// evaluation sweeps it.
     #[must_use]
     pub fn with_rrf_k(mut self, rrf_k: f32) -> Self {
@@ -290,6 +290,26 @@ impl HybridSearchUseCase {
     /// - Every branch of a hybrid search fails
     pub async fn execute(&self, request: SearchRequestDto) -> Result<SearchResponseDto> {
         self.execute_scoped(request, None, None).await
+    }
+
+    /// Run the app's default hybrid search — the same fused request chat and
+    /// the search page send — hard-scoped to `allowed_document_ids`.
+    ///
+    /// A convenience for callers that want the default mode without naming
+    /// the request DTO: the mode and fusion weights are the app's defaults,
+    /// so only the query and the scope vary.
+    pub async fn execute_hybrid_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        allowed_document_ids: Option<&HashSet<String>>,
+    ) -> Result<SearchResponseDto> {
+        self.execute_scoped(
+            SearchRequestDto::hybrid(query, limit),
+            None,
+            allowed_document_ids,
+        )
+        .await
     }
 
     /// Execute a search under an optional hard scope: a space's memberships

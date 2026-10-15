@@ -3,7 +3,6 @@ use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
 use super::research::Rounds;
 use super::*;
-use crate::domain::conversation::memory::SummaryRefold;
 use crate::features::conversation::chat::tool_loop::LoopRequest;
 
 /// The answer and what it cites, before it is saved.
@@ -14,13 +13,10 @@ pub(super) struct GeneratedAnswer {
     pub(super) retrieval_trace: Option<RetrievalTraceDto>,
     pub(super) tokens: TurnTokensDto,
     pub(super) memory_usage: Option<serde_json::Value>,
-    /// Passed on to consolidation after the answer is saved.
-    pub(super) summary_refold: Option<SummaryRefold>,
 }
 
 /// `research` saves each round of a research turn, and resumes one after the
 /// rounds it saved.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn generate_answer(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
@@ -44,7 +40,6 @@ pub(super) async fn generate_answer(
         max_output_tokens,
         input_budget,
         memory_usage,
-        summary_refold,
     } = request;
     let generation_start = Instant::now();
     let mut tokens = TurnTokensDto::default();
@@ -55,10 +50,7 @@ pub(super) async fn generate_answer(
         }
         None => run_agentic_tool_loop(
             container,
-            &turn.conv_service,
-            &turn.conv_id,
-            &turn.turn_id,
-            &turn.llm,
+            turn.chat_turn(),
             emit,
             LoopRequest {
                 input,
@@ -72,14 +64,11 @@ pub(super) async fn generate_answer(
                 ),
                 research,
             },
-            &turn.highlight_terms,
             &turn.settings.llm.tool_output,
             &mut sources,
             &mut retrieval_trace,
             pages_read,
-            &turn.focus,
             turn.explorer.as_ref(),
-            &turn.recorder,
         )
         .await
         .map(|outcome| {
@@ -98,6 +87,5 @@ pub(super) async fn generate_answer(
         retrieval_trace,
         tokens,
         memory_usage,
-        summary_refold,
     })
 }

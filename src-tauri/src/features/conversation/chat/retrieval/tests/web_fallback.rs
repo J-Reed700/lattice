@@ -4,7 +4,6 @@
 //! runtime, over a library that finds a fixed set of passages for every query
 //! and a web that records each search.
 use super::*;
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::intent::TurnIntent;
 use crate::features::conversation::chat::ports::{ChatRecords, ChatTools};
 use crate::features::conversation::chat::test_runtime::{FakeRuntime, TestVault};
@@ -16,6 +15,7 @@ use crate::features::function_calling::domain::{FunctionCall, FunctionResult, To
 use crate::features::search::dto::SearchRequestDto;
 use crate::features::search::trait_def::LibrarySearchTrait;
 use crate::features::search::use_cases::{QueryBranches, RankedBranch, RerankOptions, Reranked};
+use lattice_core::application::ports::LLMPort;
 use std::sync::Mutex;
 
 const CONVERSATION: &str = "fallback-chat";
@@ -166,10 +166,10 @@ struct Rewriter;
 impl LLMPort for Rewriter {
     async fn complete(
         &self,
-        _request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         Ok(
-            crate::application::ports::llm_port::CompletionResponse::from_text(
+            lattice_core::application::ports::llm_port::CompletionResponse::from_text(
                 "client retry HTTP failures",
             ),
         )
@@ -237,22 +237,22 @@ async fn run(passages: Vec<SearchResultDto>, flags: SearchFlags, turn: &str) -> 
     };
     let outcome = run_retrieval_pipeline(
         &runtime,
-        &conversations,
-        CONVERSATION,
-        turn,
-        QUESTION,
-        &llm,
-        &RouterSettingsDto::default(),
+        ChatTurn {
+            conv_service: &conversations,
+            conversation_id: CONVERSATION,
+            request_id: turn,
+            message: QUESTION,
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &crate::features::conversation::chat::focus::FocusScope::default(),
+            recorder: &recorder,
+        },
+        &SettingsDto::default(),
         &decision,
         flags,
         &[],
-        &[],
         EvidenceBudget::new(20_000),
         None,
-        &ToolOutputSettingsDto::default(),
-        &SearchSettingsDto::default(),
-        &crate::features::conversation::chat::focus::FocusScope::default(),
-        &recorder,
     )
     .await;
     Ran {

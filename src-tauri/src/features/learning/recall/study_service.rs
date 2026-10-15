@@ -1,6 +1,6 @@
 //! Study validation and orchestration. Persisted state belongs to the repository.
 use super::{study_dto::*, study_repository::StudyRepository};
-use crate::{
+use lattice_core::{
     application::ports::{LLMPort, LibraryPassagesPort},
     shared::error::{AppError, Result},
 };
@@ -43,9 +43,10 @@ pub fn validate_generation(request: &GenerateStudyDeckRequestDto) -> Result<()> 
     Ok(())
 }
 
-/// Passages for a deck, read from the library: each selected document's
-/// chunks that mention the focus, or an even sample of it when there is no
-/// focus.
+/// Passages for a deck, read from the library: every chunk of each selected
+/// document that mentions a focus term, or with no focus every chunk in an
+/// order that spreads any prefix evenly across the document. The deck
+/// request takes as many as its window holds.
 pub async fn passages(
     library: &dyn LibraryPassagesPort,
     ids: &[String],
@@ -54,10 +55,8 @@ pub async fn passages(
     let terms: Vec<_> = focus
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| word.len() >= 4 && !["with", "from", "this", "that", "about"].contains(word))
-        .take(8)
         .map(str::to_lowercase)
         .collect();
-    let per_document = (24 / ids.len().max(1)).max(4);
     let mut sources = Vec::new();
     for id in ids {
         let document = library
@@ -70,27 +69,27 @@ pub async fn passages(
                         .into(),
                 )
             })?;
-        let stride = (document.chunks.len() / per_document).max(1);
-        let chosen = document
-            .chunks
-            .iter()
-            .enumerate()
-            .filter(|(index, chunk)| {
-                if terms.is_empty() {
-                    index % stride == 0
-                } else {
-                    let text = chunk.text.to_lowercase();
-                    terms.iter().any(|term| text.contains(term.as_str()))
+        let order = if terms.is_empty() {
+            spread(document.chunks.len())
+        } else {
+            (0..document.chunks.len()).collect()
+        };
+        for chunk in order
+            .into_iter()
+            .filter_map(|index| document.chunks.get(index))
+        {
+            if !terms.is_empty() {
+                let text = chunk.text.to_lowercase();
+                if !terms.iter().any(|term| text.contains(term.as_str())) {
+                    continue;
                 }
-            })
-            .take(per_document);
-        for (_, chunk) in chosen {
+            }
             sources.push(StudySourceDto {
                 chunk_id: chunk.id.clone(),
                 document_id: id.clone(),
                 file_name: document.title.clone(),
                 file_path: document.file_path.clone(),
-                excerpt: chunk.text.chars().take(2400).collect(),
+                excerpt: chunk.text.clone(),
                 url: None,
             });
         }
@@ -101,6 +100,23 @@ pub async fn passages(
         ));
     }
     Ok(sources)
+}
+
+/// The indexes `0..len` in an order whose every prefix is spread evenly:
+/// the middle first, then the middles of each half, and so on.
+pub(super) fn spread(len: usize) -> Vec<usize> {
+    let mut order = Vec::with_capacity(len);
+    let mut ranges = std::collections::VecDeque::from([(0, len)]);
+    while let Some((low, high)) = ranges.pop_front() {
+        if low >= high {
+            continue;
+        }
+        let middle = low + (high - low) / 2;
+        order.push(middle);
+        ranges.push_back((low, middle));
+        ranges.push_back((middle + 1, high));
+    }
+    order
 }
 
 pub async fn generate_deck(

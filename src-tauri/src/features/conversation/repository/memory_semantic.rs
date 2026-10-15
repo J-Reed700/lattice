@@ -1,8 +1,8 @@
 //! Bounded semantic transcript recall, fused with lexical and exact matches.
 use super::ConversationRepository;
-use crate::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
 use crate::features::embedding::encoding::decode_embedding;
-use crate::shared::error::Result;
+use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
+use lattice_core::shared::error::Result;
 use std::collections::HashMap;
 
 impl ConversationRepository {
@@ -41,50 +41,66 @@ impl ConversationRepository {
             embedding: Vec<u8>,
         }
         // Hydrate only live, byte-identical sources. Model identity and dimension
-        // prevent comparing vectors from different embedding spaces.
-        let scan_limit = (64 * 1024 * 1024 / (vector.len().max(1) * 4)).min(20000);
-        let rows = sqlx::query_as::<_, Row>("SELECT m.id AS message_id, m.sequence, m.role, substr(m.content, 1, 2400) AS content, v.embedding FROM conversation_memory_vectors v JOIN conversation_messages m ON m.id=v.message_id AND m.conversation_id=v.conversation_id WHERE m.conversation_id=? AND v.embedding_model=? AND v.dimension=? AND v.content=m.content AND (m.role='user' OR m.status='completed') ORDER BY m.sequence DESC LIMIT ?")
-            .bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(scan_limit as i64 + 1).fetch_all(&self.pool).await;
-        let rows = match rows {
-            Ok(rows) => rows,
-            Err(_) => {
-                lexical.index_error = Some("semantic_index_unavailable".into());
-                return Ok(lexical);
-            }
-        };
-        lexical.semantic_ran = true;
-        if rows.len() > scan_limit {
-            lexical.index_error = Some("semantic_scan_limited".into());
-        }
+        // prevent comparing vectors from different embedding spaces. Every
+        // vector is scored, newest first, a page at a time: a page is sized so
+        // its vectors stay within a fixed amount of memory, and only the best
+        // `limit` hits are carried between pages.
+        let page = (SCAN_PAGE_BYTES / (vector.len().max(1) * 4)).max(1);
+        let mut before = i64::MAX;
         let mut semantic = Vec::new();
-        for row in rows.into_iter().take(scan_limit) {
-            let Ok(stored) = decode_embedding(&row.embedding) else {
-                continue;
+        loop {
+            let rows = sqlx::query_as::<_, Row>("SELECT m.id AS message_id, m.sequence, m.role, substr(m.content, 1, 2400) AS content, v.embedding FROM conversation_memory_vectors v JOIN conversation_messages m ON m.id=v.message_id AND m.conversation_id=v.conversation_id WHERE m.conversation_id=? AND v.embedding_model=? AND v.dimension=? AND v.content=m.content AND (m.role='user' OR m.status='completed') AND m.sequence < ? ORDER BY m.sequence DESC LIMIT ?")
+                .bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(before).bind(page as i64).fetch_all(&self.pool).await;
+            let rows = match rows {
+                Ok(rows) => rows,
+                Err(_) => {
+                    lexical.index_error = Some("semantic_index_unavailable".into());
+                    return Ok(lexical);
+                }
             };
-            let Some(score) = cosine(&vector, &stored) else {
-                continue;
-            };
-            if score <= 0.0 {
-                continue;
+            lexical.semantic_ran = true;
+            let read = rows.len();
+            for row in rows {
+                before = before.min(row.sequence);
+                let Ok(stored) = decode_embedding(&row.embedding) else {
+                    continue;
+                };
+                let Some(score) = cosine(&vector, &stored) else {
+                    continue;
+                };
+                if score <= 0.0 {
+                    continue;
+                }
+                semantic.push(RecallCandidate {
+                    message_id: row.message_id,
+                    sequence: row.sequence,
+                    role: row.role.parse()?,
+                    excerpt: row.content,
+                    score,
+                    exact_identifier: false,
+                });
             }
-            semantic.push(RecallCandidate {
-                message_id: row.message_id,
-                sequence: row.sequence,
-                role: row.role.parse()?,
-                excerpt: row.content,
-                score,
-                exact_identifier: false,
-            });
+            keep_best(&mut semantic, limit);
+            if read < page {
+                break;
+            }
         }
-        semantic.sort_by(|a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then(a.sequence.cmp(&b.sequence))
-        });
-        semantic.truncate(limit.min(64));
-        lexical.candidates = fuse(lexical.candidates, semantic, limit.min(64));
+        lexical.candidates = fuse(lexical.candidates, semantic, limit);
         Ok(lexical)
     }
+}
+
+/// Memory one page of stored vectors may occupy while it is scored.
+const SCAN_PAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// The best `limit` hits, best first, ties broken by sequence.
+fn keep_best(hits: &mut Vec<RecallCandidate>, limit: usize) {
+    hits.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(a.sequence.cmp(&b.sequence))
+    });
+    hits.truncate(limit);
 }
 
 pub(super) fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {

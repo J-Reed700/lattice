@@ -27,12 +27,12 @@
 //! println!("Downloaded: {} ({} bytes)", response.model_name, response.file_size_bytes);
 //! ```
 
-use crate::domain::models::embedding_defaults::{
-    DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
-};
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::models::embedding_defaults::{
+    DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -200,12 +200,12 @@ impl DownloadDefaultModelUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::download::{DownloadError, DownloadSession};
-    use crate::domain::models::embedding_defaults::{
-        DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
-    };
     use crate::features::download::manager::DownloadEvent;
     use async_trait::async_trait;
+    use lattice_core::domain::download::{DownloadError, DownloadSession};
+    use lattice_core::domain::models::embedding_defaults::{
+        DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
+    };
     use tempfile::TempDir;
     use tokio::sync::{mpsc, RwLock};
 

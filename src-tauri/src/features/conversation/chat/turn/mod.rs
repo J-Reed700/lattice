@@ -16,7 +16,7 @@
 //! resumed one starts at stage 6 from there.
 //!
 //! Every pool the prompt carries is sized from one
-//! [`BudgetAllocation`](crate::application::services::context_assembler::BudgetAllocation):
+//! [`BudgetAllocation`](lattice_core::application::services::context_assembler::BudgetAllocation):
 //! the turn's [`budget::TurnBudget`] before retrieval, and the context
 //! assembler's plan when the request is assembled.
 use super::dto::SourceDto;
@@ -68,8 +68,6 @@ pub(super) struct TurnRequest {
 ///
 /// - **Rate Limiting (CWE-770)**: 10 requests per minute
 /// - **Input Validation**: Message length and content validation
-/// - **Audit Logging (CWE-778)**: Logs chat interactions with context size
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
@@ -93,8 +91,10 @@ pub(super) async fn run_turn(
                 warn!(%error, conversation_id = conv_id.as_str(), "Could not stop a research job");
                 false
             });
-        let cancelled =
-            cancel_generation_for_conversation(&conv_id, request_id.as_deref()) || research;
+        let cancelled = container
+            .turn_cancellation()
+            .request_cancel(&conv_id, request_id.as_deref())
+            || research;
         return Ok(ChatResponse {
             conversation_id: conv_id,
             message: if cancelled {
@@ -368,9 +368,6 @@ async fn resume_stages(
         max_output_tokens,
         input_budget,
         memory_usage,
-        // Not saved with the turn. If the window still has to move, the next
-        // turn's plan asks again.
-        summary_refold: None,
     };
     let generated = generate::generate_answer(
         container,

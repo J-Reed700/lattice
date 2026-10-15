@@ -2,7 +2,7 @@
 
 use super::rows::{directory_has_loadable_weights, parse_optional_db_timestamp};
 use super::*;
-use crate::domain::value_objects::ArtifactIdentity;
+use lattice_core::domain::value_objects::ArtifactIdentity;
 use sqlx::sqlite::SqlitePoolOptions;
 
 #[test]

@@ -1,6 +1,6 @@
 use crate::features::embedding::generator::{EmbeddingGenerator, ModelConfig};
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -292,7 +292,7 @@ pub async fn get_embedding_model_info(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::embedding_defaults::{
+    use lattice_core::domain::models::embedding_defaults::{
         DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
     };
 

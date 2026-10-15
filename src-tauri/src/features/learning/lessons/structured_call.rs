@@ -14,14 +14,14 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::application::ports::llm_port::SamplingOverride;
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::{
-    GroundedOutput, GroundedRequest, HistoryItem, Streaming,
-};
 use crate::features::learning::outline_progress::OutlineProgress;
 use crate::features::learning::{lesson_drafts, lesson_progress, model_call};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::SamplingOverride;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::{
+    GroundedOutput, GroundedRequest, HistoryItem, Streaming,
+};
+use lattice_core::shared::error::{AppError, Result};
 
 /// The wall-clock limit on one material call that has no interactive progress
 /// attached. Each step of a two-step call has its own: the draft and the
@@ -114,8 +114,10 @@ pub(crate) async fn complete_json_with_progress(
     output_tokens: usize,
     progress: Option<&OutlineProgress>,
 ) -> Result<String> {
-    let request = model_call::structured(system, prompt, schema, output_tokens, "low");
-    let response = send(llm, request, progress, Step::Direct).await?;
+    let request = |output_tokens| {
+        model_call::structured(system, prompt.clone(), schema.clone(), output_tokens, "low")
+    };
+    let response = send_completing(llm, request, output_tokens, progress, Step::Direct).await?;
     reject_incomplete_finish_reason(&response.finish_reason)?;
     Ok(response.text)
 }
@@ -220,27 +222,30 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
     };
 
     let draft_tokens = llm.count_tokens(&draft);
-    let mut request = model_call::structured(
-        &two_step_system,
-        ANSWER_STEP.to_owned(),
-        schema.clone(),
-        output_tokens,
-        "low",
-    );
-    request.history = vec![
-        HistoryItem {
-            role: "user".into(),
-            content: prompt.clone(),
-        },
-        HistoryItem {
-            role: "assistant".into(),
-            content: draft,
-        },
-    ];
-    // The answer transcribes a draft; sampling it at the chat temperature
-    // would only add variation the draft does not contain.
-    request.call.sampling = Some(SamplingOverride::deterministic());
-    if !model_call::fits(llm, &request) {
+    let answer = |output_tokens: usize| {
+        let mut request = model_call::structured(
+            &two_step_system,
+            ANSWER_STEP.to_owned(),
+            schema.clone(),
+            output_tokens,
+            "low",
+        );
+        request.history = vec![
+            HistoryItem {
+                role: "user".into(),
+                content: prompt.clone(),
+            },
+            HistoryItem {
+                role: "assistant".into(),
+                content: draft.clone(),
+            },
+        ];
+        // The answer transcribes a draft; sampling it at the chat temperature
+        // would only add variation the draft does not contain.
+        request.call.sampling = Some(SamplingOverride::deterministic());
+        request
+    };
+    if !model_call::fits(llm, &answer(output_tokens)) {
         // The draft was capped in the model's own tokens, but the planner
         // counts it with an estimate that can come out larger. The one-step
         // call needs no room for a draft.
@@ -255,7 +260,7 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
     lesson_progress::stage(format!(
         "Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)"
     ));
-    let output = send(llm, request, progress, Step::Answer).await?;
+    let output = send_completing(llm, answer, output_tokens, progress, Step::Answer).await?;
     reject_incomplete_finish_reason(&output.finish_reason)?;
     tracing::info!(
         subject,
@@ -274,6 +279,32 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
 
 /// Send one learning request, streaming its text to whichever progress the
 /// call runs under.
+/// Send the request `request` builds for `output_tokens`. An answer cut off
+/// at its output reservation is asked for once more with the reservation
+/// doubled; a doubled request the window cannot hold keeps the first answer.
+async fn send_completing(
+    llm: &dyn LLMPort,
+    request: impl Fn(usize) -> GroundedRequest,
+    output_tokens: usize,
+    progress: Option<&OutlineProgress>,
+    step: Step,
+) -> Result<GroundedOutput> {
+    let output = send(llm, request(output_tokens), progress, step).await?;
+    if !cut_off(&output.finish_reason) {
+        return Ok(output);
+    }
+    let larger = request(output_tokens.saturating_mul(2));
+    if !model_call::fits(llm, &larger) {
+        return Ok(output);
+    }
+    tracing::warn!(
+        step = step.name(),
+        output_tokens,
+        "An answer reached its output limit; asking once more with twice the room"
+    );
+    send(llm, larger, progress, step).await
+}
+
 async fn send(
     llm: &dyn LLMPort,
     mut request: GroundedRequest,
@@ -338,7 +369,7 @@ async fn send(
 }
 
 /// Whether the model stopped because it ran out of output room.
-fn cut_off(reason: &str) -> bool {
+pub(in crate::features::learning) fn cut_off(reason: &str) -> bool {
     let reason = reason.to_ascii_lowercase();
     ["length", "max_tokens", "max_output_tokens", "incomplete"]
         .iter()
@@ -359,7 +390,7 @@ pub(crate) const FIXTURE_DRAFT: &str = "Fixture draft: the task worked through i
 /// Whether `request` is the prose step of a two-step call.
 #[cfg(test)]
 pub(crate) fn is_draft_request(
-    request: &crate::application::ports::llm_port::CompletionRequest,
+    request: &lattice_core::application::ports::llm_port::CompletionRequest,
 ) -> bool {
     request.json_schema.is_none()
         && messages(request, "system").any(|content| content.contains(TWO_STEPS))
@@ -370,7 +401,7 @@ pub(crate) fn is_draft_request(
 /// answer a task by its prompt then answer both forms alike.
 #[cfg(test)]
 pub(crate) fn task_messages(
-    request: &crate::application::ports::llm_port::CompletionRequest,
+    request: &lattice_core::application::ports::llm_port::CompletionRequest,
 ) -> (&str, &str) {
     let system = messages(request, "system").next().unwrap_or("");
     let system = system
@@ -387,7 +418,7 @@ pub(crate) fn task_messages(
 /// Contents of `role`'s messages, last first.
 #[cfg(test)]
 fn messages<'a>(
-    request: &'a crate::application::ports::llm_port::CompletionRequest,
+    request: &'a lattice_core::application::ports::llm_port::CompletionRequest,
     role: &'a str,
 ) -> impl Iterator<Item = &'a str> + 'a {
     request
@@ -395,7 +426,7 @@ fn messages<'a>(
         .iter()
         .rev()
         .filter_map(move |item| match item {
-            crate::application::ports::llm_port::CompletionInput::Message {
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
                 role: candidate,
                 content,
             } if candidate == role => Some(content.as_str()),

@@ -1,7 +1,7 @@
 //! Sets the active utility model (HyDE expansion, router/intent classification).
 
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use tracing::info;
 
 pub struct SetActiveUtilityModelUseCase {

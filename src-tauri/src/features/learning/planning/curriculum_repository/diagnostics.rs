@@ -8,7 +8,7 @@ use crate::features::learning::plan_dto::{
     StartLearningDiagnosticRequestDto, SubmitLearningDiagnosticRequestDto,
 };
 use crate::features::learning::repository::LearningRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
 impl LearningCurriculumRepository {
@@ -164,7 +164,7 @@ impl LearningCurriculumRepository {
                 });
             }
         }
-        if prompts.is_empty() || tasks.is_some_and(|t| t.len() != prompts.len() || t.len() > 6) {
+        if prompts.is_empty() || tasks.is_some_and(|t| t.len() != prompts.len()) {
             return Err(AppError::InvalidState(
                 "The accepted program has no outcomes for a diagnostic.".into(),
             ));

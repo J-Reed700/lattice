@@ -13,17 +13,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use async_trait::async_trait;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::services::completion_input::{complete_text, TextCall};
+use super::chat::ports::{ChatRuntime, ChatStarterCache};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::starters_dto::{ChatStarterDto, ChatStartersDto};
-use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
-use crate::shared::ipc::ApiError;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::services::completion_input::{complete_text, TextCall};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::ipc::ApiError;
 
 /// Bump when the fingerprint algorithm changes so old rows auto-invalidate.
 const FINGERPRINT_VERSION: &str = "starters-v2";
@@ -43,9 +44,6 @@ const MAX_QUESTION_CHARS: usize = 90;
 
 /// How many questions the empty state shows.
 const MAX_STARTERS: usize = 3;
-
-/// How many recent titles the prompt is allowed to see.
-const RECENT_TITLE_LIMIT: usize = 20;
 
 /// Cache rows kept after a write.
 const CACHE_KEEP_ROWS: i64 = 8;
@@ -181,11 +179,7 @@ impl ChatStarterCacheRepository {
     ///
     /// Blank names are dropped in SQL so a batch never spends its limit on
     /// titles the prompt would discard anyway.
-    pub async fn recent_titles(
-        &self,
-        allowed_ids: &HashSet<String>,
-        limit: usize,
-    ) -> Result<Vec<String>> {
+    pub async fn recent_titles(&self, allowed_ids: &HashSet<String>) -> Result<Vec<String>> {
         let mut rows: Vec<(String, String, String)> = Vec::new();
         for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
             let mut query = QueryBuilder::<Sqlite>::new(
@@ -195,9 +189,7 @@ impl ChatStarterCacheRepository {
             for id in batch {
                 separated.push_bind(*id);
             }
-            query
-                .push(") ORDER BY indexed_at DESC, id ASC LIMIT ")
-                .push_bind(limit as i64);
+            query.push(") ORDER BY indexed_at DESC, id ASC");
 
             let batch_rows: Vec<(String, String, String)> = query
                 .build_query_as()
@@ -213,7 +205,6 @@ impl ChatStarterCacheRepository {
         rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         Ok(rows
             .into_iter()
-            .take(limit)
             .map(|(_, _, file_name)| file_name)
             .collect())
     }
@@ -244,6 +235,41 @@ impl ChatStarterCacheRepository {
             }
         }
         Ok(latest)
+    }
+
+    /// The documents this space can see — the same allow-list every retrieval
+    /// path uses, so the questions can only be about documents this chat could
+    /// actually answer from. The rule stays in the one statement
+    /// [`ConversationRepository::space_document_scope`] owns.
+    pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>> {
+        ConversationRepository::new(self.pool.clone())
+            .space_document_scope(space_id)
+            .await
+    }
+}
+
+#[async_trait]
+impl ChatStarterCache for ChatStarterCacheRepository {
+    async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>> {
+        ChatStarterCacheRepository::space_document_scope(self, space_id).await
+    }
+    async fn get(&self, fingerprint: &str) -> Result<Option<(String, String)>> {
+        ChatStarterCacheRepository::get(self, fingerprint).await
+    }
+    async fn put(&self, fingerprint: &str, starters_json: &str, created_at: &str) -> Result<()> {
+        ChatStarterCacheRepository::put(self, fingerprint, starters_json, created_at).await
+    }
+    async fn prune(&self, keep: i64) -> Result<()> {
+        ChatStarterCacheRepository::prune(self, keep).await
+    }
+    async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>> {
+        ChatStarterCacheRepository::type_mix(self, allowed_ids).await
+    }
+    async fn recent_titles(&self, allowed_ids: &HashSet<String>) -> Result<Vec<String>> {
+        ChatStarterCacheRepository::recent_titles(self, allowed_ids).await
+    }
+    async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String> {
+        ChatStarterCacheRepository::latest_indexed_at(self, allowed_ids).await
     }
 }
 
@@ -349,6 +375,28 @@ pub fn parse_starters(raw: &str) -> Vec<ChatStarterDto> {
     out
 }
 
+/// The newest titles the starter call's window gives room for, newest first,
+/// with a line counting the older ones left out.
+fn fit_titles(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    titles: Vec<String>,
+    type_mix_line: &str,
+) -> Vec<String> {
+    use lattice_core::application::services::history_share::{
+        auxiliary_history_room, newest_that_fit,
+    };
+    let room = auxiliary_history_room(llm, &build_prompt(&[], type_mix_line));
+    let oldest_first: Vec<String> = titles.into_iter().rev().collect();
+    let (kept, omitted) = newest_that_fit(&oldest_first, room, |title| {
+        llm.count_tokens(title).saturating_add(1)
+    });
+    let mut fitted: Vec<String> = kept.iter().rev().cloned().collect();
+    if omitted > 0 {
+        fitted.push(format!("(and {omitted} older titles)"));
+    }
+    fitted
+}
+
 fn build_prompt(titles: &[String], type_mix_line: &str) -> String {
     let titles_block = if titles.is_empty() {
         "(none)".to_string()
@@ -381,7 +429,7 @@ Rules:\n\
 /// space's documents. Reading the whole vault instead was the bug: a chat in a
 /// Movies space suggested questions about documents it is not allowed to read.
 pub async fn generate_chat_starters_impl(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     space_id: Option<String>,
 ) -> std::result::Result<ChatStartersDto, ApiError> {
     let now = Utc::now().to_rfc3339();
@@ -392,7 +440,8 @@ pub async fn generate_chat_starters_impl(
 
     // The same allow-list every retrieval path uses, so the questions can only
     // be about documents this chat could actually answer from.
-    let allowed_ids = ConversationRepository::new(container.db_pool().clone())
+    let cache = runtime.chat_starter_cache();
+    let allowed_ids = cache
         .space_document_scope(&space_id)
         .await
         .map_err(ApiError::from)?;
@@ -408,7 +457,6 @@ pub async fn generate_chat_starters_impl(
         });
     }
 
-    let cache = ChatStarterCacheRepository::new(container.db_pool().clone());
     let type_mix = cache.type_mix(&allowed_ids).await.map_err(ApiError::from)?;
     let latest_indexed_at = cache
         .latest_indexed_at(&allowed_ids)
@@ -427,19 +475,18 @@ pub async fn generate_chat_starters_impl(
         }
     }
 
-    let titles = cache
-        .recent_titles(&allowed_ids, RECENT_TITLE_LIMIT)
-        .await
-        .unwrap_or_default();
+    let titles = cache.recent_titles(&allowed_ids).await.unwrap_or_default();
 
-    let llm = match container.get_or_load_utility_llm().await {
+    let llm = match runtime.get_or_load_utility_llm().await {
         Ok(Some(util)) => Some(util),
-        _ => container.get_or_load_llm().await.ok(),
+        _ => runtime.get_or_load_llm().await.ok(),
     };
 
     let starters = match llm {
         Some(llm) => {
-            let prompt = build_prompt(&titles, &format_type_mix(&type_mix));
+            let type_mix_line = format_type_mix(&type_mix);
+            let titles = fit_titles(llm.as_ref(), titles, &type_mix_line);
+            let prompt = build_prompt(&titles, &type_mix_line);
             // Upkeep: queued behind anyone waiting on the model.
             match complete_text(
                 llm.as_ref(),
@@ -620,9 +667,9 @@ mod tests {
 
     /// The anti-fabrication guard: with no LLM, the payload carries no questions.
     ///
-    /// `generate_chat_starters_impl` needs a `Container`, which cannot be built
-    /// in a unit test, so the invariant is asserted where it actually lives —
-    /// the parse/fallback path that produces the list.
+    /// `generate_chat_starters_impl` needs a `ChatRuntime`, which cannot be
+    /// built in a unit test, so the invariant is asserted where it actually
+    /// lives — the parse/fallback path that produces the list.
     #[test]
     fn test_fallback_without_llm_returns_no_questions() {
         let fallback: Vec<ChatStarterDto> = Vec::new();
@@ -716,24 +763,14 @@ mod tests {
 
         // Newest first, and the out-of-space document is not among them.
         assert_eq!(
-            repo.recent_titles(&allowed, RECENT_TITLE_LIMIT)
-                .await
-                .unwrap(),
+            repo.recent_titles(&allowed).await.unwrap(),
             ["doc-1.pdf", "doc-2.md", "doc-0.pdf"]
-        );
-        assert_eq!(
-            repo.recent_titles(&allowed, 1).await.unwrap(),
-            ["doc-1.pdf"]
         );
 
         // And an empty scope reads nothing at all.
         let empty = HashSet::new();
         assert!(repo.type_mix(&empty).await.unwrap().is_empty());
         assert!(repo.latest_indexed_at(&empty).await.unwrap().is_empty());
-        assert!(repo
-            .recent_titles(&empty, RECENT_TITLE_LIMIT)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(repo.recent_titles(&empty).await.unwrap().is_empty());
     }
 }

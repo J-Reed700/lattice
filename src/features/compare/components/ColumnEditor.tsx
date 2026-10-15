@@ -1,7 +1,5 @@
 import { useState } from 'react';
 
-const MAX_COLUMNS = 6;
-
 const PRESETS = [
   'method, sample size, finding',
   'prep time, servings, main protein',
@@ -36,14 +34,11 @@ export function parseColumns(value: string): string[] {
  */
 export function ColumnEditor({ value, onChange, onSubmit, isRunning }: ColumnEditorProps) {
   const [touched, setTouched] = useState(false);
-  const parsed = parseColumns(value);
-  const overLimit = parsed.length > MAX_COLUMNS;
-  const columns = parsed.slice(0, MAX_COLUMNS);
+  const columns = parseColumns(value);
 
-  const hint = overLimit
-    ? 'Six columns maximum.'
-    : columns.length > 0
-      ? `${columns.length} of ${MAX_COLUMNS} columns`
+  const hint =
+    columns.length > 0
+      ? `${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`
       : touched
         ? 'Name at least one column.'
         : '';

@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// Retrieves all tags in the system
 ///

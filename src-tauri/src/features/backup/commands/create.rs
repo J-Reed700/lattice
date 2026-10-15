@@ -1,9 +1,8 @@
 //! `create_backup`: writes a full database snapshot for disaster recovery.
 
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
-use crate::shared::types::ValidatedFilePath;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Creates a database backup for disaster recovery
@@ -52,7 +51,6 @@ use std::path::PathBuf;
 ///
 /// - **Rate Limiting (CWE-770)**: Backup rate limiter (50 req/min) prevents resource exhaustion
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
-/// - **Audit Logging (CWE-778)**: All backup operations logged to audit trail
 ///
 /// # Use Cases
 ///
@@ -82,7 +80,6 @@ use std::path::PathBuf;
 /// 1. Rate limiting via SecurityContext (CWE-770)
 /// 2. Path validation via ValidatedFilePath (CWE-22)
 /// 3. Backup creation (database snapshot)
-/// 4. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -90,16 +87,13 @@ use std::path::PathBuf;
 /// 2. Path validation if custom path provided
 /// 3. Generate default path if needed
 /// 4. Create database backup file
-/// 5. Log audit event (success/failure with path)
-/// 6. Return backup file path
+/// 5. Return backup file path
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn create_backup_impl(
     backup_path: Option<String>,
     container: &Container,
 ) -> Result<String, AppError> {
-    let audit_logger = get_audit_logger();
-
     // Rate limiting
     container
         .security_context()
@@ -121,32 +115,6 @@ pub async fn create_backup_impl(
     let result = use_case
         .execute(validated_path.map(|v| v.into_inner()))
         .await;
-
-    // Audit the outcome
-    match &result {
-        Ok(dto) => {
-            let event = AuditEvent::new(AuditAction::BackupCreated, AuditResult::success())
-                .with_resource_id(&dto.backup_path)
-                .with_metadata("operation", "create_backup")
-                .with_metadata("backup_type", "database");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::BackupCreated,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id("backup_failed")
-            .with_metadata("operation", "create_backup");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result.map(|dto| dto.backup_path)
 }

@@ -1,12 +1,12 @@
 //! Documents linked to a conversation, and the space memberships they imply.
 
 use super::ConversationRepository;
-use crate::domain::conversation::DocumentReference;
 use crate::features::conversation::persistence_mapper::{
     DocumentReferenceMapper, DocumentReferenceModel,
 };
-use crate::shared::error::{AppError, Result};
 use chrono::Utc;
+use lattice_core::domain::conversation::DocumentReference;
+use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
     pub async fn add_document_reference(

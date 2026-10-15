@@ -3,7 +3,7 @@ use super::{
     temp_path_for, write_file_atomically, DirtyState, KeyState, USearchVectorIndex, VectorMeta,
 };
 use crate::features::search::engine::vector_search::compression::VectorIndexCompression;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;

@@ -9,7 +9,7 @@ async fn missing_utility_and_failed_compaction_never_release_an_incomplete_plan(
         AppError::InvalidState("Utility model request failed".into()),
     ] {
         let pool = database().await;
-        let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+        let id = seed(&pool, LONG_CONVERSATION).await;
         let repository = ConversationRepository::new(pool.clone());
         let model = llm();
         let before = repository.load_memory_snapshot(&id).await.unwrap();
@@ -48,7 +48,7 @@ async fn missing_utility_and_failed_compaction_never_release_an_incomplete_plan(
 #[tokio::test]
 async fn successful_noop_cannot_release_an_incomplete_plan_or_retry_forever() {
     let pool = database().await;
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     let repository = ConversationRepository::new(pool.clone());
     let model = llm();
     let builds = std::cell::Cell::new(0);
@@ -86,7 +86,7 @@ async fn successful_noop_cannot_release_an_incomplete_plan_or_retry_forever() {
 #[tokio::test]
 async fn partial_commit_is_preserved_but_does_not_authorize_generation_with_missing_source() {
     let pool = database().await;
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     let repository = ConversationRepository::new(pool.clone());
     let model = llm();
     let result = prepare_memory_turn(
@@ -116,16 +116,13 @@ async fn partial_commit_is_preserved_but_does_not_authorize_generation_with_miss
         "keep the valid partial commit"
     );
     assert_eq!(after.state.processed_through_sequence, 1);
-    assert_eq!(
-        after.latest_sequence,
-        (RECENT_CANDIDATE_MESSAGES + 8) as i64
-    );
+    assert_eq!(after.latest_sequence, LONG_CONVERSATION as i64);
 }
 
 #[tokio::test]
 async fn a_rebuilt_complete_plan_can_continue_with_the_original_restriction() {
     let pool = database().await;
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     let repository = ConversationRepository::new(pool.clone());
     let model = llm();
     let result = prepare_memory_turn(
@@ -154,7 +151,7 @@ async fn a_rebuilt_complete_plan_can_continue_with_the_original_restriction() {
     assert!(result.plan.accounting.fits());
     assert_eq!(result.plan.memory_revision, 1);
     assert!(result.plan.messages.iter().any(|message| matches!(message,
-        crate::application::ports::llm_port::CompletionInput::Message { content, .. }
+        lattice_core::application::ports::llm_port::CompletionInput::Message { content, .. }
             if content.contains("Do not deploy until I approve.")
     )));
 }
@@ -196,7 +193,7 @@ async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_le
     repository
         .add_message(
             &id,
-            crate::domain::conversation::MessageRole::User,
+            lattice_core::domain::conversation::MessageRole::User,
             &"A long requirement. ".repeat(400),
             2000,
             None,
@@ -206,7 +203,7 @@ async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_le
     repository
         .add_message(
             &id,
-            crate::domain::conversation::MessageRole::Assistant,
+            lattice_core::domain::conversation::MessageRole::Assistant,
             "Acknowledged.",
             5,
             None,
@@ -237,7 +234,7 @@ async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_le
 #[tokio::test]
 async fn invalidated_memory_must_recheck_raw_history_instead_of_falling_back() {
     let pool = database().await;
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     record_constraint(&pool, &id).await;
     sqlx::query("UPDATE conversation_messages SET content = 'Do not deploy at all.' WHERE conversation_id = ? AND sequence = 1")
         .bind(&id).execute(&pool).await.unwrap();
@@ -276,13 +273,14 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
     let pool = database().await;
     let id = seed(&pool, 0).await;
     let repository = ConversationRepository::new(pool.clone());
-    for _ in 0..2 {
+    // Three of 400 KB: one source page (1 MiB) holds the newest two.
+    for _ in 0..3 {
         repository
             .add_message(
                 &id,
-                crate::domain::conversation::MessageRole::User,
-                &"x".repeat(300_000),
-                75_000,
+                lattice_core::domain::conversation::MessageRole::User,
+                &"x".repeat(400_000),
+                100_000,
                 None,
             )
             .await
@@ -294,14 +292,16 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
         messages: recent,
         unread_source: unread,
         reaches_start,
-    } = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
+    } = load_recent(&repository, &id, &snapshot, 0, 1_000, &estimate)
+        .await
+        .unwrap();
     assert!(
         !reaches_start,
         "the first message was not read, so the window cannot claim the whole transcript"
     );
-    assert_eq!(recent.len(), 1);
+    assert_eq!(recent.len(), 2);
     assert_eq!(
-        recent[0].sequence, snapshot.latest_sequence,
+        recent[1].sequence, snapshot.latest_sequence,
         "the newest is kept"
     );
     assert!(
@@ -313,7 +313,7 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
 #[tokio::test]
 async fn a_fallback_after_compaction_cannot_bypass_the_generation_gate() {
     let pool = database().await;
-    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    let id = seed(&pool, LONG_CONVERSATION).await;
     let repository = ConversationRepository::new(pool.clone());
     let model = llm();
     let enabled = std::cell::Cell::new(true);
@@ -341,4 +341,56 @@ async fn a_fallback_after_compaction_cannot_bypass_the_generation_gate() {
         result.is_err(),
         "losing the typed plan is not proof that the missing source fits"
     );
+}
+
+/// A model with a 128K window and the default estimate.
+struct LargeWindow;
+
+#[async_trait::async_trait]
+impl LLMPort for LargeWindow {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(String::new()))
+    }
+    fn model_name(&self) -> &str {
+        "large"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// Candidates used to stop at the newest 64 messages, so a long chat of
+/// short turns asked for compaction even when the window held all of it.
+/// How far back they reach is now the recent-history pool's call.
+#[tokio::test]
+async fn a_long_chat_of_short_turns_rides_verbatim_in_a_large_window() {
+    let pool = database().await;
+    let id = seed(&pool, 200).await;
+    let repository = ConversationRepository::new(pool.clone());
+    let model: Arc<dyn LLMPort> = Arc::new(LargeWindow);
+
+    let built = build_memory_plan(
+        &repository,
+        &repository,
+        &model,
+        &id,
+        "You are helpful.",
+        "What is the status?",
+        0,
+        Vec::new(),
+        true,
+    )
+    .await
+    .unwrap()
+    .expect("a plan");
+
+    assert!(!built.plan.compaction_required);
+    assert!(built.plan.messages.iter().any(|message| matches!(
+        message,
+        lattice_core::application::ports::llm_port::CompletionInput::Message { content, .. }
+            if content == "Do not deploy until I approve."
+    )));
 }

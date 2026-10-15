@@ -11,9 +11,9 @@
 use super::fs::{self, SearchRequest};
 use super::index::tool::{self as folder_index_tool, TOOL_SEARCH_FOLDER};
 use super::scope::Scope;
-use crate::application::ports::ToolDefinition;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::{AppError, Result};
 use serde_json::Value;
 
 pub const TOOL_LIST_DIRECTORY: &str = "list_directory";
@@ -22,12 +22,17 @@ pub const TOOL_SEARCH_FILES: &str = "search_files";
 pub const TOOL_FIND_FILES: &str = "find_files";
 
 /// Lines one `read_file` call returns at most.
-pub const READ_WINDOW_LINES: u32 = 400;
-const SEARCH_RESULTS: usize = 50;
-const FIND_RESULTS: usize = 100;
+/// The shortest a listed match or path can be ("a:1: x" and its newline):
+/// no more entries than this can fit a result, so collecting more than its
+/// allowance over this only to drop them is wasted. The rest are counted.
+const MIN_LISTED_LINE_CHARS: usize = 8;
+
+/// Entries a result of `max_chars` could show at most.
+fn listable(max_chars: usize) -> usize {
+    (max_chars / MIN_LISTED_LINE_CHARS).max(1)
+}
 /// A minified bundle can put a whole file on one line; past this a line is
 /// clipped so one line cannot spend the whole allowance.
-const MAX_LINE_CHARS: usize = 500;
 /// Room kept for the header and the "how to read on" footer.
 const FRAMING_CHARS: usize = 300;
 
@@ -63,11 +68,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_READ_FILE.to_string(),
-            description: format!(
-                "Read a text file from the user's folder, with line numbers. Returns at most \
-                 {READ_WINDOW_LINES} lines per call and says how to read the next window. Use \
-                 these line numbers when you point at lines in your answer."
-            ),
+            description: "Read a text file from the user's folder, with line numbers. Returns as \
+                 many lines as this turn has room for and says where to start the next read. \
+                 Use these line numbers when you point at lines in your answer."
+                .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -92,11 +96,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_SEARCH_FILES.to_string(),
-            description: format!(
-                "Search the text of the files in the user's folder. Returns up to \
-                 {SEARCH_RESULTS} matching lines as path:line with a preview. A lowercase query \
-                 ignores case. Files ignored by .gitignore and binary files are not searched."
-            ),
+            description:
+                "Search the text of the files in the user's folder. Returns matching lines as \
+                 path:line with a preview, as many as fit, and how many more there are. A \
+                 lowercase query ignores case. Files ignored by .gitignore and binary files are \
+                 not searched."
+                    .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -120,11 +125,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_FIND_FILES.to_string(),
-            description: format!(
-                "Find files in the user's folder by name or path: a substring such as \
-                 \"router\", or a glob such as \"*.rs\" or \"src/**/test_*.py\". Returns up to \
-                 {FIND_RESULTS} paths relative to the folder root."
-            ),
+            description: "Find files in the user's folder by name or path: a substring such as \
+                 \"router\", or a glob such as \"*.rs\" or \"src/**/test_*.py\". Returns the \
+                 paths relative to the folder root, as many as fit, and how many more there are."
+                .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -197,9 +201,10 @@ pub fn activity_label(tool: &str, arguments: &Value) -> String {
         TOOL_READ_FILE => {
             let path = arg_str(arguments, "path").unwrap_or("a file");
             let start = arg_u32(arguments, "start_line").unwrap_or(1).max(1);
-            let last = start + READ_WINDOW_LINES - 1;
-            let end = arg_u32(arguments, "end_line").map_or(last, |end| end.clamp(start, last));
-            format!("Read {path} {start}–{end}")
+            match arg_u32(arguments, "end_line") {
+                Some(end) => format!("Read {path} {start}–{}", end.max(start)),
+                None => format!("Read {path} from line {start}"),
+            }
         }
         TOOL_SEARCH_FILES => {
             let query = arg_str(arguments, "query").unwrap_or_default();
@@ -351,18 +356,11 @@ pub(super) fn list_directory(scope: &Scope, path: &str, max_chars: usize) -> Res
     Ok(out)
 }
 
-fn clip_line(line: &str) -> String {
-    if line.chars().count() <= MAX_LINE_CHARS {
-        return line.to_string();
-    }
-    let kept: String = line.chars().take(MAX_LINE_CHARS).collect();
-    format!("{kept} … [line clipped]")
-}
-
 /// One numbered line in the shape `  12│ text`, the shape the prompt also
 /// uses, so a model reads line numbers the same way wherever they come from.
+/// Whole: whoever lays lines out against a budget decides where to stop.
 pub(super) fn number_line(number: u32, text: &str, width: usize) -> String {
-    format!("{number:>width$}│ {}", clip_line(text))
+    format!("{number:>width$}│ {text}")
 }
 
 pub(super) fn number_width(last_line: u32) -> usize {
@@ -384,51 +382,95 @@ pub(super) fn read_window(
             human_size(file.size_bytes)
         )));
     }
-    if file.too_large {
+    // Lines from `start`, whole, while the turn's room holds them and up to
+    // `end_line` when one is given. A file too large to load is read as a
+    // stream, so its size changes how it is read, never whether.
+    let start = start_line.unwrap_or(1).max(1);
+    if end_line.is_some_and(|end| end < start) {
         return Err(AppError::InvalidInput(format!(
-            "{} is {}, too large to open here. Use search_files with path \"{}\" to find the lines you need.",
-            file.path,
-            human_size(file.size_bytes),
-            file.path
+            "end_line {} comes before start_line {start}.",
+            end_line.unwrap_or_default()
         )));
     }
-    let text = file.text.unwrap_or_default();
-    let total = file.line_count;
+    let budget = max_chars.saturating_sub(FRAMING_CHARS);
+    let mut selected: Vec<(u32, String)> = Vec::new();
+    let mut used = 0usize;
+    // Characters of the last selected line past the room, when a streamed
+    // line too long to read at once arrived in more pieces than fit.
+    let mut unshown_tail = 0usize;
+    let mut select = |number: u32, line: &str| -> bool {
+        if number < start {
+            return true;
+        }
+        if end_line.is_some_and(|end| number > end) {
+            return false;
+        }
+        if let Some((_, text)) = selected.last_mut().filter(|(last, _)| *last == number) {
+            // Another piece of the same long line.
+            if unshown_tail == 0 && used + line.len() <= budget {
+                used += line.len();
+                text.push_str(line);
+            } else {
+                unshown_tail += line.chars().count();
+            }
+            return true;
+        }
+        // The number column and its separator, at most this wide.
+        let cost = line.len() + 14;
+        if !selected.is_empty() && used + cost > budget {
+            return false;
+        }
+        used += cost;
+        selected.push((number, line.to_string()));
+        true
+    };
+    let total = match file.text.as_deref() {
+        Some(text) => {
+            for (index, line) in text.lines().enumerate() {
+                if !select(index as u32 + 1, line) {
+                    break;
+                }
+            }
+            file.line_count
+        }
+        None => fs::scan_lines(scope, &file.path, &mut select)?,
+    };
     if total == 0 {
         return Ok(format!("{} is empty.", file.path));
     }
-    let start = start_line.unwrap_or(1).max(1);
     if start > total {
         return Err(AppError::InvalidInput(format!(
             "{} has {total} lines; start_line {start} is past the end.",
             file.path
         )));
     }
-    let window_end = start + READ_WINDOW_LINES - 1;
-    let end = end_line.unwrap_or(window_end).min(window_end).min(total);
-    if end < start {
-        return Err(AppError::InvalidInput(format!(
-            "end_line {end} comes before start_line {start}."
-        )));
-    }
 
-    let budget = max_chars.saturating_sub(FRAMING_CHARS);
-    let width = number_width(end);
+    let last = selected.last().map_or(start - 1, |(number, _)| *number);
+    let width = number_width(last);
     let mut body = String::new();
-    let mut last = start - 1;
-    let numbered = text
-        .lines()
-        .enumerate()
-        .skip(start as usize - 1)
-        .take((end - start + 1) as usize)
-        .map(|(index, line)| number_line(index as u32 + 1, line, width));
-    for line in numbered {
-        if last >= start && body.len() + line.len() + 1 > budget {
-            break;
+    let lines_selected = selected.len();
+    for (index, (number, line)) in selected.iter().enumerate() {
+        let numbered = number_line(*number, line, width);
+        let tail = if index + 1 == lines_selected {
+            unshown_tail
+        } else {
+            0
+        };
+        if numbered.len() > budget || tail > 0 {
+            // One line longer than the whole room: the room's worth of it,
+            // and how much more the line holds.
+            let kept = &numbered[..lattice_core::shared::text::floor_char_boundary(
+                &numbered,
+                budget.saturating_sub(80),
+            )];
+            body.push_str(&format!(
+                "{kept} […line continues: {} more characters not shown]\n",
+                numbered[kept.len()..].chars().count() + tail
+            ));
+            continue;
         }
-        body.push_str(&line);
+        body.push_str(&numbered);
         body.push('\n');
-        last += 1;
     }
 
     let mut out = format!("{} · lines {start}–{last} of {total}\n{body}", file.path);
@@ -452,14 +494,15 @@ fn search_files(
     path: &str,
     max_chars: usize,
 ) -> Result<String> {
-    let result = fs::search(
+    let (result, more) = fs::search_counting(
         scope,
         &SearchRequest {
             query,
             regex,
             path_prefix: (!path.is_empty()).then_some(path),
-            max_results: SEARCH_RESULTS,
+            max_results: listable(max_chars),
         },
+        fs::WalkBounds::default(),
     )?;
     let place = if path.is_empty() {
         String::new()
@@ -473,12 +516,12 @@ fn search_files(
         );
         if result.truncated {
             out.push_str(
-                " The search stopped at a limit before covering every file; narrow it with path.",
+                " The search stopped at its time or file limit before covering every file; narrow it with path.",
             );
         }
         return Ok(out);
     }
-    let count = result.matches.len();
+    let count = result.matches.len() + more;
     let mut out = format!(
         "{count} match{} for \"{query}\"{place}:\n",
         if count == 1 { "" } else { "es" }
@@ -494,19 +537,22 @@ fn search_files(
         max_chars.saturating_sub(FRAMING_CHARS),
     );
     if result.truncated {
-        out.push_str("[The search stopped at a limit, so there may be more. Narrow it with path or a more specific query.]\n");
+        out.push_str(&format!(
+            "[The search stopped at its time or file limit after {} files, so files past them were not searched. Narrow it with path or a more specific query.]\n",
+            result.files_scanned
+        ));
     }
     Ok(out)
 }
 
 fn find_files(scope: &Scope, pattern: &str, max_chars: usize) -> Result<String> {
-    let found = fs::find_files(scope, pattern, FIND_RESULTS)?;
+    let found = fs::find_files(scope, pattern, listable(max_chars))?;
     if found.paths.is_empty() {
         return Ok(format!(
             "No files match \"{pattern}\" (files ignored by .gitignore are skipped)."
         ));
     }
-    let count = found.paths.len();
+    let count = found.paths.len() + found.more;
     let mut out = format!(
         "{count} file{} matching \"{pattern}\":\n",
         if count == 1 { "" } else { "s" }
@@ -518,7 +564,7 @@ fn find_files(scope: &Scope, pattern: &str, max_chars: usize) -> Result<String> 
         max_chars.saturating_sub(FRAMING_CHARS),
     );
     if found.truncated {
-        out.push_str("[Stopped at a limit, so there may be more. Use a more specific pattern.]\n");
+        out.push_str("[The walk stopped at its time or file limit before covering every file, so there may be more. Use a more specific pattern.]\n");
     }
     Ok(out)
 }

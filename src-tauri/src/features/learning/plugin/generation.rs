@@ -60,11 +60,13 @@ pub async fn get_learning_generation_job(
 
 pub(super) fn generation_worker(
     container: &Container,
+    runtimes: BuiltinRuntimes,
 ) -> crate::features::learning::generation_jobs::LessonGenerationWorker {
     let model_container = container.clone();
-    let source_container = container.clone();
     let library_container = container.clone();
+    let source_deps = source_deps(container);
     crate::features::learning::generation_jobs::LessonGenerationWorker {
+        runtimes,
         research_web: Some(container.web_service()),
         pool: container.db_pool().clone(),
         load_library: std::sync::Arc::new(move || {
@@ -81,13 +83,10 @@ pub(super) fn generation_worker(
             Box::pin(async move { container.get_or_load_llm().await })
         }),
         refresh_sources: std::sync::Arc::new(move |program_id| {
-            let container = source_container.clone();
+            let deps = source_deps.clone();
             Box::pin(async move {
-                crate::features::learning::sources::ensure_before_use_sources(
-                    &container,
-                    &program_id,
-                )
-                .await
+                crate::features::learning::sources::ensure_before_use_sources(&deps, &program_id)
+                    .await
             })
         }),
     }

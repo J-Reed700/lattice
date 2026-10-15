@@ -12,7 +12,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
-use crate::application::ports::SettingsRepositoryPort;
+use lattice_core::application::ports::SettingsRepositoryPort;
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -328,7 +328,7 @@ impl ArchiveWriter {
         report: &snapshot::SnapshotReport,
         out_dir: &Path,
         created_at: &chrono::DateTime<chrono::Utc>,
-    ) -> Result<ArchiveInputs, crate::shared::error::AppError> {
+    ) -> Result<ArchiveInputs, lattice_core::shared::error::AppError> {
         let settings = self.settings_repo.get_all().await?;
 
         let files_root = self.files_root.clone().filter(|root| path_exists(root));

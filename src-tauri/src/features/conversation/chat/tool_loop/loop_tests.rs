@@ -4,20 +4,21 @@
 use super::final_round::FINAL_ROUND_INSTRUCTION;
 use super::research_notes::{CONDENSE_INSTRUCTION, NOTES_HEADER};
 use super::*;
-use crate::application::ports::llm_port::{
-    CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
-};
-use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation;
+use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::ports::ChatTools;
 use crate::features::conversation::chat::test_runtime::FakeRuntime;
-use crate::features::conversation::chat::turn_record::{TurnStepDto, TurnStepState};
+use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepDto, TurnStepState};
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
+};
+use lattice_core::application::ports::LLMPort;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const CONVERSATION: &str = "tool-loop-conversation";
 
@@ -138,6 +139,7 @@ fn tool(name: &str) -> ToolDefinition {
 const PAGE_A: &str = "https://pages.example/a";
 const PAGE_B: &str = "https://pages.example/b";
 const PAGE_C: &str = "https://pages.example/c";
+const PAGE_D: &str = "https://pages.example/d";
 
 /// Pages, searches and a tool that may write, each taking as long as the
 /// test says, with a log of when each started and ended.
@@ -276,10 +278,16 @@ async fn run_on(
     let mut trace = None;
     let outcome = run_agentic_tool_loop(
         &runtime,
-        &conv_service,
-        CONVERSATION,
-        request_id,
-        &llm,
+        ChatTurn {
+            conv_service: &conv_service,
+            conversation_id: CONVERSATION,
+            request_id,
+            message: "When did the bridge open?",
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &FocusScope::default(),
+            recorder: &recorder,
+        },
         &sink,
         LoopRequest {
             input: vec![
@@ -299,14 +307,11 @@ async fn run_on(
             max_tool_rounds: rounds,
             research: None,
         },
-        &[],
         &settings,
         &mut sources,
         &mut trace,
         FetchMemory::default(),
-        &FocusScope::default(),
         None,
-        &recorder,
     )
     .await;
     Run {
@@ -630,29 +635,30 @@ async fn a_tool_that_may_write_runs_alone_and_in_order() {
 #[tokio::test]
 async fn stop_ends_a_round_of_reads_without_waiting_for_them() {
     let request_id = "concurrent-reads-stopped";
-    assert!(cancellation::begin_turn_within(
-        request_id,
-        CONVERSATION,
-        None
-    ));
     let web = Arc::new(Web {
         hang: true,
         ..Web::default()
     });
+    let runtime = FakeRuntime {
+        tools: Some(web.clone()),
+        ..FakeRuntime::default()
+    };
+    let turns = Arc::clone(&runtime.turn_cancellation);
+    assert!(turns.begin_turn_within(request_id, CONVERSATION, None));
     let model = Model::new([reads(&[PAGE_A, PAGE_B, PAGE_C])]);
     let tools = [tool("fetch_url_content")];
     let stop = async {
         while web.in_flight.load(Ordering::SeqCst) < 3 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(cancellation::request_cancel(CONVERSATION, Some(request_id)));
+        assert!(turns.request_cancel(CONVERSATION, Some(request_id)));
     };
     let (run, ()) = tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::join!(run(&model, &web, &tools, ROOMY, 3, request_id), stop)
+        tokio::join!(run_on(runtime, &model, &tools, ROOMY, 3, request_id), stop)
     })
     .await
     .expect("stop ends the round, not the time budget");
-    cancellation::finish_turn(request_id);
+    turns.finish_turn(request_id);
 
     let error = run.outcome.expect_err("a stopped turn has no answer");
     assert!(cancellation::is_cancellation(&error), "{error}");
@@ -668,8 +674,9 @@ async fn stop_ends_a_round_of_reads_without_waiting_for_them() {
 /// A 4,000-token budget: 12,000 characters, about one page.
 const ONE_PAGE_WINDOW: usize = 4_000;
 
-/// Without condensing, the second round finds the window full and has to
-/// answer from page A alone.
+/// A page read takes at most half of what is left, so two long pages fill
+/// the window past its condensing share. Without condensing, the next round
+/// would have little room left to read with.
 #[tokio::test]
 async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     let web = Web::with_pages_of(30_000);
@@ -703,18 +710,18 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     );
     let requests = model.requests();
     let kinds: Vec<_> = requests.iter().map(is_condense_request).collect();
-    assert_eq!(kinds, [false, true, false, true, false]);
+    assert_eq!(kinds, [false, false, true, false]);
     // The round after condensing is an ordinary one: tools callable, no
     // instruction to stop, and the notes in place of page A's text.
-    let after = &requests[2];
+    let after = &requests[3];
     assert_eq!(after.tool_choice, None);
     assert!(!last_text(after).contains(FINAL_ROUND_INSTRUCTION));
     assert!(last_text(after).starts_with(NOTES_HEADER));
     assert!(results_mentioning(after, &format!("Text of {PAGE_A}")).is_empty());
     // The condensing request is the round before it and an instruction: the
     // cached prompt is a prefix of it, tools and all.
-    let condense = &requests[1];
-    assert_eq!(json_of(&condense.tools), json_of(&requests[0].tools));
+    let condense = &requests[2];
+    assert_eq!(json_of(&condense.tools), json_of(&requests[1].tools));
     assert_eq!(condense.tool_choice, Some(ToolChoice::None));
     assert!(run.steps.iter().any(
         |step| step.label == "Condensing what it has read" && step.state == TurnStepState::Done
@@ -750,7 +757,11 @@ async fn citations_from_before_condensing_still_resolve() {
         .expect("[1] still has a source");
     assert_eq!(cited.path.as_deref(), Some(PAGE_A));
     // The model was shown the number it has to keep.
-    let condense = &model.requests()[1];
+    let requests = model.requests();
+    let condense = requests
+        .iter()
+        .find(|request| is_condense_request(request))
+        .expect("the window filled and was condensed");
     assert!(!results_mentioning(condense, "Citable passage [1]").is_empty());
     // The research deck's card for page A still links to it.
     assert!(run
@@ -768,6 +779,7 @@ async fn a_page_condensed_away_is_read_again_when_asked_for() {
     let web = Web::with_pages_of(30_000);
     let model = Model::new([
         reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
         reads(&[PAGE_A]),
         CompletionResponse::from_text("It opened in 1932 [1]."),
     ]);
@@ -797,7 +809,12 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let web = Web::with_pages_of(30_000);
     let model = Model::with_notes(
         [
+            // Each read takes half of what is left, at least the floor, so
+            // the window fills on the fourth.
             reads(&[PAGE_A]),
+            reads(&[PAGE_B]),
+            reads(&[PAGE_C]),
+            reads(&[PAGE_D]),
             CompletionResponse::from_text("It opened in 1932 [1]."),
         ],
         &"n".repeat(40_000),
@@ -814,8 +831,8 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
 
     assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
     let requests = model.requests();
-    assert_eq!(requests.len(), 3);
-    assert!(is_condense_request(&requests[1]));
-    assert!(last_text(&requests[2]).ends_with(FINAL_ROUND_INSTRUCTION));
-    assert!(!results_mentioning(&requests[2], &format!("Text of {PAGE_A}")).is_empty());
+    assert!(requests.iter().any(is_condense_request));
+    let last = requests.last().unwrap();
+    assert!(last_text(last).ends_with(FINAL_ROUND_INSTRUCTION));
+    assert!(!results_mentioning(last, &format!("Text of {PAGE_A}")).is_empty());
 }

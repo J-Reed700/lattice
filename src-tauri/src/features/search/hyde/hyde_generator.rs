@@ -28,11 +28,11 @@
 //! HyDEInterpretation
 //! ```
 
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
-use crate::application::ports::LLMPort;
-use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
-use crate::shared::error::{AppError, Result};
-use crate::shared::text::safe_truncate;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::qa::hyde::{HyDEInterpretation, QueryType};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::safe_truncate;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -104,7 +104,8 @@ impl HyDEGenerator {
                 }],
                 time_budget: Some(REWRITE_TIME_BUDGET),
                 // Rewrites run inside a chat turn, which someone is waiting on.
-                priority: crate::application::ports::llm_port::InferencePriority::Interactive,
+                priority:
+                    lattice_core::application::ports::llm_port::InferencePriority::Interactive,
                 cancel: self.cancel.clone(),
                 ..Default::default()
             })

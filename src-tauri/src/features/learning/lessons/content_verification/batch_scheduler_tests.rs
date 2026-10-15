@@ -1,12 +1,12 @@
 use super::*;
-use crate::application::ports::llm_port::CompletionInput;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
     curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
     dto::AcceptLearningProgramRequestDto, lesson_drafts,
     plan_dto::StartLearningGenerationJobRequestDto, repository::LearningRepository,
 };
-use crate::shared::runtime::jobs::{JobContext, JobStore, RecoveryPolicy};
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::shared::runtime::jobs::{JobContext, JobStore, RecoveryPolicy};
 
 #[derive(Default)]
 struct BatchModel {
@@ -378,7 +378,7 @@ fn coverage(count: usize) -> Coverage {
                 index,
                 complete: true,
                 reason: "Fixture coverage".into(),
-                unresolved_passages: vec![],
+                missing_assertions: vec![],
             })
             .collect(),
     }
@@ -602,7 +602,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     };
     let input = inventory(8);
     let claim = &input.units[7].claims[0];
-    let evidence = evidence_for(&claim.statement, 7, &references, &[]).await?;
+    let evidence = evidence_for(&model, &claim.statement, 7, &references, &[], 8).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(7, claim, &evidence));
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
         let mut retained=ClaimChecks::default();let candidate=candidate(GOOD);

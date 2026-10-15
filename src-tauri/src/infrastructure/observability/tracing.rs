@@ -15,11 +15,14 @@ use tracing_appender::rolling;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Global handle to the OTEL tracer provider, used for graceful shutdown.
+// global-state: the tracing subscriber is installed process-wide, so the
+// provider behind it lives as long as the process.
 static TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
 /// Worker guards for the background log writers, owned for the process so
 /// `shutdown_tracing` can flush them. Leaking them instead truncates the log at
 /// exit, and the tail is exactly where a stall or a timeout shows up.
+// global-state: the guards of the process-wide subscriber's writers.
 static WRITER_GUARDS: OnceLock<Mutex<Vec<WorkerGuard>>> = OnceLock::new();
 
 /// Check whether OpenTelemetry export is enabled via environment.
@@ -154,6 +157,9 @@ const DEBUG_FILTER: &str = "info,lattice=debug,lattice_desktop=debug,tokenizers=
 /// files hold URLs read, paths and queries, so they are not kept forever.
 const MAX_LOG_FILES: usize = 7;
 
+/// The daily log's file name; the appender adds `.<YYYY-MM-DD>`.
+const LOG_FILE_PREFIX: &str = "lattice.log";
+
 /// The filter used when `RUST_LOG` is unset: debug for our crates in a debug
 /// build, info in a release build, whose logs are the user's to keep.
 fn default_filter() -> &'static str {
@@ -257,7 +263,7 @@ fn daily_appender(
 ) -> Result<rolling::RollingFileAppender, rolling::InitError> {
     rolling::Builder::new()
         .rotation(rolling::Rotation::DAILY)
-        .filename_prefix("lattice.log")
+        .filename_prefix(LOG_FILE_PREFIX)
         .max_log_files(MAX_LOG_FILES)
         .build(log_dir)
 }
@@ -288,11 +294,28 @@ where
 /// - macOS: `~/Library/Application Support/lattice/logs`
 /// - Linux: `~/.local/share/lattice/logs`
 /// - Windows: `{FOLDERID_LocalAppData}\lattice\logs`
-fn log_directory() -> std::path::PathBuf {
+pub(crate) fn log_directory() -> std::path::PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("lattice")
         .join("logs")
+}
+
+/// The daily log files in `log_dir`, newest first. The date suffix sorts by
+/// name; a missing or unreadable directory has none.
+pub(crate) fn daily_log_files(log_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let prefix = format!("{LOG_FILE_PREFIX}.");
+    let Ok(entries) = std::fs::read_dir(log_dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<_> = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .map(|entry| entry.path())
+        .collect();
+    files.sort_unstable_by(|a, b| b.file_name().cmp(&a.file_name()));
+    files
 }
 
 #[cfg(test)]

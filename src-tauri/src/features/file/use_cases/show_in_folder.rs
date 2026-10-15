@@ -2,10 +2,10 @@
 //!
 //! Reveals a file in the system's file explorer.
 
-use crate::application::ports::{FileStoragePort, FileSystemPort};
 use crate::features::file::dto::{FileOperationSuccessDto, ShowInFolderRequestDto};
 use crate::infrastructure::security::FileAccessConfig;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{FileStoragePort, FileSystemPort};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// Use case for revealing a file in the system's file explorer.
@@ -25,7 +25,6 @@ use std::sync::Arc;
 ///
 /// - Path validation prevents directory traversal (CWE-22)
 /// - Uses secure system commands via FileSystemPort (prevents CWE-78)
-/// - Audits file access for security monitoring
 pub struct ShowInFolderUseCase {
     file_system: Arc<dyn FileSystemPort>,
     file_storage: Arc<dyn FileStoragePort>,
@@ -78,7 +77,7 @@ impl ShowInFolderUseCase {
             )));
         }
 
-        // Show file in folder (secure, audited)
+        // Show file in folder (secure)
         self.file_system.show_in_folder(&validated_path).await?;
 
         Ok(FileOperationSuccessDto {
@@ -90,8 +89,8 @@ impl ShowInFolderUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::file_system_port::FileSystemPort;
     use async_trait::async_trait;
+    use lattice_core::application::ports::file_system_port::FileSystemPort;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -160,7 +159,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl crate::application::ports::FileStoragePort for MockFileStorage {
+    impl lattice_core::application::ports::FileStoragePort for MockFileStorage {
         async fn read_file(&self, _path: &Path) -> Result<String> {
             Ok(String::new())
         }
@@ -192,8 +191,11 @@ mod tests {
                 .any(|p| p == &path_str || p == &path.display().to_string())
         }
 
-        async fn metadata(&self, _path: &Path) -> Result<crate::application::ports::FileMetadata> {
-            Ok(crate::application::ports::FileMetadata {
+        async fn metadata(
+            &self,
+            _path: &Path,
+        ) -> Result<lattice_core::application::ports::FileMetadata> {
+            Ok(lattice_core::application::ports::FileMetadata {
                 size: 0,
                 modified_at: 0,
                 is_file: true,
@@ -253,7 +255,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(crate::shared::error::AppError::NotFound(_))
+            Err(lattice_core::shared::error::AppError::NotFound(_))
         ));
     }
 }

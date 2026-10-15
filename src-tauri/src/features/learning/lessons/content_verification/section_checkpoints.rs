@@ -17,8 +17,6 @@ fn key(llm: &dyn LLMPort, content: &Value, index: usize) -> String {
             &json!({
                 "inventoryPolicy": INVENTORY_POLICY,
                 "coveragePolicy": coverage::POLICY,
-                "assessmentPolicy": coverage::ASSESSMENT_POLICY,
-                "teachingPolicy": coverage::TEACHING_CONTEXT_POLICY,
                 "model": llm.model_name(), "context": llm.max_context_tokens(),
                 "index": index, "content": content,
             })
@@ -33,7 +31,7 @@ impl SectionCheckpoint {
         unit.index == index
             && self.coverage.index == index
             && self.coverage.complete
-            && self.coverage.unresolved_passages.is_empty()
+            && self.coverage.missing_assertions.is_empty()
             && unit.non_factual_reason.chars().count() <= 500
             && (!unit.claims.is_empty() || !unit.non_factual_reason.trim().is_empty())
             && unit.claims.iter().all(|claim| {
@@ -116,7 +114,7 @@ mod capacity_tests {
                 index: 0,
                 complete: true,
                 reason: "All assertions are represented.".into(),
-                unresolved_passages: vec![],
+                missing_assertions: vec![],
             },
         };
         assert!(checkpoint.valid(&content, 0));

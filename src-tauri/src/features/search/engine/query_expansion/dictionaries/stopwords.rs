@@ -318,6 +318,8 @@ const STOPWORDS: &[&str] = &[
 ];
 
 fn stopword_set() -> &'static HashSet<&'static str> {
+    // global-state: an index over the fixed list above, built on first use
+    // and never changed.
     static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
     SET.get_or_init(|| STOPWORDS.iter().copied().collect())
 }

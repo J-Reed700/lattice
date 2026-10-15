@@ -13,4 +13,4 @@ pub use dynamic_embedding_service::DynamicEmbeddingService;
 pub use dynamic_port::DynamicEmbedding;
 
 pub const MODEL_NAME: &str =
-    crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
+    lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;

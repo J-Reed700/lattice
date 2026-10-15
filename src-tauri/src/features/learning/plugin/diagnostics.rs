@@ -29,7 +29,7 @@ pub async fn start_learning_diagnostic(
         || program.summary.status != LearningProgramStatus::Active
     {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidState(
+            lattice_core::shared::error::AppError::InvalidState(
                 "The course changed. Reload before checking your starting point.".into(),
             ),
         ));
@@ -42,10 +42,16 @@ pub async fn start_learning_diagnostic(
         .await
         .map_err(ApiError::from)?;
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    // Whole captured texts, not the program's stored previews.
+    let sources = LearningRepository::new(container.db_pool().clone())
+        .verification_sources(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
     let tasks = crate::features::learning::diagnostic_generation::author(
         llm.as_ref(),
         &program,
         &workspace.outcomes,
+        &sources,
     )
     .await
     .map_err(ApiError::from)?;
@@ -98,7 +104,7 @@ pub async fn submit_learning_diagnostic(
         || request.expected_revision != program.summary.revision
         || program.summary.status != LearningProgramStatus::Active
     {
-        return Err(ApiError::from(crate::shared::error::AppError::InvalidState("Your course or answers changed. Reload before submitting the starting-point check.".into())));
+        return Err(ApiError::from(lattice_core::shared::error::AppError::InvalidState("Your course or answers changed. Reload before submitting the starting-point check.".into())));
     }
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     let findings = crate::features::learning::diagnostic_generation::evaluate(

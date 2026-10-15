@@ -1,11 +1,11 @@
 //! Scope, explicit user memory edits and time metadata on the same ledger.
 use super::ConversationRepository;
-use crate::domain::conversation::memory::compute_digest;
 use crate::features::conversation::knowledge_dto::{
     KnowledgeItemDto, KnowledgeRequestDto, KnowledgeResponseDto,
 };
 use crate::features::conversation::memory_dto::MemoryEvidenceDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::conversation::memory::compute_digest;
+use lattice_core::shared::error::{AppError, Result};
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -176,8 +176,10 @@ impl ConversationRepository {
             let id = uuid::Uuid::new_v4().to_string();
             changed = Some(id.clone());
             let digest = compute_digest(text);
-            let tokens = i64::try_from(crate::application::ports::llm_port::estimate_tokens(text))
-                .unwrap_or(i64::MAX);
+            let tokens = i64::try_from(
+                lattice_core::application::ports::llm_port::estimate_tokens(text),
+            )
+            .unwrap_or(i64::MAX);
             sqlx::query("INSERT INTO conversation_messages(id,conversation_id,role,content,tokens,status,sequence,content_digest,metadata) VALUES (?,?,'user',?,?,'completed',?,?, '{\"memoryNote\":true}')")
                 .bind(&message).bind(&r.conversation_id).bind(text).bind(tokens).bind(sequence).bind(&digest).execute(&mut *tx).await?;
             sqlx::query("UPDATE conversations SET message_count=message_count+1,total_tokens=total_tokens+?,updated_at=? WHERE id=?").bind(tokens).bind(&now).bind(&r.conversation_id).execute(&mut *tx).await?;
@@ -289,7 +291,7 @@ impl ConversationRepository {
         &self,
         conversation: &str,
         query: &str,
-    ) -> Result<crate::application::ports::conversation_memory::PreparedMemory> {
+    ) -> Result<lattice_core::application::ports::conversation_memory::PreparedMemory> {
         let revisions = self.knowledge_revisions(conversation).await?;
         let response = self.list_knowledge(conversation, 0, true).await?;
         if response.has_more {
@@ -306,7 +308,7 @@ impl ConversationRepository {
             .collect();
         let semantic = self.knowledge_semantic_scores(conversation, query).await;
         let mut prepared =
-            crate::application::ports::conversation_memory::PreparedMemory::default();
+            lattice_core::application::ports::conversation_memory::PreparedMemory::default();
         let mut optional = Vec::new();
         for item in response.items {
             let text=serde_json::json!({"memory_id":item.id,"source_conversation":item.conversation_id,"source_title":item.conversation_title,"scope":item.scope,"kind":item.kind,"generated_label":item.label,"learned_at":item.learned_at,"valid_from":item.valid_from,"valid_until":item.valid_until,"last_user_verified_at":item.verified_at,"evidence":item.evidence,"why_available":item.availability_reason}).to_string();
@@ -335,11 +337,8 @@ impl ConversationRepository {
             }
         }
         optional.sort_by(|a, b| b.0.total_cmp(&a.0));
-        prepared.optional = optional
-            .into_iter()
-            .take(24)
-            .map(|(_, text)| text)
-            .collect();
+        // Ranked, not cut: the assembler's evidence pool decides how many fit.
+        prepared.optional = optional.into_iter().map(|(_, text)| text).collect();
         if self.knowledge_revisions(conversation).await? != revisions {
             return Err(AppError::ConcurrentModification {
                 resource: "conversation memory".into(),
@@ -378,7 +377,8 @@ impl ConversationRepository {
                 }
                 let state = self.load_memory_state(&item.conversation_id).await?;
                 if !state.is_schema_supported()
-                    || state.validity != crate::domain::conversation::memory::MemoryValidity::Ready
+                    || state.validity
+                        != lattice_core::domain::conversation::memory::MemoryValidity::Ready
                 {
                     continue;
                 }
@@ -463,10 +463,15 @@ impl ConversationRepository {
             item_id: String,
             embedding: Vec<u8>,
         }
-        let limit = (32 * 1024 * 1024 / (vector.len().max(1) * 4)).min(2000) as i64;
-        let rows=sqlx::query_as::<_,VectorRow>("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE (i.conversation_id=? OR a.scope='personal' OR (a.scope='space' AND a.space_id=(SELECT space_id FROM conversations WHERE id=?))) AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC LIMIT ?")
-            .bind(conversation).bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(limit).fetch_all(&self.pool).await;
-        if let Ok(rows) = rows {
+        // Every applicable item's evidence is scored, a page at a time, each
+        // page sized so its vectors stay within a fixed amount of memory.
+        let page = (32 * 1024 * 1024 / (vector.len().max(1) * 4)).max(1) as i64;
+        let mut offset = 0i64;
+        loop {
+            let rows=sqlx::query_as::<_,VectorRow>("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE (i.conversation_id=? OR a.scope='personal' OR (a.scope='space' AND a.space_id=(SELECT space_id FROM conversations WHERE id=?))) AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC, e.item_id, e.ordinal LIMIT ? OFFSET ?")
+                .bind(conversation).bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(page).bind(offset).fetch_all(&self.pool).await;
+            let Ok(rows) = rows else { break };
+            let read = rows.len() as i64;
             for row in rows {
                 if let Ok(stored) =
                     crate::features::embedding::encoding::decode_embedding(&row.embedding)
@@ -477,6 +482,10 @@ impl ConversationRepository {
                     }
                 }
             }
+            if read < page {
+                break;
+            }
+            offset += read;
         }
         scores
     }

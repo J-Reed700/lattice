@@ -22,12 +22,12 @@
 //! println!("Model path: {}", response.path);
 //! ```
 
-use crate::application::ports::model_storage::ModelStoragePort;
 use crate::features::llm::dto::{
     CheckModelDownloadedRequestDto, GetModelPathRequestDto, GetModelPathResponseDto,
 };
 use crate::features::llm::use_cases::CheckModelDownloadedUseCase;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_storage::ModelStoragePort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetModelPathUseCase {
@@ -76,7 +76,7 @@ impl GetModelPathUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_storage::MockModelStoragePort;
+    use lattice_core::application::ports::model_storage::MockModelStoragePort;
 
     fn create_use_case(storage: Arc<MockModelStoragePort>) -> GetModelPathUseCase {
         let check_downloaded = Arc::new(CheckModelDownloadedUseCase::new(storage.clone()));

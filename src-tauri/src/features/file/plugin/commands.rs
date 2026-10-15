@@ -11,7 +11,7 @@ use crate::features::indexing::dto::{
 use crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto;
 use crate::interfaces::commands::document_list;
 use crate::interfaces::di::Container;
-use crate::shared::ipc::{ApiError, ErrorCode};
+use lattice_core::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -21,10 +21,10 @@ pub struct IndexingStatus {
     pub progress: f32,
 }
 
-fn unwrap_api_result<T>(result: crate::shared::ipc::ApiResult<T>) -> Result<T, ApiError> {
+fn unwrap_api_result<T>(result: lattice_core::shared::ipc::ApiResult<T>) -> Result<T, ApiError> {
     match result {
-        crate::shared::ipc::ApiResult::Success { data, .. } => Ok(data),
-        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
+        lattice_core::shared::ipc::ApiResult::Success { data, .. } => Ok(data),
+        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: error.code,
             message: error.message,
             details: error.details,
@@ -33,14 +33,9 @@ fn unwrap_api_result<T>(result: crate::shared::ipc::ApiResult<T>) -> Result<T, A
 }
 
 async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<String>>) {
-    const DEFAULT_CHUNK_TOKENS: usize = 800;
-    const MIN_CHUNK_TOKENS: usize = 64;
-    const MAX_CHUNK_TOKENS: usize = 4096;
-
     match container.get_settings_use_case().execute().await {
         Ok(settings) => {
-            let chunk_tokens =
-                (settings.indexing.chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS);
+            let chunk_tokens = indexing_commands::chunk_tokens_for(settings.indexing.chunk_size);
             let include_extensions = if settings.indexing.file_types.is_empty() {
                 None
             } else {
@@ -53,7 +48,7 @@ async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<
                 error = %error,
                 "Failed to resolve indexing settings for file plugin; using defaults"
             );
-            (DEFAULT_CHUNK_TOKENS, None)
+            (indexing_commands::DEFAULT_CHUNK_TOKENS, None)
         }
     }
 }
@@ -128,7 +123,7 @@ pub async fn remove_indexed_file(
             Ok(())
         } else {
             match result {
-                crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
+                lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
                     code: ErrorCode::InternalError,
                     message: error.message,
                     details: error.details,
@@ -175,11 +170,13 @@ pub async fn get_indexing_status(
     let result = indexing_commands::get_index_progress_impl(&container).await;
 
     match result {
-        crate::shared::ipc::ApiResult::Success { data: progress, .. } => Ok(IndexingStatus {
-            active: progress.is_indexing,
-            progress: progress.percent_complete.unwrap_or(0.0),
-        }),
-        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
+        lattice_core::shared::ipc::ApiResult::Success { data: progress, .. } => {
+            Ok(IndexingStatus {
+                active: progress.is_indexing,
+                progress: progress.percent_complete.unwrap_or(0.0),
+            })
+        }
+        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: ErrorCode::InternalError,
             message: error.message,
             details: error.details,
@@ -291,8 +288,8 @@ pub async fn cancel_indexing(container: State<'_, Container>) -> Result<(), ApiE
 pub async fn pause_indexing(container: State<'_, Container>) -> Result<(), ApiError> {
     let result = indexing_commands::pause_indexing_impl(&container).await;
     match result {
-        crate::shared::ipc::ApiResult::Success { .. } => Ok(()),
-        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
+        lattice_core::shared::ipc::ApiResult::Success { .. } => Ok(()),
+        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: ErrorCode::InternalError,
             message: error.message,
             details: error.details,
@@ -305,8 +302,8 @@ pub async fn pause_indexing(container: State<'_, Container>) -> Result<(), ApiEr
 pub async fn resume_indexing(container: State<'_, Container>) -> Result<(), ApiError> {
     let result = indexing_commands::resume_indexing_impl(&container).await;
     match result {
-        crate::shared::ipc::ApiResult::Success { .. } => Ok(()),
-        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
+        lattice_core::shared::ipc::ApiResult::Success { .. } => Ok(()),
+        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: ErrorCode::InternalError,
             message: error.message,
             details: error.details,
@@ -340,8 +337,8 @@ pub async fn reindex_file(path: String, container: State<'_, Container>) -> Resu
         let result = indexing_commands::reindex_document_impl(&container, doc_id).await;
 
         match result {
-            crate::shared::ipc::ApiResult::Success { .. } => Ok(()),
-            crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
+            lattice_core::shared::ipc::ApiResult::Success { .. } => Ok(()),
+            lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
                 code: ErrorCode::InternalError,
                 message: error.message,
                 details: error.details,

@@ -1,5 +1,5 @@
-use crate::application::ports::{MentionData, MentionWithContextData};
 use crate::features::mentions::dto::{MentionDto, MentionWithContextDto};
+use lattice_core::application::ports::{MentionData, MentionWithContextData};
 
 pub struct MentionMapper;
 

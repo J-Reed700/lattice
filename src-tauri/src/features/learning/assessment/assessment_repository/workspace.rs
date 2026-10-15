@@ -8,7 +8,7 @@ use super::{
 use crate::features::learning::assessment_engine as engine;
 use crate::features::learning::dto::*;
 use crate::features::learning::persistence::db;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 use std::collections::HashMap;
 

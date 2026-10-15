@@ -17,7 +17,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
+//! use lattice_core::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
 //!
 //! # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute("doc-123".to_string(), "New Name.txt".to_string()).await?;
@@ -28,8 +28,8 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::DocumentRepositoryPort;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::DocumentRepositoryPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Request to rename a document.
@@ -118,7 +118,7 @@ impl RenameDocumentUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
+    /// # use lattice_core::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
     /// # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// // Rename a document
     /// match use_case.execute("doc-123".to_string(), "Updated Name.txt".to_string()).await {

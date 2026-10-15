@@ -2,10 +2,10 @@
 //!
 //! Reads the content of a file as raw bytes with security limits.
 
-use crate::application::ports::FileStoragePort;
 use crate::features::file::dto::ReadFileBytesRequestDto;
 use crate::infrastructure::security::FileAccessConfig;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::FileStoragePort;
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// Maximum file size for reading bytes (10 MB)
@@ -153,7 +153,10 @@ mod tests {
             })
         }
 
-        async fn metadata(&self, path: &Path) -> Result<crate::application::ports::FileMetadata> {
+        async fn metadata(
+            &self,
+            path: &Path,
+        ) -> Result<lattice_core::application::ports::FileMetadata> {
             let path_str = path.to_string_lossy().to_string();
             let path_with_slash = format!("{}/", path_str);
             let now = std::time::SystemTime::now();
@@ -166,7 +169,7 @@ mod tests {
                 })
                 .map(|(p, _, size)| {
                     let is_directory = p.ends_with('/');
-                    Ok(crate::application::ports::FileMetadata {
+                    Ok(lattice_core::application::ports::FileMetadata {
                         size: *size,
                         modified_at,
                         is_file: true,

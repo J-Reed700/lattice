@@ -1,8 +1,14 @@
 use super::*;
-use crate::application::ports::llm_port::CompletionResponse;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::use_cases::HybridSearchUseCase;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 #[test]
 fn exact_references_keep_subsections_and_deduplicate_before_the_budget() {
@@ -74,10 +80,10 @@ async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverag
 
 #[tokio::test]
 async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models() {
-    use crate::application::ports::MockEmbeddingPort;
     use crate::features::search::engine::{
         text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
     };
+    use lattice_core::application::ports::MockEmbeddingPort;
     let pool = section_fixture().await;
     let repository = ConversationRepository::new(pool.clone());
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
@@ -116,10 +122,10 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
 /// so never found an attachment in a named space; only vector search could.
 #[tokio::test]
 async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
-    use crate::application::ports::MockEmbeddingPort;
     use crate::features::search::engine::{
         text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
     };
+    use lattice_core::application::ports::MockEmbeddingPort;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -161,6 +167,74 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     );
 }
 
+/// "Start at the beginning" used to read at most four opening passages of
+/// each document whatever the window. It now reads as deep as the search's
+/// budget-sized limit, round-robin in reading order, so a large window carries
+/// far more of the opening documents and the first chapter is never crowded
+/// out by long front matter.
+#[tokio::test]
+async fn reading_from_the_beginning_goes_as_deep_as_the_budget_round_robin() {
+    use crate::features::search::engine::{
+        text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
+    };
+    use lattice_core::application::ports::MockEmbeddingPort;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
+        INSERT INTO documents VALUES ('intro','Introduction','/intro',NULL),('ch1','Chapter 1','/ch1',NULL);")
+        .execute(&pool).await.unwrap();
+    for document in ["intro", "ch1"] {
+        for index in 0..10 {
+            sqlx::query(
+                "INSERT INTO text_chunks(id, document_id, content, chunk_index) VALUES (?, ?, 'opening text', ?)",
+            )
+            .bind(format!("{document}-{index}"))
+            .bind(document)
+            .bind(index)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    }
+    let repository = ConversationRepository::new(pool.clone());
+    let embedder = Arc::new(MockEmbeddingPort::new_degraded());
+    let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
+    let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
+    let scope = super::super::SpaceDocumentScope {
+        space_id: super::super::DEFAULT_SPACE_ID.into(),
+        document_ids: ["intro".to_owned(), "ch1".to_owned()].into(),
+    };
+    let plan = CorpusSearchPlan {
+        queries: vec!["start".into()],
+        opening_document_ids: vec!["intro".into(), "ch1".into()],
+        start_at_beginning: true,
+    };
+    let found = retrieve(
+        &repository,
+        &hybrid,
+        "start at the beginning",
+        &plan,
+        &scope,
+        12,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = found.results.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        ids.get(..6).unwrap(),
+        ["intro-0", "ch1-0", "intro-1", "ch1-1", "intro-2", "ch1-2"]
+    );
+    // Ten passages of each: past the old four, and everything these hold.
+    assert!(
+        ids.contains(&"intro-9") && ids.contains(&"ch1-9"),
+        "{ids:?}"
+    );
+}
+
 #[test]
 fn plan_cannot_invent_documents_or_escape_scope() {
     let catalog = vec![CorpusDocument {
@@ -198,9 +272,15 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
         CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
-        INSERT INTO documents(id,file_name,file_path) VALUES ('a','Guide','/guide'), ('b','Private','/private');
-        INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
-    let repository = ConversationRepository::new(pool);
+        INSERT INTO documents(id,file_name,file_path) VALUES ('a','Guide','/guide'), ('b','Private','/private');").execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../../../migrations/20261015120000_document_chunk_stats.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
+    let repository = ConversationRepository::new(pool.clone());
     let scope = HashSet::from(["a".to_string()]);
     let catalog = repository.retrieval_catalog(&scope).await.unwrap();
     assert_eq!(catalog.len(), 1);
@@ -212,6 +292,36 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
     assert_eq!(
         openings.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
         ["a0", "a1"]
+    );
+    // What one passage of the scope measures, for sizing how deep to read:
+    // "Second", "Introduction" and "First" average 8 characters.
+    assert_eq!(
+        repository.retrieval_mean_chunk_chars(&scope).await.unwrap(),
+        Some(8)
+    );
+    assert_eq!(
+        repository
+            .retrieval_mean_chunk_chars(&HashSet::new())
+            .await
+            .unwrap(),
+        None
+    );
+    // A scope past SQLite's 32,766 bound variables used to fail outright;
+    // it is one bound value now.
+    let mut wide: HashSet<String> = (0..40_000).map(|n| format!("doc-{n}")).collect();
+    wide.insert("a".to_string());
+    assert_eq!(
+        repository.retrieval_mean_chunk_chars(&wide).await.unwrap(),
+        Some(8)
+    );
+    // The totals follow the chunks as they change, without a pass over them.
+    sqlx::raw_sql("DELETE FROM text_chunks WHERE id = 'a0'; UPDATE text_chunks SET content = 'Twenty characters!!!' WHERE id = 'a1';")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.retrieval_mean_chunk_chars(&scope).await.unwrap(),
+        Some(13)
     );
     assert!(repository
         .retrieval_catalog(&HashSet::new())
@@ -286,11 +396,11 @@ fn beginning_uses_explicit_chapter_sequence_not_filename_or_upload_order() {
 #[tokio::test]
 #[ignore = "requires LATTICE_RETRIEVAL_DB, LATTICE_LLAMACPP_SETTINGS and LATTICE_RETRIEVAL_REPORT"]
 async fn live_corpus_retrieval_and_answer() {
-    use crate::application::ports::EmbeddingPort;
     use crate::features::embedding::candle_service::CandleEmbeddingService;
     use crate::features::llm::llama_cpp::LlamaCppLlm;
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::features::search::engine::vector_search::USearchVectorIndex;
+    use lattice_core::application::ports::EmbeddingPort;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
@@ -380,7 +490,7 @@ async fn live_corpus_retrieval_and_answer() {
         &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
     )
     .unwrap();
-    let config: crate::application::contracts::settings::LLMSettingsDto =
+    let config: lattice_core::application::contracts::settings::LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
     let llm = LlamaCppLlm::new(&config).unwrap();
     let started = Instant::now();
@@ -390,7 +500,7 @@ async fn live_corpus_retrieval_and_answer() {
         None,
         &catalog,
         &HashMap::new(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -517,7 +627,7 @@ async fn live_corpus_retrieval_and_answer() {
         Ok(())
     };
     let request = CompletionRequest {
-        input: crate::application::services::completion_input::from_context(
+        input: lattice_core::application::services::completion_input::from_context(
             &prompts.system_prompt,
             &[],
             &prompt,
@@ -577,7 +687,9 @@ async fn live_corpus_retrieval_and_answer() {
 
 #[test]
 fn explicit_book_order_keeps_editions_separate_and_reaches_the_first_chapter() {
-    use crate::domain::value_objects::source_context::{SourceContext, SourceGroup, StructureMode};
+    use lattice_core::domain::value_objects::source_context::{
+        SourceContext, SourceGroup, StructureMode,
+    };
     let group = SourceGroup {
         id: "book-a".into(),
         title: "Manual".into(),
@@ -738,6 +850,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         queries_already_tried: vec!["noncompete clauses".into()],
         top_result_titles: vec!["Quarterly revenue".into()],
         why_insufficient: vec!["low_term_coverage"],
+        more_titles_not_shown: 0,
     };
 
     let plan = plan_correction(
@@ -746,7 +859,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         None,
         &correction_catalog(),
         &correction,
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -780,7 +893,7 @@ async fn the_planner_request_carries_the_turns_cancellation() {
         None,
         &correction_catalog(),
         &HashMap::new(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &stop,
     )
     .await
@@ -803,6 +916,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         queries_already_tried: vec!["noncompete clauses".into()],
         top_result_titles: Vec::new(),
         why_insufficient: vec!["low_top_score"],
+        more_titles_not_shown: 0,
     };
 
     let result = plan_correction(
@@ -811,7 +925,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         None,
         &correction_catalog(),
         &correction,
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await;
@@ -932,7 +1046,7 @@ async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
         Some(&history),
         &wide_catalog(43),
         &Default::default(),
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -959,6 +1073,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
             .map(|i| format!("An unhelpful document {i}"))
             .collect(),
         why_insufficient: vec!["low_term_coverage", "low_top_score"],
+        more_titles_not_shown: 0,
     };
 
     plan_correction(
@@ -967,7 +1082,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         Some(&"user: earlier turn\n".repeat(200)),
         &wide_catalog(43),
         &correction,
-        &PlannerTurn::new(),
+        &PlannerTurn::with_health(&PlannerHealth::default()),
         &CancellationToken::new(),
     )
     .await
@@ -978,4 +1093,28 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         used <= window,
         "correction built a {used}-token request for a {window}-token window"
     );
+}
+
+/// The corrective planner was shown the first pass's top five titles and no
+/// word of the rest. It is shown as many, best first, as its share of the
+/// prompt holds, and the rest are counted.
+#[test]
+fn a_correction_shows_the_titles_its_room_holds_and_counts_the_rest() {
+    let stub = NarrowWindowStub::new(8192);
+    let correction = CorrectionRequest {
+        top_result_titles: (0..40).map(|i| format!("Document title {i}")).collect(),
+        ..Default::default()
+    };
+    let roomy = correction.fitted(&stub, 100_000);
+    assert_eq!(roomy.top_result_titles.len(), 40);
+    assert_eq!(roomy.more_titles_not_shown, 0);
+
+    let tight = correction.fitted(&stub, 20);
+    assert!(!tight.top_result_titles.is_empty());
+    assert_eq!(tight.top_result_titles[0], "Document title 0");
+    assert_eq!(
+        tight.top_result_titles.len() + tight.more_titles_not_shown,
+        40
+    );
+    assert!(tight.more_titles_not_shown > 0);
 }

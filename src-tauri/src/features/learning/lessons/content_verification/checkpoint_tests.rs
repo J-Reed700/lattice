@@ -8,7 +8,7 @@ use crate::features::learning::{
     plan_dto::StartLearningGenerationJobRequestDto,
     repository::LearningRepository,
 };
-use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
+use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[tokio::test]
 async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories() -> Result<()> {
@@ -62,12 +62,14 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         fail_coverage_at: Some(1),
         ..Model::new()
     };
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         lesson_drafts::resume("section-fixture".into()).await?;
         lesson_drafts::save(&candidate.to_string()).await?;
         let sources = vec![source()];
         let result = verify_with_references(
             &model,
+            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -100,6 +102,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         verify_with_references(
             &resumed_model,
+            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -125,6 +128,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         verify_with_references(
             &changed_model,
+            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -289,7 +293,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             !coverage.units[1].complete,
             "A saved omission must remain unresolved"
         );
-        assert_eq!(coverage.units[1].unresolved_passages.len(), 1);
+        assert_eq!(coverage.units[1].missing_assertions.len(), 1);
         assert_eq!(
             coverage.units.iter().filter(|unit| unit.complete).count(),
             4
@@ -390,7 +394,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         }],
     };
     let claim = &inventory.units[0].claims[0];
-    let evidence = evidence_for(GOOD, 0, &references, &[]).await?;
+    let evidence = evidence_for(&model, GOOD, 0, &references, &[], 2).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let candidate = candidate(GOOD);
     // The server cannot finish the group, so the claims are checked one at a
@@ -631,7 +635,7 @@ fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts()
         (ClaimVerdict::Contradicted, None, false),
         (
             ClaimVerdict::Unsupported,
-            Some(crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
+            Some(lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
             true,
         ),
     ] {

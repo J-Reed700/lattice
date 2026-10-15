@@ -21,7 +21,7 @@
 //! - [`runtime`] — `SummaryRuntimePort`: lazily-resolved models
 //! - [`search`] — `SummarySearchPort` + `SummarySearch`
 //! - [`openings`] — summary hits to an opening-document list
-//! - [`trigger`] — the post-index notification indexing calls
+//! - [`trigger`] — `SummaryTrigger`, the post-index notification indexing calls
 //! - [`di::register`] — one-call wiring
 //!
 //! ## Non-goals
@@ -42,7 +42,7 @@ pub mod source;
 pub mod trigger;
 pub mod use_cases;
 
-pub use trigger::notify_document_indexed;
+pub use trigger::SummaryTrigger;
 
 #[cfg(test)]
 mod tests;

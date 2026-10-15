@@ -136,7 +136,7 @@ describe('the folders list in words', () => {
     expect(describeFolderChip(folder('x', { index: index({ state: 'indexing', passagesEmbedded: 0, etaSeconds: null }) })).text).toBe('Indexing 0%');
     expect(describeFolderChip(folder('x', { index: index({ state: 'notIndexed' }) })).text).toBe('Not indexed');
     expect(describeFolderChip(folder('x', { index: index({ state: 'refused' }) })).text).toBe('Not indexed');
-    expect(describeFolderChip(folder('x', { index: index({ state: 'tooLarge' }) })).text).toBe('Too large');
+    expect(describeFolderChip(folder('x', { index: index({ state: 'tooLarge' }) })).text).toBe('Partly indexed');
     expect(describeFolderChip(folder('x', { index: index({ state: 'error' }) })).text).toBe('Index error');
     expect(describeFolderChip(GONE)).toMatchObject({ text: 'Folder missing', tone: 'alarm' });
   });

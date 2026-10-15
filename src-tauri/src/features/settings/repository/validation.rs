@@ -63,14 +63,6 @@ impl SettingsRepository {
             }
         }
         let tuning = &settings.search.retrieval_tuning;
-        if tuning.kb_search_min_limit == 0
-            || tuning.kb_search_min_limit > tuning.kb_search_max_limit
-        {
-            result.add_error(
-                "search",
-                "kb_search_min_limit must be > 0 and <= kb_search_max_limit".to_string(),
-            );
-        }
         if tuning.doc_shortlist_candidate_min == 0
             || tuning.doc_shortlist_candidate_min > tuning.doc_shortlist_candidate_max
         {
@@ -101,19 +93,12 @@ impl SettingsRepository {
                     .to_string(),
             );
         }
-        if tuning.web_fetch_page_count > 10 {
+        // The timeout bounds only the pipeline's own page reads, so it is
+        // only wrong when those are on.
+        if tuning.read_web_pages && tuning.web_page_fetch_timeout_secs == 0 {
             result.add_error(
                 "search",
-                "web_fetch_page_count must be 10 or fewer".to_string(),
-            );
-        }
-        if tuning.web_fetch_page_count > 0
-            && (tuning.web_page_max_chars == 0 || tuning.web_page_fetch_timeout_secs == 0)
-        {
-            result.add_error(
-                "search",
-                "web_page_max_chars and web_page_fetch_timeout_secs must be greater than 0 when page fetching is enabled"
-                    .to_string(),
+                "web_page_fetch_timeout_secs must be greater than 0".to_string(),
             );
         }
         if tuning.deep_research_depth == 0 || tuning.deep_research_depth > 4 {
@@ -128,14 +113,10 @@ impl SettingsRepository {
                 "deep_research_branch_queries must be between 1 and 4".to_string(),
             );
         }
-        if tuning.wiki_snippet_max_chars == 0
-            || tuning.web_snippet_max_chars == 0
-            || tuning.external_search_query_max_chars == 0
-            || tuning.rerank_query_max_chars == 0
-        {
+        if tuning.external_search_query_max_chars == 0 || tuning.rerank_query_max_chars == 0 {
             result.add_error(
                 "search",
-                "snippet/query character limits must be greater than 0".to_string(),
+                "query character limits must be greater than 0".to_string(),
             );
         }
         if tuning.external_search_max_wiki_terms == 0 || tuning.external_search_max_web_terms == 0 {
@@ -210,7 +191,7 @@ impl SettingsRepository {
             result.add_error("llm", "repeat_penalty must be greater than 0.0".to_string());
         }
         let generation_problems =
-            crate::application::contracts::settings::presence_penalty_problem(
+            lattice_core::application::contracts::settings::presence_penalty_problem(
                 "llm",
                 settings.llm.presence_penalty,
             )
@@ -314,22 +295,10 @@ impl SettingsRepository {
                 "no_context_prompt_template cannot be empty".to_string(),
             );
         }
-        if settings.llm.tool_output.max_chars == 0 {
-            result.add_error(
-                "llm",
-                "tool_output.max_chars must be greater than 0".to_string(),
-            );
-        }
         if settings.llm.tool_output.excerpt_chars == 0 {
             result.add_error(
                 "llm",
                 "tool_output.excerpt_chars must be greater than 0".to_string(),
-            );
-        }
-        if settings.llm.tool_output.max_results == 0 {
-            result.add_error(
-                "llm",
-                "tool_output.max_results must be greater than 0".to_string(),
             );
         }
         if settings.llm.tool_output.highlight_terms_max == 0 {

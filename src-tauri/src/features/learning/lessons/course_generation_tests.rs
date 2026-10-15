@@ -4,15 +4,15 @@ use crate::features::learning::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
 };
-use crate::shared::runtime::jobs::{JobContext, JobStore};
-use crate::{
+use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
+use lattice_core::{
     application::ports::llm_port::{CompletionRequest, CompletionResponse},
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde_json::json;
 
-struct Model(String);
+pub(in crate::features::learning) struct Model(pub(in crate::features::learning) String);
 #[async_trait::async_trait]
 impl LLMPort for Model {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
@@ -51,6 +51,11 @@ impl Model {
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            // The outline review names its open findings; lesson reviews
+            // keep their own response shape.
+            if context.get("openFindings").is_some() {
+                return Ok(json!({"newFindings":[]}).to_string());
+            }
             if context["candidate"].get("blocks").is_none() {
                 return Ok(json!({"issues":[]}).to_string());
             }
@@ -61,7 +66,9 @@ impl Model {
     }
 }
 
-fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
+pub(in crate::features::learning) fn request(
+    depth: LearningCourseDepth,
+) -> GenerateLearningProgramRequestDto {
     GenerateLearningProgramRequestDto {
         goal: "Design experiments and interpret their results".into(),
         prior_knowledge: "Basic algebra".into(),
@@ -71,7 +78,7 @@ fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
         course_depth: Some(depth),
     }
 }
-fn outline(modules: usize, lessons: usize) -> Model {
+pub(in crate::features::learning) fn outline(modules: usize, lessons: usize) -> Model {
     Model(json!({"modules":(0..modules).map(|m| json!({
         "title":format!("Experimental design module {m}"),
         "prerequisiteIndices":if m == 0 {vec![]} else {vec![m-1]},
@@ -99,8 +106,10 @@ fn lesson_response() -> serde_json::Value {
 async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
+        &drafts,
         &outline(4, 3),
         request(LearningCourseDepth::Course),
         vec![],
@@ -115,6 +124,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     assert!(draft.sources.is_empty());
     let accepted = service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -144,6 +154,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     let prepared = service::prepare(
         &repo,
         &Model(lesson_candidate.to_string()),
+        &crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         PrepareLearningLessonRequestDto {
             program_id: draft.summary.id.clone(),
             lesson_id: lesson_id.clone(),
@@ -345,8 +356,10 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
 
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
+        &drafts,
         &outline(4, 3),
         request(LearningCourseDepth::Course),
         vec![],
@@ -354,6 +367,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     .await?;
     let accepted = service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -396,13 +410,14 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         })
         .await?;
     JobStore::new(pool.clone()).claim(&job.id).await?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let first = crate::features::learning::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::features::learning::lesson_drafts::run(
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &program, lesson),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await;
@@ -432,7 +447,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &retry.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &program, lesson),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await?;
@@ -488,12 +503,72 @@ impl ScriptedModel {
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
             .push(prompt.into());
-        self.outputs
+        let mut outputs = self
+            .outputs
             .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?
-            .pop_front()
-            .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?;
+        let linking = prompt.starts_with(crate::features::learning::outline_linking::LINK_SYSTEM);
+        // A links sentinel answers every linking batch of one run and is spent
+        // when a call of another kind arrives.
+        if !linking {
+            while outputs
+                .front()
+                .is_some_and(|output| output.starts_with(LINKS_SENTINEL))
+            {
+                outputs.pop_front();
+            }
+        }
+        let front = outputs
+            .front()
+            .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))?;
+        if linking && front.starts_with(LINKS_SENTINEL) {
+            return Ok(link_reply(prompt, front));
+        }
+        Ok(outputs.pop_front().unwrap_or_default())
     }
+}
+
+/// Prefix of a scripted evidence-linking reply. How many batches a run makes
+/// and which items each holds depend on retrieval, so the reply is built from
+/// the prompt: the sentinel maps item paths to the passage text to choose and
+/// every other item gets `none`.
+pub(in crate::features::learning) const LINKS_SENTINEL: &str = "{\"@links\":";
+
+fn link_reply(prompt: &str, sentinel: &str) -> String {
+    let picks: serde_json::Value = serde_json::from_str(sentinel).expect("links sentinel");
+    let payload: serde_json::Value =
+        serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}")).expect("link prompt");
+    let passages = payload["passages"].as_array().cloned().unwrap_or_default();
+    let text_of = |id: &str| {
+        passages
+            .iter()
+            .find(|p| p["id"] == id)
+            .and_then(|p| p["passage"].as_str())
+            .unwrap_or_default()
+    };
+    let links: Vec<_> = payload["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let id = item["id"].as_str().unwrap_or_default();
+            let candidates: Vec<&str> = item["candidates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.as_str())
+                .collect();
+            let chosen = picks["@links"][id].as_str().and_then(|wanted| {
+                candidates
+                    .iter()
+                    .find(|c| text_of(c) == wanted)
+                    .or_else(|| candidates.iter().find(|c| text_of(c).contains(wanted)))
+                    .copied()
+            });
+            json!({"id":id,"candidate":chosen.unwrap_or("none"),"reason":if chosen.is_some() {"The passage addresses this item."} else {"No candidate addresses this item."}})
+        })
+        .collect();
+    json!({"links":links}).to_string()
 }
 
 #[tokio::test]
@@ -674,8 +749,10 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
     };
     let pool = crate::features::learning::tests::pool().await?;
     let repository = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repository,
+        &drafts,
         &outline(2, 2),
         request(LearningCourseDepth::Focused),
         vec![],
@@ -683,6 +760,7 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
     .await?;
     let program = service::accept(
         &repository,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -793,9 +871,12 @@ async fn depth_is_enforced_and_failed_source_acquisition_cannot_become_a_topic_c
     grounded
         .source_urls
         .push("https://example.com/reference".into());
-    assert!(service::generate(&repo, &outline(4, 3), grounded, vec![])
-        .await
-        .is_err());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    assert!(
+        service::generate(&repo, &drafts, &outline(4, 3), grounded, vec![])
+            .await
+            .is_err()
+    );
     assert!(repo.list().await?.is_empty());
     Ok(())
 }
@@ -810,17 +891,18 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| AppError::InvalidState("missing fixture lesson".into()))?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let mut thin = lesson_response();
     thin["blocks"] = json!([]);
     assert!(
-        generation::prepare_lesson(&Model(thin.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(thin.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
     let mut shallow = lesson_response();
     shallow["blocks"][4]["body"] = json!("Try this.");
     assert!(
-        generation::prepare_lesson(&Model(shallow.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(shallow.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -831,7 +913,7 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
         blocks.push(duplicate_assignment);
     }
     assert!(
-        generation::prepare_lesson(&Model(ambiguous.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(ambiguous.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -839,7 +921,7 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
     invented["blocks"][0]["sourceIndex"] = json!(0);
     invented["blocks"][0]["quote"] = json!("An imaginary textbook says this is true.");
     assert!(
-        generation::prepare_lesson(&Model(invented.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(invented.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -854,8 +936,10 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
     };
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
+        &drafts,
         &outline(4, 3),
         request(LearningCourseDepth::Course),
         vec![],
@@ -863,6 +947,7 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
     .await?;
     service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -948,7 +1033,7 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
 
 #[tokio::test]
 async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output() -> Result<()> {
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     struct StreamingModel;
     #[async_trait::async_trait]
     impl LLMPort for StreamingModel {
@@ -1003,7 +1088,8 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
     .await
     .unwrap_err();
     assert!(error.to_string().contains("cut off"));
-    assert_eq!(progress.snapshot().response_characters, 14);
+    // The cut-off answer and its one retry with twice the room both streamed.
+    assert_eq!(progress.snapshot().response_characters, 28);
     Ok(())
 }
 
@@ -1015,9 +1101,9 @@ struct DelayedOutlineModel {
 impl LLMPort for DelayedOutlineModel {
     async fn complete(
         &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
         // A prose step keeps its reservation rather than taking the window;
         // the delays and scripted replies belong to the structured answers.
         if crate::features::learning::lessons::structured_call::is_draft_request(request) {
@@ -1087,9 +1173,9 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
             outputs: std::sync::Mutex::new(
                 vec![
                     draft.clone(),
-                    json!({"issues":[{"path":"/modules/0","claim":"First module objective","reason":"Clarify the observable first module objective."}]}).to_string(),
+                    json!({"newFindings":[{"path":"/modules/0","kind":"plan","claim":"First module objective","reason":"Clarify the observable first module objective."}]}).to_string(),
                     json!({"module":corrected["modules"][0]}).to_string(),
-                    json!({"issues":[]}).to_string(),
+                    json!({"verdicts":[{"id":"finding-1","status":"resolved","reason":"The objective now names an observable measurement."}],"newFindings":[]}).to_string(),
                 ]
                 .into(),
             ),
@@ -1100,9 +1186,11 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
         delays: std::sync::Mutex::new(vec![700, 700, 700, 700].into()),
     };
     let progress = crate::features::learning::outline_progress::OutlineProgress::default();
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = progress
         .run(service::generate_with_references_and_progress(
             &repo,
+            &drafts,
             &model,
             request(LearningCourseDepth::Course),
             vec![],
@@ -1120,7 +1208,8 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
     let prompts = model.inner.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 4);
     assert!(prompts[3].contains("Clarify the observable first module objective."));
-    assert!(prompts[3].contains("previousFindings"));
+    assert!(prompts[3].contains("openFindings"));
+    assert!(!prompts[3].contains("previousFindings"));
     assert_eq!(
         program.outline_review.as_ref().unwrap().status,
         crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
@@ -1131,29 +1220,16 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
 }
 
 #[tokio::test]
-async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Result<()> {
+async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_reported() -> Result<()>
+{
     let quote = "A randomized comparison isolates the intervention.";
     let mut candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    fn cite(value: &mut serde_json::Value, quote: &str) {
-        match value {
-            serde_json::Value::Object(object) => {
-                if object.contains_key("sourceIndex") {
-                    object.insert("sourceIndex".into(), json!(0));
-                    object.insert("quote".into(), json!(quote));
-                }
-                for child in object.values_mut() {
-                    cite(child, quote);
-                }
-            }
-            serde_json::Value::Array(values) => {
-                for child in values {
-                    cite(child, quote);
-                }
-            }
-            _ => {}
-        }
-    }
-    cite(&mut candidate, quote);
+    // One citation quotes the capture exactly; one does not. Neither is a finding.
+    candidate["modules"][0]["outcomes"][0]["sourceIndex"] = json!(0);
+    candidate["modules"][0]["outcomes"][0]["quote"] = json!(quote);
+    candidate["modules"][0]["summary"]["sourceIndex"] = json!(0);
+    candidate["modules"][0]["summary"]["quote"] =
+        json!("A randomized comparison does not isolate the intervention.");
     let url = "https://example.com/experimental-design";
     let captured = crate::features::learning::source_library::CapturedLearningSource {
         title: "Experimental design textbook".into(),
@@ -1176,16 +1252,14 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
         captured,
     };
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
-    let corrected = json!({"module":candidate["modules"][0]}).to_string();
-    candidate["modules"][0]["summary"]["quote"] =
-        json!("A randomized comparison does not isolate the intervention.");
+    // Linking keeps the author's exact citation (offered as a candidate) and
+    // links nothing else.
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"issues":[]}).to_string(),
-                corrected,
-                json!({"issues":[]}).to_string(),
+                json!({"@links":{"/modules/0/outcomes/0":quote}}).to_string(),
+                json!({"newFindings":[]}).to_string(),
             ]
             .into(),
         ),
@@ -1193,150 +1267,82 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     };
     let mut request = request(LearningCourseDepth::Course);
     request.goal = "Learn how a randomized comparison isolates an intervention".into();
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = service::generate_with_references(
         &repo,
+        &drafts,
         &model,
         request,
         vec![preview.clone()],
         std::slice::from_ref(&reference),
     )
     .await?;
-    assert!(model.prompts.lock().unwrap()[0].contains(quote));
-    assert_eq!(model.prompts.lock().unwrap().len(), 4);
-    assert!(model.prompts.lock().unwrap()[2].contains("This quotation could not be matched"));
+    let all = model.prompts.lock().unwrap().clone();
+    let (linking, prompts): (Vec<&String>, Vec<&String>) = all
+        .iter()
+        .partition(|p| p.starts_with(crate::features::learning::outline_linking::LINK_SYSTEM));
+    // Authoring retrieves from the complete capture, not the 2,400-char preview.
+    assert!(prompts[0].contains(quote));
+    assert_eq!(prompts.len(), 2);
+    // Only the exact-match citation is offered to the chooser; the inexact
+    // one was removed by code and never becomes a passage.
+    assert!(!linking.is_empty());
+    assert!(linking.iter().any(|p| p.contains(quote)));
+    assert!(!linking.iter().any(|p| p.contains("does not isolate")));
+    // The reviewer sees no citation fields on items and no quote findings.
+    let review_context: serde_json::Value =
+        serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;
+    assert!(review_context["candidate"]["modules"][0]["summary"]
+        .get("sourceIndex")
+        .is_none());
+    assert!(review_context["candidate"]["modules"][0]["outcomes"][0]
+        .get("quote")
+        .is_none());
+    assert!(!prompts[1].contains("could not be matched"));
+    drop(all);
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
+    );
+    assert!(review.issues.is_empty());
+    assert_eq!(review.citations_verified, 1);
+    assert_eq!(review.citations_removed, 1);
     assert_eq!(program.summary.lesson_count, 12);
     assert!(!program.sources[0].excerpt.contains(quote));
     assert!(repo.verification_sources(&program.summary.id).await?[0]
         .excerpt
         .contains(quote));
-
-    // Approval cannot override a bad quote. The unresolved draft is saved,
-    // blocked from acceptance, and repairable after reopening the repository.
-    let directory = tempfile::tempdir()?;
-    let saved_database = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("outline-draft.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let rejected_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(saved_database.clone())
-        .await?;
-    sqlx::migrate!("./migrations")
-        .run(&rejected_pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
-    let rejected_repo = LearningRepository::new(rejected_pool.clone());
-    let unchanged = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                candidate.to_string(),
-                json!({"issues":[]}).to_string(),
-                json!({"module":candidate["modules"][0]}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let saved = service::generate_with_references(
-        &rejected_repo,
-        &unchanged,
-        crate::features::learning::lessons::course_generation_tests::request(
-            LearningCourseDepth::Course,
-        ),
-        vec![preview],
-        &[reference],
-    )
-    .await?;
-    assert_eq!(unchanged.prompts.lock().unwrap().len(), 3);
+    let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(
-        saved.outline_review.as_ref().unwrap().status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::NeedsRepair
+        saved.candidate["modules"][0]["summary"]["sourceIndex"],
+        serde_json::Value::Null
     );
-    assert_eq!(saved.outline_review.as_ref().unwrap().issues.len(), 1);
-    assert_eq!(rejected_repo.list().await?.len(), 1);
-    assert!(service::accept(
-        &rejected_repo,
-        AcceptLearningProgramRequestDto {
-            program_id: saved.summary.id.clone(),
-            expected_revision: saved.summary.revision,
-            title: saved.summary.title.clone()
-        }
-    )
-    .await
-    .is_err());
-    // Close every connection and reopen the actual file, as after an app restart.
-    rejected_pool.close().await;
-    let reopened = LearningRepository::new(
-        sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(saved_database)
-            .await?,
-    );
-    let retrieved = reopened.get(&saved.summary.id).await?;
+    assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], "");
+    assert_eq!(saved.candidate["modules"][0]["outcomes"][0]["quote"], quote);
     assert_eq!(
-        retrieved.outline_review.as_ref().unwrap().issues[0].quote,
-        "A randomized comparison does not isolate the intervention."
+        saved
+            .citation_receipts
+            .values()
+            .filter(|r| r.covers)
+            .count(),
+        1
     );
-    candidate["modules"][0]["summary"]["quote"] = json!(quote);
-    let repair = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                json!({"issues":[]}).to_string(),
-                json!({"module":candidate["modules"][0]}).to_string(),
-                json!({"issues":[]}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let fixed = crate::features::learning::outline_draft::repair_saved(
-        &reopened,
-        &repair,
-        &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
-            program_id: saved.summary.id.clone(),
-            expected_revision: saved.summary.revision,
-        },
-        &crate::features::learning::outline_progress::OutlineProgress::default(),
-        None,
-    )
-    .await?;
-    assert_eq!(
-        fixed.outline_review.as_ref().unwrap().status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
-    );
-    assert!(fixed.outline_review.as_ref().unwrap().issues.is_empty());
-    assert_eq!(fixed.modules[0].id, saved.modules[0].id);
-    assert_eq!(
-        fixed.modules[0].lessons[0].id,
-        saved.modules[0].lessons[0].id
-    );
-    assert!(fixed.summary.revision > saved.summary.revision);
-    assert!(crate::features::learning::outline_draft::repair_saved(
-        &reopened,
-        &repair,
-        &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
-            program_id: saved.summary.id.clone(),
-            expected_revision: saved.summary.revision,
-        },
-        &crate::features::learning::outline_progress::OutlineProgress::default(),
-        None
-    )
-    .await
-    .is_err());
+    assert!(review
+        .note
+        .contains("1 of 24 outline items linked to references"));
     service::accept(
-        &reopened,
+        &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
-            program_id: fixed.summary.id.clone(),
-            expected_revision: fixed.summary.revision,
-            title: fixed.summary.title.clone(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            title: program.summary.title.clone(),
         },
     )
     .await?;
     Ok(())
 }
-
-#[path = "outline_research_tests.rs"]
-mod automatic_research;
 
 #[tokio::test]
 async fn outline_repair_preserves_completed_module_edits_when_later_call_fails() -> Result<()> {
@@ -1344,9 +1350,9 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    let issues = json!({"issues":[
-        {"path":"/modules/0","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."},
-        {"path":"/modules/1","claim":"Analysis objective","reason":"Distinguish observation from causal interpretation."}
+    let issues = json!({"newFindings":[
+        {"path":"/modules/0","kind":"plan","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."},
+        {"path":"/modules/1","kind":"plan","claim":"Analysis objective","reason":"Distinguish observation from causal interpretation."}
     ]});
     let mut module = candidate["modules"][0].clone();
     module["lessons"][0]["objective"] =
@@ -1363,8 +1369,15 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
         prompts: std::sync::Mutex::new(vec![]),
     };
     // The fourth request fails. A previous module's correction must survive.
-    let saved =
-        service::generate(&repo, &model, request(LearningCourseDepth::Course), vec![]).await?;
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let saved = service::generate(
+        &repo,
+        &drafts,
+        &model,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
     assert_eq!(
         saved.outline_review.as_ref().unwrap().status,
         LearningOutlineReviewStatus::Unchecked
@@ -1398,7 +1411,7 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
 
 #[tokio::test]
 async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() -> Result<()> {
-    use crate::features::learning::outline_progress::{OutlineProgress, OutlineRun};
+    use crate::features::learning::outline_progress::{OutlineProgress, OutlineRunRegistry};
     struct WaitingModel {
         draft: String,
         entered: std::sync::Arc<tokio::sync::Notify>,
@@ -1444,17 +1457,21 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         entered: entered.clone(),
     };
     let id = uuid::Uuid::new_v4().to_string();
-    let run = OutlineRun::register(Some(id.clone()), |_| {})?;
+    let registry = OutlineRunRegistry::new();
+    let run = registry.register(Some(id.clone()), |_| {})?;
     let task_repo = repo.clone();
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let task_drafts = drafts.clone();
     let task = tokio::spawn(async move {
-        run.0
+        run.progress
             .run(service::generate_with_references_and_progress(
                 &task_repo,
+                &task_drafts,
                 &model,
                 request(LearningCourseDepth::Course),
                 vec![],
                 &[],
-                &run.0,
+                &run.progress,
                 None,
             ))
             .await
@@ -1463,7 +1480,7 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         .await
         .unwrap();
     let saved = repo.list().await?.pop().unwrap();
-    assert!(crate::features::learning::outline_progress::cancel(&id));
+    assert!(registry.cancel(&id));
     assert!(task.await.unwrap().is_err());
     let reopened = LearningRepository::new(pool);
     let saved = reopened.get(&saved.id).await?;
@@ -1472,11 +1489,12 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         crate::features::learning::outline_draft::LearningOutlineReviewStatus::Unchecked
     );
     let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![json!({"issues":[]}).to_string()].into()),
+        outputs: std::sync::Mutex::new(vec![json!({"newFindings":[]}).to_string()].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     let resumed = crate::features::learning::outline_draft::repair_saved(
         &reopened,
+        &drafts,
         &model,
         &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
             program_id: saved.summary.id,
@@ -1495,128 +1513,116 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
 }
 
 #[tokio::test]
-async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<()> {
+async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_afresh(
+) -> Result<()> {
+    use crate::features::learning::outline_draft::LearningOutlineReviewStatus;
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    let first = json!({"path":"/modules/0","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."});
-    let second = json!({"path":"/modules/1","claim":"Analysis objective","reason":"Distinguish observation from causal interpretation."});
-    let mut module0 = candidate["modules"][0].clone();
-    module0["lessons"][0]["objective"] =
+    let raised = json!({"newFindings":[{"path":"/modules/0/lessons/0","kind":"plan","claim":"Design a controlled experiment and explain its limitations.","reason":"Specify the measurement used in the comparison."}]});
+    let unresolved = |reason: &str| json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":reason}],"newFindings":[]});
+    let resolved = json!({"verdicts":[{"id":"finding-1","status":"resolved","reason":"The objective now names the measurement."}],"newFindings":[]});
+    let mut first = candidate["modules"][0].clone();
+    first["lessons"][0]["objective"] =
         json!("Measure the effect of random assignment on the group comparison.");
-    let mut module1 = candidate["modules"][1].clone();
-    module1["lessons"][0]["objective"] =
-        json!("Compare group measurements and describe the observed difference.");
-    let mut final1 = module1.clone();
-    final1["lessons"][0]["objective"]=json!("Describe the observed difference and explain why observation alone does not establish causality.");
+    let mut second = first.clone();
+    second["lessons"][0]["objective"] =
+        json!("Measure the group difference with a stated outcome.");
+    let mut third = second.clone();
+    third["lessons"][0]["objective"] =
+        json!("Measure the group difference with a stated, observable outcome.");
+    // Two unresolved verdicts spend the finding's two attempts; the loop then
+    // stops with the finding exhausted instead of rewriting a third time.
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"issues":[first,second]}).to_string(),
-                json!({"module":module0}).to_string(),
-                json!({"module":module1}).to_string(),
-                json!({"issues":[second]}).to_string(),
-                json!({"module":final1}).to_string(),
-                json!({"issues":[]}).to_string(),
+                raised.to_string(),
+                json!({"module":first}).to_string(),
+                unresolved("The objective still does not name an observable measurement.")
+                    .to_string(),
+                json!({"module":second}).to_string(),
+                unresolved("The outcome is named but still not observable.").to_string(),
             ]
             .into(),
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };
-    let saved =
-        service::generate(&repo, &model, request(LearningCourseDepth::Course), vec![]).await?;
-    assert_eq!(
-        saved.outline_review.as_ref().unwrap().status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
-    );
-    assert_eq!(saved.outline_review.as_ref().unwrap().repair_passes, 2);
-    assert_eq!(model.prompts.lock().unwrap().len(), 7);
-    Ok(())
-}
-
-#[tokio::test]
-async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_captures(
-) -> Result<()> {
-    use crate::features::{
-        function_calling::dto::{FetchUrlContentOutput, WebSearchResult},
-        web::mocks::MockWebService,
-    };
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
-    let issue = json!({"issues":[{"path":"/modules/0","claim":"The experimental comparison","reason":"The comparison needs evidence for its factual premise."}]});
-    let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                candidate.to_string(),
-                issue.to_string(),
-                json!({"module":candidate["modules"][0]}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let mut program =
-        service::generate(&repo, &model, request(LearningCourseDepth::Course), vec![]).await?;
-    let mut draft = repo.outline_draft(&program.summary.id).await?.unwrap();
-    let web = MockWebService::new();
-    let url = "https://example.org/full-reference";
-    let truncated = "https://example.org/truncated";
-    web.set_search_results(
-        vec![url, truncated]
-            .into_iter()
-            .map(|url| WebSearchResult {
-                title: "Reference".into(),
-                url: url.into(),
-                snippet: "THIS SEARCH SNIPPET IS NOT EVIDENCE".into(),
-                published_date: None,
-                source: None,
-            })
-            .collect(),
-    );
-    let full = "A randomized comparison isolates the intervention. ".repeat(100);
-    for (url, is_truncated) in [(url, false), (truncated, true)] {
-        web.set_url_content(
-            url,
-            FetchUrlContentOutput {
-                url: url.into(),
-                title: Some("Experimental reference".into()),
-                content: full.clone(),
-                content_truncated: is_truncated,
-                word_count: 700,
-                fetch_time_ms: 1.,
-                content_type: None,
-                from_cache: false,
-            },
-        );
-    }
-    let mut sources = vec![];
-    crate::features::learning::outline_research::research(
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let saved = service::generate(
         &repo,
-        &web,
-        &mut program,
-        &mut draft,
-        &mut sources,
-        &crate::features::learning::outline_progress::OutlineProgress::default(),
-        &mut crate::features::learning::outline_research::ResearchAttempts::default(),
+        &drafts,
+        &model,
+        request(LearningCourseDepth::Course),
+        vec![],
     )
     .await?;
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].excerpt, full);
-    let saved = repo.verification_sources(&program.summary.id).await?;
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].excerpt, full.trim());
-    assert_eq!(program.sources[0].excerpt.chars().count(), 2400);
-    assert!(!sources[0].excerpt.contains("SEARCH SNIPPET"));
-    let restored = LearningRepository::new(pool)
-        .outline_draft(&program.summary.id)
-        .await?
-        .unwrap();
-    assert_eq!(restored.source_ids, vec![sources[0].id.clone()]);
+    let review = saved.outline_review.as_ref().unwrap();
+    // A plan finding automatic repair could not settle is advice, not a block.
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
+    assert_eq!(review.repair_passes, 2);
+    assert_eq!(review.issues.len(), 1);
+    assert_eq!(review.issues[0].id, "finding-1");
+    assert_eq!(review.issues[0].attempts, 2);
+    assert!(review.issues[0].exhausted);
     assert_eq!(
-        restored.review.status,
-        crate::features::learning::outline_draft::LearningOutlineReviewStatus::Unchecked
+        review.issues[0].claim,
+        "Measure the group difference with a stated outcome."
     );
+    assert!(review.note.starts_with("Outline checks passed."));
+    assert!(review
+        .note
+        .contains("1 plan suggestion could not be settled automatically"));
+    assert!(review
+        .note
+        .contains("Module 1 · Lesson 1: The outcome is named but still not observable."));
+    assert!(review.note.contains("use Repair to try again"));
+    let prompts = model.prompts.lock().unwrap().clone();
+    assert_eq!(prompts.len(), 6);
+    // The second rewrite carries the last-attempt instruction; the second
+    // review was told how many attempts the finding had used.
+    assert!(prompts[4].contains("This is the last attempt"));
+    assert!(!prompts[2].contains("This is the last attempt"));
+    let second_review: serde_json::Value =
+        serde_json::from_str(prompts[3].rsplit("\n\n").next().unwrap())?;
+    assert_eq!(second_review["openFindings"][0]["attempts"], 1);
+    assert_eq!(
+        second_review["openFindings"][0]["claim"],
+        "Measure the effect of random assignment on the group comparison."
+    );
+    drop(prompts);
+    // Repair starts the attempts afresh: one more rewrite, then the verdict.
+    let model = ScriptedModel {
+        outputs: std::sync::Mutex::new(
+            vec![
+                unresolved("Still not observable.").to_string(),
+                json!({"module":third}).to_string(),
+                resolved.to_string(),
+            ]
+            .into(),
+        ),
+        prompts: std::sync::Mutex::new(vec![]),
+    };
+    let repaired = crate::features::learning::outline_draft::repair_saved(
+        &repo,
+        &drafts,
+        &model,
+        &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
+            program_id: saved.summary.id.clone(),
+            expected_revision: saved.summary.revision,
+        },
+        &crate::features::learning::outline_progress::OutlineProgress::default(),
+        None,
+    )
+    .await?;
+    let review = repaired.outline_review.as_ref().unwrap();
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
+    assert!(review.issues.is_empty());
+    assert_eq!(review.repair_passes, 3);
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 3);
+    let reopened: serde_json::Value =
+        serde_json::from_str(prompts[0].rsplit("\n\n").next().unwrap())?;
+    assert_eq!(reopened["openFindings"][0]["attempts"], 0);
     Ok(())
 }
 
@@ -1626,13 +1632,11 @@ async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_
 #[tokio::test]
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and LATTICE_OUTLINE_REQUEST"]
 async fn live_outline_generation_and_save() -> Result<()> {
-    use crate::{
-        application::contracts::settings::LLMSettingsDto,
-        features::{
-            llm::llama_cpp::LlamaCppLlm,
-            web::{services::web::WebService, WebServiceTrait},
-        },
+    use crate::features::{
+        llm::llama_cpp::LlamaCppLlm,
+        web::{services::web::WebService, WebServiceTrait},
     };
+    use lattice_core::application::contracts::settings::LLMSettingsDto;
     let settings_path = std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap();
     let request_path = std::env::var("LATTICE_OUTLINE_REQUEST").unwrap();
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(settings_path)?)?;
@@ -1655,16 +1659,16 @@ async fn live_outline_generation_and_save() -> Result<()> {
     impl LLMPort for ObservedModel {
         async fn complete(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             self.inner.complete(request).await
         }
 
         async fn complete_with_progress(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
             on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let replayed = call == 0 && self.replay_draft.is_some();
             let response = if let Some(draft) = self.replay_draft.as_ref().filter(|_| call == 0) {
@@ -1672,7 +1676,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     "Replaying a previously recorded draft; this step makes no model request."
                 );
                 on_text(draft.clone())?;
-                crate::application::ports::llm_port::CompletionResponse {
+                lattice_core::application::ports::llm_port::CompletionResponse {
                     text: draft.clone(),
                     finish_reason: "stop".into(),
                     ..Default::default()
@@ -1733,18 +1737,19 @@ async fn live_outline_generation_and_save() -> Result<()> {
     let repo = LearningRepository::new(pool);
     let start = std::time::Instant::now();
     let last_stage = std::sync::Mutex::new((None, 0));
-    let run =
-        crate::features::learning::outline_progress::OutlineRun::register(None, move |update| {
-            let mut last = last_stage.lock().unwrap();
-            if last.0 != Some(update.stage) || update.elapsed_seconds >= last.1 + 30 {
-                println!(
-                    "Live outline: {:?} at {}s, {} response characters",
-                    update.stage, update.elapsed_seconds, update.response_characters
-                );
-                *last = (Some(update.stage), update.elapsed_seconds);
-            }
-        })?;
-    let progress = &run.0;
+    let registry = crate::features::learning::outline_progress::OutlineRunRegistry::new();
+    let run = registry.register(None, move |update| {
+        let mut last = last_stage.lock().unwrap();
+        if last.0 != Some(update.stage) || update.elapsed_seconds >= last.1 + 30 {
+            println!(
+                "Live outline: {:?} at {}s, {} response characters",
+                update.stage, update.elapsed_seconds, update.response_characters
+            );
+            *last = (Some(update.stage), update.elapsed_seconds);
+        }
+    })?;
+    let progress = &run.progress;
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = progress
         .run(async {
             progress
@@ -1774,6 +1779,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
             progress.model(client.model_name());
             service::generate_with_references_and_progress(
                 &repo,
+                &drafts,
                 &client,
                 request,
                 sources,

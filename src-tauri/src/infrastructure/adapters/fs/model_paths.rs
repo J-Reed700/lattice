@@ -2,7 +2,7 @@
 //!
 //! Resolves the configured home directory and enforces filesystem confinement.
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use std::path::{Path, PathBuf};
 
 /// Infrastructure adapter for model storage paths.
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 ///
 /// let paths = ModelPaths::new("phi-3-mini")?;
 /// println!("Unified path: {}", paths.unified_path().display());
-/// # Ok::<(), lattice::shared::error::AppError>(())
+/// # Ok::<(), lattice_core::shared::error::AppError>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct ModelPaths {
@@ -93,7 +93,7 @@ impl ModelPaths {
     /// let paths = ModelPaths::new("phi-3-mini")?;
     /// let file_path = paths.file_path("model.gguf")?;
     /// // Returns: ~/.cache/lattice/models/phi-3-mini/model.gguf
-    /// # Ok::<(), lattice::shared::error::AppError>(())
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
     /// ```
     ///
     /// # Errors
@@ -107,13 +107,13 @@ impl ModelPaths {
     /// return exactly that path, dropping the models root entirely and
     /// letting a download write anywhere the user can write.
     pub fn file_path(&self, filename: &str) -> Result<PathBuf, AppError> {
-        crate::shared::fs::confinement::validate_bare_filename(filename)?;
+        lattice_core::shared::fs::confinement::validate_bare_filename(filename)?;
 
         let joined = self.unified_path.join(filename);
 
         // Belt and braces: even with a validated bare name, confirm the
         // result is still under the models root before handing it to a writer.
-        crate::shared::fs::confinement::confine_to_root(&Self::models_root()?, &joined)
+        lattice_core::shared::fs::confinement::confine_to_root(&Self::models_root()?, &joined)
     }
 
     /// Resolve an internally sourced manifest-relative path under this model.
@@ -149,7 +149,7 @@ impl ModelPaths {
         }
 
         let joined = self.unified_path.join(relative);
-        crate::shared::fs::confinement::confine_to_root(&Self::models_root()?, &joined)
+        lattice_core::shared::fs::confinement::confine_to_root(&Self::models_root()?, &joined)
     }
 
     /// Validate model ID for security (prevent directory traversal).

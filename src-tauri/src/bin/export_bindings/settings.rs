@@ -1,7 +1,7 @@
 //! Specta rc.20 treats serde input defaults as optional output fields. Settings
 //! commands serialize complete DTOs. Derive their output presence from Serde,
 //! keeping the input defaults and one Rust schema.
-use lattice::application::contracts::settings::{CustomToolSettingsDto, SettingsDto};
+use lattice_core::application::contracts::settings::{CustomToolSettingsDto, SettingsDto};
 use serde_json::Value;
 use specta::{
     datatype::{DataType, StructFields},

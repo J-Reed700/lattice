@@ -12,12 +12,14 @@
 )]
 
 use async_trait::async_trait;
-use lattice::{
+use lattice::features::learning::{
+    dto::*, practice_generation, repository::LearningRepository, service,
+};
+use lattice_core::{
     application::ports::{
         llm_port::{CompletionInput, CompletionRequest, CompletionResponse},
         LLMPort,
     },
-    features::learning::{dto::*, practice_generation, repository::LearningRepository, service},
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Value};
@@ -106,12 +108,12 @@ impl ConfiguredModel {
         let context = p["models"][model]["limit"]["context"]
             .as_u64()
             .unwrap_or(32768) as usize;
-        let settings = lattice::application::contracts::settings::LLMSettingsDto {
+        let settings = lattice_core::application::contracts::settings::LLMSettingsDto {
             model: model.into(),
             max_tokens: output,
             context_window: context as u32,
             temperature: 0.2,
-            llama_cpp: lattice::application::contracts::settings::LlamaCppSettingsDto {
+            llama_cpp: lattice_core::application::contracts::settings::LlamaCppSettingsDto {
                 url: p["options"]["baseURL"].as_str().expect("Endpoint").into(),
                 model: model.into(),
                 auth_header_name,
@@ -234,6 +236,7 @@ async fn live_complete_python_course() -> Result<()> {
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = lattice::features::learning::outline_draft::DraftRunRegistry::new();
     let mut program = if std::env::var("LATTICE_TEACHING_RESUME").as_deref() == Ok("1")
         && model.directory.join("outline.json").exists()
     {
@@ -243,10 +246,11 @@ async fn live_complete_python_course() -> Result<()> {
         .expect("Retained outline");
         repo.get(&draft.summary.id).await?
     } else {
-        let draft=service::generate(&repo,&model,GenerateLearningProgramRequestDto { goal:"Build a small Python expense summarizer from supplied CSV text using the standard library. Use a single analyzer.py file and a provided three-line runner. Practice dictionaries to total amounts by category, validate empty category names, and write assert checks. Limit the CSV to category and integer cents; quoted fields use csv.DictReader. No file I/O, CLI argument parsing, classes, or external packages.".into(), prior_knowledge:"I can write small functions, iterate lists with for loops, use conditionals, and do basic arithmetic. I need practice using dictionaries, reading CSV text with the standard library, and writing assert checks.".into(),minutes_per_session:30,course_depth:Some(LearningCourseDepth::Focused),document_ids:vec![],source_urls:vec![] },vec![]).await?;
+        let draft=service::generate(&repo,&drafts,&model,GenerateLearningProgramRequestDto { goal:"Build a small Python expense summarizer from supplied CSV text using the standard library. Use a single analyzer.py file and a provided three-line runner. Practice dictionaries to total amounts by category, validate empty category names, and write assert checks. Limit the CSV to category and integer cents; quoted fields use csv.DictReader. No file I/O, CLI argument parsing, classes, or external packages.".into(), prior_knowledge:"I can write small functions, iterate lists with for loops, use conditionals, and do basic arithmetic. I need practice using dictionaries, reading CSV text with the standard library, and writing assert checks.".into(),minutes_per_session:30,course_depth:Some(LearningCourseDepth::Focused),document_ids:vec![],source_urls:vec![] },vec![]).await?;
         model.save("outline.json", &draft);
         service::accept(
             &repo,
+            &drafts,
             AcceptLearningProgramRequestDto {
                 program_id: draft.summary.id.clone(),
                 expected_revision: draft.summary.revision,
@@ -261,6 +265,9 @@ async fn live_complete_python_course() -> Result<()> {
         .iter()
         .flat_map(|m| m.lessons.iter().map(|l| l.id.clone()))
         .collect();
+    // No Python bundle is verified here, so Python worked examples report
+    // their runtime unavailable rather than running.
+    let runtimes = lattice::features::learning::embedded_runtime::BuiltinRuntimes::new(None);
     for (index, lesson_id) in lesson_ids.iter().enumerate() {
         if program
             .modules
@@ -276,6 +283,7 @@ async fn live_complete_python_course() -> Result<()> {
         program = service::prepare(
             &repo,
             &model,
+            &runtimes,
             PrepareLearningLessonRequestDto {
                 program_id: program.summary.id.clone(),
                 lesson_id: lesson_id.clone(),
@@ -291,10 +299,14 @@ async fn live_complete_python_course() -> Result<()> {
         )
         .workspace(&program.summary.id)
         .await?;
+    let sources = lattice::features::learning::repository::LearningRepository::new(pool.clone())
+        .verification_sources(&program.summary.id)
+        .await?;
     let tasks = lattice::features::learning::diagnostic_generation::author(
         &model,
         &program,
         &assessment.outcomes,
+        &sources,
     )
     .await?;
     model.save("diagnostic-authoring-private.json", &tasks);
@@ -351,6 +363,7 @@ async fn live_feedback_and_hint_matrix() -> Result<()> {
         "I set result to zero, but I do not know which condition to use.".into();
     let tutor = practice_generation::tutor(
         &model,
+        &practice_generation::tutor_pace(),
         &session,
         &RequestLearningTutorResponseRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),

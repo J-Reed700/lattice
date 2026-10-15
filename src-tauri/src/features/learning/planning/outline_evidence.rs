@@ -1,6 +1,6 @@
 //! Select outline evidence from whole captured sources, not library previews.
 use crate::features::learning::reference_collection::ReferenceCollection;
-use crate::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde_json::{json, Value};
 
 pub(in crate::features::learning) fn lesson_queries(candidate: &Value) -> Vec<String> {
@@ -19,8 +19,9 @@ pub(in crate::features::learning) fn lesson_queries(candidate: &Value) -> Vec<St
 }
 
 /// Exact provenance is checked by code, even when the model approves a quote.
-/// Field-level diagnostics let repairs copy the real punctuation and formatting
-/// instead of failing only after the final model review.
+/// Citations are optional; only a present citation can fail. Field-level
+/// diagnostics let typography restoration copy the real punctuation, and the
+/// evidence linking strips whatever still does not match.
 pub(in crate::features::learning) fn quote_checks(
     candidate: &Value,
     sources: &[crate::features::learning::dto::LearningSourceDto],
@@ -49,7 +50,7 @@ pub(in crate::features::learning) fn quote_checks(
                 .and_then(|i| usize::try_from(i).ok());
             let quote = field["quote"].as_str().unwrap_or_default();
             if let Err(error) =
-                crate::features::learning::generation::generated_source_ids(sources, index, quote)
+                crate::features::learning::generation::optional_citation(sources, index, quote)
             {
                 failures.push(json!({"path":format!("modules[{module_index}].{field_name}"),"sourceIndex":index,"quote":quote,"error":error.to_string()}));
             }
@@ -57,6 +58,10 @@ pub(in crate::features::learning) fn quote_checks(
     }
     failures
 }
+
+/// Passages each query retrieves per page; deeper pages follow while the
+/// budget has room.
+const PAGE: usize = 8;
 
 /// Keep source indices stable across authoring, review, repair and validation.
 /// The budget is for evidence in one request, not a deadline or a truncation of
@@ -75,10 +80,11 @@ pub(in crate::features::learning) async fn select(
                 "evidenceScope":"Selected exact passages from the full captured source. Cite only passages that support the assertion. Other saved sources remain searchable."}))
         }).collect()
     };
-    let mut include = |index: usize, text: String| {
+    // Whether a passage was added; one that would overflow the budget is not.
+    let mut include = |index: usize, text: String| -> bool {
         let passages = excerpts.entry(index).or_default();
         if passages.contains(&text) {
-            return;
+            return false;
         }
         passages.push(text);
         if llm.count_tokens(&json!(values(&excerpts)).to_string()) > budget {
@@ -88,29 +94,39 @@ pub(in crate::features::learning) async fn select(
                     excerpts.remove(&index);
                 }
             }
+            return false;
         }
+        true
     };
-    let mut ranked = Vec::new();
-    for query in queries {
-        ranked.push(collection.retrieve(query, 4).await?);
-    }
-    // Give relevant passages the prompt budget before reference prefixes.
-    // Source indices still refer to the complete saved collection.
-    for rank in 0..4 {
-        for matches in &ranked {
-            if let Some(passage) = matches.get(rank) {
-                if let Some(index) = collection
-                    .sources
-                    .iter()
-                    .position(|s| s.id == passage.source_id)
-                {
-                    include(index, passage.text.clone());
+    // Round-robin across queries rank by rank, paging deeper while a page
+    // still adds passages and the rankings are not exhausted. Source indices
+    // still refer to the complete saved collection.
+    let mut depth = PAGE;
+    let mut from = 0;
+    loop {
+        let mut ranked = Vec::new();
+        for query in queries {
+            ranked.push(collection.retrieve(query, depth).await?);
+        }
+        let mut added = false;
+        for rank in from..depth {
+            for matches in &ranked {
+                if let Some(passage) = matches.get(rank) {
+                    if let Some(index) = collection
+                        .sources
+                        .iter()
+                        .position(|s| s.id == passage.source_id)
+                    {
+                        added |= include(index, passage.text.clone());
+                    }
                 }
             }
         }
-    }
-    for (index, source) in collection.sources.iter().enumerate() {
-        include(index, source.excerpt.chars().take(600).collect());
+        if !added || ranked.iter().all(|matches| matches.len() < depth) {
+            break;
+        }
+        from = depth;
+        depth = depth.saturating_mul(2);
     }
     Ok(values(&excerpts))
 }
@@ -126,8 +142,8 @@ mod tests {
     impl LLMPort for TokenCounter {
         async fn complete(
             &self,
-            _: &crate::application::ports::llm_port::CompletionRequest,
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            _: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             unreachable!()
         }
         fn model_name(&self) -> &str {
@@ -142,6 +158,38 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+    }
+
+    #[tokio::test]
+    async fn deeper_ranks_fill_the_budget_instead_of_source_prefixes() {
+        let sources: Vec<_> = (0..20)
+            .map(|index| LearningSourceDto {
+                id: format!("source-{index}"),
+                title: format!("Reference {index}"),
+                url: None,
+                excerpt: format!("Window functions compute running totals in report {index}."),
+                acquired_at: 0,
+            })
+            .chain(std::iter::once(LearningSourceDto {
+                id: "unrelated".into(),
+                title: "Unrelated".into(),
+                url: None,
+                excerpt: "Pastry dough rests before rolling.".into(),
+                acquired_at: 0,
+            }))
+            .collect();
+        let collection = ReferenceCollection::lexical(&sources).unwrap();
+        let selected = select(
+            &TokenCounter(128_000),
+            &collection,
+            &["window functions running totals".into()],
+        )
+        .await
+        .unwrap();
+        // Every matching source, not the former top four, and no prefix of
+        // the unmatched one.
+        assert_eq!(selected.len(), 20);
+        assert!(selected.iter().all(|entry| entry["sourceIndex"] != 20));
     }
 
     #[tokio::test]

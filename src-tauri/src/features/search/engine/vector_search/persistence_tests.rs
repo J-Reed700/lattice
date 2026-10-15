@@ -1,10 +1,10 @@
 //! Tests for startup restore or rebuild, manifests and the debounced flush.
 
 use super::*;
-use crate::application::ports::vector_search_port::VectorIndexEntry;
-use crate::application::ports::VectorSearchPort;
 use crate::features::search::engine::vector_search::compression::VectorIndexCompression;
 use crate::features::search::engine::vector_search::manifest::manifest_path_for;
+use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
+use lattice_core::application::ports::VectorSearchPort;
 
 const GENERATION: &str = "model-a";
 const DIM: usize = 4;
@@ -230,7 +230,7 @@ async fn a_matching_manifest_skips_the_rebuild_and_still_serves_content() {
     assert_eq!(hits[0].doc_id, "doc");
     let repository =
         crate::infrastructure::persistence::repositories::ChunkRepository::new(pool.clone());
-    let text = crate::application::ports::ChunkRepositoryPort::find_content_by_ids(
+    let text = lattice_core::application::ports::ChunkRepositoryPort::find_content_by_ids(
         &repository,
         std::slice::from_ref(&hits[0].chunk_id),
     )

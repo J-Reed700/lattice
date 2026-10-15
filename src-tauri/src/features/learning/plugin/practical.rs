@@ -12,7 +12,7 @@ pub(super) async fn practical_source_versions(
     container: &Container,
     program_id: &str,
     version_ids: &[String],
-) -> crate::shared::error::Result<Vec<LearningSourceVersionDto>> {
+) -> lattice_core::shared::error::Result<Vec<LearningSourceVersionDto>> {
     let library = source_library(container);
     let workspace = library.workspace(program_id).await?;
     let mut sources = Vec::with_capacity(version_ids.len());
@@ -27,7 +27,7 @@ pub(super) async fn practical_source_versions(
                     .any(|version| &version.id == version_id)
             })
             .ok_or_else(|| {
-                crate::shared::error::AppError::InvalidInput(
+                lattice_core::shared::error::AppError::InvalidInput(
                     "A practical source version is outside this program.".into(),
                 )
             })?;
@@ -49,12 +49,13 @@ pub(super) async fn practical_source_versions(
 pub async fn get_learning_practical_workspace(
     program_id: String,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let workspace = practical_repo(&container)
         .workspace(&program_id)
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -94,6 +95,7 @@ pub fn get_learning_runtime_catalog(
 pub async fn prepare_learning_runtime_preset(
     request: PrepareLearningRuntimePresetRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash =
         source_request_hash(&("prepare_runtime_preset", &request)).map_err(ApiError::from)?;
@@ -103,7 +105,7 @@ pub async fn prepare_learning_runtime_preset(
         .await
         .map_err(ApiError::from)?
     {
-        return Ok(workspace.resolve_runtime().await);
+        return Ok(workspace.resolve_runtime(&runtimes).await);
     }
     let prepared = crate::features::learning::runtime_catalog::prepare_container_preset(
         request.engine,
@@ -128,7 +130,7 @@ pub async fn prepare_learning_runtime_preset(
         )
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -136,13 +138,14 @@ pub async fn prepare_learning_runtime_preset(
 pub async fn save_learning_runtime_profile(
     request: SaveLearningRuntimeProfileRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     let workspace = practical_repo(&container)
         .save_runtime_profile(&request, &hash)
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -150,6 +153,7 @@ pub async fn save_learning_runtime_profile(
 pub async fn generate_learning_practical_activity(
     request: GenerateLearningPracticalActivityRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     let repo = practical_repo(&container);
@@ -163,7 +167,7 @@ pub async fn generate_learning_practical_activity(
         .await
         .map_err(ApiError::from)?
     {
-        return Ok(replayed.resolve_runtime().await);
+        return Ok(replayed.resolve_runtime(&runtimes).await);
     }
     let program = LearningRepository::new(container.db_pool().clone())
         .get(&request.program_id)
@@ -173,7 +177,7 @@ pub async fn generate_learning_practical_activity(
         || program.summary.status != LearningProgramStatus::Active
     {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "The learning program changed; reload before generating this activity.".into(),
             ),
         ));
@@ -185,7 +189,7 @@ pub async fn generate_learning_practical_activity(
         .find(|lesson| lesson.id == request.lesson_id)
         .cloned()
         .ok_or_else(|| {
-            ApiError::from(crate::shared::error::AppError::NotFound(
+            ApiError::from(lattice_core::shared::error::AppError::NotFound(
                 "Learning lesson not found".into(),
             ))
         })?;
@@ -197,7 +201,6 @@ pub async fn generate_learning_practical_activity(
         .sources
         .iter()
         .filter_map(|source| source.active_version_id.clone())
-        .take(12)
         .collect::<Vec<_>>();
     if source_ids.is_empty()
         && LearningRepository::new(container.db_pool().clone())
@@ -206,7 +209,7 @@ pub async fn generate_learning_practical_activity(
             .map_err(ApiError::from)?
     {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Add or adopt at least one source before generating a practical activity.".into(),
             ),
         ));
@@ -216,6 +219,7 @@ pub async fn generate_learning_practical_activity(
         .map_err(ApiError::from)?;
     let runtime = crate::features::learning::practical_workspace::runtime_generation_context(
         &repo,
+        &runtimes,
         request.runtime_profile_id.as_deref(),
         request.builtin_runtime,
     )
@@ -236,7 +240,7 @@ pub async fn generate_learning_practical_activity(
         .save_generated_activity(&request, &generated, llm.model_name(), &hash)
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace.resolve_runtime().await)
+    Ok(workspace.resolve_runtime(&runtimes).await)
 }
 
 #[tauri::command]
@@ -244,10 +248,14 @@ pub async fn generate_learning_practical_activity(
 pub async fn start_learning_practical_run(
     request: StartLearningPracticalRunRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<LearningPracticalRunDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     crate::features::learning::practical_runs::start_run(
         &practical_repo(&container),
+        &container.practical_run_registry(),
+        container.core.background(),
+        &runtimes,
         &request,
         &hash,
     )
@@ -264,6 +272,7 @@ pub async fn cancel_learning_practical_run(
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     crate::features::learning::practical_runs::cancel_run(
         &practical_repo(&container),
+        &container.practical_run_registry(),
         &request,
         &hash,
     )
@@ -311,7 +320,7 @@ pub async fn send_learning_simulation_turn(
         .map_err(ApiError::from)?;
     if session.program_id != request.program_id || session.revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Simulation changed; reload and retry.".into(),
             ),
         ));
@@ -382,7 +391,7 @@ pub async fn finish_learning_simulation(
         .map_err(ApiError::from)?;
     if session.program_id != request.program_id || session.revision != request.expected_revision {
         return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::InvalidInput(
                 "Simulation changed; reload and retry.".into(),
             ),
         ));

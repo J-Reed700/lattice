@@ -4,8 +4,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{DatabaseStatsPort, RepositoryPort};
-use crate::domain::entities::{Chunk, Document as DocumentEntity};
 use crate::features::stats::corpus_shape_repository::{
     CorpusShapeRepositoryPort, SqliteCorpusShapeRepository,
 };
@@ -18,6 +16,8 @@ use crate::infrastructure::persistence::repositories::{
     ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::{DatabaseStatsPort, RepositoryPort};
+use lattice_core::domain::entities::{Chunk, Document as DocumentEntity};
 
 #[derive(Clone)]
 pub struct StatsDi {

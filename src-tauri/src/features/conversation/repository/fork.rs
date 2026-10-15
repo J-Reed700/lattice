@@ -1,9 +1,9 @@
 //! Branching a conversation into a sibling thread.
 
 use super::ConversationRepository;
-use crate::domain::conversation::memory::compute_digest;
-use crate::shared::error::{AppError, Result};
 use chrono::Utc;
+use lattice_core::domain::conversation::memory::compute_digest;
+use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
     /// Create a sibling conversation in the same space and copy messages up to
@@ -419,5 +419,8 @@ impl ConversationRepository {
 
 /// A stored message's token count where no model counted it.
 fn token_estimate(text: &str) -> i64 {
-    i64::try_from(crate::application::ports::llm_port::estimate_tokens(text)).unwrap_or(i64::MAX)
+    i64::try_from(lattice_core::application::ports::llm_port::estimate_tokens(
+        text,
+    ))
+    .unwrap_or(i64::MAX)
 }

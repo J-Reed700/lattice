@@ -14,10 +14,10 @@
 
 use super::dto::FolderIndexStatusDto;
 use super::store::{Counts, FolderStore};
-use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::scope::Scope;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::shared::Result;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::Result;
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -194,11 +194,10 @@ impl Pace {
 pub enum Outcome {
     Done,
     Cancelled,
-    /// The walk found this many indexable files (or at least this many, when
-    /// `capped`).
+    /// The walk found `count` indexable files, more than the bound: the first
+    /// up to it are indexed, and the rest are found by text search only.
     TooLarge {
         count: usize,
-        capped: bool,
     },
 }
 

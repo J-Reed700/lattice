@@ -5,13 +5,13 @@ use super::{
     normalized_weights, split_lexical_weight, BranchKind, HybridSearchUseCase, RankedBranch,
     RerankOptions,
 };
-use crate::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use crate::features::search::dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
 };
 use crate::features::search::engine::reranker::{RerankResult, Reranker};
 use crate::features::search::SparseSearchTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
+use lattice_core::shared::error::{AppError, Result};
 
 fn port_hit(chunk: &str, document: &str, score: f32) -> SearchResultPortDto {
     SearchResultPortDto {
@@ -254,7 +254,10 @@ impl TextSearchPort for SlowTextSearch {
 #[tokio::test]
 async fn query_time_covers_the_search_itself() {
     let use_case = HybridSearchUseCase::new(
-        Arc::new(crate::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded()),
+        Arc::new(
+            lattice_core::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded(
+            ),
+        ),
         Arc::new(ScriptedVectorSearch { hits: Vec::new() }),
         Arc::new(SlowTextSearch),
     );
@@ -466,7 +469,10 @@ async fn a_hybrid_search_asks_each_branch_for_three_candidates_per_result() {
 #[tokio::test]
 async fn a_hybrid_search_keeps_the_branch_that_answered() {
     let search = HybridSearchUseCase::new(
-        Arc::new(crate::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded()),
+        Arc::new(
+            lattice_core::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded(
+            ),
+        ),
         Arc::new(ScriptedVectorSearch {
             hits: vec![port_hit("v", "a", 0.9)],
         }),
@@ -481,7 +487,10 @@ async fn a_hybrid_search_keeps_the_branch_that_answered() {
 #[tokio::test]
 async fn a_hybrid_search_with_every_branch_down_is_an_error() {
     let search = HybridSearchUseCase::new(
-        Arc::new(crate::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded()),
+        Arc::new(
+            lattice_core::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded(
+            ),
+        ),
         Arc::new(ScriptedVectorSearch { hits: Vec::new() }),
         Arc::new(ScriptedTextSearch::down()),
     );
@@ -509,7 +518,7 @@ async fn a_hybrid_search_stays_inside_its_allow_list() {
 // Vault-wide searches and chat attachments
 // ---------------------------------------------------------------------------
 
-async fn attachment_fixture() -> Arc<dyn crate::application::ports::ChunkRepositoryPort> {
+async fn attachment_fixture() -> Arc<dyn lattice_core::application::ports::ChunkRepositoryPort> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -533,7 +542,7 @@ async fn attachment_fixture() -> Arc<dyn crate::application::ports::ChunkReposit
 }
 
 fn attachment_search(
-    chunks: Arc<dyn crate::application::ports::ChunkRepositoryPort>,
+    chunks: Arc<dyn lattice_core::application::ports::ChunkRepositoryPort>,
 ) -> HybridSearchUseCase {
     // The attachment is the nearer neighbour.
     use_case(
@@ -806,4 +815,43 @@ fn a_reranked_pool_is_three_times_the_cut_and_at_most_sixty_four() {
     assert_eq!(RerankOptions::candidate_pool(10), 30);
     assert_eq!(RerankOptions::candidate_pool(30), 64);
     assert_eq!(RerankOptions::candidate_pool(0), 0);
+}
+
+/// A cut sized to a large evidence budget is deeper than the widening bound.
+/// The pool must still hold the whole cut, or the search hands back fewer
+/// passages than the budget asked for.
+#[test]
+fn a_reranked_pool_is_never_narrower_than_the_cut() {
+    assert_eq!(RerankOptions::candidate_pool(200), 200);
+}
+
+/// A deep cut (1,500 passages on a 1M-token window) is not all sent through
+/// the cross-encoder: it judges its candidates, and the passages past them
+/// follow in fused order instead of being sorted in among blended scores on
+/// another scale.
+#[tokio::test]
+async fn only_the_candidates_are_judged_and_the_rest_follow_in_fused_order() {
+    let reranker = ScriptedReranker::scoring(vec![0.0, 0.0]);
+    let search = reranking_with(reranker.clone());
+    let results = vec![
+        hit("first", "a", 0.9),
+        hit("second", "b", 0.8),
+        hit("third", "c", 0.7),
+        hit("fourth", "d", 0.6),
+        hit("fifth", "e", 0.5),
+    ];
+    let fused = SearchResponseDto {
+        total: results.len(),
+        results,
+        query_time_ms: 0,
+    };
+
+    let reranked = search.rerank(fused, &rerank_options(2)).await;
+
+    assert!(reranked.applied);
+    assert_eq!(reranker.calls()[0].1.len(), 2);
+    assert_eq!(
+        ids(&reranked.response.results),
+        ["first", "second", "third", "fourth", "fifth"]
+    );
 }

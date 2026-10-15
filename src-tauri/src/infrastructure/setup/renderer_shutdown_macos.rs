@@ -13,9 +13,13 @@ use std::sync::OnceLock;
 use objc::runtime::{class_addMethod, Class, Imp, Object, Sel, NO, YES};
 use objc::Message;
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
+// global-state: AppKit calls `should_terminate` with no user data, so the app
+// it quits must be reachable without one.
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+// global-state: set by that same callback; AppKit holds one pending
+// termination request per process.
 static PENDING: AtomicBool = AtomicBool::new(false);
 
 // NSUInteger on both supported 64-bit macOS architectures. Returning

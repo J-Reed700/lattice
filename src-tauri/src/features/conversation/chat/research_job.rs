@@ -16,12 +16,11 @@ use super::{
     get_or_create_conversation_id, tool_loop, validate_and_guard_chat_request, ChatEventSink,
     ChatResponse,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::{
+use async_trait::async_trait;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{
     JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, NewJob, RecoveryPolicy,
 };
-use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -46,19 +45,57 @@ struct Waiter {
     reply: oneshot::Sender<Result<ChatResponse>>,
 }
 
-/// Commands waiting on their research turns, by request id.
-static WAITING: Lazy<Mutex<HashMap<String, Waiter>>> = Lazy::new(Mutex::default);
+/// Commands waiting on their research turns, by request id. The composition
+/// root builds one per process and hands it out through
+/// [`ChatJobs::research_waiters`](super::ports::ChatJobs::research_waiters),
+/// so the job that runs a turn answers the command waiting on it — and a test
+/// never answers another test's command.
+#[derive(Clone, Default)]
+pub struct ResearchWaiters {
+    waiting: Arc<Mutex<HashMap<String, Waiter>>>,
+}
 
-fn waiting() -> MutexGuard<'static, HashMap<String, Waiter>> {
-    WAITING.lock().unwrap_or_else(PoisonError::into_inner)
+impl ResearchWaiters {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, Waiter>> {
+        self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Registers the command waiting on `request_id`; it is forgotten when
+    /// the returned guard drops.
+    fn wait(&self, request_id: String, waiter: Waiter) -> Waiting {
+        self.lock().insert(request_id.clone(), waiter);
+        Waiting {
+            request_id,
+            waiters: self.clone(),
+        }
+    }
+
+    /// Where the turn of `request_id` streams while a command waits on it.
+    fn emit(&self, request_id: &str) -> Option<ChatEventSink> {
+        self.lock()
+            .get(request_id)
+            .map(|waiter| Arc::clone(&waiter.emit))
+    }
+
+    /// The command waiting on `request_id`, no longer waiting.
+    fn take(&self, request_id: &str) -> Option<Waiter> {
+        self.lock().remove(request_id)
+    }
 }
 
 /// Forgets a waiter when its command ends, however it ends.
-struct Waiting(String);
+struct Waiting {
+    request_id: String,
+    waiters: ResearchWaiters,
+}
 
 impl Drop for Waiting {
     fn drop(&mut self) {
-        waiting().remove(&self.0);
+        self.waiters.take(&self.request_id);
     }
 }
 
@@ -98,8 +135,9 @@ pub(super) async fn run(
     request.conversation_id = Some(conversation_id);
 
     let (reply, answer) = oneshot::channel();
-    waiting().insert(request_id.clone(), Waiter { emit, reply });
-    let _waiting = Waiting(request_id);
+    let _waiting = container
+        .research_waiters()
+        .wait(request_id, Waiter { emit, reply });
     let job = container.jobs().submit(&research_job(&request)?).await?;
     if job.status.is_finished() {
         return Err(AppError::InvalidState(
@@ -140,6 +178,7 @@ pub(super) async fn stop(
     request_id: Option<&str>,
 ) -> Result<bool> {
     let jobs = container.jobs();
+    let waiters = container.research_waiters();
     let wanted = request_id.map(operation_id);
     let mut stopped = false;
     for job in jobs
@@ -163,7 +202,7 @@ pub(super) async fn stop(
         // A job that never started has no turn to answer its command.
         if job.status == JobStatus::Pending {
             if let Some(request_id) = job.operation_id.strip_prefix(&operation_id("")) {
-                waiting().remove(request_id);
+                waiters.take(request_id);
             }
         }
     }
@@ -188,9 +227,10 @@ impl JobHandler for DeepResearchJob {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let request: TurnRequest = decode(context.job().requested.clone())?;
         let request_id = request.request_id.clone().unwrap_or_default();
-        let emit = waiting()
-            .get(&request_id)
-            .map_or_else(|| Arc::clone(&self.emit), |waiter| Arc::clone(&waiter.emit));
+        let waiters = self.runtime.research_waiters();
+        let emit = waiters
+            .emit(&request_id)
+            .unwrap_or_else(|| Arc::clone(&self.emit));
         let journal = JobJournal { context };
         let saved = journal.saved().await?;
         let answered = turn::run_stages(
@@ -222,7 +262,7 @@ impl JobHandler for DeepResearchJob {
                 message: error.to_string(),
             },
         };
-        if let Some(waiter) = waiting().remove(&request_id) {
+        if let Some(waiter) = waiters.take(&request_id) {
             // The command may have gone; the answer is saved either way.
             let _ = waiter.reply.send(answered);
         }

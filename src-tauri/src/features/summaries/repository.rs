@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Port for persisting and reading document/section summaries.
 ///
@@ -66,6 +66,26 @@ pub trait SummaryRepositoryPort: Send + Sync {
 
     /// How many summaries exist under an identity. Zero means the tier is off.
     async fn count_for_identity(&self, model_identity: &str) -> Result<i64>;
+
+    /// The summaries earlier runs over this revision of a document finished,
+    /// by call.
+    async fn load_progress(
+        &self,
+        document_id: &str,
+        revision: &str,
+    ) -> Result<HashMap<String, String>>;
+
+    /// Keep one finished call's summary until the document is published.
+    async fn save_progress(
+        &self,
+        document_id: &str,
+        revision: &str,
+        call_id: &str,
+        summary_text: &str,
+    ) -> Result<()>;
+
+    /// Forget a document's finished calls once its summaries are published.
+    async fn clear_progress(&self, document_id: &str) -> Result<()>;
 }
 
 /// Document-level summary text keyed by document id, for catalog augmentation.
@@ -325,27 +345,75 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
             .await
             .map_err(|e| AppError::Database(format!("count summaries: {e}")))
     }
+
+    async fn load_progress(
+        &self,
+        document_id: &str,
+        revision: &str,
+    ) -> Result<HashMap<String, String>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT call_id, summary_text FROM summary_work_progress \
+             WHERE document_id = ? AND revision = ?",
+        )
+        .bind(document_id)
+        .bind(revision)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("load summary progress: {e}")))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    async fn save_progress(
+        &self,
+        document_id: &str,
+        revision: &str,
+        call_id: &str,
+        summary_text: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO summary_work_progress (document_id, call_id, revision, summary_text) \
+             VALUES (?, ?, ?, ?) ON CONFLICT(document_id, call_id) DO UPDATE SET \
+             revision = excluded.revision, summary_text = excluded.summary_text",
+        )
+        .bind(document_id)
+        .bind(call_id)
+        .bind(revision)
+        .bind(summary_text)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("save summary progress: {e}")))?;
+        Ok(())
+    }
+
+    async fn clear_progress(&self, document_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM summary_work_progress WHERE document_id = ?")
+            .bind(document_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Database(format!("clear summary progress: {e}")))?;
+        Ok(())
+    }
 }
 
 /// Queue identities only; repeated indexing replaces one revision atomically.
 pub(crate) async fn enqueue_work(
     pool: &sqlx::SqlitePool,
     id: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("INSERT INTO summary_work_queue(document_id, revision, requested_at) SELECT id, lower(hex(randomblob(16))), unixepoch() FROM documents WHERE id = ? ON CONFLICT(document_id) DO UPDATE SET revision = excluded.revision, requested_at = excluded.requested_at, retry_at = 0")
         .bind(id).execute(pool).await?;
     Ok(())
 }
 pub(crate) async fn next_work(
     pool: &sqlx::SqlitePool,
-) -> crate::shared::error::Result<Option<(String, String)>> {
+) -> lattice_core::shared::error::Result<Option<(String, String)>> {
     Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).await?)
 }
 pub(crate) async fn acknowledge_work(
     pool: &sqlx::SqlitePool,
     id: &str,
     revision: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ? AND revision = ?")
         .bind(id)
         .bind(revision)
@@ -356,7 +424,7 @@ pub(crate) async fn acknowledge_work(
 pub(crate) async fn remove_work(
     pool: &sqlx::SqlitePool,
     id: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ?")
         .bind(id)
         .execute(pool)
@@ -366,7 +434,7 @@ pub(crate) async fn remove_work(
 pub(crate) async fn document_id_at_path(
     pool: &sqlx::SqlitePool,
     path: &std::path::Path,
-) -> crate::shared::error::Result<Option<String>> {
+) -> lattice_core::shared::error::Result<Option<String>> {
     Ok(
         sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
             .bind(path.to_string_lossy().as_ref())
@@ -375,11 +443,23 @@ pub(crate) async fn document_id_at_path(
     )
 }
 
+/// A run that did its share of the work and stopped: the document goes to
+/// the back of the queue, so other documents get their turn before it
+/// resumes.
+pub(crate) async fn requeue_work(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    revision: &str,
+) -> lattice_core::shared::error::Result<()> {
+    sqlx::query("UPDATE summary_work_queue SET requested_at = unixepoch(), retry_at = 0 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
+    Ok(())
+}
+
 pub(crate) async fn defer_work(
     pool: &sqlx::SqlitePool,
     id: &str,
     revision: &str,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     sqlx::query("UPDATE summary_work_queue SET retry_at = unixepoch() + 60 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
     Ok(())
 }
@@ -468,6 +548,55 @@ mod work_queue_tests {
         let (id, revision) = next_work(&pool).await.unwrap().unwrap();
         assert_eq!(id, "doc");
         assert!(!revision.is_empty());
+    }
+
+    /// The indexer re-indexes a file with an upsert on its path, and the
+    /// upsert's update half is what must queue the new revision: a plain
+    /// UPDATE in a test says nothing about it.
+    #[tokio::test]
+    async fn reindexing_through_the_indexers_upsert_queues_a_new_revision() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE documents(id TEXT PRIMARY KEY, file_path TEXT UNIQUE NOT NULL, \
+             checksum TEXT, status TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/20260927010000_summary_work_queue.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The statement the indexer runs, as far as these columns go.
+        let index = |id: &'static str, checksum: &'static str| {
+            sqlx::query(
+                "INSERT INTO documents (id, file_path, checksum, status) \
+                 VALUES (?, '/manual.pdf', ?, 'indexed') \
+                 ON CONFLICT(file_path) DO UPDATE SET checksum = excluded.checksum, \
+                 status = 'indexed'",
+            )
+            .bind(id)
+            .bind(checksum)
+        };
+        index("doc", "one").execute(&pool).await.unwrap();
+        let (id, first) = next_work(&pool).await.unwrap().unwrap();
+        assert_eq!(id, "doc");
+        acknowledge_work(&pool, &id, &first).await.unwrap();
+        assert!(next_work(&pool).await.unwrap().is_none());
+
+        index("fresh-uuid", "two").execute(&pool).await.unwrap();
+        let (id, second) = next_work(&pool)
+            .await
+            .unwrap()
+            .expect("re-indexing queues it");
+        assert_eq!(id, "doc", "the existing row keeps its id");
+        assert_ne!(second, first);
     }
 
     #[tokio::test]

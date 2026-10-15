@@ -13,14 +13,12 @@
 //! All commands are routed through the Gateway pattern which provides async dispatch.
 //! Async functions store state on the heap (in Future objects), not the stack.
 
-use crate::audit_success;
-use crate::domain::download::DownloadOperationState;
-use crate::domain::models::embedding_defaults::default_embedding_model;
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::interfaces::di::Container;
-use crate::shared::error::AppError;
+use lattice_core::domain::download::DownloadOperationState;
+use lattice_core::domain::models::embedding_defaults::default_embedding_model;
+use lattice_core::shared::error::AppError;
 
 #[derive(Debug, serde::Serialize)]
 struct DownloadDefaultModelResponse {
@@ -50,26 +48,6 @@ pub async fn check_first_run_status_impl(
         .execute()
         .await
         .map_err(|e| format!("First run check failed: {}", e))?;
-
-    let logger = get_audit_logger();
-    if response.needs_setup {
-        audit_success!(
-            logger,
-            AuditAction::SystemStartup,
-            "first_run_check:setup_needed",
-            "recommended_model" => response.recommended_model_id.as_deref().unwrap_or("none")
-        )
-        .await
-        .ok();
-    } else {
-        audit_success!(
-            logger,
-            AuditAction::SystemStartup,
-            "first_run_check:models_exist"
-        )
-        .await
-        .ok();
-    }
 
     serde_json::to_string(&response).map_err(|e| format!("Serialization error: {}", e))
 }
@@ -130,18 +108,6 @@ pub async fn download_default_embedding_model_impl(
             .unwrap_or_else(|| container.models_path().to_string_lossy().to_string()),
         file_size_bytes,
     };
-
-    let logger = get_audit_logger();
-    audit_success!(
-        logger,
-        AuditAction::ModelDownloaded,
-        &payload.model_id,
-        "download_id" => &payload.download_id,
-        "model_name" => &payload.model_name,
-        "file_size_bytes" => &payload.file_size_bytes.to_string()
-    )
-    .await
-    .ok();
 
     serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {}", e))
 }
@@ -225,7 +191,6 @@ pub async fn download_default_embedding_model_impl(
 /// 3. **Storage Check**: Ensure sufficient disk space
 /// 4. **Network Download**: Stream model file with progress events
 /// 5. **Integrity Verification**: Validate checksum after download
-/// 6. **Audit Logging**: Log successful download (CWE-778)
 ///
 /// **Progress Events**:
 /// - Emitted every 1 second or 10MB, whichever comes first
@@ -242,7 +207,6 @@ pub async fn download_default_embedding_model_impl(
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Max 5 downloads per hour to prevent DoS
-/// - **Audit Logging (CWE-778)**: All downloads logged with model ID and result
 /// - **Integrity Verification**: SHA-256 checksum validation
 /// - **Path Validation**: Downloads only to safe, validated paths (CWE-22)
 /// - **Size Limits**: Rejects downloads exceeding maximum size (100GB)
@@ -265,7 +229,6 @@ pub async fn download_default_embedding_model_impl(
 /// Thin controller with cross-cutting concerns:
 /// 1. **Rate Limiting**: Applied before execution
 /// 2. **Use Case Execution**: DownloadModelUseCase handles business logic
-/// 3. **Audit Logging**: Applied after successful execution
 ///
 /// # Command Flow
 ///
@@ -273,8 +236,7 @@ pub async fn download_default_embedding_model_impl(
 /// 2. Get use case from container
 /// 3. Create request DTO with model ID
 /// 4. Execute download (validate, download, verify)
-/// 5. Log audit event (success)
-/// 6. Return DownloadModelResponseDto with path
+/// 5. Return DownloadModelResponseDto with path
 ///
 /// # Note
 ///
@@ -303,17 +265,6 @@ pub async fn download_model_impl(
         tracing::error!(model_id = %model_id, error = %e, "Command: download_model - ERROR");
         e
     })?;
-
-    // Audit logging
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::ModelDownloaded,
-        &model_id,
-        "model_type" => "llm"
-    )
-    .await
-    .ok();
 
     tracing::info!(model_id = %model_id, "Command: download_model - EXIT");
     Ok(response)
@@ -351,6 +302,7 @@ mod tests {
             "http://localhost:11434",
             "llama3.1:8b",
             temp_dir.path().to_path_buf(),
+            std::sync::Arc::default(),
         )
         .await
         .unwrap();

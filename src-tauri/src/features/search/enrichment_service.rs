@@ -26,9 +26,9 @@
 
 use crate::infrastructure::persistence::database::connection::query_with_timeout;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
-use crate::shared::error::AppError;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
+use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -301,7 +301,7 @@ fn snippet_of(content: &str) -> String {
     if content.chars().count() > SNIPPET_CHARS {
         format!(
             "{}...",
-            crate::shared::text::safe_truncate(content, SNIPPET_CHARS)
+            lattice_core::shared::text::safe_truncate(content, SNIPPET_CHARS)
         )
     } else {
         content.to_string()

@@ -5,8 +5,8 @@
     clippy::panic
 )]
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use crate::shared::runtime::jobs::JobStore;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::runtime::jobs::JobStore;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -162,7 +162,7 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
     let shared_claim_check = request.input.iter().any(|item| {
         matches!(
             item,
-            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+            lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
                 if role == "system" && content.contains("Check the supplied claims independently.")
         )
     });
@@ -170,7 +170,10 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
         return;
     }
     for item in &request.input {
-        if let crate::application::ports::llm_port::CompletionInput::Message { content, .. } = item
+        if let lattice_core::application::ports::llm_port::CompletionInput::Message {
+            content,
+            ..
+        } = item
         {
             for demand in [
                 "Return only JSON",
@@ -283,8 +286,8 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Plan independent evidence searches") {
         return Some(json!({"queries":[]}).to_string());
     }
-    if prompt.starts_with("Audit claim fidelity.") {
-        return Some("supported\nReason: The fixture inventory faithfully represents the original assertions.\nSource passage: passage-0".into());
+    if prompt.starts_with("Audit inventory fidelity.") {
+        return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
     }
     if prompt.starts_with("Extract lesson claims.") {
         let data = context(prompt);
@@ -372,11 +375,15 @@ impl Model {
             return Ok(json!({"units":[]}).to_string());
         }
         if let Some(index) = self.coverage_gap_in {
-            if prompt.starts_with("Audit claim fidelity.")
-                && prompt.contains(&format!("Section {index}"))
-                && prompt.contains(&format!("\n\nClaim: {GOOD}\n\n"))
-            {
-                return Ok("unsupported\nReason: An additional original assertion is missing from this fixture inventory.\nSource passage: none".into());
+            if prompt.starts_with("Audit inventory fidelity.") {
+                let data = context(prompt);
+                if data["section"]
+                    .to_string()
+                    .contains(&format!("Section {index}"))
+                    && data["targetPassage"]["text"] == GOOD
+                {
+                    return Ok(json!({"missingAssertions":["An additional original assertion is missing from this fixture inventory."],"reason":"The fixture names one omission."}).to_string());
+                }
             }
             if prompt.starts_with("Audit claim coverage independently.") {
                 let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
@@ -444,6 +451,15 @@ mod checkpoint_tests;
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
 
+#[path = "coverage_adoption_tests.rs"]
+mod coverage_adoption_tests;
+
+#[path = "repair_progress_tests.rs"]
+mod repair_progress_tests;
+
+#[path = "evidence_paging_tests.rs"]
+mod evidence_paging_tests;
+
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
 
@@ -451,11 +467,13 @@ mod review_resume_tests;
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
     let mut model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
     let lesson = candidate(GOOD);
     let mut sources = vec![source()];
     let mut checks = ClaimChecks::default();
     let first = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -469,6 +487,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     sources.push(unrelated);
     let expanded = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -484,6 +503,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = true;
     let failed = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -498,6 +518,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = false;
     verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -511,6 +532,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 
     let edited = verify_with_references(
         &model,
+        &runtimes,
         &candidate(BAD),
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -524,6 +546,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 #[tokio::test]
 async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
     let model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let mut lesson = candidate(GOOD);
@@ -532,11 +555,13 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         .unwrap()
         .push(candidate(BAD)["blocks"][0].clone());
     let mut checks = ClaimChecks::default();
-    let first = verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    let first =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 2);
     assert_eq!(first.findings[1].verdict, ClaimVerdict::Contradicted);
     lesson["blocks"][1] = candidate(GOOD)["blocks"][0].clone();
-    let repaired = verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    let repaired =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert!(repaired.issues.is_empty());
     assert_eq!(
         *model.judge_calls.lock().unwrap(),
@@ -549,7 +574,7 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         "{} Additional wording.",
         lesson["blocks"][0]["body"].as_str().unwrap()
     ));
-    verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 3);
     Ok(())
 }
@@ -652,6 +677,7 @@ fn pending_repairs_require_identical_content_sources_and_instructions() -> Resul
         defects: 1,
         issue_fingerprint: Some(repair_issue_fingerprint(&[BAD.into()])),
         context: json!({"candidate":original,"failedClaims":[{"statement":BAD}]}),
+        progress: Default::default(),
     };
     let restored: PendingRepair = serde_json::from_str(&serde_json::to_string(&pending)?)?;
     assert!(restored.matches(&model, "instructions", &schema, &original, &references));
@@ -1067,199 +1093,71 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
 }
 
 #[tokio::test]
-async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() -> Result<()> {
-    struct CoverageModel {
-        inner: Model,
-        audits: std::sync::atomic::AtomicUsize,
-        extracted: Mutex<Vec<Vec<usize>>>,
-        audited: Mutex<Vec<Vec<usize>>>,
-        pending_fidelity: Mutex<Vec<String>>,
-        resolves: bool,
-    }
-    #[async_trait::async_trait]
-    impl LLMPort for CoverageModel {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            let mut replies = Vec::new();
-            for prompt in fixture_prompts(request) {
-                replies.push(self.respond(&prompt).await?);
-            }
-            Ok(fixture_completion(request, replies))
-        }
-        fn model_name(&self) -> &str {
-            self.inner.model_name()
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.inner.max_context_tokens()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.inner.count_tokens(text)
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-    impl CoverageModel {
-        async fn respond(&self, prompt: &str) -> Result<String> {
-            if prompt.starts_with("Audit claim fidelity.")
-                && prompt.contains("\"id\":\"unit-0-passage-")
-                && self
-                    .pending_fidelity
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|text| prompt.contains(&format!("\n\nClaim: {text}\n\n")))
-            {
-                return Ok("unsupported\nReason: The asserted condition is absent from this fixture inventory.\nSource passage: none".into());
-            }
-            if prompt.starts_with("Extract lesson claims.") {
-                let data = context(prompt);
-                self.extracted.lock().unwrap().push(
-                    data["requestedIndices"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|v| v.as_u64().unwrap() as usize)
-                        .collect(),
-                );
-            }
-            if prompt.starts_with("Complete missing lesson claims.") {
-                let data = context(prompt);
-                self.extracted
-                    .lock()
-                    .unwrap()
-                    .push(vec![data["section"]["index"].as_u64().unwrap() as usize]);
-                return Ok(json!({"claims":[],"nonFactualReason":"The fixture asks the independent audit to reconsider the remaining finding."}).to_string());
-            }
-            if prompt.starts_with("Audit claim coverage independently.") {
-                self.audited.lock().unwrap().push(
-                    context(prompt)["units"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|unit| unit["index"].as_u64().unwrap() as usize)
-                        .collect(),
-                );
-            }
-            if prompt.starts_with("Audit claim coverage independently.") {
-                let pass = self
-                    .audits
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-                let remaining = if self.resolves {
-                    2_usize.saturating_sub(pass)
-                } else {
-                    2
-                };
-                let data = context(prompt);
-                let mut missing = self.pending_fidelity.lock().unwrap();
-                missing.clear();
-                for (id, check) in response
-                    .as_object_mut()
-                    .unwrap()
-                    .iter_mut()
-                    .filter(|(id, _)| id.starts_with("unit-0-"))
-                    .take(remaining)
-                {
-                    check["missingClaims"] = json!(["Include the asserted condition explicitly."]);
-                    missing.extend(
-                        data["units"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .flat_map(|unit| unit["passages"].as_array().unwrap())
-                            .filter(|passage| passage["id"] == *id)
-                            .map(|passage| passage["text"].as_str().unwrap().to_owned()),
-                    );
-                }
-                return Ok(response.to_string());
-            }
-            self.inner.respond(prompt).await
-        }
-    }
-
-    let model = CoverageModel {
-        inner: Model::new(),
-        audits: std::sync::atomic::AtomicUsize::new(0),
-        extracted: Mutex::new(Vec::new()),
-        audited: Mutex::new(Vec::new()),
-        pending_fidelity: Mutex::new(Vec::new()),
-        resolves: true,
-    };
-    let mut lesson = candidate(GOOD);
-    let block = lesson["blocks"][0].clone();
-    lesson["blocks"].as_array_mut().unwrap().push(block);
-    let original = lesson.clone();
-    let report = verify(&model, &lesson, &[source()]).await?;
-    assert!(report.issues.is_empty());
-    assert_eq!(lesson, original);
-    assert!(!*model.inner.repaired.lock().unwrap());
-    assert_eq!(
-        *model.extracted.lock().unwrap(),
-        vec![vec![0, 1], vec![0], vec![0]]
-    );
-    assert_eq!(
-        *model.audited.lock().unwrap(),
-        vec![vec![0, 1], vec![0], vec![0]]
-    );
-    assert_eq!(model.audits.load(std::sync::atomic::Ordering::Relaxed), 3);
-
-    let stalled = CoverageModel {
-        inner: Model::new(),
-        audits: std::sync::atomic::AtomicUsize::new(0),
-        extracted: Mutex::new(Vec::new()),
-        audited: Mutex::new(Vec::new()),
-        pending_fidelity: Mutex::new(Vec::new()),
-        resolves: false,
-    };
-    let error = verify(&stalled, &lesson, &[source()]).await.err().unwrap();
-    assert!(error.to_string().contains("stopped making progress"));
-    assert_eq!(stalled.audits.load(std::sync::atomic::Ordering::Relaxed), 2);
-    assert_eq!(*stalled.inner.judge_calls.lock().unwrap(), 0);
-    assert_eq!(*stalled.audited.lock().unwrap(), vec![vec![0, 1], vec![0]]);
-
-    // Resume an interrupted audit with one completed section. Only the other
-    // section is audited, then corrected until its passage count reaches zero.
-    let resume = CoverageModel {
-        inner: Model::new(),
-        audits: std::sync::atomic::AtomicUsize::new(1),
-        extracted: Mutex::new(Vec::new()),
-        audited: Mutex::new(Vec::new()),
-        pending_fidelity: Mutex::new(Vec::new()),
-        resolves: true,
-    };
-    let content = units(&lesson)?;
-    let extracted = inventory::extract(&Model::new(), &content).await?;
-    let partial = Coverage {
-        units: vec![CoverageUnit {
-            index: 1,
-            complete: true,
-            reason: "Already audited".into(),
-            unresolved_passages: Vec::new(),
-        }],
-    };
-    assert!(valid_saved_coverage(&partial, &content));
-    let (_, completed) = complete_inventory(
-        &resume,
-        &content,
-        extracted,
-        &lesson.to_string(),
-        Some(partial),
+async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result<()> {
+    let sources: Vec<_> = (0..12)
+        .map(|i| LearningSourceDto {
+            id: format!("source-{i}"),
+            title: format!("Reference {i}"),
+            url: None,
+            excerpt: format!("DictReader whitespace handling is described in note {i}."),
+            acquired_at: 1,
+        })
+        .collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let evidence = evidence_for(
+        &Model::new(),
+        "DictReader whitespace handling",
+        0,
+        &references,
+        &[],
+        1,
     )
     .await?;
-    assert!(completed.units.iter().all(|unit| unit.complete));
-    assert_eq!(*resume.audited.lock().unwrap(), vec![vec![0], vec![0]]);
-    assert_eq!(*resume.extracted.lock().unwrap(), vec![vec![0]]);
+    assert_eq!(evidence.len(), 12, "not the former eight");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_gate_passes_a_lesson_whose_only_unsupported_claims_are_general_knowledge() -> Result<()>
+{
+    let model = Model::new();
+    let (raw, report) = verify_and_repair(
+        &model,
+        "{}",
+        &json!({"type":"object"}),
+        candidate("A short factual definition.").to_string(),
+        &[],
+        3000,
+    )
+    .await?;
+    assert!(report.issues.is_empty());
+    assert!(report
+        .findings
+        .iter()
+        .all(|f| f.verdict == ClaimVerdict::Unsupported && f.general_knowledge()));
+    assert!(
+        !*model.repaired.lock().unwrap(),
+        "general knowledge is never repaired"
+    );
+    assert_eq!(raw, candidate("A short factual definition.").to_string());
+    // An absolute in the same unsupported claim is still an issue.
+    let absolute = verify(&model, &candidate("A definition always applies."), &[]).await?;
+    assert!(!absolute.issues.is_empty());
     Ok(())
 }
 
 #[test]
 fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     let content = units(&candidate(GOOD)).unwrap();
+    let gap = |passage_id: &str| MissingAssertion {
+        passage_id: passage_id.into(),
+        statement: "Missing condition".into(),
+    };
     let valid = CoverageUnit {
         index: 0,
         complete: false,
         reason: "Missing condition".into(),
-        unresolved_passages: vec!["unit-0-passage-0".into()],
+        missing_assertions: vec![gap("unit-0-passage-0")],
     };
     assert!(valid_saved_coverage(
         &Coverage {
@@ -1283,11 +1181,19 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
             ..valid.clone()
         },
         CoverageUnit {
-            unresolved_passages: vec!["unit-1-passage-0".into()],
+            complete: false,
+            missing_assertions: Vec::new(),
             ..valid.clone()
         },
         CoverageUnit {
-            unresolved_passages: vec!["unit-0-passage-0".into(); 2],
+            missing_assertions: vec![gap("unit-1-passage-0")],
+            ..valid.clone()
+        },
+        CoverageUnit {
+            missing_assertions: vec![MissingAssertion {
+                statement: "   ".into(),
+                ..gap("unit-0-passage-0")
+            }],
             ..valid
         },
     ] {
@@ -1300,85 +1206,12 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     }
 }
 
-#[test]
-fn assessment_policy_changes_expire_assessments_without_repeating_identical_teaching_checks() {
-    let content = vec![json!({"kind":"teaching"}), json!({"kind":"assessment"})];
-    let original = Coverage {
-        units: (0..2)
-            .map(|index| CoverageUnit {
-                index,
-                complete: true,
-                reason: "Previously checked".into(),
-                unresolved_passages: Vec::new(),
-            })
-            .collect(),
-    };
-    for policy in [None, Some("previous-assessment-protocol")] {
-        let mut saved = original.clone();
-        retain_current_assessment_checks(&mut saved, &content, policy);
-        assert_eq!(
-            saved.units.iter().map(|u| u.index).collect::<Vec<_>>(),
-            vec![0]
-        );
-    }
-    let mut compatible = original.clone();
-    retain_current_assessment_checks(&mut compatible, &content, Some("assessment-fidelity-v2"));
-    assert_eq!(compatible.units.len(), 2);
-    compatible.units[1].complete = false;
-    retain_current_assessment_checks(&mut compatible, &content, Some("assessment-fidelity-v2"));
-    assert_eq!(
-        compatible.units.iter().map(|u| u.index).collect::<Vec<_>>(),
-        vec![0]
-    );
-    let mut current = original;
-    retain_current_assessment_checks(&mut current, &content, Some(coverage::ASSESSMENT_POLICY));
-    assert_eq!(current.units.len(), 2);
-}
-
-#[test]
-fn teaching_context_receipts_preserve_only_unchanged_approvals() {
-    let content = vec![
-        json!({"kind":"teaching"}),
-        json!({"kind":"teaching"}),
-        json!({"kind":"assessment"}),
-    ];
-    let original = Coverage {
-        units: (0..3)
-            .map(|index| CoverageUnit {
-                index,
-                complete: index != 1,
-                reason: "Earlier comparison".into(),
-                unresolved_passages: if index == 1 {
-                    vec!["unit-1-passage-0".into()]
-                } else {
-                    Vec::new()
-                },
-            })
-            .collect(),
-    };
-    for (policy, expected) in [
-        (None, vec![0, 2]),
-        (Some("teaching-context-v1"), vec![0, 2]),
-        (Some("previous-context-policy"), vec![2]),
-        (Some(coverage::TEACHING_CONTEXT_POLICY), vec![0, 1, 2]),
-    ] {
-        let mut saved = original.clone();
-        retain_current_teaching_checks(&mut saved, &content, policy);
-        assert_eq!(
-            saved
-                .units
-                .iter()
-                .map(|unit| unit.index)
-                .collect::<Vec<_>>(),
-            expected
-        );
-    }
-}
-
 #[tokio::test]
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();
-    let no_evidence = verify(&model, &candidate("A short factual definition."), &[]).await?;
+    // Without evidence a claim stating a figure stays an issue; a plain one
+    // is kept as general knowledge (see the gate test below).
+    let no_evidence = verify(&model, &candidate("A short definition from 2019."), &[]).await?;
     assert_eq!(no_evidence.findings[0].verdict, ClaimVerdict::Unsupported);
     assert!(!no_evidence.issues.is_empty());
     let offline = Model {
@@ -1492,7 +1325,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 index,
                 complete: true,
                 reason: "Persistence fixture".into(),
-                unresolved_passages: Vec::new(),
+                missing_assertions: Vec::new(),
             })
             .collect(),
         findings,
@@ -1621,13 +1454,15 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
 
 #[tokio::test]
 async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     let good = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nconsole.log(2 + 3);\n```"}]});
-    let observed = execution::observe(&good).await?;
+    let observed = execution::observe(&runtimes, &good).await?;
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains('5'));
     let bad = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nthrow new Error('broken example');\n```"}]});
-    assert!(!execution::observe(&bad).await?[0].passed());
+    assert!(!execution::observe(&runtimes, &bad).await?[0].passed());
     assert!(execution::observe(
+        &runtimes,
         &json!({"blocks":[{"kind":"worked_example","body":"```python\nprint(1)"}]})
     )
     .await
@@ -1637,6 +1472,7 @@ async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run()
 
 #[tokio::test]
 async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
     let model=ScriptedModel {outputs:Mutex::new(vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
     let tree = "project/\n└── main.rs\n";
@@ -1651,17 +1487,18 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
             "Directory tree:\n```text\n{tree}```\nRunnable example:\n```javascript\n{code}```\n"
         )
     );
-    let observed = execution::observe(&corrected).await?;
+    let observed = execution::observe(&runtimes, &corrected).await?;
     assert_eq!(observed.len(), 1);
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains(" a  b "));
     let titled = json!({"blocks":[{"kind":"worked_example","body":"```javascript title=example.js\nconsole.log(42);\n```"}]});
-    assert!(execution::observe(&titled).await?[0].passed());
+    assert!(execution::observe(&runtimes, &titled).await?[0].passed());
     Ok(())
 }
 
 #[tokio::test]
 async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
+    let runtimes = BuiltinRuntimes::for_tests();
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
     let lesson = json!({"blocks":[{"kind":"worked_example","body":"```\nconsole.log(42);\n```"}],"questions":[]});
     for response in [
@@ -1677,7 +1514,7 @@ async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
             .await
             .is_err());
     }
-    assert!(execution::observe(&lesson).await.is_err());
+    assert!(execution::observe(&runtimes, &lesson).await.is_err());
 }
 
 struct TypedModel {
@@ -1969,7 +1806,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         assert!(prompts[1].contains(SOURCE));
         assert!(prompts[1].contains("Correct the response format"));
     }
-    use crate::application::services::claim_verification::parse_verdict_word;
+    use lattice_core::application::services::claim_verification::parse_verdict_word;
     assert_eq!(
         parse_verdict_word("Label: unsupported\nReason: Missing source."),
         Some(ClaimVerdict::Unsupported)
@@ -2076,15 +1913,17 @@ pub(crate) async fn install_source(
     let id = || uuid::Uuid::new_v4().to_string();
     LearningSourceLibraryRepository::new(pool.clone())
         .add(
-            &id(),
-            &id(),
-            &id(),
-            program_id,
-            LearningSourceKind::Pasted,
-            "add_text",
-            "Test reference",
-            None,
-            LearningSourcePolicy::Fixed,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &id(),
+                version_id: &id(),
+                program_id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Test reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
             CapturedLearningSource {
                 title: "Test reference".into(),
                 publisher: None,
@@ -2101,11 +1940,12 @@ pub(crate) async fn install_source(
 
 #[tokio::test]
 async fn unsupported_languages_are_disclosed_and_csv_fixture_is_test_only() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     let rust = json!({"blocks":[{"kind":"worked_example","body":"```rust\nfn main() {}\n```"}]});
-    assert!(execution::observe(&rust).await?.is_empty());
+    assert!(execution::observe(&runtimes, &rust).await?.is_empty());
     assert_eq!(execution::unexecuted_languages(&rust), vec!["rust"]);
     let csv = json!({"blocks":[{"kind":"worked_example","body":format!("```python\n{}\n```", include_str!("csv_reference.py"))}]});
-    let observed = execution::observe(&csv).await?;
+    let observed = execution::observe(&runtimes, &csv).await?;
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains("header_whitespace"));
     Ok(())

@@ -1,6 +1,6 @@
 //! Learner-safe verification report. Assessment claims, keys and explanations
 //! stay on the backend; only teaching claims and original source passages leave.
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -41,6 +41,10 @@ pub struct LearningLessonEvidenceDto {
     pub embedding_model: Option<String>,
     pub content_sha256: String,
     pub claim_count: usize,
+    /// Of `claim_count`, the claims kept as general knowledge: no saved
+    /// reference supports or contradicts them, and they were not checked
+    /// against a source.
+    pub general_knowledge_count: usize,
     pub executed_examples: usize,
     pub unexecuted_languages: Vec<String>,
     pub sources_current: bool,

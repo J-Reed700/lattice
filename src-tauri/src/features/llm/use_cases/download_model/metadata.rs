@@ -1,8 +1,8 @@
 //! Resolving what to download: curated or Hugging Face metadata and embedding file lists.
 
-use crate::application::ports::model_catalog::ExternalModelMetadata;
-use crate::domain::models::curated::get_all_curated_models;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_catalog::ExternalModelMetadata;
+use lattice_core::domain::models::curated::get_all_curated_models;
+use lattice_core::shared::error::AppError;
 
 use super::DownloadModelUseCase;
 
@@ -45,8 +45,8 @@ impl DownloadModelUseCase {
         repo_id: &str,
         weights_filename: &str,
         auth_token: Option<&str>,
-    ) -> Vec<crate::domain::models::metadata::ModelFileMetadata> {
-        use crate::domain::models::metadata::ModelFileMetadata;
+    ) -> Vec<lattice_core::domain::models::metadata::ModelFileMetadata> {
+        use lattice_core::domain::models::metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
         let mut files = vec![
@@ -94,8 +94,8 @@ impl DownloadModelUseCase {
     async fn build_onnx_embedding_file_list(
         repo_id: &str,
         onnx_filename: &str,
-    ) -> Vec<crate::domain::models::metadata::ModelFileMetadata> {
-        use crate::domain::models::metadata::ModelFileMetadata;
+    ) -> Vec<lattice_core::domain::models::metadata::ModelFileMetadata> {
+        use lattice_core::domain::models::metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
 
@@ -255,7 +255,7 @@ impl DownloadModelUseCase {
                 // it would fall through to a bare single-file download with
                 // no tokenizer or config beside it.
                 if filename.ends_with(".safetensors")
-                    || filename == crate::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN
+                    || filename == lattice_core::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN
                 {
                     resolved.files = Self::build_safetensors_embedding_file_list(
                         &repo_id,

@@ -1,7 +1,7 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
-use crate::application::contracts::settings::ThinkingOverrideDto;
-use crate::application::ports::llm_port::{
+use lattice_core::application::contracts::settings::ThinkingOverrideDto;
+use lattice_core::application::ports::llm_port::{
     SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice,
 };
 
@@ -315,4 +315,90 @@ fn a_model_that_needs_thinking_thinks_on_every_request_unless_the_user_pins_it_o
     let qwen = local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Auto);
     let body = qwen.body(&tool_round).unwrap();
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+}
+
+/// A server with an 8,192-token window whose tokenizer answers `tokens`, or
+/// does not exist.
+async fn measured(tokens: Option<usize>, content: &str, asked: u32) -> u64 {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    let reply = match tokens {
+        Some(tokens) => {
+            ResponseTemplate::new(200).set_body_json(json!({"tokens": vec![1; tokens]}))
+        }
+        None => ResponseTemplate::new(404),
+    };
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(reply)
+        .mount(&server)
+        .await;
+    let settings = LLMSettingsDto::default();
+    let config = ServerConfig {
+        model: "laguna".into(),
+        generation: GenerationConfig::from_settings(&settings),
+        context_window: 8192,
+        stall_timeout: Duration::from_secs(30),
+        supports_tools: false,
+        model_thinking: ThinkingPolicy::default(),
+        prefill_guard: false,
+    };
+    let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
+    let body = client
+        .measured_body(&CompletionRequest {
+            input: user(content),
+            max_output_tokens: Some(asked),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    body["max_tokens"].as_u64().unwrap()
+}
+
+#[tokio::test]
+async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
+    let long = "word ".repeat(8_000);
+    // The estimate alone leaves only the floor.
+    assert_eq!(measured(None, &long, 2_000).await, 1_024);
+    // The server counts 2,000 tokens, so 2,000 more still fit.
+    assert_eq!(measured(Some(2_000), &long, 2_000).await, 2_000);
+}
+
+#[tokio::test]
+async fn a_prompt_truly_over_budget_still_gets_the_floor() {
+    let long = "word ".repeat(8_000);
+    assert_eq!(measured(Some(7_900), &long, 2_000).await, 1_024);
+}
+
+#[tokio::test]
+async fn a_prompt_the_estimate_fits_is_not_counted_again() {
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(path("/tokenize"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let settings = LLMSettingsDto::default();
+    let config = ServerConfig {
+        model: "laguna".into(),
+        generation: GenerationConfig::from_settings(&settings),
+        context_window: 8192,
+        stall_timeout: Duration::from_secs(30),
+        supports_tools: false,
+        model_thinking: ThinkingPolicy::default(),
+        prefill_guard: false,
+    };
+    let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
+    let body = client
+        .measured_body(&CompletionRequest {
+            input: user("A short question."),
+            max_output_tokens: Some(2_000),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(body["max_tokens"], 2_000);
 }

@@ -3,10 +3,10 @@
 //! Transaction-based implementation of DocumentRepository that delegates to ops.rs.
 //! This enables transactional operations within a broader unit of work.
 
-use crate::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
-use crate::domain::entities::Document as DocumentEntity;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
+use lattice_core::domain::entities::Document as DocumentEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Sqlite, Transaction};
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
@@ -92,7 +92,7 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
     async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<DocumentEntity>> {
         let filter = filter
             .as_any()
-            .downcast_ref::<crate::application::ports::DocumentFilter>()
+            .downcast_ref::<lattice_core::application::ports::DocumentFilter>()
             .ok_or_else(|| AppError::InvalidInput("Expected DocumentFilter".into()))?;
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
@@ -198,8 +198,8 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
 
     async fn find_by_checksum(
         &self,
-        checksum: &crate::domain::value_objects::Checksum,
-    ) -> Result<Option<crate::domain::entities::Document>> {
+        checksum: &lattice_core::domain::value_objects::Checksum,
+    ) -> Result<Option<lattice_core::domain::entities::Document>> {
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
         ops::find_aggregate_by_checksum_tx(&mut tx, checksum.as_str()).await
@@ -248,4 +248,4 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
     }
 }
 
-impl crate::application::ports::DocumentRepository for SqliteDocumentRepositoryTx {}
+impl lattice_core::application::ports::DocumentRepository for SqliteDocumentRepositoryTx {}

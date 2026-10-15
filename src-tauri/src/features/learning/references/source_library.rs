@@ -7,8 +7,8 @@ use crate::features::learning::{
     operations::Operation,
     persistence::{db, hash, hash_text, now},
 };
-use crate::shared::error::{AppError, Result};
 use futures::TryStreamExt;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
@@ -88,6 +88,22 @@ fn check_name(value: &LearningSourceCheckStatus) -> &'static str {
 #[derive(Clone)]
 pub struct LearningSourceLibraryRepository {
     pool: SqlitePool,
+}
+
+/// Who is adding a source and where it came from. Source capture owns this
+/// fixed provenance plus caller-supplied stable IDs; naming each field keeps
+/// replay validation auditable.
+#[derive(Debug, Clone)]
+pub struct NewLearningSource<'a> {
+    pub operation_id: &'a str,
+    pub source_id: &'a str,
+    pub version_id: &'a str,
+    pub program_id: &'a str,
+    pub kind: LearningSourceKind,
+    pub operation_kind: &'a str,
+    pub origin: &'a str,
+    pub requested_url: Option<&'a str>,
+    pub freshness: LearningSourcePolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -297,26 +313,30 @@ async fn require_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &s
     Ok(())
 }
 
-// Version snapshots persist each source field alongside its immutable hash.
-#[allow(clippy::too_many_arguments)]
+/// One immutable source version snapshot: each source field alongside its
+/// content hash. The excerpt and word count are derived from `full_text`.
+struct SourceVersionInsert<'a> {
+    program_id: &'a str,
+    source_id: &'a str,
+    version_id: &'a str,
+    version_number: i64,
+    title: &'a str,
+    publisher: Option<&'a str>,
+    requested_url: Option<&'a str>,
+    resolved_url: Option<&'a str>,
+    full_text: &'a str,
+    truncated: bool,
+    extraction_version: &'a str,
+    acquired_at: i64,
+    content_sha256: &'a str,
+}
+
 async fn insert_version(
     tx: &mut Transaction<'_, Sqlite>,
-    program: &str,
-    source: &str,
-    id: &str,
-    number: i64,
-    title: &str,
-    publisher: Option<&str>,
-    requested: Option<&str>,
-    resolved: Option<&str>,
-    text: &str,
-    truncated: bool,
-    extract: &str,
-    at: i64,
-    sha: &str,
+    v: SourceVersionInsert<'_>,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(id).bind(program).bind(source).bind(number).bind(title).bind(publisher).bind(requested).bind(resolved).bind(text).bind(excerpt(text)).bind(sha).bind(words(text) as i64).bind(truncated as i64).bind(extract).bind(at).execute(&mut **tx).await.map_err(db)?;
+        .bind(v.version_id).bind(v.program_id).bind(v.source_id).bind(v.version_number).bind(v.title).bind(v.publisher).bind(v.requested_url).bind(v.resolved_url).bind(v.full_text).bind(excerpt(v.full_text)).bind(v.content_sha256).bind(words(v.full_text) as i64).bind(v.truncated as i64).bind(v.extraction_version).bind(v.acquired_at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 async fn mirror_legacy(

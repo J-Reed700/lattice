@@ -1,7 +1,7 @@
-use crate::domain::entities::model_file::ModelFile;
-use crate::domain::value_objects::model_status::FileStatus;
-use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use lattice_core::domain::entities::model_file::ModelFile;
+use lattice_core::domain::value_objects::model_status::FileStatus;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 use std::str::FromStr;
 use tracing::{debug, error, info};
@@ -300,7 +300,6 @@ pub async fn update_file_status_by_model_and_name(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn parse_model_file_from_row(row: ModelFileRow) -> Result<ModelFile> {
     let status_enum = FileStatus::from_str(&row.status)
         .map_err(|e| AppError::InvalidData(format!("Invalid file status: {}", e)))?;

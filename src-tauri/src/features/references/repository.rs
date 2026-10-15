@@ -3,7 +3,7 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{FromRow, SqlitePool};
 
 const REFERENCE_COLUMNS: &str = r#"
@@ -92,18 +92,13 @@ impl PassageReferenceRepository {
     /// Newest first, `created_at >= cutoff`. `cutoff` MUST be produced by
     /// `format_db_timestamp` — this table is only ever written with
     /// `now_db_timestamp()`, so the canonical form is safe to compare.
-    pub async fn list_created_since(
-        &self,
-        cutoff: &str,
-        limit: i64,
-    ) -> Result<Vec<PassageReferenceRecord>> {
+    pub async fn list_created_since(&self, cutoff: &str) -> Result<Vec<PassageReferenceRecord>> {
         let query = format!(
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
-             WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?"
+             WHERE created_at >= ? ORDER BY created_at DESC"
         );
         sqlx::query_as::<_, PassageReferenceRecord>(&query)
             .bind(cutoff)
-            .bind(limit)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| {

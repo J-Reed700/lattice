@@ -10,7 +10,7 @@
 //! - **Context Window Management**: one budget from the context assembler for
 //!   the prompt's every pool and the generation reservation
 //! - **Auto-titling**: Generates conversation titles from first message
-//! - **Security**: Rate limiting, input validation, audit logging
+//! - **Security**: Rate limiting, input validation
 //!
 //! # Usage
 //!
@@ -30,15 +30,15 @@
 //! });
 //! ```
 
-use self::intent::{IntentClassifier, IntentInput, TurnIntent};
+use self::intent::{IntentClassifier, TurnIntent};
 use self::router::{RouterAction, RouterInput, RouterService};
-use crate::application::services::conversation_context::build_conversation_context;
-use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::settings::dto::{CustomToolSettingsDto, RouterSettingsDto};
-use crate::shared::error::{AppError, Result};
-use crate::shared::text::extract_highlight_terms;
+use lattice_core::application::services::conversation_context::build_conversation_context;
+use lattice_core::domain::qa::hyde::QueryType;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::extract_highlight_terms;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -52,7 +52,9 @@ pub use desktop::{app_event_sink, chat_with_conversation_impl};
 pub type ChatEventSink = Arc<dyn Fn(ChatStreamEventDto) -> Result<()> + Send + Sync>;
 
 mod attachments;
-mod cancellation;
+// Crate-visible so the composition root can own the one turn-cancellation
+// registry and hand it to every turn through the chat runtime.
+pub(crate) mod cancellation;
 mod document_text;
 mod fetch_memory;
 mod focus;
@@ -73,7 +75,9 @@ pub(crate) mod source_snapshots;
 mod research_job;
 pub mod retrieval;
 pub mod router;
-pub use research_job::{job_config as research_job_config, DeepResearchJob, DEEP_RESEARCH};
+pub use research_job::{
+    job_config as research_job_config, DeepResearchJob, ResearchWaiters, DEEP_RESEARCH,
+};
 mod tool_loop;
 pub mod turn_record;
 // Public so the claim-checker evaluation harness measures the verifier that
@@ -86,10 +90,11 @@ use self::attachments::{build_turn_attachments, TurnAttachments};
 /// How much of an attachment the web-query rewriter is shown. Enough to name
 /// the subject, small enough that the utility model stays fast.
 const ATTACHMENT_DIGEST_CHARS: usize = 900;
-use self::cancellation::{begin_turn_within, finish_turn, is_cancel_requested};
+use self::cancellation::TurnCancellationRegistry;
 use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
+    FinishedAnswer,
 };
 use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
@@ -108,34 +113,62 @@ pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
 pub(crate) use crate::features::explorer::prompt::ExplorerTurn;
 
-pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
-    cancellation::request_cancel(conversation_id, request_id)
-}
-
 struct TurnCancellationGuard {
     request_id: String,
+    cancellation: Arc<TurnCancellationRegistry>,
 }
 
 impl TurnCancellationGuard {
     /// `parent` is the stop of the job running the turn, if one is.
     fn start(
+        cancellation: Arc<TurnCancellationRegistry>,
         request_id: String,
         conversation_id: &str,
         parent: Option<&tokio_util::sync::CancellationToken>,
     ) -> Result<Self> {
-        if !begin_turn_within(&request_id, conversation_id, parent) {
+        if !cancellation.begin_turn_within(&request_id, conversation_id, parent) {
             return Err(AppError::InvalidState(
                 "A generation with this request ID is already in flight.".to_string(),
             ));
         }
-        Ok(Self { request_id })
+        Ok(Self {
+            request_id,
+            cancellation,
+        })
+    }
+
+    /// The token a stop press for this turn fires, handed to every model
+    /// request it makes.
+    fn turn_token(&self) -> tokio_util::sync::CancellationToken {
+        self.cancellation.turn_token(&self.request_id)
+    }
+
+    /// Whether a stop press has fired for this turn.
+    fn is_cancel_requested(&self) -> bool {
+        self.cancellation.is_cancel_requested(&self.request_id)
     }
 }
 
 impl Drop for TurnCancellationGuard {
     fn drop(&mut self) {
-        finish_turn(&self.request_id);
+        self.cancellation.finish_turn(&self.request_id);
     }
+}
+
+/// One turn as retrieval, the tool loop and persistence read it: the
+/// conversation and request it belongs to, the question, the model answering
+/// it, and the focus and recorder every search and tool call goes through.
+#[derive(Clone, Copy)]
+struct ChatTurn<'a> {
+    conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &'a str,
+    request_id: &'a str,
+    /// The user's message, validated.
+    message: &'a str,
+    llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
+    highlight_terms: &'a [String],
+    focus: &'a FocusScope,
+    recorder: &'a TurnRecorder,
 }
 
 mod dto;
@@ -221,7 +254,7 @@ async fn get_or_create_conversation_id(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
     validated_message: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
 ) -> Result<String> {
     match conversation_id {
         Some(id) => Ok(id),
@@ -251,7 +284,7 @@ fn generate_title(message: &str) -> String {
     } else {
         format!(
             "{}...",
-            crate::shared::text::safe_truncate(message, MAX_CHARS)
+            lattice_core::shared::text::safe_truncate(message, MAX_CHARS)
         )
     }
 }

@@ -3,13 +3,15 @@ use super::carry::CarriedMaterial;
 use super::classify::Route;
 use super::prepare::PreparedTurn;
 use super::*;
-use crate::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 use crate::features::conversation::chat::retrieval::RetrievalPipelineOutcome;
+use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
 /// What the turn found to read, before it is fitted and numbered.
 pub(super) struct Retrieved {
     /// Passages earlier turns cited, recalled for this question.
     pub(super) prior_sources: Vec<SourceDto>,
+    /// Earlier cited sources that matched but had no room.
+    pub(super) prior_left_out: usize,
     pub(super) retrieval: RetrievalPipelineOutcome,
 }
 
@@ -37,8 +39,11 @@ pub(super) async fn retrieve_evidence(
         .map(|reference| reference.document_id.clone())
         .collect();
     turn.focus.confine(&mut allowed_prior_documents);
-    let prior_sources = if flags.closed_book {
-        Vec::new()
+    let prior_evidence::Recalled {
+        sources: prior_sources,
+        left_out: prior_left_out,
+    } = if flags.closed_book {
+        prior_evidence::Recalled::default()
     } else {
         prior_evidence::recall(
             container,
@@ -52,7 +57,7 @@ pub(super) async fn retrieve_evidence(
         .await?
     };
     evidence.charge(
-        prior_evidence::render(&prior_sources)
+        prior_evidence::render(&prior_sources, prior_left_out)
             .as_deref()
             .map(|text| turn.llm.count_tokens(text))
             .unwrap_or(0),
@@ -65,28 +70,20 @@ pub(super) async fn retrieve_evidence(
     let retrieval_start = Instant::now();
     let retrieval = run_retrieval_pipeline(
         container,
-        &turn.conv_service,
-        &turn.conv_id,
-        &turn.turn_id,
-        &turn.message,
-        &turn.llm,
-        &turn.settings.llm.router,
+        turn.chat_turn(),
+        &turn.settings,
         &route.decision,
         flags,
         &turn.document_context,
-        &turn.highlight_terms,
         evidence,
         attachment_digest.as_deref(),
-        &turn.settings.llm.tool_output,
-        &turn.settings.search,
-        &turn.focus,
-        &turn.recorder,
     )
     .await;
     metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);
     metrics.retrieval_subtimings = Some(retrieval.sub_timings.clone());
     Ok(Retrieved {
         prior_sources,
+        prior_left_out,
         retrieval,
     })
 }

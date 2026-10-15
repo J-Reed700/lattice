@@ -1,8 +1,8 @@
 use crate::features::file::custom_collections::dto::{
     CreateCustomCollectionRequest, CustomCollectionDto, CustomCollectionKind,
 };
-use crate::shared::error::{AppError, Result};
 use chrono::Utc;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 

@@ -11,14 +11,51 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::ports::LLMPort;
-use crate::application::services::completion_input::{complete_text, TextCall};
-use crate::shared::error::Result;
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::completion_input::{complete_text, TextCall};
+use lattice_core::shared::error::Result;
 
-/// The maximum content preview fed per representative doc. Keeps prompts
-/// small on cheap utility LLMs without losing topicality.
-pub const REP_CONTENT_PREVIEW_CHARS: usize = 500;
+/// Answer room the label call reserves: a short JSON object.
+const LABEL_OUTPUT_TOKENS: usize = 256;
+
+/// Characters each of `representatives` documents may show in the label
+/// call: the labelling model's window after its answer room, a 5% margin and
+/// the instructions, shared equally. A larger window sees more of each
+/// document.
+pub fn preview_chars(llm: &dyn LLMPort, representatives: usize) -> usize {
+    let window = llm.max_context_tokens();
+    let fixed = llm.count_tokens(&build_system_prompt())
+        + llm.count_tokens(&build_prompt(&[]))
+        + representatives * 16;
+    let room = window
+        .saturating_sub(LABEL_OUTPUT_TOKENS.min(window / 4))
+        .saturating_sub(window / 20)
+        .saturating_sub(fixed);
+    lattice_core::application::ports::llm_port::chars_within_tokens(room, llm.chars_per_token())
+        / representatives.max(1)
+}
+
+/// Below this a representative's opening says too little to label by: about
+/// one passage.
+const MIN_PREVIEW_CHARS: usize = 1_200;
+
+/// How many of a cluster's `members` (nearest the centroid first) the label
+/// call shows: as many as its room gives at least [`MIN_PREVIEW_CHARS`] each,
+/// and always one. The room, not a fixed sample of five, decides how much of
+/// a cluster the label is drawn from.
+pub fn representatives_that_fit(llm: &dyn LLMPort, members: usize) -> usize {
+    let (mut fits, mut over) = (1usize, members.max(1) + 1);
+    while over - fits > 1 {
+        let mid = fits + (over - fits) / 2;
+        if preview_chars(llm, mid) >= MIN_PREVIEW_CHARS {
+            fits = mid;
+        } else {
+            over = mid;
+        }
+    }
+    fits.min(members.max(1))
+}
 
 /// Upper bound on generated label length — LLMs love to run long.
 pub const MAX_LABEL_CHARS: usize = 80;
@@ -27,7 +64,8 @@ pub const MAX_LABEL_CHARS: usize = 80;
 #[derive(Debug, Clone)]
 pub struct RepresentativeDoc {
     pub title: String,
-    /// First ~500 chars of the document body (LLM sees a preview, not the whole doc).
+    /// The opening of the document body, as much as the label call's room
+    /// gives each representative ([`preview_chars`]); `[…]` marks a cut.
     pub content_preview: String,
 }
 
@@ -137,12 +175,7 @@ fn build_prompt(representatives: &[RepresentativeDoc]) -> String {
     for (i, doc) in representatives.iter().enumerate() {
         out.push_str(&format!("Document {}:\n", i + 1));
         out.push_str(&format!("Title: {}\n", doc.title));
-        let preview: String = doc
-            .content_preview
-            .chars()
-            .take(REP_CONTENT_PREVIEW_CHARS)
-            .collect();
-        out.push_str(&format!("Content: {}\n\n", preview));
+        out.push_str(&format!("Content: {}\n\n", doc.content_preview));
     }
     out.push_str("Respond with JSON only: {\"label\": \"3-5 word noun phrase\", \"description\": \"one sentence\"}.");
     out
@@ -323,15 +356,50 @@ mod tests {
         assert!(label.label.chars().count() <= MAX_LABEL_CHARS);
     }
 
+    /// The preview is sized by the port from the call's room, so the prompt
+    /// carries it as given rather than cutting it again at 500 characters.
     #[test]
-    fn build_prompt_truncates_long_previews() {
-        let huge = "x".repeat(10_000);
+    fn build_prompt_carries_the_preview_it_was_given() {
+        let long = "x".repeat(10_000);
         let reps = vec![RepresentativeDoc {
             title: "Doc".to_string(),
-            content_preview: huge,
+            content_preview: long.clone(),
         }];
-        let prompt = build_prompt(&reps);
-        // Prompt shouldn't contain the full 10k chars.
-        assert!(prompt.len() < REP_CONTENT_PREVIEW_CHARS + 2_000);
+        assert!(build_prompt(&reps).contains(&long));
+    }
+
+    struct Window(usize);
+
+    #[async_trait::async_trait]
+    impl LLMPort for Window {
+        async fn complete(
+            &self,
+            _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            Ok(lattice_core::application::ports::llm_port::CompletionResponse::from_text("{}"))
+        }
+        fn model_name(&self) -> &str {
+            "window"
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.0
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// A label was drawn from five members whatever the window. The room
+    /// decides now: as many members as get a passage-sized look each, the
+    /// largest number that still does.
+    #[test]
+    fn the_label_call_reads_as_many_members_as_its_room_holds() {
+        let large = Window(32_768);
+        let shown = representatives_that_fit(&large, 500);
+        assert!(shown > 5, "{shown}");
+        assert!(preview_chars(&large, shown) >= MIN_PREVIEW_CHARS);
+        assert!(preview_chars(&large, shown + 1) < MIN_PREVIEW_CHARS);
+        assert_eq!(representatives_that_fit(&large, 3), 3);
+        assert_eq!(representatives_that_fit(&Window(1_024), 500), 1);
     }
 }

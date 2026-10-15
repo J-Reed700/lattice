@@ -4,7 +4,7 @@ use crate::features::conversation::context_repository::SqliteConversationContext
 use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use std::sync::Arc;
 
-use crate::application::ports::ConversationHistoryPort;
+use lattice_core::application::ports::ConversationHistoryPort;
 use sqlx::SqlitePool;
 
 use crate::features::conversation::handoff::HandoffsInFlight;
@@ -17,11 +17,12 @@ use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct ConversationDi {
-    pub document_scope: Arc<dyn crate::application::ports::document_scope::DocumentScopePort>,
+    pub document_scope:
+        Arc<dyn lattice_core::application::ports::document_scope::DocumentScopePort>,
     pub conversation_service: Arc<dyn ConversationServiceTrait>,
     pub conversation_history: Arc<dyn ConversationHistoryPort>,
     pub conversation_context:
-        Arc<dyn crate::application::ports::conversation_context::ConversationContextPort>,
+        Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>,
     pub create_conversation_use_case: Arc<CreateConversationUseCase>,
     /// Process-wide single-flight slots for compaction.
     ///
@@ -34,9 +35,16 @@ pub struct ConversationDi {
     pub compaction_slots: Arc<CompactionSlots>,
     /// The memory ledger port, shared so every caller sees one snapshot read.
     pub conversation_memory:
-        Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>,
+        Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>,
     /// Conversations a continue-in-new-chat handoff is summarizing.
     pub handoffs_in_flight: Arc<HandoffsInFlight>,
+    /// What the corpus planner has recently managed, shared by every chat
+    /// turn so a timeout on one turn shrinks the next turn's prompt.
+    pub planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
+    /// What the turn-intent classifier's model reads inside its deadline.
+    pub intent_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
+    /// What the grounding judge's model reads inside the judge's budget.
+    pub judge_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
 }
 
 pub fn build(db_pool: SqlitePool) -> ConversationDi {
@@ -44,7 +52,7 @@ pub fn build(db_pool: SqlitePool) -> ConversationDi {
     let conversation_context = Arc::new(SqliteConversationContext::new(db_pool.clone()));
     let repository = Arc::new(ConversationRepository::new(db_pool));
     let conversation_memory = repository.clone()
-        as Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>;
+        as Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>;
     let conversation_service = Arc::new(ConversationService::new(repository));
 
     ConversationDi {
@@ -53,6 +61,9 @@ pub fn build(db_pool: SqlitePool) -> ConversationDi {
         compaction_slots: Arc::new(CompactionSlots::default()),
         conversation_memory,
         handoffs_in_flight: Arc::new(HandoffsInFlight::default()),
+        planner_health: Arc::default(),
+        intent_pace: Arc::new(crate::features::conversation::chat::intent::intent_pace()),
+        judge_pace: Arc::new(crate::features::conversation::chat::verification::judge_pace()),
         conversation_history: conversation_service.clone(),
         create_conversation_use_case: Arc::new(CreateConversationUseCase::new(
             conversation_service.clone(),
@@ -80,13 +91,14 @@ impl Container {
 
     pub fn conversation_context(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
+    ) -> Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>
+    {
         Arc::clone(self.ai.conversation_context())
     }
 
     pub fn document_scope(
         &self,
-    ) -> Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
+    ) -> Arc<dyn lattice_core::application::ports::document_scope::DocumentScopePort> {
         Arc::clone(self.ai.document_scope())
     }
 
@@ -102,7 +114,8 @@ impl Container {
     /// The conversation-memory ledger port.
     pub fn conversation_memory(
         &self,
-    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+    ) -> Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>
+    {
         Arc::clone(self.ai.conversation_memory())
     }
 }

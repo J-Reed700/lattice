@@ -121,3 +121,28 @@ async fn a_tool_that_outlives_the_turn_is_cut_off_at_the_deadline() {
     .await;
     assert!(matches!(outcome, ToolRun::Finished(7)));
 }
+
+/// A part is sized to each call's own room, with no size locked in from an
+/// earlier read: parts are addressed by offset, so a larger part after a
+/// smaller one carries on where the smaller one stopped instead of rereading.
+#[test]
+fn a_document_part_follows_each_calls_room_and_keeps_its_offset() {
+    let args = serde_json::json!({"document_id": "doc", "offset": 4_000});
+    let large = document_part_sized_to(&args, 400_000);
+    let small = document_part_sized_to(&args, 700);
+    let size = |value: &serde_json::Value| value["max_content_length"].as_u64().unwrap();
+    assert!(
+        size(&large) > 100_000,
+        "a large room is not held to an old maximum"
+    );
+    assert!(size(&small) < 1_000, "a small room still reads something");
+    assert!(size(&small) >= 1);
+    assert_eq!(large["offset"], 4_000);
+    assert_eq!(
+        size(&document_part_sized_to(&large, 400_000)),
+        size(&large),
+        "nothing is remembered between calls"
+    );
+    let asked_less = serde_json::json!({"document_id": "doc", "max_content_length": 50});
+    assert_eq!(size(&document_part_sized_to(&asked_less, 400_000)), 50);
+}

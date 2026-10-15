@@ -12,17 +12,9 @@
 //! - **Stable**: Versioned schemas for breaking changes
 //! - **Validated**: Strong typing with serde
 
-use crate::application::contracts::web::default_max_results;
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::web::default_max_results;
 use serde::{Deserialize, Serialize};
-
-// immaculate-phase-2: drop once features/conversation/chat/{ports,tool_loop,web_steps}.rs,
-// features/conversation/chat/retrieval/{mod,pipeline,source_citations,tool_format}.rs and
-// features/learning/lessons/{course_generation,outline_research}_tests.rs import
-// crate::application::contracts::web::{FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult}
-pub use crate::application::contracts::web::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-};
 
 /// Input for semantic_search function.
 ///
@@ -37,6 +29,11 @@ pub struct SemanticSearchInput {
     /// Maximum number of results to return (1-50)
     #[serde(default = "default_limit")]
     pub limit: usize,
+
+    /// Results to skip: 0, or the `next_offset` a previous search named, so
+    /// results past the first page are reachable.
+    #[serde(default)]
+    pub offset: usize,
 
     /// Minimum similarity score (0.0-1.0). Lower = more results
     #[serde(default = "default_threshold")]
@@ -170,6 +167,11 @@ pub struct SemanticSearchOutput {
 
     /// Original search query
     pub query: String,
+
+    /// Where the next page of results starts, when the search filled this
+    /// page and may have more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<usize>,
 }
 
 /// Input for get_document function.
@@ -185,27 +187,20 @@ pub struct GetDocumentInput {
     #[serde(default = "default_true")]
     pub include_metadata: bool,
 
-    /// Maximum content length in characters (prevents huge returns)
-    #[serde(default = "default_max_content_length")]
-    pub max_content_length: usize,
+    /// Characters to return from `offset` on. The chat's tool loop sets this
+    /// to the room the result has in the model's window; without it the text
+    /// runs to the end of the document.
+    #[serde(default)]
+    pub max_content_length: Option<usize>,
 
-    /// 1-based page number for internal pagination.
-    ///
-    /// Page size is controlled by `max_content_length`.
-    #[serde(default = "default_page")]
-    pub page: usize,
+    /// Character the returned text starts at: 0 for the beginning, or a
+    /// previous result's `next_offset` to read on from where it stopped.
+    #[serde(default)]
+    pub offset: usize,
 }
 
 fn default_true() -> bool {
     true
-}
-
-fn default_max_content_length() -> usize {
-    50000
-}
-
-fn default_page() -> usize {
-    1
 }
 
 /// Document metadata.
@@ -235,39 +230,23 @@ pub struct GetDocumentOutput {
     /// Document identifier
     pub document_id: String,
 
-    /// Document text content for the requested page
+    /// Document text from `offset`, as much as was asked for.
     pub content: String,
 
-    /// True if additional pages are available beyond the returned page
+    /// True when text after this part remains; `next_offset` is where it starts.
     pub content_truncated: bool,
 
-    /// 1-based page returned.
-    #[serde(default = "default_page")]
-    pub page: usize,
+    /// Character this part starts at.
+    #[serde(default)]
+    pub offset: usize,
 
-    /// Total available pages for this document at the requested page size.
-    #[serde(default = "default_page")]
-    pub total_pages: usize,
+    /// Character the next part starts at, when the document goes on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<usize>,
 
     /// Total character count for the assembled document content.
     #[serde(default)]
     pub total_chars: usize,
-
-    /// True when a previous page exists.
-    #[serde(default)]
-    pub has_previous_page: bool,
-
-    /// True when a next page exists.
-    #[serde(default)]
-    pub has_next_page: bool,
-
-    /// Previous page number if available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_page: Option<usize>,
-
-    /// Next page number if available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page: Option<usize>,
 
     /// Document metadata (if include_metadata=true)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -427,6 +406,11 @@ pub struct ListDocumentsOutput {
 pub struct FetchUrlContentInput {
     /// URL to fetch and extract content from
     pub url: String,
+    /// Character the model wants the shown text to start at. The fetch always
+    /// returns the whole page; the chat formats the part from here on that
+    /// fits the result's room.
+    #[serde(default)]
+    pub offset: usize,
 }
 
 /// Input for wiki_search function.
@@ -540,6 +524,7 @@ mod tests {
         let input = SemanticSearchInput {
             query: "test query".to_string(),
             limit: 10,
+            offset: 0,
             threshold: 0.5,
             search_mode: SearchMode::Hybrid,
             file_types: Some(vec!["pdf".to_string()]),

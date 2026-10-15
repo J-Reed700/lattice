@@ -1,10 +1,10 @@
 //! Stage 1: everything the turn establishes before it decides what to read.
 use super::budget::TurnBudget;
 use super::*;
-use crate::application::ports::LLMPort;
-use crate::domain::conversation::DocumentReference;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::DocumentReference;
 use tokio_util::sync::CancellationToken;
 
 /// The turn as it stands once the conversation is open and its history read.
@@ -39,13 +39,27 @@ pub(super) struct PreparedTurn {
 }
 
 impl PreparedTurn {
+    /// The turn as retrieval, the tool loop and persistence read it.
+    pub(super) fn chat_turn(&self) -> ChatTurn<'_> {
+        ChatTurn {
+            conv_service: &self.conv_service,
+            conversation_id: &self.conv_id,
+            request_id: &self.turn_id,
+            message: &self.message,
+            llm: &self.llm,
+            highlight_terms: &self.highlight_terms,
+            focus: &self.focus,
+            recorder: &self.recorder,
+        }
+    }
+
     pub(super) fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
-        crate::features::conversation::chat::cancellation::turn_token(&self.turn_id)
+        self._guard.turn_token()
     }
 
     /// The stop button, honoured between stages.
     pub(super) fn ensure_not_cancelled(&self) -> Result<()> {
-        if is_cancel_requested(&self.turn_id) {
+        if self._guard.is_cancel_requested() {
             return Err(cancelled());
         }
         Ok(())
@@ -57,7 +71,6 @@ pub(super) fn cancelled() -> AppError {
 }
 
 /// `parent` is the stop of the job running the turn, if one is.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
@@ -81,17 +94,21 @@ pub(super) async fn prepare_turn(
     // hands back and the same one a cancel arrives with, which is what lets the
     // registry match the three up. Only a brand-new conversation has to wait
     // until its id exists.
+    let turn_cancellation = container.turn_cancellation();
     let mut turn_guard = match conversation_id.as_deref() {
-        Some(id) if !id.trim().is_empty() => {
-            Some(TurnCancellationGuard::start(turn_id.clone(), id, parent)?)
-        }
+        Some(id) if !id.trim().is_empty() => Some(TurnCancellationGuard::start(
+            Arc::clone(&turn_cancellation),
+            turn_id.clone(),
+            id,
+            parent,
+        )?),
         _ => None,
     };
 
     let validate_start = Instant::now();
     let validated_message = validate_and_guard_chat_request(container, message).await?;
     metrics.validate_request_ms = elapsed_ms(validate_start);
-    if is_cancel_requested(&turn_id) {
+    if turn_cancellation.is_cancel_requested(&turn_id) {
         return Err(cancelled());
     }
     let search_flags = SearchFlags::from_preferences(tool_preferences);
@@ -118,10 +135,15 @@ pub(super) async fn prepare_turn(
         get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
     let guard = match turn_guard.take() {
         Some(guard) => guard,
-        None => TurnCancellationGuard::start(turn_id.clone(), &conv_id, parent)?,
+        None => TurnCancellationGuard::start(
+            Arc::clone(&turn_cancellation),
+            turn_id.clone(),
+            &conv_id,
+            parent,
+        )?,
     };
     metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
-    if is_cancel_requested(&turn_id) {
+    if turn_cancellation.is_cancel_requested(&turn_id) {
         return Err(cancelled());
     }
 
@@ -261,9 +283,15 @@ pub(super) async fn resume_turn(
             "A saved research turn names its conversation and request.".into(),
         ));
     };
-    let guard = TurnCancellationGuard::start(turn_id.clone(), &conv_id, Some(parent))?;
+    let turn_cancellation = container.turn_cancellation();
+    let guard = TurnCancellationGuard::start(
+        Arc::clone(&turn_cancellation),
+        turn_id.clone(),
+        &conv_id,
+        Some(parent),
+    )?;
     let llm = container.get_or_load_llm().await?;
-    if is_cancel_requested(&turn_id) {
+    if turn_cancellation.is_cancel_requested(&turn_id) {
         return Err(cancelled());
     }
     let preferences = request.tool_preferences.as_ref();
@@ -346,6 +374,9 @@ impl PreparedTurn {
         turn_id: &str,
         llm: Arc<dyn LLMPort>,
         conv_service: Arc<dyn ConversationServiceTrait>,
+        cancellation: Arc<
+            crate::features::conversation::chat::cancellation::TurnCancellationRegistry,
+        >,
     ) -> Result<Self> {
         let settings = SettingsDto::default();
         Ok(Self {
@@ -375,7 +406,7 @@ impl PreparedTurn {
             linked_web_sources_context: None,
             system_prompt: String::new(),
             history_len: 0,
-            _guard: TurnCancellationGuard::start(turn_id.to_string(), conv_id, None)?,
+            _guard: TurnCancellationGuard::start(cancellation, turn_id.to_string(), conv_id, None)?,
         })
     }
 }

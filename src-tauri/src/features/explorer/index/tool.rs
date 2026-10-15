@@ -7,14 +7,20 @@
 use super::dto::FolderIndexState;
 use super::manager::group_digits;
 use super::search::{FolderHit, FolderSearch};
-use crate::application::ports::ToolDefinition;
 use crate::features::explorer::tools::{number_line, number_width};
-use crate::shared::{AppError, Result};
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::{AppError, Result};
 use serde_json::Value;
 
 pub const TOOL_SEARCH_FOLDER: &str = "search_folder";
-/// Passages one call returns at most.
-pub const TOOL_HITS: usize = 8;
+/// How many passages a search reads for `room_chars` of result: enough to
+/// fill it at half the chunker's largest passage. What does not fit is
+/// counted in the result, never dropped without a word.
+pub fn hits_for(room_chars: usize) -> usize {
+    room_chars
+        .div_ceil(super::chunker::MAX_CHUNK_CHARS / 2)
+        .max(1)
+}
 /// Room kept for the header and the notes after the passages.
 const FRAMING_CHARS: usize = 300;
 /// Room `render_passages` keeps for its own closing notes.
@@ -23,11 +29,11 @@ const NOTE_CHARS: usize = 64;
 pub fn definition() -> ToolDefinition {
     ToolDefinition {
         name: TOOL_SEARCH_FOLDER.to_string(),
-        description: format!(
-            "Find code or text in the folder by meaning. Use it for where/how questions when \
-             you don't know the exact words; use search_files for exact text. Returns up to \
-             {TOOL_HITS} passages, each headed by its line reference, e.g. `src/main.rs:10-24`."
-        ),
+        description: "Find code or text in the folder by meaning. Use it for where/how questions \
+             when you don't know the exact words; use search_files for exact text. Returns as \
+             many passages as this turn has room for, best first, each headed by its line \
+             reference, e.g. `src/main.rs:10-24`."
+            .to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -125,7 +131,7 @@ pub async fn run(search: &FolderSearch, arguments: &Value, max_chars: usize) -> 
     let query = arg_str(arguments, "query")
         .ok_or_else(|| AppError::InvalidInput("search_folder needs a query.".to_string()))?;
     let path = arg_str(arguments, "path");
-    let hits = search.search(query, path, TOOL_HITS).await?;
+    let hits = search.search(query, path, hits_for(max_chars)).await?;
     let place = path.map(|path| format!(" in {path}")).unwrap_or_default();
     let note = progress_note(search);
     if hits.is_empty() {

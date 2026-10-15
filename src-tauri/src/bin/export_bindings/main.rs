@@ -107,6 +107,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::preview_learning_pack_import,
             lattice::features::learning::plugin::apply_learning_pack_import,
             lattice::features::learning::plugin::cancel_learning_pack_import_preview,
+            lattice::features::learning::plugin::save_learning_pack_as::<tauri::Wry>,
+            lattice::features::learning::plugin::export_all_learning_packs::<tauri::Wry>,
             lattice::features::learning::plugin::preview_learning_curriculum_revision,
             lattice::features::learning::plugin::accept_learning_curriculum_revision,
             lattice::features::learning::plugin::discard_learning_curriculum_revision,
@@ -289,11 +291,12 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::file::plugin::commands::get_indexing_activities,
             lattice::features::file::plugin::commands::get_recent_documents,
             // Credentials Plugin (7 commands)
-            // Health Plugin (4 commands)
+            // Health Plugin (5 commands)
             lattice::features::health::plugin::commands::health_check,
             lattice::features::health::plugin::commands::get_system_stats,
             lattice::features::health::plugin::commands::get_version,
             lattice::features::health::plugin::commands::initialize_database,
+            lattice::features::health::plugin::commands::get_backend_logs,
             // Tags Plugin (5 commands)
             lattice::features::tags::plugin::get_all_tags_with_counts,
             lattice::features::tags::plugin::get_document_tags,
@@ -449,6 +452,9 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::web::plugin::fetch_url_preview,
             lattice::features::web::plugin::extract_article,
             lattice::features::web::plugin::read_web_page,
+            lattice::features::web::plugin::get_web_page_snapshot,
+            lattice::features::web::plugin::capture_web_page_snapshot,
+            lattice::features::web::plugin::list_web_page_snapshots,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,
@@ -472,6 +478,9 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
+        // Event payloads of the frozen web snapshot feature.
+        .typ::<lattice::features::web::snapshots::WebPageSnapshotChangedEvent>()
+        .typ::<lattice::features::web::snapshots::WebPageSnapshotLinkEvent>()
         // Persisted in `metadata.turn` rather than returned by a command, so it
         // reaches no signature on its own and has to be named here.
         .typ::<lattice::features::conversation::chat::TurnRecordDto>()

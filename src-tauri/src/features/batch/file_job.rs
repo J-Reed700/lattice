@@ -4,19 +4,19 @@
 use super::dto::FileIndexingOptionsDto;
 use super::items::BatchItem;
 use super::worker::{ItemImporter, ItemResult};
-use crate::application::ports::{
-    document_scope::DocumentScopePort, EmbeddingPort, UnitOfWorkFactory,
-};
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::use_cases::{
     index_file::PrepareForIndexingOutcome, IndexFileUseCase,
 };
-use crate::shared::{
+use async_trait::async_trait;
+use futures::future::BoxFuture;
+use lattice_core::application::ports::{
+    document_scope::DocumentScopePort, EmbeddingPort, UnitOfWorkFactory,
+};
+use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::JobContext,
 };
-use async_trait::async_trait;
-use futures::future::BoxFuture;
 use std::sync::Arc;
 
 pub(super) type EmbeddingLoader =
@@ -56,7 +56,7 @@ impl FileImporter {
             .as_ref()
             .and_then(|indexing| indexing.source_group.as_ref())
         {
-            let context = crate::domain::value_objects::source_context::SourceContext {
+            let context = lattice_core::domain::value_objects::source_context::SourceContext {
                 group: group.clone(),
                 position: item.position,
             };

@@ -10,16 +10,16 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 
 use crate::features::settings::use_cases::GetSettingsUseCase;
-use crate::interfaces::di::Container;
+use lattice_core::application::ports::NoteIndexSink;
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
-pub fn spawn_sync_workspace_note(container: &Container) {
-    container.vault_writer().wake.notify_one();
+pub fn spawn_sync_workspace_note(writer: &VaultWriterHandle) {
+    writer.wake.notify_one();
 }
 
-pub fn spawn_delete_workspace_note(container: &Container) {
-    container.vault_writer().wake.notify_one();
+pub fn spawn_delete_workspace_note(writer: &VaultWriterHandle) {
+    writer.wake.notify_one();
 }
 
 /// What the corpus should do about a note whose markdown file just changed.
@@ -67,17 +67,27 @@ impl Drop for WriterLifetime {
 pub struct VaultWriterHandle {
     wake: Arc<Notify>,
     // Only handles own this guard; the worker holds a token clone. Dropping
-    // standalone containers therefore stops their worker without an app scope.
+    // standalone containers therefore stops their worker without closing the
+    // background scope.
     _lifetime: Arc<WriterLifetime>,
     /// Shared cell the worker reads on every error to decide whether
     /// to emit a `vault:write-error` Tauri event. Populated post-
     /// construction via `set_app_handle` because the AppHandle isn't
     /// available until after the container builder runs.
     app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    /// Corpus sink the worker uses to put a mirrored note into (or out
+    /// of) the index. Populated post-construction via
+    /// `set_note_index_sink` because the indexing pipeline only exists
+    /// once the container is built — the same reason the AppHandle is
+    /// installed after the fact.
+    note_index_sink: Arc<std::sync::RwLock<Option<Arc<dyn NoteIndexSink>>>>,
 }
 
 impl VaultWriterHandle {
-    pub async fn enqueue_backfill(&self, pool: &SqlitePool) -> crate::shared::error::Result<()> {
+    pub async fn enqueue_backfill(
+        &self,
+        pool: &SqlitePool,
+    ) -> lattice_core::shared::error::Result<()> {
         super::repository::enqueue_all(pool).await?;
         self.wake.notify_one();
         Ok(())
@@ -94,21 +104,35 @@ impl VaultWriterHandle {
             Err(poisoned) => *poisoned.into_inner() = Some(handle),
         }
     }
+
+    /// Install the corpus sink so the worker can index or remove a
+    /// mirrored note. Called from `Container::with_app_handle` once the
+    /// indexing pipeline exists. Safe to call multiple times; later calls
+    /// overwrite earlier (non-test code only ever calls it once).
+    pub fn set_note_index_sink(&self, sink: Arc<dyn NoteIndexSink>) {
+        match self.note_index_sink.write() {
+            Ok(mut guard) => *guard = Some(sink),
+            Err(poisoned) => *poisoned.into_inner() = Some(sink),
+        }
+    }
 }
 
 pub fn start_vault_writer(
     settings_uc: Arc<GetSettingsUseCase>,
     suppression: super::watcher::WriteSuppressionRegistry,
     pool: SqlitePool,
+    background: &lattice_core::shared::runtime::background::BackgroundTasks,
 ) -> VaultWriterHandle {
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
-    let cancel = crate::shared::runtime::background::cancellation_token().child_token();
+    let note_index_sink = Arc::new(std::sync::RwLock::new(None));
+    let cancel = background.token().child_token();
     let lifetime = Arc::new(WriterLifetime(cancel.clone()));
-    crate::shared::runtime::background::spawn(run_worker(
+    background.spawn(run_worker(
         wake.clone(),
         settings_uc,
         app_handle.clone(),
+        note_index_sink.clone(),
         suppression,
         pool,
         cancel,
@@ -116,6 +140,7 @@ pub fn start_vault_writer(
     VaultWriterHandle {
         wake,
         app_handle,
+        note_index_sink,
         _lifetime: lifetime,
     }
 }
@@ -124,6 +149,7 @@ async fn run_worker(
     wake: Arc<Notify>,
     settings_uc: Arc<GetSettingsUseCase>,
     app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    note_index_sink: Arc<std::sync::RwLock<Option<Arc<dyn NoteIndexSink>>>>,
     suppression: super::watcher::WriteSuppressionRegistry,
     pool: SqlitePool,
     cancel: tokio_util::sync::CancellationToken,
@@ -199,7 +225,7 @@ async fn run_worker(
                                             // Keep the markdown write durable even if this index
                                             // action fails; retries skip the file rewrite.
                                             apply_note_index_action(
-                                                &app_handle,
+                                                &note_index_sink,
                                                 &target,
                                                 note_index_action(NoteSyncOutcome::Written {
                                                     body: &note.content,
@@ -210,7 +236,7 @@ async fn run_worker(
                                         Err(error) => Err(error),
                                     }
                                 }
-                                Err(crate::shared::error::AppError::NotFound(_)) => {
+                                Err(lattice_core::shared::error::AppError::NotFound(_)) => {
                                     let mirror_result: std::result::Result<(), String> = async {
                                         if !write.mirror_complete {
                                             match tokio::fs::remove_file(&target).await {
@@ -230,7 +256,7 @@ async fn run_worker(
                                     match mirror_result {
                                         Ok(()) => {
                                             apply_note_index_action(
-                                                &app_handle,
+                                                &note_index_sink,
                                                 &target,
                                                 NoteIndexAction::Remove,
                                             )
@@ -280,12 +306,12 @@ async fn settle_write(
     pool: &SqlitePool,
     write: &super::repository::PendingWrite,
     apply_result: std::result::Result<(), String>,
-) -> crate::shared::error::Result<()> {
+) -> lattice_core::shared::error::Result<()> {
     match apply_result {
         Ok(()) => super::repository::acknowledge(pool, write).await,
         Err(error) => {
             super::repository::defer(pool, write).await?;
-            Err(crate::shared::error::AppError::InternalError(error))
+            Err(lattice_core::shared::error::AppError::InternalError(error))
         }
     }
 }
@@ -327,62 +353,50 @@ fn emit_write_error(
 /// vault's own notes are retrievable alongside imported documents.
 ///
 /// The writer queue is constructed before the DI container exists, so it cannot
-/// hold one — it reaches the container through the Tauri state the app manages
-/// at boot, the same way every command does. A missing handle or container
-/// (boot order, test fixtures) retains the durable index intent for retry.
+/// hold one. It reaches the indexing pipeline through a `NoteIndexSink` the
+/// composition root installs once the container is built. A missing sink (boot
+/// order, test fixtures) retains the durable index intent for retry.
 ///
 /// Runs inline in the single worker so the same note is never indexed twice
 /// concurrently. Failed index work is deferred without rewriting its mirror.
 async fn apply_note_index_action(
-    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    note_index_sink: &Arc<std::sync::RwLock<Option<Arc<dyn NoteIndexSink>>>>,
     target: &Path,
     action: NoteIndexAction,
 ) -> std::result::Result<(), String> {
-    use tauri::Manager;
-
     if matches!(action, NoteIndexAction::Skip) {
         tracing::debug!(target = %target.display(), "vault worker: empty note — not indexed");
         return Ok(());
     }
 
-    let handle = {
-        let guard = match app_handle.read() {
+    let sink = {
+        let guard = match note_index_sink.read() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
         match guard.as_ref() {
-            Some(h) => h.clone(),
+            Some(s) => Arc::clone(s),
             None => {
-                return Err("Tauri app handle is unavailable; vault index action deferred".into())
+                return Err("Note index sink is unavailable; vault index action deferred".into())
             }
         }
-    };
-    let Some(container) = handle.try_state::<Container>() else {
-        return Err("Tauri container is unavailable; vault index action deferred".into());
     };
 
     let path = target.to_string_lossy().to_string();
     let outcome = match action {
-        NoteIndexAction::Index => {
-            crate::features::file::plugin::commands::index_file(path.clone(), None, container)
-                .await
-                .map(|_| ())
-        }
+        NoteIndexAction::Index => sink.index(&path).await,
         // `Skip` returned above; `Remove` is the only case left.
-        _ => {
-            crate::features::file::plugin::commands::remove_indexed_file(path.clone(), container)
-                .await
-        }
+        _ => sink.remove(&path).await,
     };
 
     outcome.map_err(|e| {
         tracing::warn!(
             target = %path,
-            error = %e.message,
+            error = %e,
             ?action,
             "vault worker: note index update failed"
         );
-        e.message
+        e.to_string()
     })?;
     tracing::debug!(target = %path, ?action, "vault worker: note index updated");
     Ok(())

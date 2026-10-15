@@ -19,9 +19,9 @@
 //! }
 //! ```
 
-use crate::application::ports::model_storage::ModelStoragePort;
 use crate::features::llm::dto::{DownloadedModelDto, DownloadedModelsDto};
-use crate::shared::error::AppError;
+use lattice_core::application::ports::model_storage::ModelStoragePort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct ListDownloadedModelsUseCase {
@@ -55,8 +55,8 @@ impl ListDownloadedModelsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::model_storage::{DownloadedModel, MockModelStoragePort};
     use chrono::{Duration, Utc};
+    use lattice_core::application::ports::model_storage::{DownloadedModel, MockModelStoragePort};
     use std::path::PathBuf;
 
     #[tokio::test]

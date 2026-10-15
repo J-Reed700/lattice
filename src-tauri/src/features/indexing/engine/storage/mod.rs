@@ -35,11 +35,11 @@ mod types;
 
 pub use types::DocumentRecord;
 
-use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
+use lattice_core::domain::value_objects::ContextualizedChunk;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::{Path, PathBuf};
 
@@ -233,7 +233,7 @@ impl IndexStorageTrait for IndexStorage {
     async fn chunk_ids_in_order(
         &self,
         document_id: &str,
-    ) -> crate::shared::error::Result<Vec<String>> {
+    ) -> lattice_core::shared::error::Result<Vec<String>> {
         Ok(sqlx::query_scalar(
             "SELECT id FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
         )

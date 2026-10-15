@@ -30,7 +30,7 @@
 //!   when the read ends, however it ends.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -40,7 +40,7 @@ use tracing::{debug, info, warn};
 use url::{Host, Url};
 
 use super::web::is_blocked_ip;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::net::IpAddr;
 
 /// The reserved address the page reports back through. `.invalid` can never
@@ -55,14 +55,17 @@ pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(25);
 /// round that hits several blocked sites should not open a dozen.
 const MAX_CONCURRENT_READS: usize = 2;
 
-static APP: OnceLock<AppHandle<Wry>> = OnceLock::new();
-static SLOTS: Semaphore = Semaphore::const_new(MAX_CONCURRENT_READS);
-static NEXT_LABEL: AtomicU64 = AtomicU64::new(1);
-
-/// Give the reader the running app. Until this is called — in tests, or before
-/// setup — every read fails fast and callers keep the HTTP result.
-pub fn install(app: AppHandle<Wry>) {
-    let _ = APP.set(app);
+/// Reads pages in hidden windows of the running app's browser engine.
+///
+/// One per app: the composition root builds it once the app exists and hands
+/// it to the web service. A web service without one — in tests, or before
+/// setup — fails every browser read fast and keeps the HTTP result.
+pub struct BrowserReader {
+    app: AppHandle<Wry>,
+    /// Bounds the reader windows open at once.
+    slots: Semaphore,
+    /// Numbers the reader's windows: a label must be unique within its app.
+    next_label: AtomicU64,
 }
 
 /// Label prefix of every reader window.
@@ -97,114 +100,262 @@ struct Report {
     /// wants a person to click, which the reader does not do.
     #[serde(default)]
     blocked: bool,
+    /// Which part of the text this is, of `parts`. A report travels in a URL,
+    /// and a whole page's text can be longer than one URL may be, so it is
+    /// sent in parts and put back together here.
+    #[serde(default)]
+    part: usize,
+    #[serde(default = "one_part")]
+    parts: usize,
+    /// Which reading of the page the part belongs to. A page that replaces
+    /// its document mid-transfer starts a new reading, and parts of two
+    /// different texts must never be joined.
+    #[serde(default)]
+    snapshot: String,
 }
 
-/// Load `url` in a hidden browser window and return its text.
-///
-/// Fails when no app is installed, the URL is not a public web address, the
-/// page never gets past its check within `timeout`, or the window cannot be
-/// created. The caller decides what a failure means; nothing is cached here.
-pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage> {
-    let app = APP.get().ok_or_else(|| {
-        AppError::ServiceNotAvailable("no browser is available to read pages".to_string())
-    })?;
-    let target = Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("not a URL: {e}")))?;
-    if !navigation_allowed(&target) {
-        return Err(AppError::Security("not a public web address".to_string()));
+fn one_part() -> usize {
+    1
+}
+
+/// Characters in one part of a report, as the check script cuts them (UTF-16
+/// units there, so never more characters than this here).
+const PART_CHARS: usize = 100_000;
+
+/// The most parts a report may claim: 16 Mi characters of page text, about
+/// eight thousand printed pages. The page writes the part count, so it is
+/// checked before anything is kept; a page claiming more is refused, and the
+/// read says why, rather than the app trying to hold what it claims.
+const MAX_REPORT_PARTS: usize = (16 * 1024 * 1024usize).div_ceil(PART_CHARS);
+
+/// The parts of one report received so far. Parts may arrive more than once
+/// (the page sends them round until the window closes) and in any order.
+/// Storage grows with the parts that arrive, never with the count a part
+/// claims.
+#[derive(Default)]
+struct Assembly {
+    snapshot: String,
+    parts: usize,
+    received: std::collections::BTreeMap<usize, String>,
+    title: String,
+    blocked: bool,
+    /// The part count of a report refused as larger than the reader takes.
+    refused: Option<usize>,
+}
+
+impl Assembly {
+    /// Add `report`'s part; the whole report once every part is in.
+    fn add(&mut self, report: Report) -> Option<Report> {
+        let parts = report.parts.max(1);
+        if parts > MAX_REPORT_PARTS {
+            self.refused = Some(parts);
+            return None;
+        }
+        if report.part >= parts || report.text.chars().count() > PART_CHARS {
+            return None;
+        }
+        // A new reading of the page, or a different cut of it: start over.
+        if self.snapshot != report.snapshot || self.parts != parts {
+            *self = Self {
+                snapshot: report.snapshot.clone(),
+                parts,
+                ..Self::default()
+            };
+        }
+        self.title = report.title;
+        self.blocked = report.blocked;
+        self.received.entry(report.part).or_insert(report.text);
+        if self.received.len() < self.parts {
+            return None;
+        }
+        Some(self.take(false))
     }
 
-    let _slot = SLOTS.acquire().await.map_err(|_| {
-        AppError::ServiceNotAvailable("the page reader is shutting down".to_string())
-    })?;
-
-    let label = format!(
-        "{LABEL_PREFIX}{}",
-        NEXT_LABEL.fetch_add(1, Ordering::Relaxed)
-    );
-    let (sender, receiver) = oneshot::channel::<Report>();
-    let sender = Arc::new(Mutex::new(Some(sender)));
-
-    let reporter = Arc::clone(&sender);
-    let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(target))
-        .title("Lattice page reader")
-        .visible(false)
-        .focused(false)
-        .skip_taskbar(true)
-        .inner_size(1280.0, 900.0)
-        .incognito(true)
-        .on_navigation(move |next| {
-            if next.host_str() == Some(REPORT_HOST) {
-                debug!(chars = next.as_str().len(), "Page reader report arrived");
-                if let Some(report) = decode_report(next) {
-                    if let Some(sender) = reporter.lock().ok().and_then(|mut slot| slot.take()) {
-                        let _ = sender.send(report);
-                    }
-                }
-                return false;
-            }
-            let allowed = navigation_allowed(next);
-            debug!(url = %next, allowed, "Page reader navigation");
-            allowed
-        })
-        .on_page_load(|_, payload| {
-            debug!(url = %payload.url(), event = ?payload.event(), "Page reader load");
-        })
-        .on_download(|_, _| false)
-        .build()
-        .map_err(|e| AppError::InternalError(format!("could not open a browser window: {e}")))?;
-
-    // The check is driven from here, not from timers inside the page: a
-    // challenge page replaces its document mid-check, and anything injected
-    // once at load is thrown away with it.
-    let started = Instant::now();
-    let poll = async {
-        let mut receiver = receiver;
-        let mut ticker = tokio::time::interval(POLL_INTERVAL);
-        loop {
-            tokio::select! {
-                report = &mut receiver => return report,
-                _ = ticker.tick() => {
-                    let elapsed = started.elapsed();
-                    let script = check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT);
-                    if let Err(error) = window.eval(script) {
-                        debug!(%error, "Page reader could not run its check");
-                    }
-                }
-            }
-        }
-    };
-    let outcome = tokio::time::timeout(timeout, poll).await;
-    // Where the page is, from the browser rather than from the page. The
-    // report navigation was cancelled, so the window still shows the page
-    // that sent it; history.pushState can move within its origin only.
-    let landed = window.url().ok();
-    if let Err(error) = window.destroy() {
-        warn!(%error, label, "Page reader window could not be destroyed");
+    /// What has arrived when time runs out: the parts in order, each missing
+    /// one marked where it belongs. `None` when nothing has.
+    fn partial(&mut self) -> Option<Report> {
+        (!self.received.is_empty()).then(|| self.take(true))
     }
-    drop(sender);
 
-    let report = match outcome {
-        Ok(Ok(report)) => report,
-        Ok(Err(_)) => {
-            return Err(AppError::InternalError(
-                "the browser window closed before the page settled".to_string(),
-            ))
+    fn take(&mut self, mark_gaps: bool) -> Report {
+        let parts = self.parts;
+        let mut received = std::mem::take(&mut self.received);
+        let mut text = String::new();
+        for index in 0..parts {
+            match received.remove(&index) {
+                Some(part) => text.push_str(&part),
+                None if mark_gaps => text.push_str(&format!(
+                    "\n\n[Part {} of {parts} of this page's text did not arrive before the \
+                     reader's time ran out.]\n\n",
+                    index + 1
+                )),
+                None => {}
+            }
         }
-        Err(_) => {
-            return Err(AppError::Network(format!(
-                "the page did not get past its check within {}s",
-                timeout.as_secs()
-            )))
+        Report {
+            title: std::mem::take(&mut self.title),
+            text,
+            blocked: self.blocked,
+            part: 0,
+            parts: 1,
+            snapshot: std::mem::take(&mut self.snapshot),
         }
-    };
-    let page = page_from_report(report, landed)?;
-    info!(
-        url,
-        final_url = page.final_url.as_str(),
-        chars = page.text.len(),
-        "Page read through the browser"
-    );
-    Ok(page)
+    }
+}
+
+/// Why a read fails when the web service has no [`BrowserReader`].
+pub fn unavailable() -> AppError {
+    AppError::ServiceNotAvailable("no browser is available to read pages".to_string())
+}
+
+impl BrowserReader {
+    /// The reader for the running `app`.
+    pub fn new(app: AppHandle<Wry>) -> Self {
+        Self {
+            app,
+            slots: Semaphore::new(MAX_CONCURRENT_READS),
+            next_label: AtomicU64::new(1),
+        }
+    }
+
+    /// Load `url` in a hidden browser window and return its text.
+    ///
+    /// Fails when the URL is not a public web address, the page never gets past
+    /// its check within `timeout`, or the window cannot be created. The caller
+    /// decides what a failure means; nothing is cached here.
+    pub async fn read(&self, url: &str, timeout: Duration) -> Result<BrowserPage> {
+        let app = &self.app;
+        let target =
+            Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("not a URL: {e}")))?;
+        if !navigation_allowed(&target) {
+            return Err(AppError::Security("not a public web address".to_string()));
+        }
+
+        let _slot = self.slots.acquire().await.map_err(|_| {
+            AppError::ServiceNotAvailable("the page reader is shutting down".to_string())
+        })?;
+
+        let label = format!(
+            "{LABEL_PREFIX}{}",
+            self.next_label.fetch_add(1, Ordering::Relaxed)
+        );
+        let (sender, receiver) = oneshot::channel::<Report>();
+        let sender = Arc::new(Mutex::new(Some(sender)));
+
+        let reporter = Arc::clone(&sender);
+        let assembly = Arc::new(Mutex::new(Assembly::default()));
+        let collector = Arc::clone(&assembly);
+        // A part in, more to come: look again now rather than at the next
+        // tick, so a long page is not read at one part per poll.
+        let part_arrived = Arc::new(tokio::sync::Notify::new());
+        let arrival = Arc::clone(&part_arrived);
+        let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(target))
+            .title("Lattice page reader")
+            .visible(false)
+            .focused(false)
+            .skip_taskbar(true)
+            .inner_size(1280.0, 900.0)
+            .incognito(true)
+            .on_navigation(move |next| {
+                if next.host_str() == Some(REPORT_HOST) {
+                    debug!(chars = next.as_str().len(), "Page reader report arrived");
+                    let whole = decode_report(next).and_then(|part| {
+                        collector.lock().ok().and_then(|mut parts| parts.add(part))
+                    });
+                    match whole {
+                        Some(report) => {
+                            if let Some(sender) =
+                                reporter.lock().ok().and_then(|mut slot| slot.take())
+                            {
+                                let _ = sender.send(report);
+                            }
+                        }
+                        None => arrival.notify_one(),
+                    }
+                    return false;
+                }
+                let allowed = navigation_allowed(next);
+                debug!(url = %next, allowed, "Page reader navigation");
+                allowed
+            })
+            .on_page_load(|_, payload| {
+                debug!(url = %payload.url(), event = ?payload.event(), "Page reader load");
+            })
+            .on_download(|_, _| false)
+            .build()
+            .map_err(|e| {
+                AppError::InternalError(format!("could not open a browser window: {e}"))
+            })?;
+
+        // The check is driven from here, not from timers inside the page: a
+        // challenge page replaces its document mid-check, and anything injected
+        // once at load is thrown away with it.
+        let started = Instant::now();
+        let poll = async {
+            let mut receiver = receiver;
+            let mut ticker = tokio::time::interval(POLL_INTERVAL);
+            loop {
+                tokio::select! {
+                    report = &mut receiver => return report,
+                    _ = ticker.tick() => {}
+                    () = part_arrived.notified() => {}
+                }
+                let elapsed = started.elapsed();
+                let script = check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT);
+                if let Err(error) = window.eval(script) {
+                    debug!(%error, "Page reader could not run its check");
+                }
+            }
+        };
+        let outcome = tokio::time::timeout(timeout, poll).await;
+        // Where the page is, from the browser rather than from the page. The
+        // report navigation was cancelled, so the window still shows the page
+        // that sent it; history.pushState can move within its origin only.
+        let landed = window.url().ok();
+        if let Err(error) = window.destroy() {
+            warn!(%error, label, "Page reader window could not be destroyed");
+        }
+        drop(sender);
+
+        let report = match outcome {
+            Ok(Ok(report)) => report,
+            Ok(Err(_)) => {
+                return Err(AppError::InternalError(
+                    "the browser window closed before the page settled".to_string(),
+                ))
+            }
+            Err(_) => {
+                let mut assembly = assembly
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if let Some(parts) = assembly.refused {
+                    return Err(AppError::Network(format!(
+                        "the page reported its text in {parts} parts, more than the \
+                         {MAX_REPORT_PARTS} the reader takes in"
+                    )));
+                }
+                // Time ran out partway through a long page: what arrived is
+                // kept, with each missing part marked, rather than thrown away.
+                match assembly.partial() {
+                    Some(report) => report,
+                    None => {
+                        return Err(AppError::Network(format!(
+                            "the page did not get past its check within {}s",
+                            timeout.as_secs()
+                        )))
+                    }
+                }
+            }
+        };
+        let page = page_from_report(report, landed)?;
+        info!(
+            url,
+            final_url = page.final_url.as_str(),
+            chars = page.text.len(),
+            "Page read through the browser"
+        );
+        Ok(page)
+    }
 }
 
 /// The page read, located at `landed`, the webview's own URL. No page is
@@ -289,18 +440,41 @@ fn check_script(give_up_on_check: bool, settle_now: bool) -> String {
             if give_up_on_check { "true" } else { "false" },
         )
         .replace("__SETTLE_NOW__", if settle_now { "true" } else { "false" })
+        .replace("__PART__", &PART_CHARS.to_string())
 }
 
 const CHECK_SCRIPT: &str = r#"
 (() => {
   if (!/^https?:$/.test(location.protocol) || document.readyState === 'loading') return;
-  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, sent: false };
-  if (state.sent) return;
+  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, parts: null, next: 0, id: '' };
 
-  const report = (blocked, text) => {
-    state.sent = true;
-    const payload = JSON.stringify({ title: document.title || '', text, blocked });
+  // A report travels in a URL, so a long page goes in parts, one per look,
+  // round and round until the window closes: a part the app missed comes by
+  // again. Each part is whole characters; a cut between the halves of a
+  // surrogate pair could not be encoded.
+  const PART = __PART__;
+  const send = () => {
+    const index = state.next;
+    state.next = (index + 1) % state.parts.length;
+    const payload = JSON.stringify({
+      title: state.title, blocked: state.blocked, part: index, parts: state.parts.length, text: state.parts[index],
+      snapshot: state.id
+    });
     location.href = 'https://lattice-page-reader.invalid/#' + encodeURIComponent(payload);
+  };
+  if (state.parts) { send(); return; }
+  const report = (blocked, text) => {
+    const parts = [];
+    let start = 0;
+    do {
+      let end = Math.min(start + PART, text.length);
+      if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
+      parts.push(text.slice(start, end));
+      start = end;
+    } while (start < text.length);
+    state.parts = parts; state.title = document.title || ''; state.blocked = blocked; state.next = 0;
+    state.id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    send();
   };
 
   const challenged =
@@ -328,129 +502,9 @@ const CHECK_SCRIPT: &str = r#"
   const article = blocks(Array.from(document.querySelectorAll('article')));
   const page = blocks([document]);
   const parts = article.length > 0 && size(article) * 3 >= size(page) ? article : page;
-  report(false, parts.join('\n\n').slice(0, 60000));
+  report(false, parts.join('\n\n'));
 })();
 "#;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn allowed(url: &str) -> bool {
-        navigation_allowed(&Url::parse(url).unwrap())
-    }
-
-    #[test]
-    fn only_the_public_web_is_reachable() {
-        assert!(allowed(
-            "https://www.thespruce.com/best-houseplants-for-sun-4147670"
-        ));
-        assert!(allowed("http://example.com/"));
-        assert!(allowed("https://93.184.216.34/"));
-        assert!(allowed("about:blank"));
-        assert!(allowed("about:srcdoc"));
-
-        for blocked in [
-            "file:///etc/passwd",
-            "ftp://example.com/",
-            "tauri://localhost/",
-            "javascript:alert(1)",
-            "http://localhost:1420/",
-            "http://app.localhost/",
-            "http://127.0.0.1:8080/",
-            "http://10.0.0.1/",
-            "http://192.168.1.1/",
-            "http://169.254.169.254/latest/meta-data/",
-            "http://[::1]/",
-            "http://[fd00::1]/",
-            "http://[::ffff:127.0.0.1]/",
-            "http://100.64.0.1/",
-            "http://0.0.0.0/",
-            "http://printer.local/",
-            "http://router/",
-        ] {
-            assert!(!allowed(blocked), "{blocked} should be refused");
-        }
-    }
-
-    fn report(text: &str) -> Report {
-        Report {
-            title: "Title".to_string(),
-            text: text.to_string(),
-            blocked: false,
-        }
-    }
-
-    #[test]
-    fn a_page_is_located_by_the_browser_not_by_its_report() {
-        // The page's script claims to be Wikipedia; the webview says otherwise.
-        let payload = serde_json::json!({
-            "url": "https://en.wikipedia.org/wiki/Rust",
-            "title": "Rust",
-            "text": "forged"
-        })
-        .to_string();
-        let posted = Url::parse(&format!(
-            "https://{REPORT_HOST}/#{}",
-            urlencoding::encode(&payload)
-        ))
-        .unwrap();
-        let forged = decode_report(&posted).expect("decodes");
-        let landed = Url::parse("https://attacker.example/page").unwrap();
-
-        let page = page_from_report(forged, Some(landed)).unwrap();
-        assert_eq!(page.final_url, "https://attacker.example/page");
-        assert_eq!(page.text, "forged");
-    }
-
-    #[test]
-    fn a_page_the_browser_cannot_place_is_not_returned() {
-        assert!(page_from_report(report("text"), None).is_err());
-        for landed in ["about:blank", "data:text/html,hi", "http://192.168.1.1/"] {
-            let landed = Url::parse(landed).unwrap();
-            assert!(page_from_report(report("text"), Some(landed)).is_err());
-        }
-        let blocked = Report {
-            blocked: true,
-            ..report("text")
-        };
-        let landed = Url::parse("https://example.com/").unwrap();
-        assert!(page_from_report(blocked, Some(landed)).is_err());
-    }
-
-    #[test]
-    fn a_report_is_decoded_from_the_fragment() {
-        let payload = serde_json::json!({
-            "title": "A — page",
-            "text": "First paragraph.\n\nSecond, with #hash & ünïcode."
-        })
-        .to_string();
-        let url = Url::parse(&format!(
-            "https://{REPORT_HOST}/#{}",
-            urlencoding::encode(&payload)
-        ))
-        .unwrap();
-        let report = decode_report(&url).expect("decodes");
-        assert_eq!(report.title, "A — page");
-        assert!(report.text.contains("ünïcode"));
-    }
-
-    #[test]
-    fn the_check_script_carries_its_deadlines_and_no_placeholders() {
-        let early = check_script(false, false);
-        assert!(early.contains("if (false) report(true, '')"));
-        let late = check_script(true, true);
-        assert!(late.contains("if (true) report(true, '')"));
-        assert!(!late.contains("__"));
-        assert!(late.contains(REPORT_HOST));
-    }
-
-    #[tokio::test]
-    async fn without_an_app_a_read_fails_at_once() {
-        let error = read("https://example.com/", Duration::from_secs(1))
-            .await
-            .unwrap_err();
-        assert!(matches!(error, AppError::ServiceNotAvailable(_)));
-        assert!(error.to_string().contains("no browser"));
-    }
-}
+mod tests;

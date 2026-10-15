@@ -1,8 +1,8 @@
 //! Mock search enrichment service for testing.
 
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::shared::error::Result;
 use std::sync::{Arc, RwLock};
 
 /// Mock search enrichment service for testing

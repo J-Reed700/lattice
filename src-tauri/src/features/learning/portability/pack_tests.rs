@@ -1,22 +1,119 @@
 use crate::features::learning::{
-    pack_repository::LearningPackRepository,
+    pack_repository::{DestinationPicker, LearningPackRepository},
     portability_dto::{
-        ApplyLearningPackImportRequestDto, CancelLearningPackImportPreviewRequestDto,
-        CreateLearningSourceSelectorRequestDto, DeleteLearningSourceRequestDto,
-        ExportLearningPackRequestDto, LearningPackConflictPolicy,
-        PreviewLearningPackImportRequestDto,
+        ApplyLearningPackImportRequestDto, CreateLearningSourceSelectorRequestDto,
+        DeleteLearningSourceRequestDto, ExportLearningPackRequestDto, LearningPackConflictPolicy,
+        LearningPackExportDto, LearningPackExportOptionsDto, PreviewLearningPackImportRequestDto,
+        SaveLearningPackAsResultDto,
     },
     recall_repository::LearningRecallRepository,
     repository::LearningRepository,
     source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     tests::{fixture, pool},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
+mod destinations;
+mod evidence_entries;
+mod export_all;
+mod r#move;
 mod provenance;
+mod replace;
 
-fn id() -> String {
+pub(super) fn id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// A repository whose app data directory is `dir`, with packs in its
+/// `learning-packs` folder, as the plugin builds it.
+pub(super) fn packs(pool: &sqlx::SqlitePool, dir: &std::path::Path) -> LearningPackRepository {
+    LearningPackRepository::new(pool.clone(), dir.join("learning-packs"), dir.to_path_buf())
+}
+
+/// The move defaults: evidence and practical work, no full source bodies.
+pub(super) fn move_request(program_id: &str) -> ExportLearningPackRequestDto {
+    ExportLearningPackRequestDto {
+        operation_id: id(),
+        program_id: program_id.into(),
+        options: LearningPackExportOptionsDto {
+            include_evidence: true,
+            include_practical_artifacts: true,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        },
+    }
+}
+
+/// Answers every dialog with `0`: a path, or `None` for a dismissed dialog.
+pub(super) struct Picks(pub(super) Option<std::path::PathBuf>);
+
+#[async_trait::async_trait]
+impl DestinationPicker for Picks {
+    async fn pick_file(&self, _suggested_file_name: &str) -> Result<Option<std::path::PathBuf>> {
+        Ok(self.0.clone())
+    }
+    async fn pick_folder(&self) -> Result<Option<std::path::PathBuf>> {
+        Ok(self.0.clone())
+    }
+}
+
+pub(super) fn picks(path: &std::path::Path) -> Picks {
+    Picks(Some(path.to_path_buf()))
+}
+
+/// The export a save-as wrote; a dismissed dialog fails the test.
+pub(super) fn saved(result: SaveLearningPackAsResultDto) -> Result<LearningPackExportDto> {
+    match result {
+        SaveLearningPackAsResultDto::Saved { export } => Ok(*export),
+        SaveLearningPackAsResultDto::Cancelled => {
+            Err(lattice_core::shared::error::AppError::InvalidState(
+                "the save dialog was dismissed".into(),
+            ))
+        }
+    }
+}
+
+pub(super) fn preview_request(
+    path: &str,
+    policy: LearningPackConflictPolicy,
+) -> PreviewLearningPackImportRequestDto {
+    PreviewLearningPackImportRequestDto {
+        operation_id: id(),
+        preview_id: id(),
+        source_path: path.into(),
+        conflict_policy: policy,
+    }
+}
+
+/// Re-encode a decoded pack after `change` edits its entries or stamp, so a
+/// test can build a pack the exporter would never write.
+pub(super) fn repack(
+    pack: &crate::features::learning::pack::DecodedLearningPack,
+    change: impl FnOnce(&mut crate::features::learning::pack::LearningPackInput),
+) -> Result<Vec<u8>> {
+    use crate::features::learning::pack::{
+        encode_learning_pack, LearningPackEntry, LearningPackInput,
+    };
+    let manifest = &pack.manifest;
+    let mut input = LearningPackInput {
+        schema_version: manifest.schema_version,
+        pack_id: id(),
+        title: manifest.title.clone(),
+        created_at: manifest.created_at,
+        application_version: manifest.application_version.clone(),
+        privacy: manifest.privacy.clone(),
+        entries: manifest
+            .entries
+            .iter()
+            .map(|entry| LearningPackEntry {
+                path: entry.path.clone(),
+                kind: entry.kind.clone(),
+                bytes: pack.entries[&entry.path].clone(),
+            })
+            .collect(),
+    };
+    change(&mut input);
+    encode_learning_pack(input)
 }
 
 fn captured(text: &str) -> CapturedLearningSource {
@@ -31,28 +128,21 @@ fn captured(text: &str) -> CapturedLearningSource {
     }
 }
 
-async fn test_container() -> Result<crate::interfaces::di::Container> {
-    crate::tests::common::setup_test_container().await
-}
-
 async fn export_copy(
     repository: &LearningPackRepository,
-    container: &crate::interfaces::di::Container,
     program_id: &str,
 ) -> Result<(String, String)> {
     let exported = repository
-        .export(
-            container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program_id.into(),
-                file_name: format!("roundtrip-{}.lattice-learning", id()),
+        .export(&ExportLearningPackRequestDto {
+            operation_id: id(),
+            program_id: program_id.into(),
+            options: LearningPackExportOptionsDto {
                 include_evidence: true,
                 include_practical_artifacts: true,
                 include_source_bodies: true,
                 source_body_redistribution_confirmed: true,
             },
-        )
+        })
         .await?;
     let path = exported
         .exports
@@ -71,14 +161,11 @@ async fn export_copy(
     let preview_row = preview.import_previews.first().expect("copy preview");
     let target_program_id = preview_row.incoming_program_id.clone();
     repository
-        .apply(
-            container,
-            &ApplyLearningPackImportRequestDto {
-                operation_id: id(),
-                preview_id: preview_row.id.clone(),
-                expected_root_sha256: preview_row.manifest.root_sha256.clone(),
-            },
-        )
+        .apply(&ApplyLearningPackImportRequestDto {
+            operation_id: id(),
+            preview_id: preview_row.id.clone(),
+            expected_root_sha256: preview_row.manifest.root_sha256.clone(),
+        })
         .await?;
     Ok((target_program_id, preview_row.id.clone()))
 }
@@ -106,15 +193,17 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
     let first_version_id = id();
     sources
         .add(
-            &id(),
-            &source_id,
-            &first_version_id,
-            &program.summary.id,
-            crate::features::learning::dto::LearningSourceKind::Web,
-            "add_web",
-            "https://example.org/portable-source",
-            Some("https://example.org/portable-source"),
-            crate::features::learning::dto::LearningSourcePolicy::Manual,
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &first_version_id,
+                program_id: &program.summary.id,
+                kind: crate::features::learning::dto::LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/portable-source",
+                requested_url: Some("https://example.org/portable-source"),
+                freshness: crate::features::learning::dto::LearningSourcePolicy::Manual,
+            },
             captured("First immutable passage. A quoted rule appears here."),
             "source-add-payload".into(),
         )
@@ -156,9 +245,13 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         })
         .await?;
 
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let (copy_id, _) = export_copy(&packs, &container, &program.summary.id).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
+    let (copy_id, _) = export_copy(&packs, &program.summary.id).await?;
 
     let imported_lesson: (String, Option<String>) = sqlx::query_as(
         "SELECT curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? AND title=?",
@@ -481,9 +574,13 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .await
         .expect("practical run check");
 
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let (copy_id, _) = export_copy(&packs, &container, program_id).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
+    let (copy_id, _) = export_copy(&packs, program_id).await?;
 
     let imported_form: String =
         sqlx::query_scalar("SELECT f.id FROM learning_assessment_forms f WHERE f.program_id=?")
@@ -639,220 +736,5 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .await?,
         submission_operation_id
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Result<()> {
-    let pool = pool().await?;
-    let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
-    let lesson_id = &program.modules[0].lessons[0].id;
-    let activity_id = id();
-    sqlx::query("INSERT INTO learning_practical_activities(id,program_id,lesson_id,predecessor_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,runtime_profile_id,runtime_engine,runtime_image_id,runtime_command_json,runtime_limits_json,generator_model,revision,created_at,updated_at) VALUES(?,?,?,NULL,'project','Protected project','A project with a private evaluator','ready','practice','[]','[]','[]','[]','none',NULL,NULL,NULL,NULL,NULL,'test-model',0,1,1)")
-        .bind(&activity_id)
-        .bind(&program.summary.id)
-        .bind(lesson_id)
-        .execute(&pool)
-        .await
-        .expect("practical activity inserts");
-    sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,0,'checks/test.sh','check','assertion','private-check-hash',0)")
-        .bind(&activity_id)
-        .execute(&pool)
-        .await
-        .expect("hidden practical evaluator inserts");
-
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let exported = packs
-        .export(
-            &container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program.summary.id.clone(),
-                file_name: format!("preflight-{}.lattice-learning", id()),
-                include_evidence: false,
-                include_practical_artifacts: false,
-                include_source_bodies: false,
-                source_body_redistribution_confirmed: false,
-            },
-        )
-        .await?;
-    let source_path = exported.exports[0].destination_path.clone();
-    let source_program_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_programs")
-        .fetch_one(&pool)
-        .await?;
-    let source_hidden_file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')")
-        .bind(&program.summary.id)
-        .fetch_one(&pool)
-        .await?;
-
-    let blocked = packs
-        .preview(&PreviewLearningPackImportRequestDto {
-            operation_id: id(),
-            preview_id: id(),
-            source_path: source_path.clone(),
-            conflict_policy: LearningPackConflictPolicy::ReplaceAfterBackup,
-        })
-        .await?;
-    let blocked_preview = blocked.import_previews.first().expect("replace preview");
-    assert!(!blocked_preview.can_apply);
-    assert!(blocked_preview
-        .conflicts
-        .iter()
-        .any(|conflict| conflict.resolution == "blocked"
-            && conflict
-                .existing_title
-                .contains("hidden practical evaluators")));
-    let title_after_block: String =
-        sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
-            .bind(&program.summary.id)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(title_after_block, program.summary.title);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs")
-            .fetch_one(&pool)
-            .await?,
-        source_program_count
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')")
-        .bind(&program.summary.id)
-        .fetch_one(&pool)
-        .await?,
-        source_hidden_file_count
-    );
-
-    let cancelled = packs
-        .preview(&PreviewLearningPackImportRequestDto {
-            operation_id: id(),
-            preview_id: id(),
-            source_path,
-            conflict_policy: LearningPackConflictPolicy::CreateCopy,
-        })
-        .await?;
-    let pending = cancelled.import_previews.first().expect("copy preview");
-    let pending_id = pending.id.clone();
-    let cancelled = packs
-        .cancel(&CancelLearningPackImportPreviewRequestDto {
-            operation_id: id(),
-            preview_id: pending_id.clone(),
-        })
-        .await?;
-    assert_eq!(
-        cancelled
-            .import_previews
-            .iter()
-            .find(|preview| preview.id == pending_id)
-            .map(|preview| preview.status),
-        Some(crate::features::learning::portability_dto::LearningPackPreviewStatus::Cancelled)
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs")
-            .fetch_one(&pool)
-            .await?,
-        source_program_count
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')")
-        .bind(&program.summary.id)
-        .fetch_one(&pool)
-        .await?,
-        source_hidden_file_count
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
-    let pool = pool().await?;
-    let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let exported = packs
-        .export(
-            &container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program.summary.id.clone(),
-                file_name: format!("replace-source-{}.lattice-learning", id()),
-                include_evidence: false,
-                include_practical_artifacts: false,
-                include_source_bodies: false,
-                source_body_redistribution_confirmed: false,
-            },
-        )
-        .await?;
-    let preview = packs
-        .preview(&PreviewLearningPackImportRequestDto {
-            operation_id: id(),
-            preview_id: id(),
-            source_path: exported.exports[0].destination_path.clone(),
-            conflict_policy: LearningPackConflictPolicy::ReplaceAfterBackup,
-        })
-        .await?;
-    let preview = preview.import_previews.first().expect("replace preview");
-    assert!(preview.can_apply);
-    let preview_id = preview.id.clone();
-    let applied = packs
-        .apply(
-            &container,
-            &ApplyLearningPackImportRequestDto {
-                operation_id: id(),
-                preview_id: preview_id.clone(),
-                expected_root_sha256: preview.manifest.root_sha256.clone(),
-            },
-        )
-        .await?;
-    let import = applied
-        .imports
-        .iter()
-        .find(|item| item.preview_id == preview_id)
-        .expect("replacement import result");
-    let backup_id = import
-        .backup_id
-        .as_ref()
-        .expect("replacement returns a recovery backup ID");
-    assert!(applied.exports.iter().any(|export| {
-        export.id.as_str() == backup_id.as_str()
-            && export
-                .destination_path
-                .ends_with(&format!("backup-{backup_id}.lattice-learning"))
-    }));
-    let backup_path = container
-        .core
-        .data_dir()
-        .join("learning-packs")
-        .join(format!("backup-{backup_id}.lattice-learning"));
-    let backup_bytes = tokio::fs::read(&backup_path)
-        .await
-        .expect("reported recovery backup is present");
-    let decoded = crate::features::learning::pack::decode_learning_pack(&backup_bytes)
-        .expect("reported recovery backup is a valid learning pack");
-    assert_eq!(decoded.manifest.title, program.summary.title);
-    let backed_up_program: serde_json::Value = serde_json::from_slice(
-        decoded
-            .entries
-            .get("program/program.json")
-            .expect("backup contains its program snapshot"),
-    )
-    .expect("backup program snapshot parses");
-    assert_eq!(
-        backed_up_program["summary"]["id"],
-        program.summary.id.as_str()
-    );
-    let restored_title: String =
-        sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
-            .bind(&program.summary.id)
-            .fetch_one(&pool)
-            .await
-            .expect("replacement program remains available");
-    assert_eq!(restored_title, program.summary.title);
     Ok(())
 }
