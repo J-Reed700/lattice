@@ -3,6 +3,7 @@
 //! review and repair, acceptance and first-lesson preparation, using the
 //! configured model and the real web service. Nothing is mocked or replayed.
 use super::*;
+use crate::features::learning::patient_model::PatientModel;
 use crate::features::learning::{
     curriculum::LearningGenerationJobKind,
     dto::*,
@@ -113,10 +114,12 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
     let mut program = progress
         .run(async {
             progress.model(model.model_name());
+            // As the app's command does: a model outage is waited out.
+            let patient = PatientModel::new(model.as_ref(), progress.as_ref());
             service::generate_with_references_and_progress(
                 &repo,
                 &drafts,
-                model.as_ref(),
+                &patient,
                 request.clone(),
                 vec![],
                 &[],
@@ -143,10 +146,11 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
         };
         program = progress
             .run(async {
+                let patient = PatientModel::new(model.as_ref(), progress.as_ref());
                 crate::features::learning::outline_draft::repair_saved(
                     &repo,
                     &drafts,
-                    model.as_ref(),
+                    &patient,
                     &repair,
                     progress,
                     Some(&web),
