@@ -1,4 +1,5 @@
-//! Supplement pinned evidence when a lesson's claim checks expose gaps.
+//! Supplement pinned evidence when a lesson's claim checks expose gaps, or
+//! when no saved reference covers a lesson topic before it is written.
 use super::*;
 use crate::application::contracts::web::WebSearchResult;
 #[cfg(test)]
@@ -11,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 #[path = "research_tests.rs"]
-mod tests;
+pub(in crate::features::learning) mod tests;
 
 #[derive(Clone)]
 struct Context {
@@ -138,9 +139,68 @@ pub(super) async fn expand<'a>(
     if gaps.is_empty() {
         return Ok(None);
     }
+    let Some(expanded) = research(llm, references, &context, &gaps, Gaps::Claims).await? else {
+        return Ok(None);
+    };
+    // Persist the claim-to-source scope before returning. If the app exits
+    // between research and rechecking, recovery still reopens only the failed
+    // comparisons that requested these automatically captured references.
+    evidence_selection::record_research_scope(&expanded, findings, checks).await?;
+    Ok(Some(expanded))
+}
+
+/// Before a lesson is written, search for references on its topics that no
+/// saved reference covers. Without web research the topics simply stay
+/// uncovered, and an unusable planning or selection answer leaves them so
+/// too: this step adds evidence, it never stops the lesson.
+pub(in crate::features::learning) async fn research_topics<'a>(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'a>,
+    topics: &[String],
+) -> Result<Option<ReferenceCollection<'a>>> {
+    let Ok(context) = CURRENT.try_with(Clone::clone) else {
+        return Ok(None);
+    };
+    let gaps: Vec<_> = topics
+        .iter()
+        .map(|topic| json!({"topic":topic,"missingEvidence":"No saved reference covers this lesson topic"}))
+        .collect();
+    if gaps.is_empty() {
+        return Ok(None);
+    }
+    match research(llm, references, &context, &gaps, Gaps::Topics).await {
+        Err(error @ (AppError::InvalidInput(_) | AppError::Other(_))) => {
+            tracing::warn!(%error, topics = gaps.len(), "Lesson topic research gave no usable answer; the topics stay uncovered");
+            Ok(None)
+        }
+        result => result,
+    }
+}
+
+/// What a research round is asked to fill.
+#[derive(Clone, Copy, PartialEq)]
+enum Gaps {
+    /// Claims the evidence checks could not support.
+    Claims,
+    /// Lesson topics no saved reference covers, before writing.
+    Topics,
+}
+
+/// Plan searches for `gaps`, choose and capture credible results, save them
+/// to the program, and reload the collection. None when nothing was saved.
+async fn research<'a>(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'a>,
+    context: &Context,
+    gaps: &[Value],
+    kind: Gaps,
+) -> Result<Option<ReferenceCollection<'a>>> {
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Research,
-        "Finding authoritative references for unresolved claims",
+        match kind {
+            Gaps::Claims => "Finding authoritative references for unresolved claims",
+            Gaps::Topics => "Finding references for lesson topics no saved reference covers",
+        },
     );
     let search_key = format!(
         "research-v1:{}",
@@ -170,11 +230,15 @@ pub(super) async fn expand<'a>(
     let queries = web_research::plan_queries(
         llm,
         &context.topic,
-        &gaps,
+        gaps,
         references.catalog(llm),
         &already_searched,
     )
     .await?;
+    // Topics nobody can find searches for stay uncovered and say so.
+    if queries.is_empty() && kind == Gaps::Topics {
+        return Ok(None);
+    }
     if queries.is_empty() {
         return Err(AppError::Other(
             "The reference search plan was malformed. The lesson remains unpublished.".into(),
@@ -215,7 +279,7 @@ pub(super) async fn expand<'a>(
             .into_iter()
             .filter(|result| !urls.contains(&result.url))
             .collect();
-        let selected = select_references(llm, &context.topic, &query, &gaps, candidates).await?;
+        let selected = select_references(llm, &context.topic, &query, gaps, candidates).await?;
         for result in selected {
             if !urls.insert(result.url.clone()) {
                 continue;
@@ -285,12 +349,8 @@ pub(super) async fn expand<'a>(
     crate::features::learning::lesson_progress::stage(format!(
         "Indexing {added} additional references; checking which saved comparisons can be reused"
     ));
-    let expanded = references
+    references
         .reload(&context.pool, &context.program_id, &sources)
-        .await?;
-    // Persist the claim-to-source scope before returning. If the app exits
-    // between research and rechecking, recovery still reopens only the failed
-    // comparisons that requested these automatically captured references.
-    evidence_selection::record_research_scope(&expanded, findings, checks).await?;
-    Ok(Some(expanded))
+        .await
+        .map(Some)
 }

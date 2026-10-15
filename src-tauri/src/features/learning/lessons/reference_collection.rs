@@ -14,6 +14,12 @@ use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
 const CHUNK_CHARS: usize = 1200;
+/// How far `retrieve` widens a ranked chunk on each side, toward paragraph
+/// edges.
+const WIDEN_BYTES: usize = 300;
+/// About the longest passage `retrieve` returns: one chunk widened on both
+/// sides. Callers size retrieval to a token budget with it.
+pub(in crate::features::learning) const PASSAGE_CHARS: usize = CHUNK_CHARS + 2 * WIDEN_BYTES;
 const STEP_CHARS: usize = 900;
 /// Reciprocal-rank constant for merging library and keyword rankings.
 const RANK_K: usize = 60;
@@ -279,11 +285,11 @@ impl<'a> ReferenceCollection<'a> {
                 .ok_or_else(|| invalid("Reference index contains an unknown source."))?;
             // Expand to adjacent paragraph boundaries where practical. Evidence
             // is always an exact substring, including significant whitespace.
-            let mut start = chunk.start.saturating_sub(300);
+            let mut start = chunk.start.saturating_sub(WIDEN_BYTES);
             while !source.excerpt.is_char_boundary(start) {
                 start += 1;
             }
-            let mut end = (chunk.end + 300).min(source.excerpt.len());
+            let mut end = (chunk.end + WIDEN_BYTES).min(source.excerpt.len());
             while !source.excerpt.is_char_boundary(end) {
                 end -= 1;
             }
@@ -467,28 +473,6 @@ impl<'a> ReferenceCollection<'a> {
         serde_json::json!({"totalSources":self.sources.len(),
             "omittedFromThisPrompt":self.sources.len()-entries.len(),"sources":entries,
             "scope":"A partial catalog for orientation. Retrieval searches all saved sources."})
-    }
-
-    pub async fn author_sources(&self, query: &str) -> Result<Vec<LearningSourceDto>> {
-        let passages = self.retrieve(query, 12).await?;
-        let mut seen = HashSet::new();
-        let mut result = Vec::new();
-        for passage in &passages {
-            if !seen.insert(&passage.source_id) {
-                continue;
-            }
-            if let Some(source) = self.sources.iter().find(|s| s.id == passage.source_id) {
-                let mut source = source.clone();
-                source.excerpt = passages
-                    .iter()
-                    .filter(|p| p.source_id == source.id)
-                    .map(|p| p.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                result.push(source);
-            }
-        }
-        Ok(result)
     }
 }
 
