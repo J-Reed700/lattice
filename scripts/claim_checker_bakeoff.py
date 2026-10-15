@@ -152,6 +152,7 @@ def main(argv=None):
     parser.add_argument('--device', default='cpu',
                         help='cpu (default; what a Candle port would run on) or mps')
     parser.add_argument('--threads', type=int, default=4)
+    parser.add_argument('--run-date', default=RUN_DATE, help='prefix of the output file names')
     parser.add_argument('--limit', type=int, default=None, help='score only the first N pairs (smoke test)')
     args = parser.parse_args(argv)
 
@@ -171,7 +172,7 @@ def main(argv=None):
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f'{RUN_DATE}-{args.checker}.jsonl'
+    out_path = out_dir / f'{args.run_date}-{args.checker}.jsonl'
     latencies = []
     with out_path.open('w', encoding='utf-8') as out:
         for position, pair in enumerate(pairs, start=1):
@@ -180,10 +181,10 @@ def main(argv=None):
             latency_ms = (time.perf_counter() - started) * 1000
             latencies.append(latency_ms)
             out.write(json.dumps({
-                'id': pair['id'], 'checker': args.checker, 'label': pair['label'],
+                'id': pair['id'], 'checker': args.checker, 'label': pair.get('label'),
                 'difficulty': pair.get('difficulty', []), 'verdict': verdict,
                 'score_supported': score, 'latency_ms': latency_ms}) + '\n')
-            print(f"[{position}/{len(pairs)}] {pair['id']} gold={pair['label']} "
+            print(f"[{position}/{len(pairs)}] {pair['id']} gold={pair.get('label')} "
                   f"verdict={verdict} p={score:.3f} {latency_ms:.0f} ms", file=sys.stderr)
 
     meta = {
@@ -195,7 +196,7 @@ def main(argv=None):
         'torch': torch.__version__, 'transformers': transformers.__version__,
         'python': platform.python_version(), 'machine': platform.machine(), **notes,
     }
-    (out_dir / f'{RUN_DATE}-{args.checker}.meta.json').write_text(json.dumps(meta, indent=2) + '\n')
+    (out_dir / f'{args.run_date}-{args.checker}.meta.json').write_text(json.dumps(meta, indent=2) + '\n')
     print(json.dumps(meta, indent=2), file=sys.stderr)
 
 

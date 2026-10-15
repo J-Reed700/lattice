@@ -2,7 +2,7 @@ import unittest
 
 from claim_checker_bakeoff import lettuce_support
 from claim_checker_bakeoff_score import (
-    best_threshold, binary_metrics, score_checker, validate_dataset)
+    best_threshold, binary_metrics, both_approve, score_checker, validate_dataset)
 
 
 def pair(pair_id, label, tags=('paraphrase',), passage='The pump is on shelf R-14.'):
@@ -101,6 +101,28 @@ class ScoringTests(unittest.TestCase):
         metrics = binary_metrics([True, True, True, False], [True, True, True, True])
         self.assertEqual(metrics['accuracy'], 0.75)
         self.assertEqual(metrics['balanced_accuracy'], 0.5)
+
+    def test_a_gate_makes_two_kinds_of_error(self):
+        metrics = binary_metrics([True, True, False, False], [True, False, True, False])
+        self.assertEqual((metrics['false_approvals'], metrics['false_approval_rate']), (1, 0.5))
+        self.assertEqual((metrics['false_blocks'], metrics['false_block_rate']), (1, 0.5))
+
+    def test_errors_are_reported_per_subject_when_pairs_name_one(self):
+        pairs = validate_dataset([{**pair('a', 'supported'), 'subject': 'music'},
+                                  {**pair('b', 'unsupported'), 'subject': 'music'},
+                                  {**pair('c', 'supported'), 'subject': 'sql'}])
+        result = score_checker(pairs, [{'id': 'a', 'verdict': 'supported'},
+                                       {'id': 'b', 'verdict': 'supported'},
+                                       {'id': 'c', 'verdict': 'unsupported'}])
+        self.assertEqual(result['by_subject']['music']['false_approvals'], 1)
+        self.assertEqual(result['by_subject']['sql']['false_blocks'], 1)
+        self.assertNotIn('by_origin', result)
+
+    def test_an_and_gate_passes_only_what_both_checkers_support(self):
+        first = [{'id': 'a', 'verdict': 'supported'}, {'id': 'b', 'verdict': 'supported'}]
+        second = [{'id': 'a', 'verdict': 'supported'}, {'id': 'b', 'verdict': 'not_supported'}]
+        rows = both_approve('x AND y', first, second)
+        self.assertEqual([row['verdict'] for row in rows], ['supported', 'not_supported'])
 
 
 class LettuceAggregationTests(unittest.TestCase):

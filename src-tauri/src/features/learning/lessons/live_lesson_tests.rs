@@ -15,6 +15,8 @@ use crate::features::llm::llama_cpp::LlamaCppLlm;
 mod small;
 #[path = "live_course_e2e.rs"]
 mod course_e2e;
+#[path = "live_claim_pairs_eval.rs"]
+mod claim_pairs;
 
 struct ObservedModel {
     inner: LlamaCppLlm,
