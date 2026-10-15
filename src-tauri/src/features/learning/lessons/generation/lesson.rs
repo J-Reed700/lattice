@@ -7,16 +7,17 @@ use super::{
     validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
     MAX_BODY, MAX_EXPLANATION, MAX_QUESTION,
 };
-use crate::application::ports::LLMPort;
 use crate::features::learning::dto::{
     LearningAnswerKey, LearningAssessmentKind, LearningBlockDto, LearningBlockKind,
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningQuestionDto,
     PreparedLearningLesson,
 };
+use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -135,17 +136,20 @@ fn lesson_prompt(
 /// assessment kind; correct indexes and explanations remain internal keys.
 pub async fn prepare_lesson(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
 ) -> Result<PreparedLearningLesson> {
     let references = crate::features::learning::reference_collection::ReferenceCollection::lexical(
         &program.sources,
     )?;
-    prepare_lesson_with_references(llm, program, lesson, &references).await
+    prepare_lesson_with_references(llm, runtimes, program, lesson, &references).await
 }
 
+/// `runtimes` runs the lesson's worked examples while it is verified.
 pub async fn prepare_lesson_with_references(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
     references: &crate::features::learning::reference_collection::ReferenceCollection<'_>,
@@ -325,6 +329,7 @@ pub async fn prepare_lesson_with_references(
     let (raw, report) =
         crate::features::learning::content_verification::verify_and_repair_with_references(
             llm,
+            runtimes,
             &prompt,
             &lesson_schema(sources.len()),
             raw,

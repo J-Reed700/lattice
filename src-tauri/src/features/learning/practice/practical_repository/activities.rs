@@ -15,7 +15,7 @@ use crate::features::learning::practical_dto::*;
 use crate::features::learning::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, Transaction};
 use std::collections::HashSet;
 

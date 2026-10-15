@@ -23,7 +23,7 @@
 //! - `crate::features::conversation::service` — ConversationService
 //!
 //! Domain types (Conversation, ConversationMessage, MessageRole, ...) live in
-//! `crate::domain::conversation` because the application layer depends on them.
+//! `lattice_core::domain::conversation` because the application layer depends on them.
 
 mod branching;
 pub mod branching_dto;

@@ -3,7 +3,7 @@
 //! for identical content and inputs; factual verification remains required.
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::dto::LearningSourceDto;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

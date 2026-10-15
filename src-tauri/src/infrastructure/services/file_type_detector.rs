@@ -1,4 +1,4 @@
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::path::Path;
 
 #[derive(Debug, Clone)]

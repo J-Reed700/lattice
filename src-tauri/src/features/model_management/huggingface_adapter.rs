@@ -23,7 +23,7 @@
 //!
 //! ```rust,no_run
 //! use lattice::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-//! use lattice::application::ports::ModelCatalogPort;
+//! use lattice_core::application::ports::ModelCatalogPort;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,10 +44,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::application::ports::{ExternalModelMetadata, ModelCatalogPort};
-use crate::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
-use crate::shared::error::AppError;
-use crate::shared::http::reqwest_client_builder;
+use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
+use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::http::reqwest_client_builder;
 
 mod hub_client;
 

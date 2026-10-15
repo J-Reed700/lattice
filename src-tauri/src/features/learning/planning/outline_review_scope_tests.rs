@@ -13,7 +13,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     service,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde_json::json;
 
 #[tokio::test]
@@ -48,7 +48,7 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     let review = program.outline_review.as_ref().unwrap();
     assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
     assert_eq!(review.citations_verified, 1);
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = llm.prompts.lock().unwrap().clone();
     // Draft, coverage, full review, repair, incremental review. The repaired
     // module kept its verified citation, so no second coverage call was made.
     assert_eq!(prompts.len(), 5);

@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
-//! use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
+//! use lattice_core::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
+//! use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
 //!
 //! # async fn example(use_case: GenerateSingleEmbeddingUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = GenerateSingleEmbeddingRequestDto {
@@ -28,11 +28,11 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::EmbeddingPort;
 use crate::features::embedding::dto::{
     GenerateSingleEmbeddingRequestDto, GenerateSingleEmbeddingResponseDto,
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::{AppError, Result};
 
 /// Maximum text length for embedding (10,000 characters)
 const MAX_TEXT_LENGTH: usize = 10_000;
@@ -81,8 +81,8 @@ impl GenerateSingleEmbeddingUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use lattice::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
-    /// # use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
+    /// # use lattice_core::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
+    /// # use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
     /// # async fn example(use_case: GenerateSingleEmbeddingUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = GenerateSingleEmbeddingRequestDto {
     ///     text: "Sample document for embedding generation".to_string(),
@@ -149,8 +149,8 @@ impl GenerateSingleEmbeddingUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     use async_trait::async_trait;
+    use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
     /// Mock embedding service for testing
     struct MockEmbeddingService {

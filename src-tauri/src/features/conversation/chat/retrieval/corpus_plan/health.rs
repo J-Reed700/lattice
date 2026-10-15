@@ -37,10 +37,10 @@ pub(super) const PLANNER_PROMPT_FLOOR: usize = 1_024;
 /// planning locally and skipping the corrective retry.
 pub(super) const PLANNER_STAND_DOWN: Duration = Duration::from_secs(2 * 60);
 
-/// What the planner has recently managed. Process-wide in production, because
-/// "how much can this model prefill in time" is a property of the machine and
-/// the model, not of any one conversation.
-pub(in super::super) struct PlannerHealth {
+/// What the planner has recently managed. One per chat runtime, shared by
+/// every turn it runs, because "how much can this model prefill in time" is a
+/// property of the machine and the model, not of any one conversation.
+pub struct PlannerHealth {
     state: Mutex<HealthState>,
 }
 
@@ -49,8 +49,14 @@ struct HealthState {
     stood_down_until: Option<Instant>,
 }
 
+impl Default for PlannerHealth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlannerHealth {
-    pub(in super::super) const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             state: Mutex::new(HealthState {
                 prompt_tokens: PLANNER_PROMPT_TOKENS,
@@ -110,9 +116,6 @@ impl PlannerHealth {
     }
 }
 
-/// The planner's health for this process.
-static PLANNER_HEALTH: PlannerHealth = PlannerHealth::new();
-
 /// One turn's use of the planner: the documents a local search ranked for the
 /// request, and whether the planner has already cost this turn a timeout.
 ///
@@ -125,18 +128,6 @@ pub(in super::super) struct PlannerTurn<'h> {
     pub(in super::super) candidates: Option<Vec<String>>,
     timed_out: AtomicBool,
     pub(super) health: &'h PlannerHealth,
-}
-
-impl PlannerTurn<'static> {
-    pub(in super::super) fn new() -> Self {
-        Self::with_health(&PLANNER_HEALTH)
-    }
-}
-
-impl Default for PlannerTurn<'static> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<'h> PlannerTurn<'h> {

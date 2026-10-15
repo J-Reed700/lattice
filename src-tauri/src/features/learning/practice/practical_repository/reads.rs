@@ -7,7 +7,7 @@ use super::{
 use crate::features::learning::embedded_runtime::LearningBuiltinRuntime;
 use crate::features::learning::persistence::db;
 use crate::features::learning::practical_dto::*;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 use std::collections::HashMap;
 

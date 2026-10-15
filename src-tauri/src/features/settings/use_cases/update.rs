@@ -1,10 +1,9 @@
-use crate::application::ports::{
+use crate::features::settings::dto::{SettingsCategory, SettingsDto, UpdateSettingsRequestDto};
+use crate::infrastructure::security::InputValidator;
+use lattice_core::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
 };
-use crate::features::settings::dto::{SettingsCategory, SettingsDto, UpdateSettingsRequestDto};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::infrastructure::security::InputValidator;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use url::Url;
 
@@ -36,10 +35,6 @@ impl UpdateSettingsUseCase {
         validate_security_constraints(&request)?;
 
         let previous = self.repository.get_all().await.ok();
-        let previous_ollama_url = previous
-            .as_ref()
-            .map(|s| s.llm.ollama_url.clone())
-            .unwrap_or_default();
         let previous_vault_enabled = previous.as_ref().map(|s| s.vault.enabled).unwrap_or(false);
 
         // Pre-flight vault writability on enable flip.
@@ -68,22 +63,10 @@ impl UpdateSettingsUseCase {
         // Saving again here re-ran the whole write outside that lock, which
         // widened the window for a concurrent update to be lost.
 
-        if updated_settings.llm.ollama_url != previous_ollama_url {
-            let event = AuditEvent::new(AuditAction::ConfigChanged, AuditResult::success())
-                .with_resource_id("settings.llm.ollama_url")
-                .with_metadata("operation", "update_settings")
-                .with_metadata("ollama_url", &updated_settings.llm.ollama_url)
-                .with_metadata("previous_ollama_url", &previous_ollama_url);
-
-            if let Err(e) = get_audit_logger().log(event).await {
-                tracing::warn!("Failed to write audit log for settings update: {}", e);
-            }
-        }
-
         // Side effects after persist. Best-effort — failures don't roll
         // back already-committed settings.
         let hints =
-            crate::application::ports::settings_side_effects_port::SettingsTransitionHints {
+            lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints {
                 vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
             };
         self.side_effects
@@ -289,8 +272,8 @@ fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockSettingsRepository;
-    use crate::shared::testing::paths as test_paths;
+    use lattice_core::application::ports::MockSettingsRepository;
+    use lattice_core::shared::testing::paths as test_paths;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -459,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn audit_p03_side_effects_fire_on_successful_update() {
-        use crate::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
+        use lattice_core::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
 
         let repository = Arc::new(MockSettingsRepository::new());
         let side_effects = Arc::new(RecordingSettingsSideEffects::new());
@@ -487,7 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn enabling_the_vault_is_refused_when_its_folder_fails_the_pre_flight() {
-        use crate::application::ports::settings_side_effects_port::SettingsTransitionHints;
+        use lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints;
 
         struct RefuseVaultFolder;
 
@@ -528,7 +511,7 @@ mod tests {
 
     #[tokio::test]
     async fn audit_p03_side_effects_skipped_on_validation_failure() {
-        use crate::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
+        use lattice_core::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
 
         let repository = Arc::new(MockSettingsRepository::new());
         let side_effects = Arc::new(RecordingSettingsSideEffects::new());
@@ -560,7 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn audit_p03_side_effects_carry_global_category_for_global_update() {
-        use crate::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
+        use lattice_core::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
 
         let repository = Arc::new(MockSettingsRepository::new());
         let side_effects = Arc::new(RecordingSettingsSideEffects::new());

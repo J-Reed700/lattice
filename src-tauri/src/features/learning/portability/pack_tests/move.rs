@@ -18,7 +18,7 @@ use crate::features::learning::{
     repository::LearningRepository,
     tests::{pool, ready_program},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 type LessonRow = (String, i64, String, Option<String>);

@@ -15,12 +15,11 @@
 //! - All file paths are validated before use
 //! - Uses secure system APIs (no shell execution with user input)
 //! - Prevents directory traversal attacks
-//! - Audits all file access operations
 
-use crate::application::ports::FileSystemPort;
-use crate::shared::error::AppError;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::ports::FileSystemPort;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::Result;
 use std::path::Path;
 use tracing::{debug, error, warn};
 

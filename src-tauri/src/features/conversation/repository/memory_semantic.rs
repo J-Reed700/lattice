@@ -1,8 +1,8 @@
 //! Bounded semantic transcript recall, fused with lexical and exact matches.
 use super::ConversationRepository;
-use crate::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
 use crate::features::embedding::encoding::decode_embedding;
-use crate::shared::error::Result;
+use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
+use lattice_core::shared::error::Result;
 use std::collections::HashMap;
 
 impl ConversationRepository {

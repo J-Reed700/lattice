@@ -2,13 +2,13 @@
 //! its concurrency slot back, and a late progress tick must not resurrect a
 //! terminal session.
 
-use crate::domain::download::DownloadState;
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::{
     DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use lattice_core::domain::download::DownloadState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -51,7 +51,12 @@ async fn start_one(
 async fn pausing_leaves_the_session_paused_and_resumable() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let id = start_one(&manager, &engine, "paused.bin").await;
 
@@ -86,7 +91,12 @@ async fn pausing_leaves_the_session_paused_and_resumable() {
 async fn pausing_releases_the_concurrency_slot() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let first = start_one(&manager, &engine, "slot-a.bin").await;
     let second = start_one(&manager, &engine, "slot-b.bin").await;
@@ -129,7 +139,12 @@ async fn pausing_releases_the_concurrency_slot() {
 async fn progress_write_cannot_revert_a_terminal_state() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     let id = start_one(&manager, &engine, "terminal.bin").await;
 
@@ -160,7 +175,12 @@ async fn slow_progress_persistence_coalesces_flood_and_flushes_before_pause() {
     let repository =
         Arc::new(MockDownloadRepository::new().with_progress_delay(Duration::from_millis(30)));
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
     let id = start_one(&manager, &engine, "coalesced.bin").await;
     let callback = tokio::time::timeout(Duration::from_secs(2), async {
         loop {

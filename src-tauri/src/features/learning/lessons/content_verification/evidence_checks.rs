@@ -1,11 +1,11 @@
 //! Retrieve and restore individual comparisons, then batch only unfinished ones.
 //! Every decision retains its own evidence binding and durable receipt.
 use super::*;
-use crate::application::services::claim_verification::LocatedClaim;
+use lattice_core::application::services::claim_verification::LocatedClaim;
 
 const BATCH_SIZE: usize = 8;
 const PROVISIONAL_BATCH_POLICY: &str =
-    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY;
+    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY;
 
 struct PendingClaim {
     ordinal: usize,
@@ -233,7 +233,7 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
                 reason: finding.reason.clone(),
                 supporting_quote: finding.supporting_quote.clone(),
                 interpretation_policy: Some(
-                    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
                         .into(),
                 ),
             })?,

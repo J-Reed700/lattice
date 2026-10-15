@@ -1,4 +1,4 @@
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use tauri::Manager;
 

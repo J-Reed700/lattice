@@ -1,5 +1,5 @@
-use crate::domain::qa::hyde::QueryType;
 use crate::features::search::dto::SearchResponseDto;
+use lattice_core::domain::qa::hyde::QueryType;
 
 use super::SearchFlags;
 
@@ -23,7 +23,7 @@ pub(super) fn should_execute_external_lookup(
 
 pub(super) fn should_use_external_as_fallback(
     search_flags: SearchFlags,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
 ) -> bool {
     // Web the intent step guessed at is a fallback by definition. The intent
     // step runs only when no toggle is set, so no wiki search shares the gate.
@@ -58,8 +58,10 @@ pub(super) fn should_use_external_as_fallback(
 /// runs beside the vault.
 pub(super) fn kb_can_run_alongside_external(search_flags: SearchFlags) -> bool {
     let external_planned = search_flags.web_planned() || search_flags.force_wiki_search;
-    let kb_interpretation =
-        crate::domain::qa::hyde::HyDEInterpretation::raw_only(String::new(), QueryType::Question);
+    let kb_interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
+        String::new(),
+        QueryType::Question,
+    );
     external_planned && !should_use_external_as_fallback(search_flags, &kb_interpretation)
 }
 

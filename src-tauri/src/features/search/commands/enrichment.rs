@@ -2,7 +2,7 @@
 
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto, SearchResultDto};
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 pub(super) async fn enrich_vector_results(
     results: Vec<crate::features::search::engine::service::SearchResult>,
@@ -71,7 +71,7 @@ impl LibraryMode {
             Self::Vector => SearchRequestDto {
                 query: query.to_owned(),
                 limit: Some(limit),
-                threshold: Some(crate::shared::constants::MIN_SIMILARITY_SCORE),
+                threshold: Some(lattice_core::shared::constants::MIN_SIMILARITY_SCORE),
                 mode: SearchModeDto::Vector,
             },
             Self::Keyword => SearchRequestDto {

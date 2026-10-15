@@ -1,6 +1,6 @@
-use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::features::indexing::engine::metadata_extractor::DocumentMetadata;
+use lattice_core::domain::value_objects::ContextualizedChunk;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
@@ -36,7 +36,7 @@ impl ChunkerConfig {
     /// - `max_tokens > 0` (must produce at least 1 token per chunk)
     /// - `overlap_tokens < max_tokens` (must advance by at least 1 token per iteration)
     pub fn validate(&self) -> Result<()> {
-        use crate::shared::error::AppError;
+        use lattice_core::shared::error::AppError;
 
         if self.max_tokens == 0 {
             return Err(AppError::InvalidConfig(
@@ -80,7 +80,7 @@ impl SemanticChunker {
         let mut source_tokenizer = (*tokenizer).clone();
         source_tokenizer
             .with_truncation(None)
-            .map_err(|e| crate::shared::error::AppError::InvalidConfig(e.to_string()))?;
+            .map_err(|e| lattice_core::shared::error::AppError::InvalidConfig(e.to_string()))?;
         source_tokenizer.with_padding(None);
         Ok(Self {
             tokenizer: Arc::new(source_tokenizer),

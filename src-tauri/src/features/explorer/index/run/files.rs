@@ -5,7 +5,7 @@ use super::StatusCell;
 use crate::features::explorer::fs;
 use crate::features::explorer::index::chunker::{self, Chunk};
 use crate::features::explorer::scope::Scope;
-use crate::shared::Result;
+use lattice_core::shared::Result;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;

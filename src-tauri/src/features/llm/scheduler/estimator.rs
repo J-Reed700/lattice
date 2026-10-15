@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
 
 /// No tokenizer averages outside this range on real text; a measurement that
 /// does is a mis-attributed prompt (images, opaque provider state), not a

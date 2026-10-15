@@ -6,8 +6,10 @@ use crate::features::learning::lab_runtime::{
     self, LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
 use crate::features::learning::{lab_runner, python_runtime};
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
+use python_runtime::PythonRuntime;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// Why a built-in runtime cannot run in a build without the engines.
@@ -79,40 +81,6 @@ pub struct LearningBuiltinRuntimeCapability {
     pub reason: Option<String>,
 }
 
-pub fn capabilities() -> Vec<LearningBuiltinRuntimeCapability> {
-    if !cfg!(feature = "learning-labs") {
-        return [
-            (LearningBuiltinRuntime::Python, "Python"),
-            (LearningBuiltinRuntime::Javascript, "JavaScript"),
-        ]
-        .into_iter()
-        .map(|(id, name)| LearningBuiltinRuntimeCapability {
-            id,
-            name: name.into(),
-            description: format!("{name} exercises."),
-            available: false,
-            reason: Some(UNAVAILABLE_IN_BUILD.into()),
-        })
-        .collect();
-    }
-    let python_available = python_runtime::python_runtime_available();
-    vec![
-        LearningBuiltinRuntimeCapability {
-            id: LearningBuiltinRuntime::Python,
-            name: "Python".into(),
-            description: "Python fundamentals and standard-library exercises. Included with Lattice.".into(),
-            available: python_available,
-            reason: (!python_available).then(|| "The bundled Python runtime is missing or invalid. Reinstall this build, or use the optional Python container environment.".into()),
-        },
-        LearningBuiltinRuntimeCapability {
-            id: LearningBuiltinRuntime::Javascript,
-            name: "JavaScript".into(),
-            description: "JavaScript functions, algorithms and module exercises. Included with Lattice.".into(),
-            available: true, reason: None,
-        },
-    ]
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuiltinLabExecutionSpec {
@@ -141,39 +109,115 @@ impl BuiltinLabExecutionSpec {
     }
 }
 
-/// Limits concurrent guests as well as per-guest memory. Cancelling while
-/// queued cannot create a late guest after the caller has stopped the run.
-static GUEST_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+/// How many guests run at once, whatever started them.
+const CONCURRENT_GUESTS: usize = 2;
 
-pub async fn execute_builtin_lab(
-    spec: BuiltinLabExecutionSpec,
-    token: CancellationToken,
-) -> Result<LearningLabExecutionResult> {
-    spec.validate()?;
-    if !cfg!(feature = "learning-labs") {
-        return Ok(LearningLabExecutionResult {
-            status: LearningLabRunStatus::RuntimeUnavailable,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: UNAVAILABLE_IN_BUILD.into(),
-            output_truncated: false,
-            duration_ms: 0,
-        });
+/// The built-in runtimes as one app runs them: the guest slots every run
+/// shares, the bundled Python they run on, and its interpreter warm-up.
+/// Clones share all three.
+#[derive(Clone)]
+pub struct BuiltinRuntimes {
+    /// Limits concurrent guests as well as per-guest memory. Cancelling while
+    /// queued cannot create a late guest after the caller has stopped the run.
+    guest_slots: Arc<tokio::sync::Semaphore>,
+    /// The verified bundle; `None` when it is missing or failed its check.
+    python: Option<PythonRuntime>,
+    /// Only one Python run loads the interpreter at a time, so a cold cache is
+    /// compiled once and every other run waits to load the result.
+    python_warmup: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl BuiltinRuntimes {
+    /// Runtimes whose Python labs run on `python`, or report it unavailable.
+    pub fn new(python: Option<PythonRuntime>) -> Self {
+        Self {
+            guest_slots: Arc::new(tokio::sync::Semaphore::new(CONCURRENT_GUESTS)),
+            python,
+            python_warmup: Arc::default(),
+        }
     }
-    let permit = tokio::select! {
-        permit = GUEST_SLOTS.acquire() => permit.map_err(|_| AppError::InternalError("Learning runtime is shutting down.".into()))?,
-        _ = token.cancelled() => return Ok(cancelled()),
-    };
-    let python = match spec.runtime {
-        LearningBuiltinRuntime::Javascript => None,
-        LearningBuiltinRuntime::Python => match python_runtime::bundle() {
-            Some(bundle) => Some(bundle),
-            None => return Ok(python_runtime::unavailable_result()),
-        },
-    };
-    let result = lab_runner::run(spec, python, token).await;
-    drop(permit);
-    result
+
+    /// Runtimes on the source tree's Python bundle, for one test.
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self::new(PythonRuntime::source_tree())
+    }
+
+    /// Whether each built-in runtime can run here, and why not when it cannot.
+    pub fn capabilities(&self) -> Vec<LearningBuiltinRuntimeCapability> {
+        if !cfg!(feature = "learning-labs") {
+            return [
+                (LearningBuiltinRuntime::Python, "Python"),
+                (LearningBuiltinRuntime::Javascript, "JavaScript"),
+            ]
+            .into_iter()
+            .map(|(id, name)| LearningBuiltinRuntimeCapability {
+                id,
+                name: name.into(),
+                description: format!("{name} exercises."),
+                available: false,
+                reason: Some(UNAVAILABLE_IN_BUILD.into()),
+            })
+            .collect();
+        }
+        let python_available = self.python.is_some();
+        vec![
+            LearningBuiltinRuntimeCapability {
+                id: LearningBuiltinRuntime::Python,
+                name: "Python".into(),
+                description: "Python fundamentals and standard-library exercises. Included with Lattice.".into(),
+                available: python_available,
+                reason: (!python_available).then(|| "The bundled Python runtime is missing or invalid. Reinstall this build, or use the optional Python container environment.".into()),
+            },
+            LearningBuiltinRuntimeCapability {
+                id: LearningBuiltinRuntime::Javascript,
+                name: "JavaScript".into(),
+                description: "JavaScript functions, algorithms and module exercises. Included with Lattice.".into(),
+                available: true, reason: None,
+            },
+        ]
+    }
+
+    /// Run one lab on a built-in runtime, waiting for a guest slot first.
+    pub async fn execute(
+        &self,
+        spec: BuiltinLabExecutionSpec,
+        token: CancellationToken,
+    ) -> Result<LearningLabExecutionResult> {
+        spec.validate()?;
+        if !cfg!(feature = "learning-labs") {
+            return Ok(LearningLabExecutionResult {
+                status: LearningLabRunStatus::RuntimeUnavailable,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: UNAVAILABLE_IN_BUILD.into(),
+                output_truncated: false,
+                duration_ms: 0,
+            });
+        }
+        let permit = tokio::select! {
+            permit = self.guest_slots.acquire() => permit.map_err(|_| AppError::InternalError("Learning runtime is shutting down.".into()))?,
+            _ = token.cancelled() => return Ok(cancelled()),
+        };
+        let python = match spec.runtime {
+            LearningBuiltinRuntime::Javascript => None,
+            LearningBuiltinRuntime::Python => match &self.python {
+                Some(python) => Some(python.bundle()),
+                None => return Ok(python_runtime::unavailable_result()),
+            },
+        };
+        let warmup = if python.is_some() {
+            tokio::select! {
+                guard = self.python_warmup.lock() => Some(guard),
+                _ = token.cancelled() => return Ok(cancelled()),
+            }
+        } else {
+            None
+        };
+        let result = lab_runner::run(spec, python, warmup, token).await;
+        drop(permit);
+        result
+    }
 }
 
 pub(super) fn cancelled() -> LearningLabExecutionResult {
@@ -208,7 +252,9 @@ mod tests {
     async fn a_run_cancelled_before_it_starts_reports_cancelled() -> Result<()> {
         let token = CancellationToken::new();
         token.cancel();
-        let result = execute_builtin_lab(javascript_spec(), token).await?;
+        let result = BuiltinRuntimes::for_tests()
+            .execute(javascript_spec(), token)
+            .await?;
         let expected = if cfg!(feature = "learning-labs") {
             LearningLabRunStatus::Cancelled
         } else {
@@ -220,7 +266,7 @@ mod tests {
 
     #[test]
     fn capabilities_say_whether_this_build_has_the_engines() {
-        let capabilities = capabilities();
+        let capabilities = BuiltinRuntimes::for_tests().capabilities();
         let javascript = capabilities
             .iter()
             .find(|capability| capability.id == LearningBuiltinRuntime::Javascript);

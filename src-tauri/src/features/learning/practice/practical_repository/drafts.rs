@@ -6,7 +6,7 @@ use super::{
 use crate::features::learning::lab_runtime::LearningLabFile;
 use crate::features::learning::persistence::{db, now};
 use crate::features::learning::practical_dto::*;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 use std::collections::HashSet;
 

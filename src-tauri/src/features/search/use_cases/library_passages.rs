@@ -8,13 +8,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::HybridSearchUseCase;
-use crate::application::ports::{
+use crate::features::search::dto::SearchRequestDto;
+use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, LibraryChunk, LibraryDocumentText, LibraryPassageHit,
     LibraryPassagesPort,
 };
-use crate::domain::DocumentStatus;
-use crate::features::search::dto::SearchRequestDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::DocumentStatus;
+use lattice_core::shared::error::{AppError, Result};
 
 pub struct LibraryPassages {
     search: Arc<HybridSearchUseCase>,

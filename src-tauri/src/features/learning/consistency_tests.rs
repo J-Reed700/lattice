@@ -8,7 +8,7 @@ use super::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 #[tokio::test]
 async fn completed_lesson_does_not_prevent_editing_and_accepting_the_curriculum() -> Result<()> {

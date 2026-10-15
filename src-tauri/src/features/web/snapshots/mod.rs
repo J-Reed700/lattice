@@ -30,9 +30,10 @@ pub use dto::{
 pub use gc::{SweepReport, WebSnapshotGc};
 
 use crate::features::web::traits::page_snapshot::PageCapturePort;
-use crate::shared::error::{AppError, Result};
-use crate::shared::http::normalize_web_source_url;
-use crate::shared::runtime::jobs::{JobRuntime, NewJob};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::normalize_web_source_url;
+use lattice_core::shared::runtime::background::BackgroundTasks;
+use lattice_core::shared::runtime::jobs::{JobRuntime, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
 use store::SnapshotStore;
 
@@ -42,25 +43,31 @@ pub trait SnapshotEvents: Send + Sync {
 }
 
 type Emit = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
-static EMIT: OnceLock<Emit> = OnceLock::new();
 
-/// Give the feature the running app so it can emit to the main window. Until
-/// this is called — in tests, or before setup — events go nowhere.
-pub fn install<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
-    let _ = EMIT.set(Arc::new(move |event: &str, payload: serde_json::Value| {
-        use tauri::Emitter;
-        if let Err(error) = app.emit_to("main", event, payload) {
-            tracing::debug!(%error, event, "Could not publish a web snapshot event");
-        }
-    }));
+/// Emits to the main window through the app handle [`AppEvents::attach`]
+/// stored. Until then — in tests, or before setup — events go nowhere.
+#[derive(Default)]
+pub struct AppEvents {
+    emit: OnceLock<Emit>,
 }
 
-/// Emits through the app handle [`install`] stored.
-pub struct AppEvents;
+impl AppEvents {
+    /// Give the feature the running app so it can emit to the main window.
+    pub fn attach<R: tauri::Runtime>(&self, app: tauri::AppHandle<R>) {
+        let _ = self
+            .emit
+            .set(Arc::new(move |event: &str, payload: serde_json::Value| {
+                use tauri::Emitter;
+                if let Err(error) = app.emit_to("main", event, payload) {
+                    tracing::debug!(%error, event, "Could not publish a web snapshot event");
+                }
+            }));
+    }
+}
 
 impl SnapshotEvents for AppEvents {
     fn emit(&self, event: &str, payload: serde_json::Value) {
-        if let Some(emit) = EMIT.get() {
+        if let Some(emit) = self.emit.get() {
             emit(event, payload);
         }
     }
@@ -160,6 +167,7 @@ pub struct WebPageSnapshotService {
     shared: Arc<Shared>,
     jobs: Arc<JobRuntime>,
     gc: WebSnapshotGc,
+    background: Arc<BackgroundTasks>,
 }
 
 impl WebPageSnapshotService {
@@ -169,6 +177,7 @@ impl WebPageSnapshotService {
         capture: Arc<dyn PageCapturePort>,
         jobs: Arc<JobRuntime>,
         events: Arc<dyn SnapshotEvents>,
+        background: Arc<BackgroundTasks>,
     ) -> Self {
         let repository = SnapshotRepository::new(pool);
         let store = SnapshotStore::new(root);
@@ -181,6 +190,7 @@ impl WebPageSnapshotService {
                 events,
             }),
             jobs,
+            background,
         }
     }
 
@@ -346,7 +356,7 @@ impl WebPageSnapshotService {
     /// The sweep, run in the background with its outcome logged.
     pub fn sweep_in_background(self: &Arc<Self>, reason: &'static str) {
         let service = Arc::clone(self);
-        crate::shared::runtime::background::spawn(async move {
+        self.background.spawn(async move {
             match service.sweep().await {
                 Ok(report) => tracing::info!(
                     reason,

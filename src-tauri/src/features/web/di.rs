@@ -17,7 +17,7 @@ use crate::features::web::{
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use tokenizers::Tokenizer;
 
@@ -34,8 +34,9 @@ pub struct WebDi {
 pub fn build(
     db_pool: SqlitePool,
     model_dir: &Path,
-    model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
-    vector_search: Arc<dyn crate::application::ports::VectorSearchPort>,
+    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    vector_search: Arc<dyn lattice_core::application::ports::VectorSearchPort>,
+    query_cache: Arc<dyn lattice_core::application::ports::SearchResultCachePort>,
 ) -> Result<WebDi> {
     let web_capture_service =
         Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
@@ -63,6 +64,7 @@ pub fn build(
             .index_storage(index_storage)
             .tokenizer(tokenizer)
             .vector_search(vector_search)
+            .query_cache(query_cache)
             .build()?,
     ) as Arc<dyn WebIngestionServiceTrait>;
 
@@ -77,21 +79,23 @@ pub fn build(
 }
 
 /// The frozen-copy feature: the capture engine behind its trait, the
-/// snapshot directory, and the one job runtime its captures run on.
+/// snapshot directory, the one job runtime its captures run on, and the
+/// window events the app attaches once it is running.
 pub fn build_page_snapshots(
     db_pool: SqlitePool,
-    jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
+    jobs: Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
+    events: Arc<crate::features::web::snapshots::AppEvents>,
+    background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
 ) -> Result<Arc<crate::features::web::snapshots::WebPageSnapshotService>> {
-    use crate::features::web::snapshots::{
-        store::SnapshotStore, AppEvents, WebPageSnapshotService,
-    };
+    use crate::features::web::snapshots::{store::SnapshotStore, WebPageSnapshotService};
     let capture = crate::features::web::services::snapshot::build_page_capture()?;
     Ok(Arc::new(WebPageSnapshotService::new(
         db_pool,
         SnapshotStore::default_root()?,
         capture,
         jobs,
-        Arc::new(AppEvents),
+        events,
+        background,
     )))
 }
 

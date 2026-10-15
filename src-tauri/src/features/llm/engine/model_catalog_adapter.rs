@@ -6,9 +6,9 @@
 //!
 //! Production adapter with hardcoded LLM model catalog.
 
-use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
-use crate::shared::error::AppError;
 use async_trait::async_trait;
+use lattice_core::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
+use lattice_core::shared::error::AppError;
 
 pub use self::model_info::ModelInfo;
 

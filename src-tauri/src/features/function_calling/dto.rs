@@ -12,17 +12,9 @@
 //! - **Stable**: Versioned schemas for breaking changes
 //! - **Validated**: Strong typing with serde
 
-use crate::application::contracts::web::default_max_results;
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::web::default_max_results;
 use serde::{Deserialize, Serialize};
-
-// immaculate-phase-2: drop once features/conversation/chat/{ports,tool_loop,web_steps}.rs,
-// features/conversation/chat/retrieval/{mod,pipeline,source_citations,tool_format}.rs and
-// features/learning/lessons/course_generation_tests.rs import
-// crate::application::contracts::web::{FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult}
-pub use crate::application::contracts::web::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-};
 
 /// Input for semantic_search function.
 ///

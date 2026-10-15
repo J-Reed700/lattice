@@ -2,11 +2,10 @@
 //!
 //! Reads the content of a text file with security limits.
 
-use crate::application::ports::FileStoragePort;
 use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
-use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::infrastructure::security::{FileAccessConfig, ValidatedFile};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{ContentExtractionPort, FileStoragePort};
+use lattice_core::shared::error::{AppError, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -15,7 +14,7 @@ use std::sync::Arc;
 /// This limit prevents:
 /// - Memory exhaustion attacks (CWE-400)
 /// - Denial of service via large file reads (CWE-770)
-const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+pub const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 
 /// Use case for reading file content as text.
 ///
@@ -33,6 +32,10 @@ const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 /// - UTF-8 validation ensures safe text processing
 pub struct ReadFileContentUseCase {
     file_access_config: Arc<FileAccessConfig>,
+    /// Reads text out of a document that is not plain UTF-8 (a PDF, an office
+    /// file), limited to [`MAX_FILE_SIZE_BYTES`] and sharing the app's parser
+    /// workers with indexing.
+    preview_extractor: Arc<dyn ContentExtractionPort>,
 }
 
 impl ReadFileContentUseCase {
@@ -40,8 +43,12 @@ impl ReadFileContentUseCase {
     pub fn new(
         _file_storage: Arc<dyn FileStoragePort>,
         file_access_config: Arc<FileAccessConfig>,
+        preview_extractor: Arc<dyn ContentExtractionPort>,
     ) -> Self {
-        Self { file_access_config }
+        Self {
+            file_access_config,
+            preview_extractor,
+        }
     }
 
     /// Execute the use case.
@@ -133,7 +140,7 @@ impl ReadFileContentUseCase {
 
     async fn try_extract_preview_content(&self, file: &mut ValidatedFile) -> Option<String> {
         let path = file.path().to_path_buf();
-        let extractor = ContentExtractor::with_max_size(MAX_FILE_SIZE_BYTES);
+        let extractor = &self.preview_extractor;
 
         if !extractor.is_supported(&path) {
             return None;
@@ -171,7 +178,7 @@ impl ReadFileContentUseCase {
             return None;
         }
 
-        let result = extractor.extract_from_file(&temp_path).await;
+        let result = extractor.extract_content(&temp_path).await;
         if let Err(error) = std::fs::remove_file(&temp_path) {
             tracing::debug!(path = %temp_path.display(), error = %error, "Failed to remove secure preview copy");
         }
@@ -195,6 +202,10 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::path::Path;
+
+    fn preview_extractor() -> Arc<dyn ContentExtractionPort> {
+        Arc::new(crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter::new())
+    }
 
     struct MockFileStorage {
         files: Vec<(String, String, u64)>, // (path, content, size)
@@ -278,7 +289,10 @@ mod tests {
             })
         }
 
-        async fn metadata(&self, path: &Path) -> Result<crate::application::ports::FileMetadata> {
+        async fn metadata(
+            &self,
+            path: &Path,
+        ) -> Result<lattice_core::application::ports::FileMetadata> {
             let path_str = path.to_string_lossy().to_string();
             let path_with_slash = format!("{}/", path_str);
             self.files
@@ -289,7 +303,7 @@ mod tests {
                 .map(|(p, _, size)| {
                     let is_directory = p.ends_with('/');
 
-                    crate::application::ports::FileMetadata {
+                    lattice_core::application::ports::FileMetadata {
                         size: *size,
                         modified_at: 0,
                         is_file: !is_directory,
@@ -314,7 +328,8 @@ mod tests {
         let file_storage = Arc::new(
             MockFileStorage::new().with_file(&canonical_path.to_string_lossy(), "Hello, World!"),
         );
-        let use_case = ReadFileContentUseCase::new(file_storage, file_access_config);
+        let use_case =
+            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor());
 
         let request = ReadFileContentRequestDto {
             path: test_file.to_string_lossy().to_string(),
@@ -339,7 +354,8 @@ mod tests {
         let temp_dir = env::temp_dir();
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
         let file_storage = Arc::new(MockFileStorage::new()); // No files
-        let use_case = ReadFileContentUseCase::new(file_storage, file_access_config);
+        let use_case =
+            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor());
 
         let nonexistent = temp_dir.join("nonexistent_read_test.txt");
         let request = ReadFileContentRequestDto {
@@ -369,7 +385,8 @@ mod tests {
             .and_then(|file| file.set_len(MAX_FILE_SIZE_BYTES + 1))
             .expect("create sparse oversized test file");
         let file_storage = Arc::new(MockFileStorage::new());
-        let use_case = ReadFileContentUseCase::new(file_storage, file_access_config);
+        let use_case =
+            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor());
 
         let request = ReadFileContentRequestDto {
             path: test_file.to_string_lossy().to_string(),
@@ -396,7 +413,8 @@ mod tests {
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
         let file_storage =
             Arc::new(MockFileStorage::new().with_directory(&canonical_path.to_string_lossy()));
-        let use_case = ReadFileContentUseCase::new(file_storage, file_access_config);
+        let use_case =
+            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor());
 
         let request = ReadFileContentRequestDto {
             path: test_dir.to_string_lossy().to_string(),
@@ -429,7 +447,8 @@ mod tests {
                 )
                 .with_read_error(),
         );
-        let use_case = ReadFileContentUseCase::new(file_storage, file_access_config);
+        let use_case =
+            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor());
 
         let request = ReadFileContentRequestDto {
             path: test_file.to_string_lossy().to_string(),

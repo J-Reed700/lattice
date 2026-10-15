@@ -7,7 +7,7 @@
 //! two questions with no I/O in them, and both easier to test alone than
 //! through a whole run.
 
-use crate::domain::conversation::memory::{SourceMessage, SourceRole};
+use lattice_core::domain::conversation::memory::{SourceMessage, SourceRole};
 
 use super::prompts::ContextPassage;
 use super::segment::{clip_chars, SourceSegment};

@@ -5,9 +5,9 @@
 #[cfg(test)]
 use super::trait_def::EmbeddingServiceTrait;
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 
 #[cfg(test)]
 /// Mock embedding service that returns deterministic embeddings
@@ -56,7 +56,7 @@ impl MockEmbeddingService {
 #[cfg(test)]
 impl Default for MockEmbeddingService {
     fn default() -> Self {
-        Self::new(crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM)
+        Self::new(lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM)
     }
 }
 
@@ -73,7 +73,7 @@ impl EmbeddingServiceTrait for MockEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::domain::value_objects::ContextualizedChunk],
+        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         Ok(chunks
             .iter()

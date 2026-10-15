@@ -7,15 +7,15 @@ use super::dto::{FolderIndexState, FolderIndexStatusDto};
 use super::manager::{relative_below, root_string, too_large_message, FolderIndexManager};
 use super::run::{Indexer, Outcome, StatusCell};
 use super::store::{self, Counts, FolderStore, TooLarge};
-use crate::application::ports::vector_search_port::VectorSearchPort;
-use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::scope::Scope;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::shared::{
+use async_trait::async_trait;
+use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::{
     runtime::jobs::{JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy},
     AppError, Result,
 };
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

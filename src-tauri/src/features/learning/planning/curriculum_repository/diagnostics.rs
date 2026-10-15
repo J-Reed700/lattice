@@ -8,7 +8,7 @@ use crate::features::learning::plan_dto::{
     StartLearningDiagnosticRequestDto, SubmitLearningDiagnosticRequestDto,
 };
 use crate::features::learning::repository::LearningRepository;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
 impl LearningCurriculumRepository {

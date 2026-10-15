@@ -17,8 +17,8 @@
 //! println!("Mention deleted successfully");
 //! ```
 
-use crate::application::ports::MentionRepositoryPort;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::MentionRepositoryPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct DeleteMentionUseCase {
@@ -73,8 +73,8 @@ impl DeleteMentionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{MentionData, MentionWithContextData};
     use async_trait::async_trait;
+    use lattice_core::application::ports::{MentionData, MentionWithContextData};
     use std::collections::HashSet;
     use std::sync::Mutex;
 

@@ -38,9 +38,7 @@ impl FidelityFinding {
             && self
                 .missing_assertions
                 .iter()
-                .all(|statement| {
-                    !statement.trim().is_empty() && statement.chars().count() <= 1000
-                })
+                .all(|statement| !statement.trim().is_empty() && statement.chars().count() <= 1000)
     }
 }
 
@@ -130,10 +128,15 @@ fn resolve(raw: &str, units: &[Value]) -> Result<Vec<CoverageUnit>> {
             {
                 return Err(failure());
             }
-            missing.extend(check.missing_claims.iter().map(|statement| MissingAssertion {
-                passage_id: id.to_owned(),
-                statement: statement.clone(),
-            }));
+            missing.extend(
+                check
+                    .missing_claims
+                    .iter()
+                    .map(|statement| MissingAssertion {
+                        passage_id: id.to_owned(),
+                        statement: statement.clone(),
+                    }),
+            );
         }
         result.push(CoverageUnit::from_missing(
             index,
@@ -182,20 +185,26 @@ fn fidelity_request(unit: &Value, passage: &Value) -> Value {
         .map(|claim| json!({"id":claim["id"],"statement":claim["statement"]}))
         .collect();
     let mut request = json!({"targetPassage":passage,"inventory":inventory});
+    let Some(object) = request.as_object_mut() else {
+        return request;
+    };
     if unit["kind"] == "assessment" {
-        request["assessment"] = json!({
-            "correctIndex": unit["correctIndex"],
-            "question": unit["passages"].as_array().into_iter().flatten()
-                .filter(|p| p["field"] == "/prompt")
-                .map(|p| p["text"].clone()).collect::<Vec<_>>(),
-            "options": unit["passages"].as_array().into_iter().flatten()
-                .chain(unit["distractors"].as_array().into_iter().flatten())
-                .filter(|p| p["field"].as_str().is_some_and(|f| f.starts_with("/options/")))
-                .map(|p| json!({"field":p["field"],"text":p["text"]})).collect::<Vec<_>>(),
-            "section": unit["passages"],
-        });
+        object.insert(
+            "assessment".into(),
+            json!({
+                "correctIndex": unit["correctIndex"],
+                "question": unit["passages"].as_array().into_iter().flatten()
+                    .filter(|p| p["field"] == "/prompt")
+                    .map(|p| p["text"].clone()).collect::<Vec<_>>(),
+                "options": unit["passages"].as_array().into_iter().flatten()
+                    .chain(unit["distractors"].as_array().into_iter().flatten())
+                    .filter(|p| p["field"].as_str().is_some_and(|f| f.starts_with("/options/")))
+                    .map(|p| json!({"field":p["field"],"text":p["text"]})).collect::<Vec<_>>(),
+                "section": unit["passages"],
+            }),
+        );
     } else {
-        request["section"] = unit["passages"].clone();
+        object.insert("section".into(), unit["passages"].clone());
     }
     request
 }
@@ -206,8 +215,8 @@ async fn judge(llm: &dyn LLMPort, request: &Value) -> Result<FidelityFinding> {
     let mut errors = Vec::<String>::new();
     for attempt in 0..2 {
         let mut prompt = request.clone();
-        if attempt > 0 {
-            prompt["responseErrors"] = json!(errors);
+        if let (true, Some(object)) = (attempt > 0, prompt.as_object_mut()) {
+            object.insert("responseErrors".into(), json!(errors));
         }
         let raw = crate::features::learning::generation::complete_json(
             llm,
@@ -391,11 +400,11 @@ pub(in crate::features::learning) async fn live_mapping_fixture(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::features::learning::content_verification::tests::{
         fixture_completion, fixture_prompts,
     };
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
     fn represented() -> String {
         json!({"missingAssertions":[],"reason":"Every assertion is represented."}).to_string()
@@ -477,7 +486,9 @@ mod tests {
             .to_string();
         let mut coverage = resolve(&raw, &units).unwrap();
         assert!(coverage[0].complete);
-        let model = scripted(vec![missing(&["Equal inputs guarantee identical results."])]);
+        let model = scripted(vec![missing(&[
+            "Equal inputs guarantee identical results.",
+        ])]);
         check_fidelity(&model, &raw, &units, &mut coverage)
             .await
             .unwrap();
@@ -501,17 +512,17 @@ mod tests {
         let units = vec![
             json!({"index":0,"passages":[{"id":"a","text":"A fact."}],"claims":[{"id":"c","statement":"A fact."}]}),
         ];
-        let raw = json!({"a":{"claimIds":["c"],"nonFactualReason":"","missingClaims":[]}}).to_string();
+        let raw =
+            json!({"a":{"claimIds":["c"],"nonFactualReason":"","missingClaims":[]}}).to_string();
         let corrected = scripted(vec!["not json".into(), represented()]);
         let mut coverage = resolve(&raw, &units).unwrap();
         check_fidelity(&corrected, &raw, &units, &mut coverage)
             .await
             .unwrap();
         assert!(coverage[0].complete);
-        let prompts = corrected.prompts.lock().unwrap();
+        let prompts = corrected.prompts.lock().unwrap().clone();
         assert_eq!(prompts.len(), 2);
         assert!(request(&prompts[1])["responseErrors"].is_array());
-        drop(prompts);
         let unusable = scripted(vec![
             json!({"missingAssertions":["   "],"reason":""}).to_string(),
             "still not json".into(),
@@ -525,7 +536,13 @@ mod tests {
 
     #[tokio::test]
     async fn proposed_omissions_are_replaced_by_the_judges_own_list() {
-        for (reply, complete) in [(represented(), true), (missing(&["The result follows only after the full sequence."]), false)] {
+        for (reply, complete) in [
+            (represented(), true),
+            (
+                missing(&["The result follows only after the full sequence."]),
+                false,
+            ),
+        ] {
             let model = scripted(vec![reply]);
             let units = vec![
                 json!({"index":0,"passages":[{"id":"p0","text":"The documented result follows from the sequence."}],"claims":[{"id":"c0","statement":"The sequence produces the documented result."}]}),
@@ -552,7 +569,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!checked[0].complete);
-        assert_eq!(checked[0].missing_assertions[0].statement, "An unsupported assertion.");
+        assert_eq!(
+            checked[0].missing_assertions[0].statement,
+            "An unsupported assertion."
+        );
         assert_eq!(model.prompts.lock().unwrap().len(), 1);
     }
 
@@ -561,7 +581,8 @@ mod tests {
         let units = vec![
             json!({"index":0,"passages":[{"id":"p0","text":"Water boils at 100 °C at sea level."}],"claims":[{"id":"c0","statement":"Water boils at 100 °C at sea level."}]}),
         ];
-        let raw = json!({"p0":{"claimIds":["c0"],"nonFactualReason":"","missingClaims":[]}}).to_string();
+        let raw =
+            json!({"p0":{"claimIds":["c0"],"nonFactualReason":"","missingClaims":[]}}).to_string();
         let model = scripted(vec![missing(&[
             "water boils at 100 °C   at sea level",
             "The boiling point depends on pressure.",
@@ -608,8 +629,12 @@ mod tests {
             .starts_with("Given that this sample is fully saturated"));
         let options = data["assessment"]["options"].to_string();
         assert!(options.contains("/options/1") && options.contains("The extra solute disappears."));
-        assert!(!data["inventory"].to_string().contains("The extra solute disappears."));
-        assert!(data["inventory"].to_string().contains("Unselected assertion"));
+        assert!(!data["inventory"]
+            .to_string()
+            .contains("The extra solute disappears."));
+        assert!(data["inventory"]
+            .to_string()
+            .contains("Unselected assertion"));
         assert!(coverage[0].complete);
     }
 
@@ -637,8 +662,12 @@ mod tests {
         assert_eq!(prompts.len(), 1, "nonfactual passages are not judged");
         let data = request(&prompts[0]);
         assert_eq!(data["targetPassage"]["id"], "target");
-        assert!(data["section"].to_string().contains("A specified experimental group"));
-        assert!(data["inventory"].to_string().contains("Unselected inventory assertion"));
+        assert!(data["section"]
+            .to_string()
+            .contains("A specified experimental group"));
+        assert!(data["inventory"]
+            .to_string()
+            .contains("Unselected inventory assertion"));
         assert!(!prompts[0].contains("UNRELATED SECOND SECTION ASSERTION"));
     }
 

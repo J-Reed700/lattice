@@ -19,10 +19,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::ports::{
+use lattice_core::application::ports::{
     BlobReferenceCheck, BlobRemoval, ContentAddressedStoragePort, DocumentRepositoryPort,
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 /// What a [`LibraryGc::sweep`] did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -155,12 +155,12 @@ impl LibraryGc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::RepositoryPort;
-    use crate::domain::entities::Document;
-    use crate::domain::value_objects::{ChunkingStrategy, FileMetadata};
     use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
     use crate::infrastructure::storage::ContentAddressedStorage;
-    use crate::shared::types::ValidatedFilePath;
+    use lattice_core::application::ports::RepositoryPort;
+    use lattice_core::domain::entities::Document;
+    use lattice_core::domain::value_objects::{ChunkingStrategy, FileMetadata};
+    use lattice_core::shared::types::ValidatedFilePath;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
     use tokio::fs;
@@ -192,7 +192,7 @@ mod tests {
         Document::from_file(
             ValidatedFilePath::new(path.to_path_buf()).unwrap(),
             metadata,
-            crate::domain::value_objects::Checksum::new(checksum.to_string()).unwrap(),
+            lattice_core::domain::value_objects::Checksum::new(checksum.to_string()).unwrap(),
             "some indexed body text".to_string(),
             ChunkingStrategy::FixedSize { size: 64 },
         )

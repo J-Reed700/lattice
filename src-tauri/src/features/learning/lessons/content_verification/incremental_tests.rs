@@ -3,7 +3,7 @@ use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
     curriculum_repository::LearningCurriculumRepository, lesson_drafts,
 };
-use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
+use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[derive(Default)]
 struct IncrementalModel {

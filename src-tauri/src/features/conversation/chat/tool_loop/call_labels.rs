@@ -1,9 +1,9 @@
 //! How a tool call is named, labelled and answered from memory: the parts of
 //! running one that are about words, not about running it.
 
-use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::fetch_memory::{self, Recall};
 use crate::features::conversation::chat::turn_record::TurnStepKind;
+use lattice_core::application::ports::ToolDefinition;
 use std::collections::HashSet;
 
 pub(super) fn canonical_tool_name(tool_name: &str) -> &str {

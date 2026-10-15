@@ -291,11 +291,12 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::file::plugin::commands::get_indexing_activities,
             lattice::features::file::plugin::commands::get_recent_documents,
             // Credentials Plugin (7 commands)
-            // Health Plugin (4 commands)
+            // Health Plugin (5 commands)
             lattice::features::health::plugin::commands::health_check,
             lattice::features::health::plugin::commands::get_system_stats,
             lattice::features::health::plugin::commands::get_version,
             lattice::features::health::plugin::commands::initialize_database,
+            lattice::features::health::plugin::commands::get_backend_logs,
             // Tags Plugin (5 commands)
             lattice::features::tags::plugin::get_all_tags_with_counts,
             lattice::features::tags::plugin::get_document_tags,

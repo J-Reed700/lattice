@@ -8,7 +8,7 @@ use crate::features::learning::{
     plan_dto::StartLearningGenerationJobRequestDto,
     repository::LearningRepository,
 };
-use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
+use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[tokio::test]
 async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories() -> Result<()> {
@@ -62,12 +62,14 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         fail_coverage_at: Some(1),
         ..Model::new()
     };
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         lesson_drafts::resume("section-fixture".into()).await?;
         lesson_drafts::save(&candidate.to_string()).await?;
         let sources = vec![source()];
         let result = verify_with_references(
             &model,
+            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -100,6 +102,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         verify_with_references(
             &resumed_model,
+            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -125,6 +128,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         verify_with_references(
             &changed_model,
+            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -631,7 +635,7 @@ fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts()
         (ClaimVerdict::Contradicted, None, false),
         (
             ClaimVerdict::Unsupported,
-            Some(crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
+            Some(lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
             true,
         ),
     ] {

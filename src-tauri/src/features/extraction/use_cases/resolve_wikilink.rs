@@ -31,7 +31,7 @@ use crate::features::extraction::dto::{
     DocumentRefDto, ResolveWikilinkRequestDto, ResolveWikilinkResponseDto,
 };
 use crate::infrastructure::extraction::{DocumentInfo, LinkParser};
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 
 pub struct ResolveWikilinkUseCase {
     link_parser: LinkParser,

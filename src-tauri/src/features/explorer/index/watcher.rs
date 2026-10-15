@@ -7,7 +7,7 @@
 //! walks the whole tree, ignored directories included, and the update reads
 //! each path's state from the disk anyway.
 
-use crate::shared::{AppError, Result};
+use lattice_core::shared::{AppError, Result};
 use notify_debouncer_full::notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};
 use std::path::{Path, PathBuf};

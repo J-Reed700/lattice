@@ -15,6 +15,8 @@ use std::sync::RwLock;
 /// Where crash reports go. Set once at the top of `main`, before the app-data
 /// directory is known, then moved there by `set_crashes_directory`. A lock
 /// rather than a `OnceLock` so that the move takes effect.
+// global-state: the panic hook is process-wide and runs on whatever thread
+// panics, so the directory it writes to is too.
 static CRASHES_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 fn store_crashes_directory(dir: PathBuf) {

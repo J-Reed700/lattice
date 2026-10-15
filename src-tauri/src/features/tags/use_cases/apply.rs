@@ -2,7 +2,7 @@
 
 use crate::features::tags::dto::{ApplyTagsRequestDto, ApplyTagsResponseDto, TagDto};
 use crate::features::tags::TagServiceTrait;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Use case for applying multiple tags to a document

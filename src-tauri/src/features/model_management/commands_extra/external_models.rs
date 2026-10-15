@@ -1,7 +1,7 @@
 //! Discovering GGUF files in user-configured external directories and syncing
 //! them into the downloaded-model registry.
 use super::*;
-use crate::domain::models::downloaded::StoredDownloadedModel;
+use lattice_core::domain::models::downloaded::StoredDownloadedModel;
 
 const EXTERNAL_MODEL_SOURCE: &str = "external_directory";
 const MAX_EXTERNAL_MODEL_FILES: usize = 5000;

@@ -34,15 +34,15 @@
 //! }
 //! ```
 
-use crate::domain::{
-    CompatibilityScorer, ModelCatalogService, ModelCategory, ModelRecommendation, ModelSource,
-    SearchFilters, SystemCapabilities,
-};
 use crate::features::model_management::cache_adapter::ModelCatalogStats;
 use crate::features::model_management::domain::ModelMetadata;
 use crate::interfaces::di::Container;
 use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto};
-use crate::shared::error::{AppError, Result};
+use lattice_core::domain::{
+    CompatibilityScorer, ModelCatalogService, ModelCategory, ModelRecommendation, ModelSource,
+    SearchFilters, SystemCapabilities,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::State;
@@ -369,7 +369,9 @@ async fn fetch_downloadable_hf_models(
 /// Hugging Face did not return are added, so a 22 GB model outside the top
 /// results is still one click away.
 fn merge_curated_chat_models(models: &mut Vec<DownloadableHfModel>, query: &str) {
-    use crate::domain::models::curated::{curated_chat_models_matching, get_curated_llm_models};
+    use lattice_core::domain::models::curated::{
+        curated_chat_models_matching, get_curated_llm_models,
+    };
 
     let catalog = get_curated_llm_models();
     let mut unlisted = curated_chat_models_matching(query);
@@ -411,21 +413,22 @@ async fn fetch_hf_models(
     };
     let model_catalog = container.model_catalog();
     let mut external_metadata = model_catalog.search_models(discovery_query, limit).await?;
-    let to_catalog_models = |metadata: &[crate::application::ports::ExternalModelMetadata]| {
-        metadata
-            .iter()
-            .filter_map(|meta| {
-                meta.to_domain_model()
-                    .ok()
-                    .map(|model| DownloadableHfModel {
-                        model,
-                        downloads: meta.downloads,
-                        likes: meta.likes,
-                    })
-            })
-            .filter(|entry| !require_downloadable || is_downloadable_model(&entry.model))
-            .collect::<Vec<_>>()
-    };
+    let to_catalog_models =
+        |metadata: &[lattice_core::application::ports::ExternalModelMetadata]| {
+            metadata
+                .iter()
+                .filter_map(|meta| {
+                    meta.to_domain_model()
+                        .ok()
+                        .map(|model| DownloadableHfModel {
+                            model,
+                            downloads: meta.downloads,
+                            likes: meta.likes,
+                        })
+                })
+                .filter(|entry| !require_downloadable || is_downloadable_model(&entry.model))
+                .collect::<Vec<_>>()
+        };
     let mut catalog_models = to_catalog_models(&external_metadata);
 
     // Recovery path for stale/empty broad-catalog cache entries.
@@ -468,42 +471,60 @@ fn parse_model_category(category: &str) -> Result<ModelCategory> {
 }
 
 /// Map CPU architecture from current platform.
-fn map_cpu_architecture() -> crate::domain::CpuArchitecture {
+fn map_cpu_architecture() -> lattice_core::domain::CpuArchitecture {
     #[cfg(target_arch = "aarch64")]
     {
-        crate::domain::CpuArchitecture::ARM64
+        lattice_core::domain::CpuArchitecture::ARM64
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
-        crate::domain::CpuArchitecture::X86_64
+        lattice_core::domain::CpuArchitecture::X86_64
     }
 }
 
 /// Map GPU type from port GpuInfo.
-fn map_gpu_type(gpu_info: &Option<crate::application::ports::GpuInfo>) -> crate::domain::GpuType {
+fn map_gpu_type(
+    gpu_info: &Option<lattice_core::application::ports::GpuInfo>,
+) -> lattice_core::domain::GpuType {
     match gpu_info {
         Some(info) => match info.compute_type {
-            crate::application::ports::ComputeType::Metal => crate::domain::GpuType::AppleSilicon,
-            crate::application::ports::ComputeType::Cuda => crate::domain::GpuType::Nvidia,
-            crate::application::ports::ComputeType::Rocm => crate::domain::GpuType::AMD,
-            crate::application::ports::ComputeType::None => crate::domain::GpuType::None,
+            lattice_core::application::ports::ComputeType::Metal => {
+                lattice_core::domain::GpuType::AppleSilicon
+            }
+            lattice_core::application::ports::ComputeType::Cuda => {
+                lattice_core::domain::GpuType::Nvidia
+            }
+            lattice_core::application::ports::ComputeType::Rocm => {
+                lattice_core::domain::GpuType::AMD
+            }
+            lattice_core::application::ports::ComputeType::None => {
+                lattice_core::domain::GpuType::None
+            }
         },
-        None => crate::domain::GpuType::None,
+        None => lattice_core::domain::GpuType::None,
     }
 }
 
 /// Map GPU acceleration from port GpuInfo.
 fn map_gpu_acceleration(
-    gpu_info: &Option<crate::application::ports::GpuInfo>,
-) -> crate::domain::GpuAcceleration {
+    gpu_info: &Option<lattice_core::application::ports::GpuInfo>,
+) -> lattice_core::domain::GpuAcceleration {
     match gpu_info {
         Some(info) => match info.compute_type {
-            crate::application::ports::ComputeType::Metal => crate::domain::GpuAcceleration::Metal,
-            crate::application::ports::ComputeType::Cuda => crate::domain::GpuAcceleration::CUDA,
-            crate::application::ports::ComputeType::Rocm => crate::domain::GpuAcceleration::ROCm,
-            crate::application::ports::ComputeType::None => crate::domain::GpuAcceleration::None,
+            lattice_core::application::ports::ComputeType::Metal => {
+                lattice_core::domain::GpuAcceleration::Metal
+            }
+            lattice_core::application::ports::ComputeType::Cuda => {
+                lattice_core::domain::GpuAcceleration::CUDA
+            }
+            lattice_core::application::ports::ComputeType::Rocm => {
+                lattice_core::domain::GpuAcceleration::ROCm
+            }
+            lattice_core::application::ports::ComputeType::None => {
+                lattice_core::domain::GpuAcceleration::None
+            }
         },
-        None => crate::domain::GpuAcceleration::None,
+        None => lattice_core::domain::GpuAcceleration::None,
     }
 }
 
@@ -519,115 +540,7 @@ fn get_available_disk_space() -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_model_category_llm() {
-        let result = parse_model_category("LLM").unwrap();
-        assert_eq!(result, ModelCategory::LLM);
-    }
-
-    #[test]
-    fn test_parse_model_category_embedding() {
-        let result = parse_model_category("Embedding").unwrap();
-        assert_eq!(result, ModelCategory::Embedding);
-    }
-
-    #[test]
-    fn test_parse_model_category_ocr() {
-        let result = parse_model_category("OCR").unwrap();
-        assert_eq!(result, ModelCategory::OCR);
-    }
-
-    #[test]
-    fn test_parse_model_category_invalid() {
-        let result = parse_model_category("invalid");
-        assert!(result.is_err());
-    }
-
-    fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
-        let mut model = crate::domain::models::curated::get_curated_llm_models()
-            .into_iter()
-            .next()
-            .expect("catalog has entries");
-        model.id = format!("hf::{repo}::{file}");
-        model.model_id = Some(repo.into());
-        model.default_filename = Some(file.into());
-        model.files.clear();
-        model.minimum_ram_gb = 99.0;
-        DownloadableHfModel {
-            model,
-            downloads,
-            likes: 7,
-        }
-    }
-
-    #[test]
-    fn a_catalog_repository_row_becomes_the_catalog_entry() {
-        let mut models = vec![
-            hf_row("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf", 1_000),
-            hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5),
-        ];
-        merge_curated_chat_models(&mut models, "qwen3.5 9b");
-
-        let catalog: Vec<_> = models
-            .iter()
-            .filter(|entry| entry.model.id.starts_with("qwen3.5-9b"))
-            .collect();
-        // The plain 9B replaced its Hugging Face row; the MTP build matched the
-        // search too and was added.
-        assert_eq!(catalog.len(), 2);
-        let plain = catalog
-            .iter()
-            .find(|entry| entry.model.id == "qwen3.5-9b-q4_k_m")
-            .expect("plain 9B");
-        assert_eq!(plain.downloads, 1_000, "keeps the repository's popularity");
-        assert_eq!(plain.likes, 7);
-        assert!(
-            plain.model.minimum_ram_gb < 10.0,
-            "catalog memory, not the guess"
-        );
-        assert!(models
-            .iter()
-            .any(|entry| entry.model.id == "hf::someone/Other-GGUF::Other-Q4_K_M.gguf"));
-        let ids: HashSet<_> = models.iter().map(|entry| entry.model.id.clone()).collect();
-        assert_eq!(ids.len(), models.len(), "no row twice");
-    }
-
-    #[test]
-    fn the_catalog_overview_lists_every_chat_entry_once() {
-        let mut models = vec![hf_row(
-            "unsloth/Qwen3.6-35B-A3B-GGUF",
-            "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-            50,
-        )];
-        merge_curated_chat_models(&mut models, "gguf");
-        let catalog = crate::domain::models::curated::get_curated_llm_models();
-        assert_eq!(models.len(), catalog.len());
-        for model in catalog {
-            assert_eq!(
-                models
-                    .iter()
-                    .filter(|entry| entry.model.id == model.id)
-                    .count(),
-                1,
-                "{}",
-                model.id
-            );
-        }
-    }
-
-    #[test]
-    fn test_map_cpu_architecture() {
-        let arch = map_cpu_architecture();
-        // Just verify it returns a valid value
-        assert!(matches!(
-            arch,
-            crate::domain::CpuArchitecture::ARM64 | crate::domain::CpuArchitecture::X86_64
-        ));
-    }
-}
+mod tests;
 
 /// Request to search external model catalogs.
 #[derive(Debug, Deserialize, specta::Type)]
@@ -715,7 +628,7 @@ pub async fn search_model_catalog(
         .into_iter()
         .map(|entry| {
             let source =
-                if crate::domain::models::curated::get_model_category_by_id(&entry.model.id)
+                if lattice_core::domain::models::curated::get_model_category_by_id(&entry.model.id)
                     .is_some()
                 {
                     ModelSource::Curated
@@ -777,7 +690,7 @@ pub async fn get_model_variants(
             // The catalog's own file keeps its catalog id and figures, so
             // picking it here is the same download first run makes.
             let curated = metadata.preferred_filename.as_deref().and_then(|file| {
-                crate::domain::models::curated::curated_chat_model_for_file(&repo_id, file)
+                lattice_core::domain::models::curated::curated_chat_model_for_file(&repo_id, file)
             });
             match curated {
                 Some(model) => Ok(model.into()),

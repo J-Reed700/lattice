@@ -7,8 +7,8 @@
 use super::state::{ActiveDownload, DownloadManagerService, StopReason};
 use super::types::DownloadEvent;
 use super::validation::{recover_resume_offset, validate_downloaded_file};
-use crate::domain::download::DownloadError;
 use crate::features::download::engine::{DownloadOptions, ProgressCallback};
+use lattice_core::domain::download::DownloadError;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -115,7 +115,7 @@ impl DownloadManagerService {
         let shutdown = self.shutdown.clone();
         // Register before the worker can finish/remove itself.
         let mut active = self.active_downloads.write().await;
-        let task_handle = crate::shared::runtime::background::spawn(async move {
+        let task_handle = self.background.spawn(async move {
             info!(session_id = %session_id_for_task, "Download started");
 
             let resume_from =

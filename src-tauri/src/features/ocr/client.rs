@@ -9,7 +9,7 @@ use tracing::warn;
 
 use super::render::PageImage;
 use super::server::ServerAddress;
-use crate::application::ports::OcrError;
+use lattice_core::application::ports::OcrError;
 
 /// Most tokens one page may produce. The context holds the image (about 1,250
 /// tokens) plus the answer; a dense page of prose reads back in about 900, so

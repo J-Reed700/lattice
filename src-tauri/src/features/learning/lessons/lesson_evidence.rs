@@ -1,6 +1,6 @@
 //! Learner-safe verification report. Assessment claims, keys and explanations
 //! stay on the backend; only teaching claims and original source passages leave.
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 

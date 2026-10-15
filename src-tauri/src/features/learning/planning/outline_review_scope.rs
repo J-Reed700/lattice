@@ -1,6 +1,6 @@
 //! Reuse completed semantic checks only while their inputs still match.
 use crate::features::learning::{dto::LearningSourceDto, outline_draft::OutlineDraft};
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

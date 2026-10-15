@@ -14,14 +14,14 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::application::ports::llm_port::SamplingOverride;
-use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::{
-    GroundedOutput, GroundedRequest, HistoryItem, Streaming,
-};
 use crate::features::learning::outline_progress::OutlineProgress;
 use crate::features::learning::{lesson_drafts, lesson_progress, model_call};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::SamplingOverride;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::{
+    GroundedOutput, GroundedRequest, HistoryItem, Streaming,
+};
+use lattice_core::shared::error::{AppError, Result};
 
 /// The wall-clock limit on one material call that has no interactive progress
 /// attached. Each step of a two-step call has its own: the draft and the
@@ -359,7 +359,7 @@ pub(crate) const FIXTURE_DRAFT: &str = "Fixture draft: the task worked through i
 /// Whether `request` is the prose step of a two-step call.
 #[cfg(test)]
 pub(crate) fn is_draft_request(
-    request: &crate::application::ports::llm_port::CompletionRequest,
+    request: &lattice_core::application::ports::llm_port::CompletionRequest,
 ) -> bool {
     request.json_schema.is_none()
         && messages(request, "system").any(|content| content.contains(TWO_STEPS))
@@ -370,7 +370,7 @@ pub(crate) fn is_draft_request(
 /// answer a task by its prompt then answer both forms alike.
 #[cfg(test)]
 pub(crate) fn task_messages(
-    request: &crate::application::ports::llm_port::CompletionRequest,
+    request: &lattice_core::application::ports::llm_port::CompletionRequest,
 ) -> (&str, &str) {
     let system = messages(request, "system").next().unwrap_or("");
     let system = system
@@ -387,7 +387,7 @@ pub(crate) fn task_messages(
 /// Contents of `role`'s messages, last first.
 #[cfg(test)]
 fn messages<'a>(
-    request: &'a crate::application::ports::llm_port::CompletionRequest,
+    request: &'a lattice_core::application::ports::llm_port::CompletionRequest,
     role: &'a str,
 ) -> impl Iterator<Item = &'a str> + 'a {
     request
@@ -395,7 +395,7 @@ fn messages<'a>(
         .iter()
         .rev()
         .filter_map(move |item| match item {
-            crate::application::ports::llm_port::CompletionInput::Message {
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
                 role: candidate,
                 content,
             } if candidate == role => Some(content.as_str()),

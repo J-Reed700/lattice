@@ -7,7 +7,6 @@
 //!
 //! # Security
 //! - Stores endpoint securely in credentials store
-//! - Audit logs endpoint changes
 //!
 //! Note: this use case does **not** validate the URL. That is currently safe
 //! because the stored value is never fetched from here, but any code that
@@ -22,9 +21,9 @@
 //! use_case.execute("ollama".into(), "http://localhost:11434".into()).await?;
 //! ```
 
-use crate::application::ports::CredentialsPort;
 use crate::features::credentials::dto::CredentialOperationResultDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::CredentialsPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct SetCustomEndpointUseCase {

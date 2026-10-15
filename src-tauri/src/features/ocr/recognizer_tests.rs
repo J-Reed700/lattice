@@ -49,6 +49,7 @@ fn ocr(model: Option<OcrModel>, endpoint: &str) -> (VisionOcr, Arc<PointAt>) {
     let ocr = VisionOcr::new(
         Arc::new(FixedOcrModel(model)),
         Arc::clone(&launcher) as Arc<dyn ServerLauncher>,
+        Arc::default(),
     )
     .unwrap();
     (ocr, launcher)

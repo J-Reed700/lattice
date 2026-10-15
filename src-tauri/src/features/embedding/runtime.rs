@@ -5,9 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::application::ports::{EmbeddingPort, LoadedEmbeddingModelPort};
 use crate::features::embedding::loading::EmbeddingLoader;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::{EmbeddingPort, LoadedEmbeddingModelPort};
+use lattice_core::shared::error::{AppError, Result};
 
 use crate::infrastructure::ml::model_cache::ModelCache;
 

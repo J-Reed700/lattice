@@ -12,8 +12,8 @@ use super::{to_dto, Shared};
 use crate::features::web::traits::page_snapshot::{
     CaptureError, CaptureProgress, CaptureRequest, ProgressSink,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::runtime::jobs::{
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, RecoveryPolicy,
 };
 

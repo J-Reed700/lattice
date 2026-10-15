@@ -136,11 +136,11 @@ impl LinkParser {
                 + 1;
 
             // Keep roughly 50 bytes on either side without splitting UTF-8.
-            let start = crate::shared::text::floor_char_boundary(
+            let start = lattice_core::shared::text::floor_char_boundary(
                 content,
                 full_match.start().saturating_sub(50),
             );
-            let end = crate::shared::text::floor_char_boundary(
+            let end = lattice_core::shared::text::floor_char_boundary(
                 content,
                 full_match.end().saturating_add(50),
             );

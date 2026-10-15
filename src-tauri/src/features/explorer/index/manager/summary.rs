@@ -8,7 +8,7 @@ use crate::features::explorer::index::dto::{
 };
 use crate::features::explorer::index::store::{self, Counts, FolderStore, IndexEntry};
 use crate::features::explorer::scope::Scope;
-use crate::shared::{runtime::jobs::JobStatus, AppError, Result};
+use lattice_core::shared::{runtime::jobs::JobStatus, AppError, Result};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 

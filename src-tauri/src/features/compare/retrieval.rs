@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use tracing::{debug, warn};
 
 use crate::features::compare::di::CompareDeps;
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 
 use super::use_case::{CHUNKS_PER_COLUMN, MAX_CHUNKS_PER_DOCUMENT};
 

@@ -3,7 +3,7 @@
 //! Queries indexed directories from the documents table to populate
 //! FileAccessConfig allowed_roots at application startup.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 

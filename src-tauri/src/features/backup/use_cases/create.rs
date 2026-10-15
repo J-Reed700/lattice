@@ -16,9 +16,9 @@
 //! println!("Backup created at: {}", result.path);
 //! ```
 
-use crate::application::ports::BackupPort;
 use crate::features::backup::dto::CreateBackupResultDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::BackupPort;
+use lattice_core::shared::error::AppError;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -128,7 +128,7 @@ mod tests {
         async fn list_backups(
             &self,
             _data_dir: PathBuf,
-        ) -> Result<Vec<crate::application::ports::BackupInfoData>, AppError> {
+        ) -> Result<Vec<lattice_core::application::ports::BackupInfoData>, AppError> {
             unimplemented!("Not needed for create backup tests")
         }
     }

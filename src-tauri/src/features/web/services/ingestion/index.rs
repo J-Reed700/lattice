@@ -1,9 +1,9 @@
 //! Chunking of extracted article text ahead of embedding and storage.
 
 use super::WebIngestionService;
-use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::indexing::use_cases::embedding_input::SpanEmbeddingGroup;
-use crate::shared::error::Result;
+use lattice_core::domain::value_objects::ContextualizedChunk;
+use lattice_core::shared::error::Result;
 
 /// The one context prefix every web-article chunk carries.
 const WEB_ARTICLE_CONTEXT_PREFIX: &str = "[Document: Web Article]";

@@ -20,9 +20,9 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::application::contracts::web::CleanArticle;
-use crate::domain::ports::article_archive::ArticleArchive;
-use crate::shared::error::Result;
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::shared::error::Result;
 
 /// Trait for web archive operations
 ///
@@ -95,7 +95,7 @@ pub trait WebArchiveServiceTrait: ArticleArchive {
     /// # Example
     /// ```rust,no_run
     /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
-    /// use lattice::application::dtos::function_calling_dto::CleanArticle;
+    /// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
     ///
     /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let article = CleanArticle {

@@ -1,8 +1,5 @@
 //! Reference planning and gathering before drafting; the References finding.
 //! Fixtures here are shared with the review-scope tests.
-use crate::application::contracts::web::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
-};
 use crate::features::learning::{
     dto::*,
     lessons::course_generation_tests::{outline, request, ScriptedModel},
@@ -16,7 +13,10 @@ use crate::features::learning::{
     service,
 };
 use crate::features::web::{mocks::MockWebService, traits::WebServiceTrait};
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -214,7 +214,8 @@ async fn the_plan_guard_drops_queries_that_copy_the_goal_and_fails_only_when_non
     request.goal = GOAL.into();
     let progress = OutlineProgress::default();
     // One copied query is dropped; the public one survives.
-    let llm = model(vec![plan_output(&[
+    let llm =
+        model(vec![plan_output(&[
         (
             "Randomized comparison",
             &[
@@ -256,7 +257,10 @@ async fn the_plan_guard_drops_queries_that_copy_the_goal_and_fails_only_when_non
     let llm = model(vec![empty]);
     let plan = outline_references::plan(&llm, &request, &[original_source()], &progress).await?;
     assert_eq!(plan.query_count(), 0);
-    assert_eq!(plan.subtopic_titles(), vec!["Randomized comparison".to_owned()]);
+    assert_eq!(
+        plan.subtopic_titles(),
+        vec!["Randomized comparison".to_owned()]
+    );
     Ok(())
 }
 
@@ -312,14 +316,9 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     // subtopic 2 sees one (c). Both selections approve everything.
     let llm = model(vec![select_all(3), select_all(1)]);
     let existing = vec![original_source()];
-    let found = outline_references::gather(
-        &llm,
-        &web,
-        &plan,
-        &existing,
-        &OutlineProgress::default(),
-    )
-    .await?;
+    let found =
+        outline_references::gather(&llm, &web, &plan, &existing, &OutlineProgress::default())
+            .await?;
     assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
     assert_eq!(found.searches, 3);
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
@@ -402,7 +401,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].excerpt, full.trim());
     assert!(!saved[0].excerpt.contains("SEARCH_SNIPPET"));
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = llm.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 4);
     // The plan runs first, the draft retrieves by subtopic and sees the deep passage.
     assert!(prompts[0].starts_with("Plan the reference material"));
@@ -411,7 +410,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert!(prompts[2].contains(deep));
     assert!(!prompts[2].contains("name the sourceIndex of the passage that supports it"));
     assert!(prompts[2].contains("most plan items need no citation"));
-    let stages = stages.lock().unwrap();
+    let stages = stages.lock().unwrap().clone();
     let position = |stage: OutlineStage| stages.iter().position(|s| *s == stage).unwrap();
     assert!(position(OutlineStage::GatheringReferences) < position(OutlineStage::Drafting));
     assert!(position(OutlineStage::Drafting) < position(OutlineStage::CheckingCitations));
@@ -518,7 +517,7 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
     assert_eq!(program.sources.len(), 2);
     assert_eq!(program.sources[0].excerpt, ORIGINAL);
     assert_eq!(program.sources[1].excerpt, ADDITIONAL);
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = llm.prompts.lock().unwrap().clone();
     let plan = payload(&prompts[0]);
     assert_eq!(plan["existingSources"]["totalSources"], 1);
     assert!(plan["existingSources"]
@@ -528,7 +527,10 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
     assert!(prompts[0].contains("never copy the learner's goal"));
     let draft = payload(&prompts[2]);
     assert_eq!(draft["sourceCatalog"]["totalSources"], 2);
-    assert_eq!(repo.verification_sources(&program.summary.id).await?.len(), 2);
+    assert_eq!(
+        repo.verification_sources(&program.summary.id).await?.len(),
+        2
+    );
     Ok(())
 }
 
@@ -587,7 +589,7 @@ async fn typography_only_mismatches_are_restored_before_coverage_is_judged() -> 
     assert_eq!(review.citations_verified, 1);
     assert_eq!(review.citations_removed, 0);
     assert_eq!(review.repair_passes, 0);
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = llm.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 3);
     assert!(payload(&prompts[1])["items"][0]["passage"]
         .as_str()

@@ -9,7 +9,7 @@ use crate::features::learning::{
     pack::{decode_learning_pack, encode_learning_pack},
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::path::Path;
 

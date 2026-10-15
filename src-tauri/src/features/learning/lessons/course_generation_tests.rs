@@ -4,8 +4,8 @@ use crate::features::learning::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
 };
-use crate::shared::runtime::jobs::{JobContext, JobStore};
-use crate::{
+use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
+use lattice_core::{
     application::ports::llm_port::{CompletionRequest, CompletionResponse},
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -61,7 +61,9 @@ impl Model {
     }
 }
 
-pub(in crate::features::learning) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
+pub(in crate::features::learning) fn request(
+    depth: LearningCourseDepth,
+) -> GenerateLearningProgramRequestDto {
     GenerateLearningProgramRequestDto {
         goal: "Design experiments and interpret their results".into(),
         prior_knowledge: "Basic algebra".into(),
@@ -147,6 +149,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     let prepared = service::prepare(
         &repo,
         &Model(lesson_candidate.to_string()),
+        &crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         PrepareLearningLessonRequestDto {
             program_id: draft.summary.id.clone(),
             lesson_id: lesson_id.clone(),
@@ -402,13 +405,14 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         })
         .await?;
     JobStore::new(pool.clone()).claim(&job.id).await?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let first = crate::features::learning::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::features::learning::lesson_drafts::run(
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &program, lesson),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await;
@@ -438,7 +442,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &retry.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &program, lesson),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await?;
@@ -822,17 +826,18 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
         .first()
         .and_then(|module| module.lessons.first())
         .ok_or_else(|| AppError::InvalidState("missing fixture lesson".into()))?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let mut thin = lesson_response();
     thin["blocks"] = json!([]);
     assert!(
-        generation::prepare_lesson(&Model(thin.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(thin.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
     let mut shallow = lesson_response();
     shallow["blocks"][4]["body"] = json!("Try this.");
     assert!(
-        generation::prepare_lesson(&Model(shallow.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(shallow.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -843,7 +848,7 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
         blocks.push(duplicate_assignment);
     }
     assert!(
-        generation::prepare_lesson(&Model(ambiguous.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(ambiguous.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -851,7 +856,7 @@ async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persist
     invented["blocks"][0]["sourceIndex"] = json!(0);
     invented["blocks"][0]["quote"] = json!("An imaginary textbook says this is true.");
     assert!(
-        generation::prepare_lesson(&Model(invented.to_string()), &program, lesson)
+        generation::prepare_lesson(&Model(invented.to_string()), &runtimes, &program, lesson)
             .await
             .is_err()
     );
@@ -963,7 +968,7 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
 
 #[tokio::test]
 async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output() -> Result<()> {
-    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     struct StreamingModel;
     #[async_trait::async_trait]
     impl LLMPort for StreamingModel {
@@ -1030,9 +1035,9 @@ struct DelayedOutlineModel {
 impl LLMPort for DelayedOutlineModel {
     async fn complete(
         &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
         // A prose step keeps its reservation rather than taking the window;
         // the delays and scripted replies belong to the structured answers.
         if crate::features::learning::lessons::structured_call::is_draft_request(request) {
@@ -1148,7 +1153,8 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
 }
 
 #[tokio::test]
-async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_reported() -> Result<()> {
+async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_reported() -> Result<()>
+{
     let quote = "A randomized comparison isolates the intervention.";
     let mut candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
     // One citation quotes the capture exactly; one does not. Neither is a finding.
@@ -1202,7 +1208,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         std::slice::from_ref(&reference),
     )
     .await?;
-    let prompts = model.prompts.lock().unwrap();
+    let prompts = model.prompts.lock().unwrap().clone();
     // Authoring retrieves from the complete capture, not the 2,400-char preview.
     assert!(prompts[0].contains(quote));
     assert_eq!(prompts.len(), 3);
@@ -1475,13 +1481,11 @@ async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<
 #[tokio::test]
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and LATTICE_OUTLINE_REQUEST"]
 async fn live_outline_generation_and_save() -> Result<()> {
-    use crate::{
-        application::contracts::settings::LLMSettingsDto,
-        features::{
-            llm::llama_cpp::LlamaCppLlm,
-            web::{services::web::WebService, WebServiceTrait},
-        },
+    use crate::features::{
+        llm::llama_cpp::LlamaCppLlm,
+        web::{services::web::WebService, WebServiceTrait},
     };
+    use lattice_core::application::contracts::settings::LLMSettingsDto;
     let settings_path = std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap();
     let request_path = std::env::var("LATTICE_OUTLINE_REQUEST").unwrap();
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(settings_path)?)?;
@@ -1504,16 +1508,16 @@ async fn live_outline_generation_and_save() -> Result<()> {
     impl LLMPort for ObservedModel {
         async fn complete(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             self.inner.complete(request).await
         }
 
         async fn complete_with_progress(
             &self,
-            request: &crate::application::ports::llm_port::CompletionRequest,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
             on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let replayed = call == 0 && self.replay_draft.is_some();
             let response = if let Some(draft) = self.replay_draft.as_ref().filter(|_| call == 0) {
@@ -1521,7 +1525,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     "Replaying a previously recorded draft; this step makes no model request."
                 );
                 on_text(draft.clone())?;
-                crate::application::ports::llm_port::CompletionResponse {
+                lattice_core::application::ports::llm_port::CompletionResponse {
                     text: draft.clone(),
                     finish_reason: "stop".into(),
                     ..Default::default()

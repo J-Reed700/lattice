@@ -34,7 +34,7 @@ setup/
    - `setup_database(<app_data>/lattice.db)`: opens the pool (WAL, foreign
      keys on, corrupt files moved aside) and applies every pending sqlx
      migration from `src-tauri/migrations/`;
-   - wires the audit sink and security context, reads `settings.json`, builds
+   - wires the security context, reads `settings.json`, builds
      the DI `Container`, and starts background work (auto-backup scheduler,
      stale-download reconciliation, orphaned session and model-file cleanup).
 5. `lattice::plugins::init_plugins()` registers the feature plugins.

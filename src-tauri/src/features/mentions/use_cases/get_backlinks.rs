@@ -16,9 +16,9 @@
 //! println!("Document referenced by {} other documents", backlinks.backlinks.len());
 //! ```
 
-use crate::application::ports::MentionRepositoryPort;
 use crate::features::mentions::dto::BacklinksResultDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::MentionRepositoryPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct GetBacklinksUseCase {
@@ -59,8 +59,8 @@ impl GetBacklinksUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{MentionData, MentionWithContextData};
     use async_trait::async_trait;
+    use lattice_core::application::ports::{MentionData, MentionWithContextData};
     use std::collections::HashMap;
     use std::sync::Mutex;
 

@@ -1,10 +1,10 @@
 //! Web search and page capture shared by outline reference gathering and
 //! lesson research. Search snippets never become evidence: only a complete
 //! capture of a page, validated for full text, is returned.
-use crate::application::contracts::web::{WebSearchInput, WebSearchResult};
 use crate::features::learning::source_library::CapturedLearningSource;
 use crate::features::web::traits::WebServiceTrait;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::contracts::web::{WebSearchInput, WebSearchResult};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Search providers may ignore site operators (including enrichment providers).
 /// Enforce the requested host/path ourselves, again after any fetch redirect.

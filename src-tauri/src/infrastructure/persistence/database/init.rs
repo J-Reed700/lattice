@@ -1,4 +1,4 @@
-use crate::shared::error::Result;
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 pub async fn initialize_database(pool: &SqlitePool) -> Result<()> {

@@ -2,6 +2,7 @@
 //! macro expansion and aliases exported elsewhere still require compiler boundaries.
 use std::{
     collections::HashSet,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
@@ -12,10 +13,21 @@ use syn::{
 
 mod ratchet;
 
+/// The core crate's feature that lends its test doubles to the app's tests.
+/// Only a dev-dependency enables it, so code behind it never ships.
+const TEST_SUPPORT: &str = "test-support";
+
+/// Whether a `#[cfg(...)]` keeps the item out of production builds: `test`,
+/// `doc`, or the core crate's `test-support` feature.
 fn test_only(attrs: &[Attribute]) -> bool {
     fn excluded_from_production(meta: &syn::Meta) -> bool {
         match meta {
             syn::Meta::Path(path) => path.is_ident("test") || path.is_ident("doc"),
+            syn::Meta::NameValue(pair) if pair.path.is_ident("feature") => matches!(
+                &pair.value,
+                syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(name), .. })
+                    if name.value() == TEST_SUPPORT
+            ),
             syn::Meta::List(list) if list.path.is_ident("any") || list.path.is_ident("all") => {
                 let Ok(items) = list.parse_args_with(
                     syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
@@ -432,28 +444,53 @@ fn check_feature_entrypoints(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// What the command line asks for.
+#[derive(Debug, PartialEq)]
+struct Options {
+    write_baseline: bool,
+    /// The app crate's source root.
+    app: PathBuf,
+    /// The core crate's source root: the app root while core still lives in it.
+    core: PathBuf,
+    /// The API server's source root, when one is given.
+    api: Option<PathBuf>,
+}
+
+/// Reads `<app root> [<api root>] [--core <dir>] [--write-baseline]`.
+fn parse_args(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Result<Options, Box<dyn std::error::Error>> {
     let mut write_baseline = false;
+    let mut core = None;
     let mut roots = Vec::new();
-    for argument in std::env::args_os().skip(1) {
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
         if argument == "--write-baseline" {
             write_baseline = true;
+        } else if argument == "--core" {
+            let directory = arguments.next().ok_or("--core expects a directory")?;
+            core = Some(PathBuf::from(directory));
         } else if argument.to_string_lossy().starts_with("--") {
             return Err(format!("unknown flag {}", argument.to_string_lossy()).into());
         } else {
             roots.push(PathBuf::from(argument));
         }
     }
-    let root = roots.first().ok_or("expected Rust source root")?.clone();
-    let mut failures = 0;
-    ratchet::check(
-        &root,
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline.txt"),
+    let mut roots = roots.into_iter();
+    let app = roots.next().ok_or("expected Rust source root")?;
+    Ok(Options {
         write_baseline,
-        &mut failures,
-    )?;
-    check_integration_tests(&root, &mut failures)?;
-    check_feature_entrypoints(&root.join("features"), &mut failures)?;
+        core: core.unwrap_or_else(|| app.clone()),
+        api: roots.next(),
+        app,
+    })
+}
+
+/// Rules for the app crate: its integration tests, plugin entry points and
+/// the workflow files that must stay free of drivers.
+fn check_app(root: &Path, failures: &mut usize) -> Result<(), Box<dyn std::error::Error>> {
+    check_integration_tests(root, failures)?;
+    check_feature_entrypoints(&root.join("features"), failures)?;
     let mut chat_workflows: Vec<PathBuf> = [
         "chat/turn_record.rs",
         "chat/tool_loop.rs",
@@ -473,14 +510,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     turn_stages.sort();
     chat_workflows.extend(turn_stages);
     for workflow in &chat_workflows {
-        scan_with_drivers(workflow, &[], &["tauri"], &mut HashSet::new(), &mut failures)?;
+        scan_with_drivers(workflow, &[], &["tauri"], &mut HashSet::new(), failures)?;
     }
     scan_with_drivers(
         &root.join("features/learning/lessons/generation_jobs.rs"),
         &[],
         &["tauri"],
         &mut HashSet::new(),
-        &mut failures,
+        failures,
     )?;
     for workflow in ["branching.rs", "synthesis.rs"] {
         scan_with_drivers(
@@ -488,7 +525,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[],
             &["sqlx"],
             &mut HashSet::new(),
-            &mut failures,
+            failures,
         )?;
     }
     scan_with_drivers(
@@ -496,8 +533,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &["interfaces"],
         &["tauri", "axum"],
         &mut HashSet::new(),
-        &mut failures,
+        failures,
     )?;
+    Ok(())
+}
+
+/// Rules for the core layers: `domain`, `application` and `shared`.
+fn check_core(root: &Path, failures: &mut usize) -> Result<(), Box<dyn std::error::Error>> {
     scan_with_drivers(
         &root.join("shared/error"),
         &[
@@ -509,14 +551,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
         &["sqlx", "keyring", "ndarray", "tauri"],
         &mut HashSet::new(),
-        &mut failures,
+        failures,
     )?;
     scan_with_drivers(
         &root.join("domain"),
         &[],
         &["std::fs", "std::env", "tokio::fs", "crate::shared::fs"],
         &mut HashSet::new(),
-        &mut failures,
+        failures,
     )?;
     for (layer, forbidden) in [
         (
@@ -528,14 +570,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &["features", "infrastructure", "interfaces"][..],
         ),
     ] {
-        scan(
-            &root.join(layer),
-            forbidden,
-            &mut HashSet::new(),
-            &mut failures,
-        )?;
+        scan(&root.join(layer), forbidden, &mut HashSet::new(), failures)?;
     }
-    if let Some(api) = roots.get(1) {
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = parse_args(std::env::args_os().skip(1))?;
+    let mut failures = 0;
+    ratchet::check(
+        &[options.app.as_path(), options.core.as_path()],
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline.txt"),
+        options.write_baseline,
+        &mut failures,
+    )?;
+    check_app(&options.app, &mut failures)?;
+    check_core(&options.core, &mut failures)?;
+    if let Some(api) = &options.api {
         for part in ["sync", "error.rs"] {
             scan(
                 &api.join(part),
@@ -604,6 +655,85 @@ mod tests {
         let mut failures = 0;
         check_integration_tests(&source, &mut failures).unwrap();
         assert_eq!(failures, 0);
+    }
+
+    #[test]
+    fn the_test_support_feature_is_test_only_like_cfg_test() {
+        let (bad, _) = inspect(
+            r#"
+            #[cfg(feature = "test-support")] pub mod testing { use sqlx::Pool; }
+            #[cfg(any(test, feature = "test-support"))] pub mod mocks { use sqlx::Pool; }
+            #[cfg(feature = "bindings-export")] pub mod export { use sqlx::Shipped; }
+            #[cfg(any(test, feature = "bindings-export"))] pub mod either { use sqlx::Either; }
+        "#,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(bad, vec!["sqlx::Shipped", "sqlx::Either"]);
+        let (bad, _) = inspect(
+            "#![cfg(any(test, feature = \"test-support\"))] use sqlx::Pool;",
+            &[],
+        )
+        .unwrap();
+        assert!(bad.is_empty());
+    }
+
+    #[test]
+    fn the_core_root_defaults_to_the_app_root_and_takes_a_directory() {
+        let parse = |arguments: &[&str]| parse_args(arguments.iter().map(OsString::from));
+        assert_eq!(
+            parse(&["app", "api", "--write-baseline"]).unwrap(),
+            Options {
+                write_baseline: true,
+                app: "app".into(),
+                core: "app".into(),
+                api: Some("api".into()),
+            }
+        );
+        assert_eq!(
+            parse(&["--core", "core", "app"]).unwrap(),
+            Options {
+                write_baseline: false,
+                app: "app".into(),
+                core: "core".into(),
+                api: None,
+            }
+        );
+        assert!(parse(&["app", "--core"]).is_err());
+        assert!(parse(&["app", "--cores", "core"]).is_err());
+        assert!(parse(&["--core", "core"]).is_err());
+    }
+
+    #[test]
+    fn core_rules_run_at_the_core_root_which_has_no_integration_tests() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let core = std::env::temp_dir()
+            .join(format!(
+                "lattice-architecture-core-{}-{unique}",
+                std::process::id()
+            ))
+            .join("src");
+        for directory in ["domain", "application", "shared/error"] {
+            fs::create_dir_all(core.join(directory)).unwrap();
+        }
+        fs::write(
+            core.join("domain/mod.rs"),
+            "use crate::application::Port; use std::fs::read;",
+        )
+        .unwrap();
+        fs::write(core.join("application/mod.rs"), "use crate::domain::Entity;").unwrap();
+        fs::write(core.join("shared/error/mod.rs"), "use keyring::Error;").unwrap();
+        let mut failures = 0;
+        let result = check_core(&core, &mut failures);
+        let mut app_failures = 0;
+        let app = check_integration_tests(&core, &mut app_failures);
+        fs::remove_dir_all(core.parent().unwrap()).unwrap();
+        result.unwrap();
+        assert_eq!(failures, 3);
+        assert!(app.is_err(), "the app's rules need a tests directory");
     }
 
     #[test]

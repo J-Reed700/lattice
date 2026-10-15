@@ -1,12 +1,13 @@
 //! Vault feature dependency injection.
 //!
-//! The write-back worker handle and the suppression registry are built in
-//! `Container::new`; the accessors over them belong to this feature.
+//! The write-back worker handle, the suppression registry and the rescan lock
+//! are built in `Container::new`; the accessors over them belong to this
+//! feature.
 
 use crate::features::vault::watcher::RescanSummary;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// Vault's registrar surface on `Container`.
 impl Container {
@@ -47,7 +48,9 @@ impl Container {
             self.core.db_pool().clone(),
             vault_root,
             self.vault_write_suppression.clone(),
+            &self.vault_rescan_lock,
             app_handle,
+            std::sync::Arc::clone(self.core.background()),
         )
         .await
     }

@@ -17,10 +17,10 @@
 //! println!("Found {} mentions", result.mentions.len());
 //! ```
 
-use crate::application::ports::MentionRepositoryPort;
 use crate::features::mentions::dto::{ExtractMentionsResultDto, MentionWithContextDto};
 use crate::features::mentions::mapper::MentionMapper;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::MentionRepositoryPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
 pub struct ExtractMentionsUseCase {
@@ -75,8 +75,8 @@ impl ExtractMentionsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{MentionData, MentionWithContextData};
     use async_trait::async_trait;
+    use lattice_core::application::ports::{MentionData, MentionWithContextData};
     use std::sync::Mutex;
 
     struct MockMentionRepository {

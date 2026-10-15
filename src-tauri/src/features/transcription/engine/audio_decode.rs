@@ -5,7 +5,7 @@
 //! the 16 kHz buffer is ever held; a second source-rate buffer would double peak
 //! memory on long files.
 
-use crate::shared::error::AppError;
+use lattice_core::shared::error::AppError;
 use rubato::{FftFixedIn, Resampler};
 use std::path::Path;
 use symphonia::core::audio::SampleBuffer;

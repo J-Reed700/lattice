@@ -2,9 +2,9 @@
 //! building articles from video metadata.
 
 use super::WebIngestionService;
-use crate::application::contracts::web::CleanArticle;
-use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDate, Utc};
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +78,7 @@ impl WebIngestionService {
             return Some(trimmed.to_string());
         }
 
-        let truncated = &trimmed[..crate::shared::text::floor_char_boundary(trimmed, 200)];
+        let truncated = &trimmed[..lattice_core::shared::text::floor_char_boundary(trimmed, 200)];
         if let Some(last_space) = truncated.rfind(' ') {
             Some(format!("{}...", &trimmed[..last_space]))
         } else {

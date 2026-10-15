@@ -2,8 +2,8 @@
 //! This separate pass may raise research questions, never approve an unsupported
 //! claim or turn the model's recollection into evidence of a contradiction.
 use super::*;
-use crate::application::ports::llm_port::InferencePriority;
-use crate::application::services::grounded_generation::{GroundedRequest, Streaming};
+use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::services::grounded_generation::{GroundedRequest, Streaming};
 
 mod batch;
 pub(super) use batch::guard_batch;
@@ -51,7 +51,7 @@ async fn send_challenge(
     llm: &dyn LLMPort,
     request: GroundedRequest,
     too_large: &str,
-) -> Result<crate::application::services::grounded_generation::GroundedOutput> {
+) -> Result<lattice_core::application::services::grounded_generation::GroundedOutput> {
     let receive = |text: String| {
         crate::features::learning::lesson_progress::received(&text);
         Ok(())

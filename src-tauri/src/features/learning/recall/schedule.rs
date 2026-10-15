@@ -3,8 +3,8 @@
 //! A card's schedule is plain data stored on its `study_cards` row; this
 //! module only decides the next state, so it never touches the database.
 use super::study_dto::StudyRating;
-use crate::shared::error::{AppError, Result};
 use fsrs::{MemoryState, FSRS};
+use lattice_core::shared::error::{AppError, Result};
 
 pub(crate) const DAY_MS: i64 = 86_400_000;
 /// The retention FSRS aims for when it picks the next interval.

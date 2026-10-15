@@ -29,13 +29,13 @@
 //! # }
 //! ```
 
-use crate::application::contracts::web::UrlPreview;
 use crate::features::web::services::stealth;
 use crate::features::web::WebCaptureServiceTrait;
-use crate::shared::constants::WEB_REQUEST_TIMEOUT;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::web::UrlPreview;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
+use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};

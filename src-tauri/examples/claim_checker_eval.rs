@@ -30,12 +30,12 @@
 //! in the answer.
 
 use async_trait::async_trait;
-use lattice::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
-use lattice::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use lattice::application::ports::LLMPort;
 use lattice::features::conversation::chat::verification::GroundingVerifier;
 use lattice::features::llm::llama_cpp::LlamaCppLlm;
 use lattice::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -202,7 +202,7 @@ impl LLMPort for RecordingLlm {
     async fn complete(
         &self,
         request: &CompletionRequest,
-    ) -> lattice::shared::error::Result<CompletionResponse> {
+    ) -> lattice_core::shared::error::Result<CompletionResponse> {
         let started = Instant::now();
         let result = self.inner.complete(request).await;
         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -252,7 +252,7 @@ impl LLMPort for RecordingLlm {
         self.inner.chars_per_token()
     }
 
-    async fn is_ready(&self) -> lattice::shared::error::Result<bool> {
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         self.inner.is_ready().await
     }
 

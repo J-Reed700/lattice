@@ -2,10 +2,10 @@
 //!
 //! SQLite pool-based implementation of DocumentRepository that delegates to ops.rs.
 
-use crate::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
-use crate::domain::entities::Document as DocumentEntity;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
+use lattice_core::domain::entities::Document as DocumentEntity;
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 use super::ops;
@@ -77,7 +77,7 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
     async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<DocumentEntity>> {
         let filter = filter
             .as_any()
-            .downcast_ref::<crate::application::ports::DocumentFilter>()
+            .downcast_ref::<lattice_core::application::ports::DocumentFilter>()
             .ok_or_else(|| AppError::InvalidInput("Expected DocumentFilter".into()))?;
         let mut tx = self.pool.begin().await?;
         let documents = ops::find_by_filter(&mut tx, filter).await?;
@@ -192,8 +192,8 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
 
     async fn find_by_checksum(
         &self,
-        checksum: &crate::domain::value_objects::Checksum,
-    ) -> Result<Option<crate::domain::entities::Document>> {
+        checksum: &lattice_core::domain::value_objects::Checksum,
+    ) -> Result<Option<lattice_core::domain::entities::Document>> {
         let mut tx = self.pool.begin().await?;
         let result = ops::find_aggregate_by_checksum_tx(&mut tx, checksum.as_str()).await?;
         tx.commit().await?;
@@ -237,4 +237,4 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
     }
 }
 
-impl crate::application::ports::DocumentRepository for SqliteDocumentRepository {}
+impl lattice_core::application::ports::DocumentRepository for SqliteDocumentRepository {}

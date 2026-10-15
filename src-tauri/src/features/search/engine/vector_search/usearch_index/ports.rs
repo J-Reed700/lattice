@@ -1,12 +1,12 @@
 //! The index as a `VectorSearchPort` and a `SearchServiceTrait`.
 use super::{USearchVectorIndex, MAX_SCOPED_CANDIDATES};
-use crate::application::ports::vector_search_port::VectorIndexEntry;
-use crate::application::ports::VectorSearchPort;
 use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::engine::service::SearchResult;
 use crate::features::search::SearchServiceTrait;
-use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
+use lattice_core::application::ports::VectorSearchPort;
+use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 

@@ -18,7 +18,6 @@
 //! ## Security Features
 //!
 //! - **Rate Limiting (CWE-770)**: Health checks limited to prevent DoS
-//! - **Audit Logging (CWE-778)**: All health checks and stats queries logged
 
 use crate::interfaces::di::Container;
 use serde::{Deserialize, Serialize};
@@ -60,16 +59,6 @@ pub async fn health_check_impl(container: &Container) -> std::result::Result<Str
         .await
         .map_err(|e| format!("Health check failed: {}", e))?;
 
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::HealthCheck,
-        "system_health",
-        "status" => response.status.as_str()
-    )
-    .await
-    .ok();
-
     serde_json::to_string(&response).map_err(|e| format!("Serialization error: {}", e))
 }
 
@@ -91,17 +80,6 @@ pub async fn get_system_stats_impl(container: &Container) -> std::result::Result
         .execute()
         .await
         .map_err(|e| format!("Stats collection failed: {}", e))?;
-
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::HealthCheck,
-        "system_stats",
-        "doc_count" => stats.total_documents.to_string(),
-        "chunk_count" => stats.total_chunks.to_string()
-    )
-    .await
-    .ok();
 
     serde_json::to_string(&stats).map_err(|e| format!("Serialization error: {}", e))
 }

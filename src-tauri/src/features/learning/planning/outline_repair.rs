@@ -4,14 +4,12 @@
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
-use crate::features::learning::outline_citation_check::{
-    self, CitationReceipts, ItemKind,
-};
+use crate::features::learning::outline_citation_check::{self, CitationReceipts, ItemKind};
 use crate::features::learning::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
     reference_collection::ReferenceCollection, repository::LearningRepository,
 };
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -228,7 +226,10 @@ fn preserve_valid_citations(
     if let (Some(before), Some(after)) = (before.get("summary"), after.get_mut("summary")) {
         preserve(ItemKind::Summary, before, after);
     }
-    for (name, kind) in [("outcomes", ItemKind::Outcome), ("lessons", ItemKind::Lesson)] {
+    for (name, kind) in [
+        ("outcomes", ItemKind::Outcome),
+        ("lessons", ItemKind::Lesson),
+    ] {
         if let (Some(before), Some(after)) = (
             before.get(name).and_then(Value::as_array),
             after.get_mut(name).and_then(Value::as_array_mut),

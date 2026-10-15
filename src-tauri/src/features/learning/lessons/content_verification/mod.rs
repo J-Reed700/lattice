@@ -1,17 +1,18 @@
 //! Fail-closed lesson publication checks. Evidence and execution reduce errors;
 //! the claim inventory and its coverage audit are still fallible model judgments.
-use crate::application::ports::{llm_port::SamplingOverride, LLMPort};
-#[cfg(test)]
-use crate::application::services::claim_verification::ClaimEvidence;
-use crate::application::services::claim_verification::{
-    CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
-};
 #[cfg(test)]
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
+use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
-use crate::shared::error::{AppError, Result};
 use futures::{FutureExt, StreamExt, TryStreamExt};
+use lattice_core::application::ports::{llm_port::SamplingOverride, LLMPort};
+#[cfg(test)]
+use lattice_core::application::services::claim_verification::ClaimEvidence;
+use lattice_core::application::services::claim_verification::{
+    CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
+};
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -39,8 +40,8 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
     let pool = crate::features::learning::tests::pool().await?;
     let (_, job, _) = tests::batch_scheduler_tests::setup(&pool).await?;
     crate::features::learning::lesson_progress::run(
-        &crate::shared::runtime::jobs::JobContext::detached(
-            &crate::shared::runtime::jobs::JobStore::new(pool.clone()),
+        &lattice_core::shared::runtime::jobs::JobContext::detached(
+            &lattice_core::shared::runtime::jobs::JobStore::new(pool.clone()),
             &job,
         )
         .await?,
@@ -233,7 +234,7 @@ impl ClaimReceipt {
         if self.verdict == ClaimVerdict::Unverified
             || (self.verdict != ClaimVerdict::Supported
                 && self.interpretation_policy.as_deref() != Some(
-                    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY,
+                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY,
                 ))
             || (self.verdict == ClaimVerdict::Supported
                 && self.supporting_quote.as_ref().is_none_or(|q| {
@@ -395,7 +396,14 @@ async fn verify(
     sources: &[LearningSourceDto],
 ) -> Result<LessonVerificationReport> {
     let references = ReferenceCollection::lexical(sources)?;
-    verify_with_references(llm, candidate, &references, &mut ClaimChecks::default()).await
+    verify_with_references(
+        llm,
+        &BuiltinRuntimes::for_tests(),
+        candidate,
+        &references,
+        &mut ClaimChecks::default(),
+    )
+    .await
 }
 
 /// The publication path requires both source entailment and an independent
@@ -420,7 +428,7 @@ pub(in crate::features::learning) async fn judge_for_publication(
 
 pub(in crate::features::learning) async fn judge_batch_provisionally(
     llm: &dyn LLMPort,
-    claims: &[crate::application::services::claim_verification::LocatedClaim],
+    claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<Vec<ClaimJudgment>> {
     let checker = ClaimChecker::new(
         llm,
@@ -445,7 +453,7 @@ pub(in crate::features::learning) async fn judge_batch_provisionally(
 
 pub(in crate::features::learning) async fn challenge_batch_for_publication(
     llm: &dyn LLMPort,
-    claims: &[crate::application::services::claim_verification::LocatedClaim],
+    claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
     provisional: Vec<ClaimJudgment>,
 ) -> Result<Vec<ClaimJudgment>> {
     challenge::guard_batch(llm, claims, provisional).await
@@ -454,7 +462,7 @@ pub(in crate::features::learning) async fn challenge_batch_for_publication(
 #[cfg(test)]
 pub(in crate::features::learning) async fn judge_batch_for_publication(
     llm: &dyn LLMPort,
-    claims: &[crate::application::services::claim_verification::LocatedClaim],
+    claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<Vec<ClaimJudgment>> {
     let provisional = judge_batch_provisionally(llm, claims).await?;
     challenge_batch_for_publication(llm, claims, provisional).await
@@ -503,6 +511,7 @@ pub(in crate::features::learning) async fn live_coverage_fixture(
 
 async fn verify_with_references(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     candidate: &Value,
     references: &ReferenceCollection<'_>,
     checks: &mut ClaimChecks,
@@ -560,7 +569,7 @@ async fn verify_with_references(
         crate::features::learning::lesson_progress::Phase::Examples,
         "Checking executable examples",
     );
-    let executions = execution::observe(candidate).await?;
+    let executions = execution::observe(runtimes, candidate).await?;
     check_evidence(
         llm, candidate, references, inventory, coverage, executions, checks,
     )

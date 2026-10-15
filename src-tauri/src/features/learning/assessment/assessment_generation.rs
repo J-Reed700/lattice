@@ -2,7 +2,7 @@
 //! remain internal and never appear in renderer DTOs.
 use crate::features::learning::model_call;
 use crate::features::learning::{assessment_engine as engine, dto::*};
-use crate::{
+use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
-use crate::shared::text::safe_truncate;
+use lattice_core::shared::text::safe_truncate;
 
 use super::{
     extract_acronym_context_terms, extract_acronym_terms, extract_phrase_terms,
@@ -11,7 +11,7 @@ use super::{
 
 pub(super) fn select_wiki_search_query_with_tuning(
     validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
 ) -> String {
@@ -39,7 +39,7 @@ pub(super) fn select_wiki_search_query_with_tuning(
 #[cfg(test)]
 pub(super) fn select_web_search_query<'a>(
     validated_message: &'a str,
-    interpretation: &'a crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &'a lattice_core::domain::qa::hyde::HyDEInterpretation,
     followup_anchor_terms: Option<&HashSet<String>>,
 ) -> String {
     select_web_search_query_with_tuning(
@@ -52,7 +52,7 @@ pub(super) fn select_web_search_query<'a>(
 
 pub(super) fn select_web_search_query_with_tuning<'a>(
     validated_message: &'a str,
-    interpretation: &'a crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &'a lattice_core::domain::qa::hyde::HyDEInterpretation,
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
 ) -> String {
@@ -77,7 +77,7 @@ pub(super) fn select_web_search_query_with_tuning<'a>(
 
 fn build_external_search_terms(
     validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
+    interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
     followup_anchor_terms: Option<&HashSet<String>>,
     max_terms: usize,
 ) -> Vec<String> {

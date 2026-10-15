@@ -1,3 +1,3 @@
 //! Compatibility export for the embedding domain entity.
 
-pub use crate::domain::entities::Embedding;
+pub use lattice_core::domain::entities::Embedding;

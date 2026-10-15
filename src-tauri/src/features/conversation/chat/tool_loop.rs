@@ -11,23 +11,21 @@ mod research_notes;
 mod scoped_document_tools;
 mod tool_sources;
 
-use crate::application::ports::llm_port::{CompletionInput, ThinkingMode};
-use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::ToolOutputSettingsDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::application::ports::llm_port::{CompletionInput, ThinkingMode};
+use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::{info, warn};
 
 use super::fetch_memory::FetchMemory;
-use super::focus::FocusScope;
 use super::turn::{ResearchRound, Rounds};
-use super::turn_record::{TurnRecorder, TurnStepKind};
-use super::{ChatEventSink, ChatStreamEventDto};
+use super::turn_record::TurnStepKind;
+use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -147,29 +145,31 @@ impl Drop for StreamEmitter<'_> {
     }
 }
 
-// The tool loop is a turn-level orchestration boundary with explicit runtime inputs.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_agentic_tool_loop(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conv_id: &str,
-    request_id: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    turn: ChatTurn<'_>,
     sink: &ChatEventSink,
     request: LoopRequest<'_>,
-    highlight_terms: &[String],
     tool_output_settings: &ToolOutputSettingsDto,
     sources: &mut Vec<SourceDto>,
     retrieval_trace: &mut Option<super::RetrievalTraceDto>,
     pages_already_read: FetchMemory,
-    focus: &FocusScope,
     // The folder of an Explorer conversation; `None` for every other turn. The
     // folder tools are only in `request.tools` when this is set.
     explorer: Option<&crate::features::explorer::prompt::ExplorerTurn>,
-    recorder: &TurnRecorder,
 ) -> Result<ToolLoopOutcome> {
-    use crate::application::ports::llm_port::{CompletionRequest, InferencePriority};
+    use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
 
+    let ChatTurn {
+        conv_service,
+        conversation_id: conv_id,
+        request_id,
+        llm,
+        highlight_terms,
+        focus,
+        recorder,
+        ..
+    } = turn;
     let LoopRequest {
         mut input,
         tools: tools_ref,
@@ -581,12 +581,14 @@ fn window_has_room_for_a_result(window_chars: usize, chars_in_flight: usize) -> 
 /// the backend's calibrated characters per token and erring short, so dense
 /// text under-fills rather than overruns.
 fn window_chars(input_budget: usize, chars_per_token: f64) -> usize {
-    crate::application::ports::llm_port::chars_within_tokens(input_budget, chars_per_token)
+    lattice_core::application::ports::llm_port::chars_within_tokens(input_budget, chars_per_token)
 }
 
 /// The tool definitions as the provider receives them, for budgeting: the
 /// JSON `parameters` of each tool are sent and read like any other prompt text.
-pub(super) fn tool_schema_text(tools: &[crate::application::ports::ToolDefinition]) -> String {
+pub(super) fn tool_schema_text(
+    tools: &[lattice_core::application::ports::ToolDefinition],
+) -> String {
     crate::features::llm::llama_cpp::tool_specs(tools).to_string()
 }
 
@@ -637,8 +639,8 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
 const MIN_TOOL_RESULT_CHARS: usize = 1_500;
 
 /// Roughly how many characters the next generation already has to read.
-fn chars_in_flight(input: &[crate::application::ports::llm_port::CompletionInput]) -> usize {
-    use crate::application::ports::llm_port::CompletionInput;
+fn chars_in_flight(input: &[lattice_core::application::ports::llm_port::CompletionInput]) -> usize {
+    use lattice_core::application::ports::llm_port::CompletionInput;
     input
         .iter()
         .map(|item| match item {

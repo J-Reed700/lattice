@@ -5,9 +5,9 @@
 #[cfg(test)]
 use crate::infrastructure::services::traits::*;
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 #[cfg(test)]
 use std::sync::{Arc, RwLock};
 

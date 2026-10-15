@@ -2,9 +2,9 @@
 //!
 //! Provides clean article content extraction (reader mode) from web pages.
 
-use crate::application::contracts::web::CleanArticle;
-use crate::shared::error::Result;
 use async_trait::async_trait;
+use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::Result;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -110,7 +110,7 @@ pub trait ArticleExtractorServiceTrait: Send + Sync {
 /// # Example
 /// ```rust
 /// use lattice::features::web::traits::MockArticleExtractorService;
-/// use lattice::application::dtos::function_calling_dto::CleanArticle;
+/// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
 ///
 /// let mock = MockArticleExtractorService::new();
 ///
@@ -221,7 +221,7 @@ impl ArticleExtractorServiceTrait for MockArticleExtractorService {
 
     async fn extract_article(&self, _html: &str, url: &str) -> Result<CleanArticle> {
         if let Some(error_message) = self.is_disabled() {
-            return Err(crate::shared::error::AppError::ServiceNotAvailable(
+            return Err(lattice_core::shared::error::AppError::ServiceNotAvailable(
                 error_message,
             ));
         }

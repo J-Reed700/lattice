@@ -6,7 +6,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 
 use super::dto::WebPageSnapshotStatus;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())

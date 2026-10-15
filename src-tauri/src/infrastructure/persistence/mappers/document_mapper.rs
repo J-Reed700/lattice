@@ -11,12 +11,12 @@
 //! - **DB Model** (defined in repository) - Anemic struct for database persistence
 //! - **Mapper** - Converts between the two
 
-use crate::domain::entities::document::{
+use chrono::{DateTime, Utc};
+use lattice_core::domain::entities::document::{
     Category, Document as DomainDocument, DocumentStatus, Language, StoredDocument,
 };
-use crate::shared::error::{AppError, Result};
-use crate::shared::types::{DocumentId, ValidatedFilePath};
-use chrono::{DateTime, Utc};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -75,7 +75,7 @@ impl DocumentMapper {
     ///
     /// ```rust,no_run
     /// use lattice::infrastructure::persistence::mappers::DocumentMapper;
-    /// use lattice::domain::entities::Document;
+    /// use lattice_core::domain::entities::Document;
     ///
     /// let entity = Document::new(/* ... */);
     /// let db_model = DocumentMapper::to_model(&entity);
@@ -250,7 +250,7 @@ impl DocumentMapper {
             .map(|dt| dt.with_timezone(&Utc));
 
         let checksum =
-            crate::domain::value_objects::checksum::Checksum::new(model.checksum.clone())?;
+            lattice_core::domain::value_objects::checksum::Checksum::new(model.checksum.clone())?;
 
         let mut entity = DomainDocument::with_id(StoredDocument {
             id,

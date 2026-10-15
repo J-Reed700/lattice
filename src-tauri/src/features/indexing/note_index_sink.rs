@@ -5,10 +5,10 @@
 //! indexing). This adapter is the port's one real implementation. It runs
 //! the same single-file path the `index_file` command does — path
 //! validation, embedding-model readiness, settings-driven chunking, the
-//! shared progress state, the `FileIndexed` audit event and the ENTRY/EXIT
-//! logs — and removes a note through the same path a user-initiated delete
-//! takes, ownership-aware [`DeleteDocumentUseCase`] and `FileDeleted` audit
-//! event included, so a mirrored file is never deleted from disk.
+//! shared progress state and the ENTRY/EXIT logs — and removes a note
+//! through the same path a user-initiated delete takes, ownership-aware
+//! [`DeleteDocumentUseCase`] included, so a mirrored file is never deleted
+//! from disk.
 //!
 //! Every failure is returned, never swallowed: the vault writer keeps the
 //! durable outbox entry deferred and retries on its next pass.
@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::ports::{DocumentRepository, NoteIndexSink};
 use crate::features::indexing::commands::{
     chunk_tokens_for, delete_indexed_document, index_single_file, SingleFileIndexing,
     DEFAULT_CHUNK_TOKENS,
@@ -28,7 +27,8 @@ use crate::features::indexing::dto::{
 use crate::features::indexing::engine::IndexingState;
 use crate::features::indexing::use_cases::{DeleteDocumentUseCase, IndexFileUseCase};
 use crate::infrastructure::security::FileAccessConfig;
-use crate::shared::error::Result;
+use lattice_core::application::ports::{DocumentRepository, NoteIndexSink};
+use lattice_core::shared::error::Result;
 
 /// The embedding model must be loaded and ready before a file is indexed.
 ///
@@ -178,17 +178,19 @@ impl NoteIndexSink for NoteIndexSinkAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{DocumentRepositoryPort, MockEmbeddingPort, RepositoryPort};
-    use crate::domain::entities::Document;
     use crate::features::indexing::commands::require_embedding_ready;
     use crate::features::indexing::engine::progress::IndexStatus;
-    use crate::shared::error::{AppError, Result as AppResult};
+    use lattice_core::application::ports::{
+        DocumentRepositoryPort, MockEmbeddingPort, RepositoryPort,
+    };
+    use lattice_core::domain::entities::Document;
+    use lattice_core::shared::error::{AppError, Result as AppResult};
     // The fake vault must be absolute *on the host*: `/vault` has a root but
     // no prefix, so Windows does not consider it absolute and
     // `validate_path` resolves a note under it against the current drive,
     // landing outside the configured root. `abs` spells the same fake vault
     // the way the running platform spells absolute paths.
-    use crate::shared::testing::paths::{abs, abs_str};
+    use lattice_core::shared::testing::paths::{abs, abs_str};
 
     struct ReadyModel;
 
@@ -317,7 +319,7 @@ mod tests {
 
         async fn find_by_filter(
             &self,
-            _filter: &dyn crate::application::ports::Filter,
+            _filter: &dyn lattice_core::application::ports::Filter,
         ) -> AppResult<Vec<Document>> {
             Ok(vec![])
         }
@@ -371,7 +373,7 @@ mod tests {
 
         async fn find_by_checksum(
             &self,
-            _checksum: &crate::domain::value_objects::Checksum,
+            _checksum: &lattice_core::domain::value_objects::Checksum,
         ) -> AppResult<Option<Document>> {
             Ok(None)
         }

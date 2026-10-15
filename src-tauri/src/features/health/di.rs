@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{EmbeddingPort, LLMPort, MockEmbeddingPort};
 use crate::features::health::use_cases::HealthCheckUseCase;
 use crate::features::llm::engine::factory::MockLLMPort;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::{EmbeddingPort, LLMPort, MockEmbeddingPort};
 
 #[derive(Clone)]
 pub struct HealthDi {

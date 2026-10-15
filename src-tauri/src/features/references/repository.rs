@@ -3,7 +3,7 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{FromRow, SqlitePool};
 
 const REFERENCE_COLUMNS: &str = r#"

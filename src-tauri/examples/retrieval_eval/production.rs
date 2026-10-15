@@ -39,11 +39,6 @@
 //! - Documents are synthesised from fixture rows rather than extracted from files, so there are
 //!   no page ranges and `page_number` is always NULL.
 
-use lattice::application::ports::vector_search_port::VectorIndexEntry;
-use lattice::application::ports::{
-    ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,
-};
-use lattice::domain::value_objects::ContextualizedChunk;
 use lattice::features::conversation::chat::retrieval::{
     assess_retrieval_sufficiency, RetrievalSufficiency,
 };
@@ -66,6 +61,11 @@ use lattice::features::search::use_cases::{BranchKind, HybridSearchUseCase, Rera
 use lattice::features::search::SparseSearchTrait;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
 use lattice::infrastructure::persistence::repositories::ChunkRepository;
+use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
+use lattice_core::application::ports::{
+    ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,
+};
+use lattice_core::domain::value_objects::ContextualizedChunk;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -825,7 +825,7 @@ fn prepare_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice::application::ports::{ChunkRepositoryPort, TextSearchPort};
+    use lattice_core::application::ports::{ChunkRepositoryPort, TextSearchPort};
 
     fn chunk(document_id: &str, chunk_index: usize, score: f32) -> RankedChunk {
         RankedChunk {

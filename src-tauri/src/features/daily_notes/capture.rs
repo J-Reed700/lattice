@@ -3,7 +3,7 @@ use super::dto::{
     CaptureReferenceRequestDto, ConversationSnapshotDto, SnapshotMessageDto, WorkspaceNoteDto,
 };
 use crate::features::qa::dto::SourceDto;
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 /// The text a capture will append, or `InvalidInput` when there is nothing.
 ///

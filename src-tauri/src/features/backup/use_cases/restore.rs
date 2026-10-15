@@ -8,7 +8,6 @@
 //! # Security
 //! - Validates backup file integrity before restoration
 //! - Creates automatic backup before restore operation
-//! - Audit logs restore operations
 //!
 //! # Example
 //! ```rust,no_run
@@ -16,9 +15,9 @@
 //! use_case.execute(PathBuf::from("/backups/vault_20240115.db")).await?;
 //! ```
 
-use crate::application::ports::BackupPort;
 use crate::features::backup::dto::RestoreBackupResultDto;
-use crate::shared::error::AppError;
+use lattice_core::application::ports::BackupPort;
+use lattice_core::shared::error::AppError;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -144,7 +143,7 @@ mod tests {
         async fn list_backups(
             &self,
             _data_dir: PathBuf,
-        ) -> Result<Vec<crate::application::ports::BackupInfoData>, AppError> {
+        ) -> Result<Vec<lattice_core::application::ports::BackupInfoData>, AppError> {
             unimplemented!("Not needed for restore backup tests")
         }
     }

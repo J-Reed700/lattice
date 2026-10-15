@@ -4,7 +4,7 @@ use crate::features::learning::{
     outline_draft::OutlineDraft,
     repository::{insert_source, LearningRepository},
 };
-use crate::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, Result};
 
 impl LearningRepository {
     pub(in crate::features::learning) async fn outline_draft(

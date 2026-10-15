@@ -10,7 +10,7 @@ use crate::features::learning::{
     outline_progress::{OutlineProgress, OutlineStage},
     persistence::hash_text,
 };
-use crate::{
+use lattice_core::{
     application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
     shared::error::{AppError, Result},
 };
@@ -63,7 +63,7 @@ impl ItemKind {
             Self::Lesson => "lesson objective",
         }
     }
-    fn text<'a>(self, field: &'a Value) -> Option<&'a str> {
+    fn text(self, field: &Value) -> Option<&str> {
         match self {
             Self::Summary | Self::Outcome => field.get("text"),
             Self::Lesson => field.get("objective"),
@@ -226,8 +226,8 @@ fn pending_item(
         "id":path,"kind":kind.name(),"item":text,
         "sourceTitle":source.title,"passage":quote
     });
-    if kind == ItemKind::Lesson {
-        payload["lessonTitle"] = field["title"].clone();
+    if let (ItemKind::Lesson, Some(object)) = (kind, payload.as_object_mut()) {
+        object.insert("lessonTitle".into(), field["title"].clone());
     }
     Some(Pending {
         path: path.to_owned(),
@@ -307,7 +307,12 @@ pub(in crate::features::learning) async fn check(
     }
     let total = pending.len();
     if total == 0 {
-        tracing::info!(verified = log.verified, removed_unmatched = log.removed_unmatched, removed_irrelevant = log.removed_irrelevant, "Outline citations checked from receipts alone");
+        tracing::info!(
+            verified = log.verified,
+            removed_unmatched = log.removed_unmatched,
+            removed_irrelevant = log.removed_irrelevant,
+            "Outline citations checked from receipts alone"
+        );
         return Ok(log);
     }
     progress.detail(format!(
@@ -392,7 +397,12 @@ pub(in crate::features::learning) async fn check(
         done += group.len();
         progress.detail(format!("Checked {done} of {total} citations"));
     }
-    tracing::info!(verified = log.verified, removed_unmatched = log.removed_unmatched, removed_irrelevant = log.removed_irrelevant, "Outline citations checked");
+    tracing::info!(
+        verified = log.verified,
+        removed_unmatched = log.removed_unmatched,
+        removed_irrelevant = log.removed_irrelevant,
+        "Outline citations checked"
+    );
     Ok(log)
 }
 
@@ -460,9 +470,15 @@ mod tests {
             {"id":"/modules/0/outcomes/0","covers":true,"reason":"The passage explains what a randomized comparison achieves."},
             {"id":"/modules/0/lessons/0","covers":true,"reason":"The passage covers random assignment."}
         ]})]);
-        let log = check(&llm, &mut draft, &[source()], None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        let log = check(
+            &llm,
+            &mut draft,
+            &[source()],
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             log,
             CitationLog {
@@ -493,17 +509,29 @@ mod tests {
             {"id":"/modules/0/outcomes/0","covers":true,"reason":"Covers the outcome."},
             {"id":"/modules/0/lessons/0","covers":true,"reason":"Covers the objective."}
         ]})]);
-        check(&llm, &mut draft, &[source()], None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        check(
+            &llm,
+            &mut draft,
+            &[source()],
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         // A repair re-attaches the rejected summary citation; no model call is
         // needed to strip it again, nor to confirm the verified ones.
         draft.candidate["modules"][0]["summary"]["sourceIndex"] = json!(0);
         draft.candidate["modules"][0]["summary"]["quote"] = json!(PASSAGE);
         let silent = model(vec![]);
-        let log = check(&silent, &mut draft, &[source()], None, &OutlineProgress::default())
-            .await
-            .unwrap();
+        let log = check(
+            &silent,
+            &mut draft,
+            &[source()],
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             log,
             CitationLog {
@@ -513,7 +541,10 @@ mod tests {
             }
         );
         assert!(silent.prompts.lock().unwrap().is_empty());
-        assert_eq!(draft.candidate["modules"][0]["summary"]["sourceIndex"], Value::Null);
+        assert_eq!(
+            draft.candidate["modules"][0]["summary"]["sourceIndex"],
+            Value::Null
+        );
         let hashes = source_hashes(&[source()]);
         assert!(is_verified(
             &draft.citation_receipts,
@@ -541,11 +572,15 @@ mod tests {
             {"id":"/modules/0/summary","covers":true,"reason":"ok"},
             {"id":"/modules/0/lessons/0","covers":true,"reason":"ok"}
         ]})]);
-        assert!(
-            check(&llm, &mut draft, &[source()], None, &OutlineProgress::default())
-                .await
-                .is_err()
-        );
+        assert!(check(
+            &llm,
+            &mut draft,
+            &[source()],
+            None,
+            &OutlineProgress::default()
+        )
+        .await
+        .is_err());
         assert!(draft.citation_receipts.len() < 3);
     }
 }
