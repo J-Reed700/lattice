@@ -104,7 +104,11 @@ jobs:
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          cargo test --locked --features bindings-export --lib --bins --tests --no-run --message-format=json > $json
+          # Two jobs, not four: each test crate that reads the lattice rlib
+          # (about 1 GB) needs several GB while it compiles, and four at once
+          # exceed the runner's commit limit ("The paging file is too small",
+          # os error 1455), which rustc reports as E0786 invalid metadata.
+          cargo test --locked --features bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }

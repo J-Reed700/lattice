@@ -534,33 +534,52 @@ struct SearchResult {
 }
 
 /// Perform vector similarity search
-async fn perform_vector_search(pool: &SqlitePool, _query: &str) -> Result<Vec<SearchResult>> {
-    // In a real implementation, this would:
-    // 1. Generate embedding for query
-    // 2. Use FAISS or vector search to find similar embeddings
-    // 3. Return ranked results
-
-    // Mock implementation: return documents with similarity scores
+///
+/// Stands in for the real vector search: ranks chunks by how many of the
+/// query's words they contain, so the order depends on content alone. The
+/// previous mock ordered by `indexed_at`, a second-resolution timestamp, and
+/// flipped whenever a slow runner spread the inserts across a second boundary.
+async fn perform_vector_search(pool: &SqlitePool, query: &str) -> Result<Vec<SearchResult>> {
     let rows = sqlx::query(
         r#"
-        SELECT d.file_name, c.content, 0.75 as similarity_score
+        SELECT d.file_name, c.content
         FROM documents d
         JOIN text_chunks c ON d.id = c.document_id
-        ORDER BY d.indexed_at DESC
-        LIMIT 10
         "#,
     )
     .fetch_all(pool)
     .await?;
 
-    let results = rows
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(|term| term.to_lowercase())
+        .collect();
+
+    let mut results: Vec<SearchResult> = rows
         .into_iter()
-        .map(|row| SearchResult {
-            file_name: row.get("file_name"),
-            content: row.get("content"),
-            similarity_score: row.get("similarity_score"),
+        .map(|row| {
+            let content: String = row.get("content");
+            let lowered = content.to_lowercase();
+            let hits = terms
+                .iter()
+                .filter(|term| lowered.contains(term.as_str()))
+                .count();
+            // Shifted by one so every result scores above zero and at most 1.0.
+            let similarity_score = (hits + 1) as f32 / (terms.len() + 1) as f32;
+            SearchResult {
+                file_name: row.get("file_name"),
+                content,
+                similarity_score,
+            }
         })
         .collect();
+
+    results.sort_by(|a, b| {
+        b.similarity_score
+            .total_cmp(&a.similarity_score)
+            .then_with(|| a.file_name.cmp(&b.file_name))
+    });
+    results.truncate(10);
 
     Ok(results)
 }
