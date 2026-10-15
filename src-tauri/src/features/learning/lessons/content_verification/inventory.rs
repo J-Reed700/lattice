@@ -196,6 +196,57 @@ pub(in crate::features::learning) async fn extract(
     .await
 }
 
+/// The error for sections extraction could not complete after its correction
+/// attempt. A first failure defers the job, since the model may answer
+/// differently on a retry. The same sections failing again on the same model
+/// and content is not progress, so the job stops naming them instead of being
+/// deferred indefinitely. A different set of sections may defer again.
+async fn unfinished_sections(
+    llm: &dyn LLMPort,
+    content: &[Value],
+    missing: &[usize],
+    errors: &[String],
+) -> Result<AppError> {
+    let sections = missing
+        .iter()
+        .map(|index| (index + 1).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let key = format!(
+        "inventory-unfinished-v1:{}",
+        digest(
+            &json!({
+                "policy": INVENTORY_POLICY,
+                "model": llm.model_name(),
+                "sections": missing
+                    .iter()
+                    .map(|index| (index, content.get(*index).map(|unit| digest(&unit.to_string()))))
+                    .collect::<Vec<_>>(),
+            })
+            .to_string()
+        )
+    );
+    if crate::features::learning::lesson_drafts::checkpoint(&key)
+        .await?
+        .is_some()
+    {
+        return Ok(AppError::InvalidInput(format!(
+            "Claim extraction failed again on the same sections ({sections}) after a retry: {}. No lesson was published.",
+            errors.join("; ")
+        )));
+    }
+    crate::features::learning::lesson_drafts::record_checkpoint(&key, json!(true)).await?;
+    let recovery = if crate::features::learning::lesson_drafts::active() {
+        "The lesson draft is saved; retry resumes it."
+    } else {
+        "Retry the claim check."
+    };
+    Ok(AppError::ServiceNotAvailable(format!(
+        "Claim extraction could not complete sections {sections}: {}. {recovery} No lesson was published.",
+        errors.join("; ")
+    )))
+}
+
 pub(super) async fn extract_remaining(
     llm: &dyn LLMPort,
     content: &[Value],
@@ -311,12 +362,7 @@ async fn extract_scoped(
                 revisions::save(llm, content, unit).await?;
             }
             if attempt == 1 {
-                let recovery = if crate::features::learning::lesson_drafts::active() {
-                    "The lesson draft is saved; retry resumes it."
-                } else {
-                    "Retry the claim check."
-                };
-                return Err(AppError::ServiceNotAvailable(format!("Claim extraction could not complete sections {:?}: {}. {recovery} No lesson was published.",missing,errors.join("; "))));
+                return Err(unfinished_sections(llm, content, &missing, &errors).await?);
             }
         }
     }
@@ -345,7 +391,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_remaining_section_is_retryable_and_keeps_completed_inventory() -> Result<()>
+    async fn a_failed_section_defers_once_then_fails_and_completed_inventory_is_kept() -> Result<()>
     {
         let pool = crate::features::learning::tests::pool().await?;
         let (repo, job, lesson) =
@@ -365,11 +411,20 @@ mod tests {
         crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
             crate::features::learning::lesson_drafts::resume("inventory-retry-fixture".into())
                 .await?;
+            // The first failure is deferred: a retry may answer differently.
             let error = extract_remaining(&broken, &content, vec![])
                 .await
                 .err()
                 .unwrap();
             assert!(matches!(error, AppError::ServiceNotAvailable(_)));
+            // The same sections failing again on a retry stop the job.
+            let again = model(vec![json!({"units":{}}), json!({"units":{}})]);
+            let error = extract_remaining(&again, &content, vec![])
+                .await
+                .err()
+                .unwrap();
+            assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
+            assert!(error.to_string().contains("same sections (2)"), "{error}");
             let result = extract_remaining(&resumed, &content, vec![]).await?;
             assert_eq!(result.units.len(), 2);
             let prompts = resumed.prompts.lock().unwrap();
