@@ -39,17 +39,6 @@ use self::lexical::LexicalClaim;
 
 use crate::application::services::claim_verification::ClaimVerdict;
 
-impl ClaimVerdict {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Supported => "supported",
-            Self::Contradicted => "contradicted",
-            Self::Unsupported => "unsupported",
-            Self::Unverified => "unverified",
-        }
-    }
-}
-
 /// Why a claim was left unverified, so the UI can say which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnverifiedReason {

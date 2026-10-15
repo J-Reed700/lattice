@@ -23,6 +23,18 @@ pub(crate) enum ClaimVerdict {
     Unverified,
 }
 
+impl ClaimVerdict {
+    /// The verdict's wire name, as its serde form spells it.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Supported => "supported",
+            Self::Contradicted => "contradicted",
+            Self::Unsupported => "unsupported",
+            Self::Unverified => "unverified",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum CheckPolicy {
     Chat,
