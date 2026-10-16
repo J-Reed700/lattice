@@ -56,18 +56,28 @@
   outline-offset: -2px;
 }
 
+/* One line, "4/6", inside the 28px rail. Three-digit counts tighten so
+   "120/240" still fits without wrapping. */
 .conversation-navigator-position {
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  justify-content: center;
+  align-items: baseline;
   flex-shrink: 0;
   padding: 5px 0;
   font-size: 10px;
   line-height: 14px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+}
+.conversation-navigator-position[data-long] {
+  font-size: 8.5px;
+  letter-spacing: -0.06em;
 }
 .conversation-navigator[data-expanded] .conversation-navigator-position {
-  align-items: flex-start;
+  justify-content: flex-start;
+  font-size: 10px;
+  letter-spacing: normal;
   padding: 2px 8px 8px;
   color: hsl(var(--text-muted));
 }

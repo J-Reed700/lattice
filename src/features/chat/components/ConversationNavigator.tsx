@@ -119,7 +119,11 @@ export function ConversationNavigator({ messages, activeIndex, getKey, onNavigat
           {expanded ? <PanelRightClose size={15} /> : <List size={16} />}
         </button>
       </div>
-      <div className="conversation-navigator-position" title={`Message ${current + 1} of ${messages.length} · ${roleLabel(messages[current].role)}`}>
+      <div
+        className="conversation-navigator-position"
+        data-long={messages.length >= 100 ? '' : undefined}
+        title={`Message ${current + 1} of ${messages.length} · ${roleLabel(messages[current].role)}`}
+      >
         {expanded ? `Message ${current + 1} of ${messages.length}` : <><span>{current + 1}</span><span className="text-text-muted">/{messages.length}</span></>}
       </div>
       {expanded && <Checkpoints id={checkpointsId} messages={messages} activeIndex={current} getKey={getKey} onNavigate={onNavigate} />}
