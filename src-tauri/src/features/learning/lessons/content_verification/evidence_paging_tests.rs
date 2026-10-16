@@ -127,16 +127,28 @@ async fn a_claim_backed_only_past_its_first_page_is_found_by_deepening() -> Resu
         "the fixture must put the support past page 1"
     );
 
-    let results = evidence_checks::check(
-        &model,
-        &references,
-        &inventory(&[CLAIM.into()]),
-        &[],
-        &ClaimChecks::default(),
-    )
-    .await?;
+    let (results, activity) =
+        crate::features::learning::lesson_progress::observed(evidence_checks::check(
+            &model,
+            &references,
+            &inventory(&[CLAIM.into()]),
+            &[],
+            &ClaimChecks::default(),
+        ))
+        .await;
+    let results = results?;
 
     assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
+    assert_eq!(
+        (
+            activity.checks_completed,
+            activity.checks_total,
+            activity.checks_unresolved
+        ),
+        (1, 1, 0),
+        "The deeper page's support resolves the claim without a second check"
+    );
+    assert_eq!(activity.deeper_evidence, None);
     assert!(results[0]
         .2
         .evidence
@@ -234,17 +246,24 @@ async fn deepening_stops_after_a_round_that_settles_nothing() -> Result<()> {
     let sources: Vec<_> = (0..20).map(related).collect();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
-    let results = evidence_checks::check(
-        &model,
-        &references,
-        &inventory(&[CLAIM.into()]),
-        &[],
-        &ClaimChecks::default(),
-    )
-    .await?;
+    let (results, activity) =
+        crate::features::learning::lesson_progress::observed(evidence_checks::check(
+            &model,
+            &references,
+            &inventory(&[CLAIM.into()]),
+            &[],
+            &ClaimChecks::default(),
+        ))
+        .await;
+    let results = results?;
     assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
     // Page 1, then one deepening round that settled nothing, then stop.
     assert_eq!(model.checks.lock().unwrap().len(), 2);
+    assert_eq!(
+        (activity.checks_completed, activity.checks_unresolved),
+        (1, 1),
+        "A claim unsupported on two pages needs attention once"
+    );
     Ok(())
 }
 

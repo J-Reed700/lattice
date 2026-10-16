@@ -196,14 +196,32 @@ pub struct LearningGenerationActivity {
     pub response_characters: u32,
     pub model_attempt: u32,
     pub verification_pass: u32,
+    /// Claims of this pass with a finished first check. Each claim counts once.
     pub checks_completed: u32,
     pub checks_total: u32,
     pub checks_reused: u32,
+    /// Checked claims of this pass that are not supported at present. A claim
+    /// a deeper evidence page supports leaves this count.
     pub checks_unresolved: u32,
     /// None while looking up saved checks; otherwise the number requiring the
     /// model in this pass, after every reusable comparison has been restored.
     pub model_checks_total: Option<u32>,
+    /// Set while claims this pass left unsupported are checked against further
+    /// pages of their evidence.
+    pub deeper_evidence: Option<LearningDeeperEvidence>,
     pub recent_steps: Vec<LearningGenerationStep>,
+}
+
+/// One round of checking unsupported claims against their next evidence page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningDeeperEvidence {
+    /// The evidence page of this round. Page 1 is each claim's first check.
+    pub page: u32,
+    /// Claims checked against this page.
+    pub claims: u32,
+    /// Of those claims, the ones whose check against this page has finished.
+    pub checked: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
