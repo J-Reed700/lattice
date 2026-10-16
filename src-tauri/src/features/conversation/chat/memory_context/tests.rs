@@ -292,8 +292,8 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
         .expect("the constraint must reach the prompt");
     assert!(last[requirement..].contains("Do not deploy until I approve."));
 
-    // Every message the summary covers is carried verbatim, so it stays out
-    // rather than changing the head of the request after each consolidation.
+    // The whole conversation fits, so every message the summary covers is
+    // carried verbatim and the summary stays out.
     assert!(!rendered
         .iter()
         .any(|(_, content)| content.contains("[generated summary")));
@@ -609,6 +609,7 @@ fn plan_with(content: &str, input_budget: usize) -> ContextPlan {
         },
         retrieval: RecallDiagnostics::default(),
         compaction_required: false,
+        summary_refold: None,
         max_output_tokens: 512,
         used_memory_ids: Vec::new(),
     }

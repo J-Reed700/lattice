@@ -366,6 +366,9 @@ async fn resume_stages(
         max_output_tokens,
         input_budget,
         memory_usage,
+        // Not saved with the turn. If the window still has to move, the next
+        // turn's plan asks again.
+        summary_refold: None,
     };
     let generated = generate::generate_answer(
         container,

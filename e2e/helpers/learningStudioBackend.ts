@@ -1,7 +1,6 @@
 import type { Page } from "@playwright/test";
 
 import type {
-  LearningLessonEvidenceDto,
   JsonValue,
   LearningDiagnosticAttemptDto,
   LearningAssessmentBlueprintDto,
@@ -749,7 +748,7 @@ export async function installLearningStudioBackend(page: Page) {
         program.modules.forEach((module) => module.lessons.forEach((lesson) => {
           lesson.preparation = "outline"; lesson.completed = false; lesson.blocks = []; lesson.questions = [];
         }));
-        program.outlineReview = { status: "needs_repair", repairPasses: 1, updatedAt: Date.now(), contentHash: "draft-fixture", citationsVerified: 0, citationsRemoved: 0, referencesGathered: 1, note: "Completed corrections are saved. One finding remains unresolved.", issues: [{ id: "outline-issue-fixture", path: "/modules/0/lessons/0", kind: "factual", attempts: 1, exhausted: true, searched: [], claim: "A comparison always establishes causality.", quote: "This unsupported statement is retained for review.", sourceId: source.id, message: "The reference does not support this universal claim." }] };
+        program.outlineReview = { status: "needs_repair", repairPasses: 1, updatedAt: Date.now(), contentHash: "draft-fixture", note: "Completed corrections are saved. One finding remains unresolved.", citationsVerified: 0, citationsRemoved: 0, referencesGathered: 0, issues: [{ id: "finding-1", path: "/modules/0/lessons/0", kind: "factual", claim: "A comparison always establishes causality.", quote: "This unsupported statement is retained for review.", sourceId: source.id, message: "The reference does not support this universal claim.", attempts: 1, exhausted: false, searched: [] }] };
       },
       update(update: LearningOutlineProgressDto) { pendingOutline?.send(update); },
       fail(error: unknown) { pendingOutline?.reject(error); pendingOutline = null; },
@@ -1133,7 +1132,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Draft changed");
         program.summary.revision += 1;
         program.modules[0].lessons[0].objective = "Compare observations and explain why they alone do not establish causality.";
-        program.outlineReview = { status: "passed", repairPasses: 2, updatedAt: Date.now(), contentHash: "repaired-fixture", citationsVerified: 1, citationsRemoved: 0, referencesGathered: 1, issues: [], note: "Outline checks passed for this revision. Lesson content is checked separately." };
+        program.outlineReview = { status: "passed", repairPasses: 2, updatedAt: Date.now(), contentHash: "repaired-fixture", issues: [], note: "Outline checks passed for this revision. Lesson content is checked separately.", citationsVerified: 0, citationsRemoved: 0, referencesGathered: 0 };
         return program;
       },
       list_learning_programs: () => [program.summary],
@@ -1165,7 +1164,7 @@ export async function installLearningStudioBackend(page: Page) {
           ],
         };
       },
-      get_learning_lesson_evidence: (): LearningLessonEvidenceDto => ({
+      get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
         claimCount: 14, generalKnowledgeCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,

@@ -19,7 +19,7 @@ use super::super::{
 };
 use super::{
     hold_before, redact_forgotten, summary_resume_point, CandidateLedger, CompactionJob,
-    PhaseTiming, Refold,
+    FoldTarget, PhaseTiming, Refold,
 };
 
 impl CompactionJob {
@@ -51,33 +51,37 @@ impl CompactionJob {
         } else {
             snapshot.state.processed_through_sequence
         };
-        // Source the ledger covers but no summary does: empty unless a delete
-        // or a user correction dropped the summary and left the ledger
-        // standing. A rebuild folds everything from zero anyway.
+        // Where the working summary ends, and what this run does with it. The
+        // summary usually trails the watermark: extraction runs after every
+        // answer, the summary moves only when a fold is asked for. A rebuild
+        // starts both from nothing.
         let refold_after = if rebuild {
             start_after
         } else {
             summary_resume_point(&snapshot, start_after)
         };
+        let target = FoldTarget::for_run(request, refold_after);
+        let refold_through = target.below_watermark(refold_after, start_after);
         let operation = match (rebuild, request.trigger) {
             (true, _) => "rebuild",
             (false, CompactionTrigger::Automatic) => "auto_compact",
             (false, CompactionTrigger::Manual) => "compact",
             (false, CompactionTrigger::Maintenance) => "consolidate",
         };
-        if snapshot.latest_sequence <= refold_after {
+        if snapshot.latest_sequence <= start_after && refold_through.is_none() {
             return Ok(CompactionOutcome::nothing(&snapshot));
         }
 
-        let refold = if refold_after < start_after {
-            let refold_phase = PhaseTiming::start(conversation_id, "read_refold_window");
-            let read = self
-                .read_refold(conversation_id, refold_after, start_after, &snapshot)
-                .await;
-            refold_phase.finish(if read.is_ok() { "completed" } else { "error" });
-            read?
-        } else {
-            Refold::none()
+        let refold = match refold_through {
+            Some(through) => {
+                let refold_phase = PhaseTiming::start(conversation_id, "read_refold_window");
+                let read = self
+                    .read_refold(conversation_id, refold_after, through, &snapshot)
+                    .await;
+                refold_phase.finish(if read.is_ok() { "completed" } else { "error" });
+                read?
+            }
+            None => Refold::none(),
         };
 
         let (window, reached_end) = if snapshot.latest_sequence > start_after {
@@ -283,10 +287,10 @@ impl CompactionJob {
             ledger.absorb(commit);
         }
 
-        // Nothing was accepted: there is no watermark to advance, and unless a
-        // dropped summary is being folded again there is no summary worth
-        // writing, so this attempt commits nothing at all. A refold does not
-        // wait on extraction: it reads only source the ledger already covers.
+        // Nothing was accepted: there is no watermark to advance, and unless
+        // source below it is being folded there is no summary worth writing,
+        // so this attempt commits nothing at all. A refold does not wait on
+        // extraction: it reads only source the ledger already covers.
         let refold_only = accepted_through <= start_after;
         if refold_only && refold_boundary.is_none() {
             if let Some(error) = rejection {
@@ -303,25 +307,30 @@ impl CompactionJob {
             operation
         };
 
-        // Only eligible text is folded: a failed assistant output is not part of
-        // the conversation's progress. The *display* boundary below still points
-        // at the last message of the compacted prefix, eligible or not, because
-        // that is where the divider belongs.
+        // What this run processed, recorded on the commit's event.
         let fresh: Vec<SourceMessage> = eligible
             .iter()
             .filter(|message| message.sequence <= accepted_through)
             .cloned()
             .collect();
         let refolded = refold.eligible();
-        // Refolded source goes first, in conversation order. Fresh source joins
-        // it only once the refold has reached the watermark: the summary's
-        // boundary is where the next refold resumes, so nothing may sit
-        // unfolded behind it. Fresh source extracted meanwhile is folded later,
-        // as part of the range the refold still has to cover.
-        let folded: Vec<SourceMessage> = if refold.finished {
-            refolded.iter().chain(&fresh).cloned().collect()
-        } else {
-            refolded.clone()
+        // Where the summary ends after this run, or `None` to leave it.
+        let fold_end = target.end(refold_after, accepted_through);
+        // Only eligible text is folded: a failed assistant output is not part
+        // of the conversation's progress. Refolded source goes first, in
+        // conversation order. Fresh source joins it only once the refold has
+        // reached its end: the summary's boundary is where the next fold
+        // resumes, so nothing may sit unfolded behind it. Fresh source
+        // extracted meanwhile is folded later, as part of the range the next
+        // fold covers.
+        let folded: Vec<SourceMessage> = match fold_end {
+            None => Vec::new(),
+            Some(end) if refold.finished => refolded
+                .iter()
+                .chain(fresh.iter().filter(|message| message.sequence <= end))
+                .cloned()
+                .collect(),
+            Some(_) => refolded.clone(),
         };
         // The one place source text enters the summariser, for a normal fold,
         // a refold and a rebuild alike, so this is where a user's forget is
@@ -338,14 +347,17 @@ impl CompactionJob {
             labels_phase.finish(if labels.is_ok() { "completed" } else { "error" });
             labels?
         };
-        let display_boundary = if refold.finished {
-            prefix
+        // The *display* boundary points at the last message folded over,
+        // eligible or not, because that is where the summary ends and where
+        // the divider belongs.
+        let display_boundary = match fold_end {
+            None => None,
+            Some(end) if refold.finished => prefix
                 .iter()
                 .rev()
-                .find(|message| message.sequence <= accepted_through)
-                .or(refold_boundary)
-        } else {
-            refold_boundary
+                .find(|message| message.sequence <= end)
+                .or(refold_boundary),
+            Some(_) => refold_boundary,
         };
         // A rebuild must not fold an earlier summary back in: that summary was
         // written against a boundary this run is discarding (§7.2).
@@ -354,26 +366,34 @@ impl CompactionJob {
         } else {
             snapshot.summary.as_deref()
         };
-        let summary_phase = PhaseTiming::start(conversation_id, "summary");
-        let summary = summarize::fold_summary(
-            self.utility_llm.as_ref(),
-            deadline,
-            previous_summary,
-            &folded,
-            &ledger.mandatory_labels(),
-            &forgotten_labels,
-            self.config.summary_token_budget,
-            self.count_tokens.as_ref(),
-        )
-        .await;
-        summary_phase.finish(if summary.is_ok() {
-            "completed"
-        } else {
-            "error"
-        });
-        let summary = summary?;
+        let summary = match display_boundary {
+            Some(_) => {
+                let summary_phase = PhaseTiming::start(conversation_id, "summary");
+                let summary = summarize::fold_summary(
+                    self.utility_llm.as_ref(),
+                    deadline,
+                    previous_summary,
+                    &folded,
+                    &ledger.mandatory_labels(),
+                    &forgotten_labels,
+                    self.config.summary_token_budget,
+                    self.count_tokens.as_ref(),
+                )
+                .await;
+                summary_phase.finish(if summary.is_ok() {
+                    "completed"
+                } else {
+                    "error"
+                });
+                Some(summary?)
+            }
+            None => None,
+        };
 
-        let summary_text = Some(summary.text.clone()).filter(|text| !text.is_empty());
+        let summary_text = summary
+            .as_ref()
+            .map(|summary| summary.text.clone())
+            .filter(|text| !text.is_empty());
         let (inserts, updates) = ledger.into_changes();
         let commit = MemoryCommit {
             inserts,
@@ -381,8 +401,8 @@ impl CompactionJob {
             summary: summary_text.clone(),
             processed_through_sequence: accepted_through,
         };
-        let summary_update = match (summary_text, display_boundary) {
-            (Some(text), Some(last)) => Some(SummaryUpdate {
+        let summary_update = match (summary_text, display_boundary, &summary) {
+            (Some(text), Some(last), Some(summary)) => Some(SummaryUpdate {
                 summary_text: text,
                 up_to_message_id: last.id.clone(),
                 original_message_count: folded.len() as i64,
@@ -427,7 +447,7 @@ impl CompactionJob {
         // Retaining the recent tail is the design, not unfinished work. This run
         // is incomplete only when the work cap stopped the read short of the
         // transcript, a batch was rejected and the watermark stayed behind it,
-        // or a dropped summary still has source left to fold back in.
+        // or a fold still has source below the watermark left to read.
         let incomplete = !reached_end || rejection.is_some() || halt.is_some() || !refold.finished;
         info!(
             conversation_id,
@@ -439,6 +459,7 @@ impl CompactionJob {
             rejected_segments = segments_rejected.len(),
             refolded = refolded.len(),
             refold_finished = refold.finished,
+            summary_through = ?display_boundary.map(|message| message.sequence),
             incomplete,
             "Conversation memory committed"
         );
@@ -455,9 +476,14 @@ impl CompactionJob {
             boundary_message_id: display_boundary.map(|message| message.id.clone()),
             active_mandatory_count: committed.active_mandatory_count,
             active_optional_count: committed.active_optional_count,
-            summary: commit.summary.clone(),
-            summary_tokens: summary.tokens,
-            summary_regenerated: summary.regenerated,
+            // The summary in force after this run: the refolded one, or the
+            // one it left as it was.
+            summary: commit
+                .summary
+                .clone()
+                .or_else(|| previous_summary.map(str::to_owned)),
+            summary_tokens: summary.as_ref().map_or(0, |summary| summary.tokens),
+            summary_regenerated: summary.as_ref().is_some_and(|summary| summary.regenerated),
             commit,
             source_messages_read: window.len(),
             segments_submitted,

@@ -27,10 +27,19 @@
 //! work cap returns [`CompactionStatus::Partial`] with the sequence to resume
 //! from. It never skips the remainder (§7.5).
 //!
-//! A delete or a user correction can drop the working summary while the ledger
-//! and its watermark stand. A run then folds the source between the summary's
-//! boundary and the watermark back in — summary only, never re-extracted —
-//! a bounded slice at a time, resuming from wherever the last summary ended.
+//! Extraction and the working summary move separately. Extraction advances the
+//! watermark on every run; the summary is refolded only when a run is asked to,
+//! because the prompt opens its window where the summary ends and a summary
+//! that changed after every answer would change the head of every request.
+//! Consolidation after an answer folds only when that turn's prompt asked
+//! ([`CompactionRequest::summary_refold`]); `/compact` and the compaction a
+//! turn waits on fold everything they extract.
+//!
+//! A fold reads the source between the summary's boundary and its end back
+//! from the transcript — summary only, never re-extracted — a bounded slice at
+//! a time, resuming from wherever the last summary ended. That also covers a
+//! summary a delete or a user correction dropped while the ledger and its
+//! watermark stood: the next fold starts from the beginning.
 
 pub mod extract;
 pub mod prompts;
@@ -58,7 +67,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::memory::{
-    MemoryCommit, MemorySnapshot, MemoryValidationError,
+    MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };
 use lattice_core::shared::error::AppError;
 
@@ -485,6 +494,11 @@ pub struct CompactionRequest {
     /// Minimum raw messages to retain, adjusted outward to a turn boundary.
     pub keep_recent_messages: Option<usize>,
     pub cancellation: Option<CancellationToken>,
+    /// The refold a turn's prompt asked for, when its window had to drop
+    /// turns the working summary does not cover. Consolidation refolds only
+    /// on this; `/compact` and the compaction a turn waits on fold everything
+    /// they extract without it.
+    pub summary_refold: Option<SummaryRefold>,
 }
 
 /// How far a run got.
@@ -532,8 +546,8 @@ pub struct CompactionOutcome {
     pub commit_conflict_retries: usize,
     /// Sequence to resume from when `status` is [`CompactionStatus::Partial`].
     pub resume_after_sequence: Option<i64>,
-    /// A summary a delete or a correction dropped still trails the watermark:
-    /// this run folded a page of it back in, and more remain.
+    /// A fold over source below the watermark stopped at the work cap: this
+    /// run folded a page of it, and more remain.
     pub refold_pending: bool,
     pub was_already_committed: bool,
 }

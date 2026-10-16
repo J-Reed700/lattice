@@ -27,7 +27,16 @@
 //! supporting material, the date and the request, in that order. Two turns of
 //! the same conversation therefore share every message up to the newest
 //! answer, and the server re-reads only what was added.
+//!
+//! That holds past the window too, because the window is anchored: it opens
+//! right after the last message the summary covers and stays there while the
+//! budget allows, rather than reaching back as far as it can and starting one
+//! turn later every time a turn is added. When it no longer fits it has to
+//! start later, and the plan asks for the summary to be refolded over what it
+//! dropped ([`ContextPlan::summary_refold`]). Consolidation does that after
+//! the answer, and the window then opens at the summary's new end.
 
+mod anchor;
 pub mod budget;
 pub mod plan;
 pub mod render;
@@ -282,27 +291,38 @@ impl ContextAssembler {
         // paraphrase of them, and whether the summary is needed at all depends
         // on how far back the window reaches. Newest first so the most recent
         // turn is the one that survives, then restored to chronological order.
-        let mut recent_messages: Vec<(i64, CompletionInput)> = Vec::new();
-        let mut recent_tokens = 0usize;
-        let mut oldest_kept_sequence = i64::MAX;
+        //
+        // A transcript that fits whole is carried whole. Otherwise, with a
+        // summary to carry, the window opens right after the last message it
+        // covers and never reaches further back, even when there is room: the
+        // summary and the oldest turns then stay the same from one turn to the
+        // next, and each request extends the one before it. A summary too
+        // large for its pool is not carried, so it anchors nothing, and nor
+        // does one whose boundary cannot be placed.
+        let summary = request
+            .snapshot
+            .filter(|snapshot| snapshot.is_usable())
+            .and_then(|snapshot| {
+                let message = render::render_summary(snapshot.summary.as_deref()?)?;
+                let cost = self.count_input(&message);
+                Some((snapshot.summary_through_sequence, message, cost))
+            });
         let recent_pool = allocation
             .recent_history
             .max(newest_turn_tokens)
             .min(remaining);
-        for message in request.recent.iter().rev() {
-            let rendered = render::render_recent(message);
-            let cost = self.count_input(&rendered);
-            if recent_tokens + cost > recent_pool && !recent_messages.is_empty() {
-                break;
-            }
-            if recent_tokens + cost > remaining && !recent_messages.is_empty() {
-                break;
-            }
-            recent_tokens += cost;
-            oldest_kept_sequence = oldest_kept_sequence.min(message.sequence);
-            recent_messages.push((message.sequence, rendered));
-        }
-        recent_messages.reverse();
+        let anchor::RecentWindow {
+            messages: recent_messages,
+            tokens: recent_tokens,
+            oldest_kept_sequence,
+            anchored_after,
+        } = self.recent_window(
+            request,
+            summary.as_ref(),
+            recent_pool,
+            remaining,
+            allocation.summary,
+        );
         remaining = remaining.saturating_sub(recent_tokens);
         accounting.recent_history = recent_tokens;
 
@@ -319,24 +339,18 @@ impl ContextAssembler {
             });
 
         // --- 6. working summary --------------------------------------------
-        // Background consolidation refolds the summary after every answer, so
-        // carrying it while the window still holds the whole transcript would
-        // change the second message of every request — and with it the cached
-        // prefix of everything after — to repeat text the model already has
-        // verbatim. It is carried only once older turns have left the window.
+        // Carried only once older turns have left the window. While the window
+        // still holds the whole transcript the summary would only repeat text
+        // the model has verbatim, and a request without it stays append-only
+        // from the first turn.
         let window_reaches_start = request.recent_reaches_start
             && request
                 .recent
                 .first()
                 .is_none_or(|first| oldest_kept_sequence == first.sequence);
-        let summary_message = request
-            .snapshot
-            .filter(|snapshot| snapshot.is_usable() && !window_reaches_start)
-            .and_then(|snapshot| snapshot.summary.as_deref())
-            .and_then(render::render_summary);
+        let summary_message = summary.filter(|_| !window_reaches_start);
         let summary_message = match summary_message {
-            Some(message) => {
-                let cost = self.count_input(&message);
+            Some((_, message, cost)) => {
                 // Dropped whole rather than sliced: cutting a summary mid-clause
                 // can invert a condition it was describing.
                 if cost <= allocation.summary.min(remaining) {
@@ -518,6 +532,9 @@ impl ContextAssembler {
             || evicted_sequences
                 .iter()
                 .any(|sequence| *sequence > request.processed_through_sequence);
+        // Measured on the window as sent, after overflow eviction, which can
+        // move its start too.
+        let summary_refold = self.summary_refold(request, &layout.recent, anchored_after);
 
         Ok(ContextPlan {
             messages: layout.into_messages(),
@@ -532,6 +549,7 @@ impl ContextAssembler {
             accounting,
             retrieval,
             compaction_required: dropped_unprocessed,
+            summary_refold,
             max_output_tokens: allocation.output_reserved,
             used_memory_ids,
         })

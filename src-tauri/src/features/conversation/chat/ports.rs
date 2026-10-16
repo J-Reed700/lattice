@@ -355,7 +355,13 @@ pub trait ChatPolicy: Send + Sync {
         id: &str,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
-    fn consolidate_after_turn(&self, id: String);
+    /// `summary_refold` is the turn's plan asking for the working summary to
+    /// be refolded; consolidation leaves the summary alone without it.
+    fn consolidate_after_turn(
+        &self,
+        id: String,
+        summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
+    );
     /// Remove a conversation and everything it owns — its in-flight turn, its
     /// attachments, its messages.
     async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;

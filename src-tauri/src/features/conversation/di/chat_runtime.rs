@@ -191,8 +191,16 @@ impl ChatPolicy for Container {
     ) -> Result<()> {
         crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
     }
-    fn consolidate_after_turn(&self, id: String) {
-        crate::features::conversation::compaction::consolidate_after_turn(self.share(), id);
+    fn consolidate_after_turn(
+        &self,
+        id: String,
+        summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
+    ) {
+        crate::features::conversation::compaction::consolidate_after_turn(
+            self.share(),
+            id,
+            summary_refold,
+        );
     }
     async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
         // A turn already generating for this conversation should not continue
