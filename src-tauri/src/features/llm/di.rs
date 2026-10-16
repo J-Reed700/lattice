@@ -180,20 +180,6 @@ impl Container {
         self.model_loader().load(&settings.llm).await
     }
 
-    /// Gets the LLM service, loading it lazily if needed.
-    ///
-    /// Coalesces concurrent misses and prevents invalidated loads from
-    /// publishing into the current cache generation.
-    pub async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        let generation = self.llm_cache.generation();
-        self.llm_cache
-            .get_or_load((), generation, || async {
-                self.load_llm_with_fallback().await.map(Some)
-            })
-            .await?
-            .ok_or_else(|| AppError::AiModelsNotInstalled("Chat model unavailable".into()))
-    }
-
     /// The model a turn in `conversation_id` runs on, pinned for the turn:
     /// `request_override`, else the chat's choice, else the Settings default.
     pub async fn chat_llm_for(
@@ -215,10 +201,20 @@ impl Container {
         self.pinned_default_chat_llm().await
     }
 
-    /// The Settings default chat model, for work that belongs to no chat.
+    /// The Settings default chat model, for work that belongs to no chat,
+    /// loaded lazily.
+    ///
+    /// Coalesces concurrent misses and prevents invalidated loads from
+    /// publishing into the current cache generation.
     pub async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
         // A1 replaces
-        self.get_or_load_llm().await
+        let generation = self.llm_cache.generation();
+        self.llm_cache
+            .get_or_load((), generation, || async {
+                self.load_llm_with_fallback().await.map(Some)
+            })
+            .await?
+            .ok_or_else(|| AppError::AiModelsNotInstalled("Chat model unavailable".into()))
     }
 
     // A1 replaces
@@ -241,7 +237,7 @@ impl Container {
         let default = default_chat_model(&settings.llm, active_local);
         let resolved = resolve(None, &ChatModelChoice::Default, &default)?;
         Ok(PinnedModel {
-            llm: self.get_or_load_llm().await?,
+            llm: self.default_chat_llm().await?,
             resolved,
             instance_id: 0,
             degraded: None,
@@ -439,7 +435,7 @@ impl Container {
                 // kills late registrations during shutdown.
                 let Some(outcome) = finish_or_cancel(&cancel, async {
                     match role {
-                        "chat" => match container.get_or_load_llm().await {
+                        "chat" => match container.default_chat_llm().await {
                             Ok(_) => Outcome::Ready,
                             Err(e) => classify_load_error(e),
                         },

@@ -13,7 +13,7 @@ pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(),
     })?;
 
     let start = Instant::now();
-    if let Err(error) = container.get_or_load_llm().await {
+    if let Err(error) = container.default_chat_llm().await {
         if let AppError::ModelLoadFailed(load_error) = &error {
             warn!(
                 model_id = %active_model.model_id(),
