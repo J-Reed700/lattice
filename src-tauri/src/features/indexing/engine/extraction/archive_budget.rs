@@ -191,7 +191,10 @@ mod tests {
         let path = dir.path().join("bomb.docx");
         let mut writer = zip::ZipWriter::new(File::create(&path).unwrap());
         writer
-            .start_file("word/document.xml", zip::write::FileOptions::default())
+            .start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
             .unwrap();
         let chunk = vec![b'a'; 1024 * 1024];
         for _ in 0..(MAX_ARCHIVE_MEMBER_BYTES / chunk.len() as u64 + 1) {
