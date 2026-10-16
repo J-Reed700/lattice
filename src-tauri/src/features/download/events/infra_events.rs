@@ -87,7 +87,7 @@ pub struct DownloadEventBridge {
     event_rx_arc:
         Arc<RwLock<Option<mpsc::Receiver<crate::features::download::manager::DownloadEvent>>>>,
     // reason: holds the repository handle supplied by DI wiring in
-    // infrastructure/setup/app.rs; dropping it would change the public `new` signature.
+    // bootstrap/app.rs; dropping it would change the public `new` signature.
     #[allow(dead_code)]
     downloaded_model_repository: Option<
         Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,

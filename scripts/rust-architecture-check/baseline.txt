@@ -23,18 +23,14 @@
 #   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
 #                                                         its strongly connected component
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
-#                                                         DI, desktop, setup and interfaces files
+#                                                         DI, desktop, bootstrap and interfaces files
+#   composition-root-import <file> bootstrap              the composition root named outside itself
+#                                                         and the entry points main.rs, lib.rs, bin/*
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
 #   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
-
-infrastructure-imports-feature infrastructure/services/startup_reconciliation.rs features::download 2
-infrastructure-imports-feature infrastructure/setup/app.rs features::download 8
-infrastructure-imports-feature infrastructure/setup/app.rs features::embedding 1
-infrastructure-imports-feature infrastructure/setup/app.rs features::settings 2
-infrastructure-imports-feature infrastructure/setup/app.rs features::summaries 1
 
 feature-edge features::backup features::settings 2
 feature-edge features::backup features::vault 2

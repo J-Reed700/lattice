@@ -13,6 +13,10 @@
 //! never read. File length is the exception: it reads every `.rs` file below
 //! the root and skips test-only files by name. The app and core source roots
 //! are walked separately and their findings counted together.
+//!
+//! The composition root (`bootstrap`) builds the app, so it names every
+//! feature and the `Container`. It must stay a leaf: only the crate entry
+//! points (`main.rs`, `lib.rs`, `bin/*`) and its own files may name it.
 use proc_macro2::{Spacing, TokenStream, TokenTree};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -36,11 +40,13 @@ pub const CONTAINER_IMPORT: &str = "container-import";
 pub const RAW_SPAWN: &str = "raw-spawn";
 pub const GLOBAL_STATE: &str = "global-state";
 pub const FILE_LENGTH: &str = "file-length";
-const RULES: [&str; 7] = [
+pub const COMPOSITION_ROOT_IMPORT: &str = "composition-root-import";
+const RULES: [&str; 8] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
     FEATURE_CYCLE,
     CONTAINER_IMPORT,
+    COMPOSITION_ROOT_IMPORT,
     RAW_SPAWN,
     GLOBAL_STATE,
     FILE_LENGTH,
@@ -55,6 +61,8 @@ const RAW_SPAWNS: [&[&str]; 4] = [
 const SPAWN_MARKER: &str = "raw-spawn:";
 const SUPERVISOR: &str = "shared/runtime/";
 const CONTAINER_TARGET: &str = "interfaces::di";
+/// The app's composition root module: startup wiring and shutdown.
+const COMPOSITION_ROOT: &str = "bootstrap";
 /// The app's library crate, as its binaries name it.
 const APP_LIBRARY: &str = "lattice";
 /// The core crate. Its paths are another crate's, outside the app's layers.
@@ -110,7 +118,9 @@ const HEADER: &str = "\
 #   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
 #                                                         its strongly connected component
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
-#                                                         DI, desktop, setup and interfaces files
+#                                                         DI, desktop, bootstrap and interfaces files
+#   composition-root-import <file> bootstrap              the composition root named outside itself
+#                                                         and the entry points main.rs, lib.rs, bin/*
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
@@ -449,6 +459,12 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
                 location: at(reference.line),
             });
         }
+        if names_composition_root(path, reference.glob) && !may_import_composition_root(relative) {
+            found.push(Finding {
+                key: Key::new(COMPOSITION_ROOT_IMPORT, relative, COMPOSITION_ROOT),
+                location: at(reference.line),
+            });
+        }
     }
     if !relative.starts_with(SUPERVISOR) {
         for (target, line) in collector.spawns {
@@ -572,8 +588,23 @@ pub fn may_import_container(relative: &str) -> bool {
         || directories
             .iter()
             .any(|d| d.starts_with("plugin") || d.starts_with("commands") || *d == "di")
-        || matches!(directories.first(), Some(&"interfaces" | &"desktop_e2e"))
-        || directories.starts_with(&["infrastructure", "setup"])
+        || matches!(
+            directories.first(),
+            Some(&"interfaces" | &"desktop_e2e" | &COMPOSITION_ROOT)
+        )
+}
+
+fn names_composition_root(path: &[String], glob: bool) -> bool {
+    path.first().is_some_and(|s| s == COMPOSITION_ROOT) || (glob && path.is_empty())
+}
+
+/// The composition root is a leaf: the entry points start it, and nothing
+/// else may depend on the code that wires everything together.
+pub fn may_import_composition_root(relative: &str) -> bool {
+    let first = relative.split('/').next().unwrap_or_default();
+    matches!(relative, "main.rs" | "lib.rs")
+        || first == "bin"
+        || first.trim_end_matches(".rs") == COMPOSITION_ROOT
 }
 
 /// Local names that `use` declarations bind, mapped to the path they import.
@@ -1345,7 +1376,7 @@ mod tests {
     }
 
     #[test]
-    fn container_allowlist_covers_plugin_command_di_desktop_setup_and_interfaces_files() {
+    fn container_allowlist_covers_plugin_command_di_desktop_bootstrap_and_interfaces_files() {
         for allowed in [
             "features/backup/plugin.rs",
             "features/learning/plugin/sources.rs",
@@ -1355,7 +1386,8 @@ mod tests {
             "features/backup/di.rs",
             "features/conversation/di/mod.rs",
             "features/explorer/desktop.rs",
-            "infrastructure/setup/app.rs",
+            "bootstrap/app.rs",
+            "bootstrap/shutdown.rs",
             "interfaces/di/modules.rs",
             "main.rs",
             "lib.rs",
@@ -1368,10 +1400,97 @@ mod tests {
             "features/conversation/synthesis.rs",
             "features/qa/starters.rs",
             "infrastructure/services/mod.rs",
+            "infrastructure/setup/database.rs",
             "features/explorer/folders.rs",
             "shared/runtime/background.rs",
         ] {
             assert!(!may_import_container(denied), "{denied} should be denied");
+        }
+    }
+
+    #[test]
+    fn composition_root_references_are_violations_outside_entry_points() {
+        let text = r#"
+            use crate::bootstrap::graceful_shutdown;
+            use crate::{bootstrap as root, interfaces::dto::Request};
+            fn quit(app: &AppHandle) { crate::bootstrap::graceful_shutdown(app); }
+            #[cfg(test)] mod tests { use crate::bootstrap::initialize_app; }
+        "#;
+        for (relative, module) in [
+            (
+                "features/download/plugin.rs",
+                &["features", "download", "plugin"][..],
+            ),
+            (
+                "infrastructure/setup/database.rs",
+                &["infrastructure", "setup", "database"],
+            ),
+            (
+                "interfaces/di/container.rs",
+                &["interfaces", "di", "container"],
+            ),
+        ] {
+            assert_eq!(
+                counted(&source(relative, module, text), &HashSet::new()),
+                vec![row(COMPOSITION_ROOT_IMPORT, relative, COMPOSITION_ROOT, 3)],
+                "{relative}"
+            );
+        }
+        let wiring = source("bootstrap/app.rs", &["bootstrap", "app"], text);
+        assert!(counted(&wiring, &HashSet::new()).is_empty());
+
+        let entry = "use lattice::bootstrap; fn main() { bootstrap::initialize_app(); }";
+        for relative in ["main.rs", "bin/tool.rs"] {
+            let mut binary = source(relative, &[], entry);
+            binary.library = false;
+            assert!(counted(&binary, &HashSet::new()).is_empty(), "{relative}");
+        }
+        let mut e2e = source(
+            "desktop_e2e/self_test.rs",
+            &["desktop_e2e", "self_test"],
+            "use lattice::bootstrap::graceful_shutdown;",
+        );
+        e2e.library = false;
+        assert_eq!(
+            counted(&e2e, &HashSet::new()),
+            vec![row(
+                COMPOSITION_ROOT_IMPORT,
+                "desktop_e2e/self_test.rs",
+                COMPOSITION_ROOT,
+                1
+            )]
+        );
+    }
+
+    #[test]
+    fn composition_root_allowlist_is_the_entry_points_and_the_root_itself() {
+        for allowed in [
+            "main.rs",
+            "lib.rs",
+            "bin/tool.rs",
+            "bin/export_bindings/main.rs",
+            "bootstrap/mod.rs",
+            "bootstrap/app.rs",
+            "bootstrap.rs",
+        ] {
+            assert!(
+                may_import_composition_root(allowed),
+                "{allowed} should be allowed"
+            );
+        }
+        for denied in [
+            "features/backup/plugin.rs",
+            "features/conversation/di/mod.rs",
+            "features/bootstrap/mod.rs",
+            "interfaces/di/container.rs",
+            "infrastructure/setup/database.rs",
+            "desktop_e2e/learning_runtime_self_test.rs",
+            "plugins.rs",
+        ] {
+            assert!(
+                !may_import_composition_root(denied),
+                "{denied} should be denied"
+            );
         }
     }
 
@@ -2045,6 +2164,13 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         assert_eq!(
             parse_baseline("feature-cycle features::a features::b 2").unwrap(),
             Counts::from([(key(FEATURE_CYCLE, "features::a", "features::b"), 2)])
+        );
+        assert_eq!(
+            parse_baseline("composition-root-import features/a.rs bootstrap 1").unwrap(),
+            Counts::from([(
+                key(COMPOSITION_ROOT_IMPORT, "features/a.rs", "bootstrap"),
+                1
+            )])
         );
     }
 }
