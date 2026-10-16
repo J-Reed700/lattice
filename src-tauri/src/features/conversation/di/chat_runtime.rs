@@ -15,9 +15,6 @@ use tracing::warn;
 
 #[async_trait]
 impl ChatModels for Container {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        Container::get_or_load_llm(self).await
-    }
     async fn chat_llm_for(
         &self,
         conversation_id: &str,
@@ -204,9 +201,10 @@ impl ChatPolicy for Container {
     async fn compact_for_turn(
         &self,
         id: &str,
+        llm: Arc<dyn LLMPort>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()> {
-        crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
+        crate::features::conversation::compaction::compact_for_turn(self, id, llm, cancel).await
     }
     fn consolidate_after_turn(
         &self,

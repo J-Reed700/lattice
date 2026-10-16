@@ -260,7 +260,9 @@ async fn plan_synthesis(
 
     let mut entries = entries;
     let sources = assign_synthesis_source_ids(&mut entries);
-    let llm = runtime.get_or_load_llm().await?;
+    // Each part runs as a turn in a scratch chat, which follows the Settings
+    // default; the parts are sized for that model.
+    let llm = runtime.default_chat_llm().await?;
     let part_chars = synthesis_part_chars(llm.as_ref());
     let prompts = plan_journal_map_prompts(&entries, part_chars);
     Ok(SynthesisPlan {

@@ -477,9 +477,18 @@ pub async fn generate_chat_starters_impl(
 
     let titles = cache.recent_titles(&allowed_ids).await.unwrap_or_default();
 
+    // Starters belong to a space, not a chat, so without the utility model
+    // they are written by the Settings default.
     let llm = match runtime.get_or_load_utility_llm().await {
         Ok(Some(util)) => Some(util),
-        _ => runtime.get_or_load_llm().await.ok(),
+        Ok(None) => {
+            tracing::info!("No utility model; chat starters use the default chat model");
+            runtime.default_chat_llm().await.ok()
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Utility model unavailable; chat starters use the default chat model");
+            runtime.default_chat_llm().await.ok()
+        }
     };
 
     let starters = match llm {

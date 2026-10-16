@@ -1,6 +1,6 @@
 //! One chat turn, as a sequence of stages with typed hand-offs:
 //!
-//! 1. [`prepare`]: validate, load the model, open the conversation, read its
+//! 1. [`prepare`]: validate, open the conversation, pin its model, read its
 //!    history and settings, and plan the turn's budget.
 //! 2. [`classify`]: what the turn needs (intent), then where to look (router).
 //! 3. [`carry`]: the material the turn reads whole — attachments, the folder.
@@ -36,6 +36,8 @@ mod retrieve;
 
 pub(super) use research::{AssembledTurn, Research, ResearchJournal, ResearchRound, Rounds, Saved};
 
+#[cfg(test)]
+mod pin_tests;
 #[cfg(test)]
 mod tests;
 
@@ -165,6 +167,7 @@ pub(super) async fn run_stages(
         request.conversation_id.clone(),
         &request.message,
         request.request_id.clone(),
+        request.model.as_ref(),
         preferences,
         parent.as_ref(),
         emit,

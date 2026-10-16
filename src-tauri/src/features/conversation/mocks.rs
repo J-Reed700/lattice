@@ -46,6 +46,42 @@ impl MockConversationService {
     pub fn count(&self) -> usize {
         self.conversations.read().unwrap().len()
     }
+
+    /// The model a conversation asked for, as the repository keeps it.
+    pub fn model_choice(
+        &self,
+        id: &str,
+    ) -> Result<lattice_core::domain::conversation::ChatModelChoice> {
+        let conversations = self.conversations.read().unwrap();
+        let aggregate = conversations.get(id).ok_or_else(|| not_found(id))?;
+        Ok(aggregate.model_choice().clone())
+    }
+
+    /// Record the model a conversation asks for, as the repository does.
+    pub fn set_model_choice(
+        &self,
+        id: &str,
+        choice: lattice_core::domain::conversation::ChatModelChoice,
+    ) -> Result<()> {
+        use lattice_core::domain::conversation::ConversationAggregate;
+
+        let mut conversations = self.conversations.write().unwrap();
+        let aggregate = conversations.get_mut(id).ok_or_else(|| not_found(id))?;
+        let mut conversation = aggregate.conversation().clone();
+        conversation.model_choice = choice;
+        *aggregate = ConversationAggregate::from_persistence(
+            conversation,
+            aggregate.messages().to_vec(),
+            aggregate.document_context().to_vec(),
+            aggregate.compaction().cloned(),
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn not_found(id: &str) -> lattice_core::shared::error::AppError {
+    lattice_core::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
 }
 
 #[cfg(test)]

@@ -463,7 +463,13 @@ pub(super) async fn plan_request(
             }
             Ok(memory_turn)
         },
-        || container.compact_for_turn(turn.conv_id.as_str(), turn.cancel_token()),
+        || {
+            container.compact_for_turn(
+                turn.conv_id.as_str(),
+                Arc::clone(&turn.llm),
+                turn.cancel_token(),
+            )
+        },
     )
     .await?;
     let carried = inline_message

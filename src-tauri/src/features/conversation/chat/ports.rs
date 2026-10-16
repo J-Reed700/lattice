@@ -27,7 +27,6 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait ChatModels: Send + Sync {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>>;
     /// The model a turn in `conversation_id` runs on, pinned for the turn:
     /// `request_override`, else the chat's choice, else the Settings default.
     async fn chat_llm_for(
@@ -371,11 +370,14 @@ pub trait ChatPolicy: Send + Sync {
         &self,
         request: crate::features::conversation::dto::CreateConversationRequestDto,
     ) -> Result<crate::features::conversation::dto::CreateConversationResponseDto>;
-    /// `cancel` is the turn's stop button: the user is waiting on this
-    /// compaction, so stopping the turn stops it too.
+    /// `llm` is the model the turn is pinned to: the summary has to fit the
+    /// prompt of the model that carries it. `cancel` is the turn's stop
+    /// button: the user is waiting on this compaction, so stopping the turn
+    /// stops it too.
     async fn compact_for_turn(
         &self,
         id: &str,
+        llm: Arc<dyn LLMPort>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
     /// `summary_refold` is the turn's plan asking for the working summary to

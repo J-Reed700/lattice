@@ -9,14 +9,14 @@ use tauri::State;
 
 /// Checks LLM availability and returns health status information
 ///
-/// Verifies that the configured LLM is ready to handle Q&A requests and returns
+/// Verifies that the Settings default chat model is ready and returns
 /// detailed information about the model's capabilities and current status. Useful
 /// for displaying service health in UI, debugging connectivity issues, and gracefully
 /// handling LLM unavailability.
 pub async fn check_llm_health(
     container: State<'_, Container>,
 ) -> Result<super::dto::LLMHealthStatusDto> {
-    let llm = container.get_or_load_llm().await?;
+    let llm = container.default_chat_llm().await?;
     let is_ready = llm.is_ready().await?;
 
     let health_response = super::dto::LLMHealthStatusDto {
