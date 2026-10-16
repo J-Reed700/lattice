@@ -72,7 +72,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
   'src/features/search/components/SearchInterface/SearchInterface.tsx',
   'src/features/settings/components/AITab/ChatTab.tsx',
   'src/features/settings/components/ModelCatalog/startModelDownload.ts',
-  'src/features/settings/components/modelRoles/LocalModelRow.tsx',
 ], (text) => valueImportSources(text).some(isBackendSource));
 
 // View files that imported a Tauri plugin or convertFileSrc when the rule
