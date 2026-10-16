@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
-import VaultAPI from '@/lib/api';
+import { fetchLibraryDocuments } from '@/features/files/hooks/useLibraryDocumentsQuery';
 import { getErrorMessage } from '@/lib/errorUtils';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
@@ -15,9 +15,8 @@ export function LibraryFilePicker({ onAdd, disabled }: { onAdd: (paths: string[]
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const result = await VaultAPI.listAllDocuments(10000);
-      if (!result.ok) throw new Error(result.error);
-      setDocuments(result.data.filter(document => document.filePath && !/^https?:/.test(document.filePath)));
+      const all = await fetchLibraryDocuments();
+      setDocuments(all.filter(document => document.filePath && !/^https?:/.test(document.filePath)));
     } catch (err) { setError(getErrorMessage(err)); } finally { setLoading(false); }
   };
   const visible = documents?.filter(doc => `${doc.fileName} ${doc.filePath}`.toLowerCase().includes(filter.toLowerCase())) ?? [];

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useCreateJournalMutation, useJournalsQuery, useSidebarBookmarksQuery } from '@/features/chat/components/sidebar/workspaceQueries';
+import { useCreateJournalMutation, useJournalsQuery, useSidebarBookmarksQuery } from '@/features/chat/hooks/workspaceQueries';
 import { VaultAPI } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 

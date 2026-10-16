@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
-import { useQueries } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, File, FileCode, FileJson, FileText, Folder, FolderOpen, Image } from 'lucide-react';
 
+import { useExplorerDirListings } from '@/features/explorer/api/queries';
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
-import { VaultAPI } from '@/lib/api';
-import type { ExplorerEntryDto, ExplorerListingDto } from '@/lib/bindings';
+import type { ExplorerEntryDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 
 const INDENT_PX = 12;
 const ROW_HEIGHT = 26;
-
-export const explorerDirKey = (root: string, path: string) => ['explorer', 'dir', root, path] as const;
 
 const CODE_EXTENSIONS = new Set(['rs', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'go', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'rb', 'php', 'sh', 'zsh', 'bash', 'toml', 'yaml', 'yml', 'html', 'css', 'scss', 'sql', 'xml', 'lua', 'dart', 'zig', 'ex', 'exs', 'hs', 'scala', 'vue', 'svelte']);
 const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'mdx', 'txt', 'rst', 'adoc']);
@@ -37,12 +34,6 @@ export interface ExplorerTreeProps {
   root: string;
 }
 
-async function listDir(root: string, path: string): Promise<ExplorerListingDto> {
-  const result = await VaultAPI.explorerListDir(root, path);
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
-
 /**
  * The folder as a tree, one directory read at a time.
  *
@@ -61,13 +52,7 @@ export function ExplorerTree({ root }: ExplorerTreeProps) {
   const listRef = useRef<HTMLDivElement>(null);
 
   const dirs = useMemo(() => ['', ...[...expanded].sort()], [expanded]);
-  const listings = useQueries({
-    queries: dirs.map((path) => ({
-      queryKey: explorerDirKey(root, path),
-      queryFn: () => listDir(root, path),
-      staleTime: 10_000,
-    })),
-  });
+  const listings = useExplorerDirListings(root, dirs);
   const listingByPath = new Map(dirs.map((path, index) => [path, listings[index]] as const));
 
   const rows: Row[] = [];

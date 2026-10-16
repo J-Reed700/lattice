@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ClipboardCopy, NotebookPen } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import { useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
+import { useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { VaultAPI } from '@/lib/api';

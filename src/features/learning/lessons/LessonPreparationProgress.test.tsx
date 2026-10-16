@@ -63,7 +63,7 @@ describe('Durable lesson preparation progress', () => {
       phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 120_000,
       lastCheckpointAt: Date.now() - 180_000, lessonTitle: 'Understanding observations', modelName: 'Test model',
       modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 2,
-      checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134,
+      checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134, deeperEvidence: null,
       recentSteps: [{ phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
     } };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
@@ -117,7 +117,7 @@ describe('Durable lesson preparation progress', () => {
       phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: false,
       responseCharacters: 0, modelAttempt: 0, verificationPass: 41, checksCompleted: 3,
-      checksTotal: 170, checksReused: 3, checksUnresolved: 0, modelChecksTotal: null, recentSteps: [],
+      checksTotal: 170, checksReused: 3, checksUnresolved: 0, modelChecksTotal: null, deeperEvidence: null, recentSteps: [],
     } };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
     const view = show();
@@ -125,7 +125,7 @@ describe('Durable lesson preparation progress', () => {
     expect(screen.getByText('Calculating…')).toBeVisible();
     expect(screen.queryByText('167')).not.toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
-    current = { ...current, activity: { ...current.activity!, checksCompleted: 167, checksReused: 167, modelChecksTotal: 3, modelRunning: true } };
+    current = { ...current, activity: { ...current.activity!, checksCompleted: 167, checksReused: 167, modelChecksTotal: 3, deeperEvidence: null, modelRunning: true } };
     await view.client.invalidateQueries();
     expect(await screen.findByText('167 saved checks reused. 3 of 3 model checks remaining in this pass.')).toBeVisible();
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '167');
@@ -141,6 +141,36 @@ describe('Durable lesson preparation progress', () => {
     view.unmount(); view.client.clear();
   });
 
+  it('counts each claim once while unsupported claims are checked against deeper evidence pages', async () => {
+    let current: LearningGenerationJob = { ...job, progressMessage: 'Checking 21 unsupported claims against their next page of evidence (page 3)', activity: {
+      phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
+      lessonTitle: 'Async/Await Under the Hood', modelName: 'Test model', modelRunning: true,
+      responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted: 115,
+      checksTotal: 115, checksReused: 115, checksUnresolved: 21, modelChecksTotal: 0,
+      deeperEvidence: { page: 3, claims: 21, checked: 8 }, recentSteps: [],
+    } };
+    const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
+    const view = show();
+    const bar = await screen.findByRole('progressbar', { name: 'Unsupported claims checked against evidence page 3' });
+    expect(bar).toHaveAttribute('aria-valuenow', '8');
+    expect(bar).toHaveAttribute('aria-valuemax', '21');
+    expect(screen.getByText('115 / 115 checked')).toBeVisible();
+    expect(screen.getByText(/Every claim has had its first check\. Checking 21 unsupported claims against evidence page 3; 13 left\./)).toBeVisible();
+    expect([count('Supported'), count('Need attention'), count('Left on evidence page 3')]).toEqual(['94', '21', '13']);
+    expect(screen.queryByText('Still to check')).not.toBeInTheDocument();
+    current = { ...current, activity: { ...current.activity!, checksUnresolved: 20, deeperEvidence: { page: 3, claims: 21, checked: 9 } } };
+    await view.client.invalidateQueries();
+    await waitFor(() => expect(count('Left on evidence page 3')).toBe('12'));
+    expect([count('Supported'), count('Need attention')]).toEqual(['95', '20']);
+    current = { ...current, activity: { ...current.activity!, deeperEvidence: null } };
+    await view.client.invalidateQueries();
+    expect(await screen.findByText(/Checking finished\. Preparing the next step\./)).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Claim checks this pass' })).toHaveAttribute('aria-valuenow', '115');
+    expect([count('Supported'), count('Need attention'), count('Still to check')]).toEqual(['95', '20', '0']);
+    view.unmount(); view.client.clear();
+  });
+
   it('keeps repair work and an advancing quiet-period clock visible instead of a finished check bar', () => {
     vi.useFakeTimers();
     const now = Date.now();
@@ -150,7 +180,7 @@ describe('Durable lesson preparation progress', () => {
         phase: 'repair', phaseStartedAt: now - 600_000, lastActivityAt: now - 120_000,
         lastCheckpointAt: now - 120_000, lessonTitle: 'Understanding observations', modelName: 'Test model',
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 43,
-        checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, modelChecksTotal: 115, recentSteps: [],
+        checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, modelChecksTotal: 115, deeperEvidence: null, recentSteps: [],
       },
     };
     const client = new QueryClient();
@@ -185,7 +215,7 @@ describe('Durable lesson preparation progress', () => {
         phase: 'evidence', phaseStartedAt: Date.now() - 60_000, lastActivityAt: Date.now(),
         lastCheckpointAt: Date.now(), lessonTitle: 'Understanding observations', modelName: 'Previous main model',
         modelRunning: true, responseCharacters: 420, modelAttempt: 1, verificationPass: 2,
-        checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134, recentSteps: [],
+        checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134, deeperEvidence: null, recentSteps: [],
       },
     };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));

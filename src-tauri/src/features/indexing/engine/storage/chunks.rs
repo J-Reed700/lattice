@@ -130,11 +130,13 @@ pub async fn store_document(
             IndexingError::InvalidData(format!("Embedding index {} out of bounds", idx))
         })?;
 
-        let embedding_bytes = crate::features::embedding::encoding::encode_embedding(embedding);
+        let embedding_bytes =
+            lattice_core::shared::persistence::embedding_encoding::encode_embedding(embedding);
 
         // Canonical key so delete/rebuild/insert all agree — see
-        // `embedding::encoding::vector_key`.
-        let embedding_id = crate::features::embedding::encoding::vector_key(&chunk_id);
+        // `embedding_encoding::vector_key`.
+        let embedding_id =
+            lattice_core::shared::persistence::embedding_encoding::vector_key(&chunk_id);
         let dimension = embedding.len() as i32;
 
         sqlx::query!(

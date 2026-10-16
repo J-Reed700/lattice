@@ -23,10 +23,11 @@
 //!
 //! ```rust,no_run
 //! use lattice::infrastructure::adapters::system_info::SystemInfoAdapter;
-//! use lattice_core::application::ports::SystemInfoPort;
+//! use lattice_core::application::ports::{NoAcceleratorProbe, SystemInfoPort};
+//! use std::sync::Arc;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let adapter = SystemInfoAdapter::new(Default::default());
+//! let adapter = SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe));
 //! let info = adapter.get_system_info().await?;
 //!
 //! println!("RAM: {} GB", info.total_ram_gb);
@@ -35,9 +36,10 @@
 //! # }
 //! ```
 
-use crate::features::llm::engine::system::BackendDevices;
 use async_trait::async_trait;
-use lattice_core::application::ports::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort};
+use lattice_core::application::ports::{
+    AcceleratorProbe, ComputeType, GpuInfo, SystemInfo, SystemInfoPort,
+};
 use lattice_core::shared::error::AppError;
 use std::process::Command;
 use std::sync::Arc;
@@ -49,26 +51,25 @@ use sysinfo::System;
 /// with platform-specific APIs for GPU information.
 pub struct SystemInfoAdapter {
     system: parking_lot::Mutex<System>,
-    /// The sidecar's device list, once the app has probed it.
-    backend_devices: Arc<BackendDevices>,
+    /// The inference backend's device list, once the app has probed it.
+    accelerator: Arc<dyn AcceleratorProbe>,
 }
 
 impl SystemInfoAdapter {
     /// Create a new system information adapter that reads the app's device
-    /// probe, `backend_devices`, whenever that has run.
-    pub fn new(backend_devices: Arc<BackendDevices>) -> Self {
+    /// probe, `accelerator`, whenever that has run.
+    pub fn new(accelerator: Arc<dyn AcceleratorProbe>) -> Self {
         Self {
             system: parking_lot::Mutex::new(System::new_all()),
-            backend_devices,
+            accelerator,
         }
     }
 
     /// Detect GPU information.
     ///
     /// The sidecar's own device list answers this for every platform at once,
-    /// so it is consulted first; see
-    /// [`backend_devices`](crate::features::llm::engine::system::backend_devices)
-    /// for why asking beats guessing. The platform-specific probes below are the
+    /// so it is consulted first; see [`AcceleratorProbe`] for why asking beats
+    /// guessing. The platform-specific probes below are the
     /// fallback for when that has not run, and they are weaker than they look —
     /// the Windows one cannot see an AMD or Intel card at all.
     fn detect_gpu_info(&self) -> Option<GpuInfo> {
@@ -77,36 +78,10 @@ impl SystemInfoAdapter {
         if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
             return None;
         }
-        if let Some(gpu) = self.gpu_from_sidecar_probe() {
+        if let Some(gpu) = self.accelerator.probed_gpu() {
             return Some(gpu);
         }
         self.detect_gpu_platform()
-    }
-
-    /// The cached `--list-devices` answer, if anything has probed yet.
-    fn gpu_from_sidecar_probe(&self) -> Option<GpuInfo> {
-        use crate::features::llm::engine::system::GPUVendor;
-
-        let device = self
-            .backend_devices
-            .cached()?
-            .iter()
-            .filter(|device| device.is_accelerator())
-            .max_by_key(|device| device.total_mib)?;
-
-        Some(GpuInfo {
-            name: device.name.clone(),
-            vram_gb: (device.total_mib > 0).then(|| device.total_gb()),
-            compute_type: match device.vendor() {
-                GPUVendor::Apple => ComputeType::Metal,
-                GPUVendor::Nvidia => ComputeType::Cuda,
-                GPUVendor::AMD => ComputeType::Rocm,
-                // The port models only these three backends, and Intel/Arc runs
-                // through SYCL or Vulkan; `None` here would read as "no GPU",
-                // which is worse than naming the nearest neighbour.
-                GPUVendor::Intel | GPUVendor::Unknown => ComputeType::None,
-            },
-        })
     }
 
     /// Platform-specific fallback, used only when the probe has not run.
@@ -347,18 +322,19 @@ impl SystemInfoPort for SystemInfoAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::application::ports::NoAcceleratorProbe;
 
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     #[test]
     fn intel_mac_does_not_advertise_gpu_inference() {
-        assert!(SystemInfoAdapter::new(Arc::default())
+        assert!(SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe))
             .detect_gpu_info()
             .is_none());
     }
 
     #[tokio::test]
     async fn test_adapter_returns_valid_info() {
-        let adapter = SystemInfoAdapter::new(Arc::default());
+        let adapter = SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe));
         let info = adapter.get_system_info().await.unwrap();
 
         // Basic sanity checks
@@ -369,7 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adapter_multiple_calls() {
-        let adapter = SystemInfoAdapter::new(Arc::default());
+        let adapter = SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe));
 
         let info1 = adapter.get_system_info().await.unwrap();
         let info2 = adapter.get_system_info().await.unwrap();

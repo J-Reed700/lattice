@@ -6509,6 +6509,22 @@ export type LearningCurriculumModule = { id: string; title: string; purpose: str
 export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
 export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
 export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
+/**
+ * One round of checking unsupported claims against their next evidence page.
+ */
+export type LearningDeeperEvidence = {
+/**
+ * The evidence page of this round. Page 1 is each claim's first check.
+ */
+page: number;
+/**
+ * Claims checked against this page.
+ */
+claims: number;
+/**
+ * Of those claims, the ones whose check against this page has finished.
+ */
+checked: number }
 export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; revision?: number; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; findings?: LearningDiagnosticFindingDto[]; createdAt: number; submittedAt: number | null }
 export type LearningDiagnosticCoverageGapDto = { outcomeId: string; outcomeTitle: string; sourceVersionIds: string[] }
 export type LearningDiagnosticFindingDto = { promptId: string; outcomeId: string; signal: LearningDiagnosticSignal; feedback: string; evidenceQuote: string | null }
@@ -6526,12 +6542,26 @@ export type LearningFollowUpActionKind = "lesson" | "practice" | "assessment" | 
 export type LearningFollowUpReasonCode = "missed_outcome" | "assisted_success" | "low_transfer" | "stale_evidence" | "uncertain_grade"
 export type LearningFollowUpRecommendationDto = { id: string; outcomeId: string | null; reasonCode: LearningFollowUpReasonCode; explanation: string; actionKind: LearningFollowUpActionKind; actionRef: string | null; status: LearningFollowUpStatus; evidenceEventIds: string[]; createdAt: number; decidedAt: number | null }
 export type LearningFollowUpStatus = "pending" | "accepted" | "dismissed" | "completed"
-export type LearningGenerationActivity = { phase: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number; checksCompleted: number; checksTotal: number; checksReused: number; checksUnresolved: number;
+export type LearningGenerationActivity = { phase: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number;
+/**
+ * Claims of this pass with a finished first check. Each claim counts once.
+ */
+checksCompleted: number; checksTotal: number; checksReused: number;
+/**
+ * Checked claims of this pass that are not supported at present. A claim
+ * a deeper evidence page supports leaves this count.
+ */
+checksUnresolved: number;
 /**
  * None while looking up saved checks; otherwise the number requiring the
  * model in this pass, after every reusable comparison has been restored.
  */
-modelChecksTotal: number | null; recentSteps: LearningGenerationStep[] }
+modelChecksTotal: number | null;
+/**
+ * Set while claims this pass left unsupported are checked against further
+ * pages of their evidence.
+ */
+deeperEvidence: LearningDeeperEvidence | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"

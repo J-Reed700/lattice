@@ -4,13 +4,13 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { Files, History, Link, List, type LucideIcon } from 'lucide-react';
 
 import { PageHeader } from '@/components/ui';
+import { fetchCorpusShape } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { BatchFileImport } from '@/features/files/components/Ingest/BatchFileImport';
 import { BatchUrlImport } from '@/features/files/components/Ingest/BatchUrlImport';
 import { ImportHistory } from '@/features/files/components/Ingest/ImportHistory';
 import { UrlImport } from '@/features/files/components/Ingest/UrlImport';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { useToast } from '@/hooks/useToast';
-import VaultAPI from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { CorpusShapeDto } from '@/types';
 
@@ -41,8 +41,7 @@ const TABS: ReadonlyArray<{ id: TabId; label: string; icon: LucideIcon }> = [
 /** The corpus shape, or null on any failure — the sentence is optional, the toast is not. */
 const loadCorpusShapeSafe = async (): Promise<CorpusShapeDto | null> => {
   try {
-    const result = await VaultAPI.getCorpusShape();
-    return result.ok ? result.data : null;
+    return await fetchCorpusShape();
   } catch {
     return null;
   }

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -24,9 +25,11 @@ beforeEach(() => {
 
 async function openPalette() {
   render(
-    <MemoryRouter>
-      <CommandPalette />
-    </MemoryRouter>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
+      <MemoryRouter>
+        <CommandPalette />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
   act(() => { window.dispatchEvent(new Event(OPEN_PALETTE_EVENT)); });
   return screen.findByRole('dialog');

@@ -418,7 +418,7 @@ impl IndexFileUseCase {
         if let Some(search) = self.vector_search.clone() {
             let stale_keys: Vec<_> = stale_chunk_ids
                 .iter()
-                .map(|id| crate::features::embedding::encoding::vector_key(id))
+                .map(|id| lattice_core::shared::persistence::embedding_encoding::vector_key(id))
                 .collect();
             tokio::task::spawn_blocking(move || search.remove_embeddings(&stale_keys))
                 .await

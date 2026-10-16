@@ -522,7 +522,7 @@ async fn a_leftover_temporary_is_ignored_and_cleaned_up() {
 #[tokio::test]
 #[ignore = "benchmark: builds a 20k-vector HNSW graph"]
 async fn cold_start_against_a_forced_rebuild() {
-    use crate::features::embedding::encoding::encode_embedding;
+    use lattice_core::shared::persistence::embedding_encoding::encode_embedding;
 
     const VECTORS: usize = 20_000;
     const WIDE: usize = 1_024;

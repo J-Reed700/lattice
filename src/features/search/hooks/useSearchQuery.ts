@@ -4,6 +4,10 @@ import VaultAPI from '@/lib/api';
 import { describeFailure } from '@/lib/errorHandling';
 import { type SearchResult } from '@/types';
 
+/** The command palette's live search: the ten best hybrid matches. */
+export const quickSearchDocuments = (query: string) =>
+  VaultAPI.searchDocuments({ query, limit: 10, searchMode: 'hybrid' });
+
 export interface UseSearchQueryParams {
   query: string;
   mode: 'semantic' | 'keyword' | 'hybrid';

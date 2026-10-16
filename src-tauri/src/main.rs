@@ -57,6 +57,9 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // every spawned sidecar is included in the shutdown sweep. The
             // orphan scan cleans up sidecars left by a previous crash.
             app.manage(lattice::features::llm::engine::sidecar_manager::SidecarRegistry::new());
+            app.manage(setup::SidecarSweep(
+                lattice::features::llm::engine::sidecar_manager::kill_registered_sidecars,
+            ));
             lattice::features::llm::engine::sidecar_manager::reap_orphan_sidecars();
 
             // Plugins require the managed container. A failed initialization

@@ -30,22 +30,11 @@
 #   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
 
-infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::indexing 1
-infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::transcription 3
-infrastructure-imports-feature infrastructure/adapters/system_info.rs features::llm 2
-infrastructure-imports-feature infrastructure/persistence/repositories/mocks.rs features::embedding 4
-infrastructure-imports-feature infrastructure/persistence/repositories/mocks.rs features::mentions 1
-infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::embedding 1
-infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::model_management 1
-infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::search 1
 infrastructure-imports-feature infrastructure/services/startup_reconciliation.rs features::download 2
-infrastructure-imports-feature infrastructure/services/traits/context.rs features::search 1
 infrastructure-imports-feature infrastructure/setup/app.rs features::download 8
 infrastructure-imports-feature infrastructure/setup/app.rs features::embedding 1
 infrastructure-imports-feature infrastructure/setup/app.rs features::settings 2
 infrastructure-imports-feature infrastructure/setup/app.rs features::summaries 1
-infrastructure-imports-feature infrastructure/setup/degraded_mocks.rs features::web 2
-infrastructure-imports-feature infrastructure/setup/shutdown.rs features::llm 1
 
 feature-edge features::backup features::settings 2
 feature-edge features::backup features::vault 2
@@ -53,7 +42,6 @@ feature-edge features::batch features::indexing 4
 feature-edge features::batch features::web 2
 feature-edge features::compare features::search 1
 feature-edge features::conversation features::daily_notes 1
-feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
 feature-edge features::conversation features::function_calling 34
 feature-edge features::conversation features::llm 2
@@ -78,7 +66,7 @@ feature-edge features::function_calling features::settings 4
 feature-edge features::function_calling features::tags 1
 feature-edge features::function_calling features::web 1
 feature-edge features::health features::llm 1
-feature-edge features::indexing features::embedding 14
+feature-edge features::indexing features::embedding 6
 feature-edge features::indexing features::mentions 1
 feature-edge features::indexing features::search 1
 feature-edge features::indexing features::transcription 1
@@ -92,7 +80,7 @@ feature-edge features::llm features::model_management 22
 feature-edge features::model_management features::download 21
 feature-edge features::model_management features::embedding 5
 feature-edge features::search features::download 1
-feature-edge features::search features::embedding 13
+feature-edge features::search features::embedding 12
 feature-edge features::settings features::llm 2
 feature-edge features::stats features::health 1
 feature-edge features::stats features::tags 3

@@ -27,9 +27,13 @@ import { useNavigate } from 'react-router'
 
 
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { useClearCacheMutation } from '@/features/cache/hooks/useClearCacheMutation'
+import { chooseFiles, chooseFolder } from '@/features/files/hooks/filePickers'
+import { useAddToLibrary } from '@/features/files/hooks/useAddToLibrary'
+import { fetchDocument, openFilePath } from '@/features/files/hooks/useLibraryDocumentActions'
 import { useCommandPalette } from '@/features/palette/hooks/useCommandPalette'
 import { selectPaletteGroups, usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore'
-import VaultAPI from '@/lib/api'
+import { quickSearchDocuments } from '@/features/search/hooks/useSearchQuery'
 import { describeFailure } from '@/lib/errorHandling'
 import { getErrorMessage } from '@/lib/errorUtils'
 import { toast } from '@/stores/toastStore'
@@ -58,6 +62,9 @@ export function CommandPalette() {
     addRecentDocument,
     clearRecentSearches,
   } = useCommandPalette()
+
+  const { indexFile, indexFolder } = useAddToLibrary()
+  const { mutateAsync: clearCache } = useClearCacheMutation()
 
   const [showShortcuts, setShowShortcuts] = useState(false)
   const registeredCommands = usePaletteCommandsStore((state) => state.commands)
@@ -93,7 +100,7 @@ export function CommandPalette() {
     searchTimeoutRef.current = window.setTimeout(() => {
       void (async () => {
         try {
-          const result = await VaultAPI.searchDocuments({ query: searchQuery, limit: 10, searchMode: 'hybrid' })
+          const result = await quickSearchDocuments(searchQuery)
           if (abortController.signal.aborted) return
           if (result.ok) {
             setSearchResults(result.data)
@@ -154,13 +161,13 @@ export function CommandPalette() {
   const handleAddFiles = useCallback(async () => {
     run(async () => {
       try {
-        const selected = await VaultAPI.selectMultipleFiles()
+        const selected = await chooseFiles()
         if (!selected || selected.length === 0) return
         // The palette has closed by now, so a failure the user cannot see
         // is one they never learn about.
         const failures: string[] = []
         for (const file of selected) {
-          const result = await VaultAPI.indexFile(file)
+          const result = await indexFile(file)
           if (!result.ok) {
             logger.error('Failed to index file:', { file, error: result.error })
             failures.push(result.error)
@@ -177,14 +184,14 @@ export function CommandPalette() {
         toast.error("Couldn't add files", { message: getErrorMessage(error) })
       }
     })
-  }, [run])
+  }, [indexFile, run])
 
   const handleAddFolder = useCallback(async () => {
     run(async () => {
       try {
-        const selected = await VaultAPI.selectFolder()
+        const selected = await chooseFolder()
         if (!selected) return
-        const result = await VaultAPI.startIndexing(selected, true)
+        const result = await indexFolder(selected)
         if (!result.ok) {
           logger.error('Failed to index directory:', { path: selected, error: result.error })
           toast.error("Couldn't add this folder", { message: result.error })
@@ -194,17 +201,17 @@ export function CommandPalette() {
         toast.error("Couldn't add this folder", { message: getErrorMessage(error) })
       }
     })
-  }, [run])
+  }, [indexFolder, run])
 
   const handleClearCache = useCallback(async () => {
     run(async () => {
-      const result = await VaultAPI.clearCache()
+      const result = await clearCache()
       if (!result.ok) {
         logger.error('Failed to clear cache:', { error: result.error })
         toast.error("Couldn't clear the cache", { message: result.error })
       }
     })
-  }, [run])
+  }, [clearCache, run])
 
   const handleShowKeyboardShortcuts = useCallback(() => {
     close()
@@ -227,14 +234,14 @@ export function CommandPalette() {
       run(async () => {
         addRecentDocument(docId, docName)
         try {
-          const docResult = await VaultAPI.getDocument(docId)
+          const docResult = await fetchDocument(docId)
           if (!docResult.ok) {
             logger.error('Failed to retrieve document metadata', { component: 'command-palette', docId, error: docResult.error })
             return
           }
           const { filePath } = docResult.data
           if (!filePath) return
-          const openResult = await VaultAPI.openFile(filePath)
+          const openResult = await openFilePath(filePath)
           if (!openResult.ok) {
             logger.error('Failed to open document', { component: 'command-palette', docId, path: filePath, error: openResult.error })
           }
@@ -259,7 +266,7 @@ export function CommandPalette() {
         const metadataPath = result.metadata.path
         const filePath = result.path ?? (typeof metadataPath === 'string' ? metadataPath : undefined)
         if (!filePath) return
-        const openResult = await VaultAPI.openFile(filePath)
+        const openResult = await openFilePath(filePath)
         if (!openResult.ok) logger.error('Failed to open file:', { error: openResult.error })
       } catch (error) {
         logger.error('Failed to open search result:', { error })

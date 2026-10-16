@@ -480,6 +480,13 @@
      there is a thread, so an empty chat stays centred. */
   .chat-panel { container: chat-panel / inline-size; }
   .chat-column { max-width: clamp(680px, 72vw, 900px); }
+  /* The thread scrolls up under the bar above it (citations, tangents). Fade
+     its top edge so a half-scrolled action row dissolves instead of being cut
+     off hard against the bar's border. */
+  .chat-panel .overflow-y-auto:has(> .chat-column) {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem);
+  }
   .evidence-margin { display: none; }
   .evidence-margin-notes {
     position: sticky;

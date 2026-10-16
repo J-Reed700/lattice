@@ -1,7 +1,6 @@
 pub mod app;
 mod background_workers;
 pub mod database;
-pub mod degraded_mocks;
 pub mod directories;
 pub mod embedding;
 pub mod indexing_config;
@@ -17,7 +16,7 @@ pub use database::setup_database;
 pub use directories::{setup_app_directories, setup_model_directory};
 pub use embedding::setup_tokenizer;
 pub use observability::setup_tracing;
-pub use shutdown::graceful_shutdown;
+pub use shutdown::{graceful_shutdown, SidecarSweep};
 
 pub fn show_error_dialog(app: &tauri::AppHandle, title: &str, message: &str) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogKind};

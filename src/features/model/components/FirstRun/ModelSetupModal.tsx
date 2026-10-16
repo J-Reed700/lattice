@@ -15,8 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { fetchFirstRunStatus, useFirstRunDownloads, type FirstRunStatus } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
-import { VaultAPI } from '@/lib/api';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { router } from '@/routes';
 import { toast } from '@/stores/toastStore';
@@ -31,24 +31,6 @@ interface ModelSetupModalProps {
    * to localStorage.
    */
   onDismiss: () => void;
-}
-
-interface RecommendedModel {
-  model_id: string;
-  display_name: string;
-  estimated_size_bytes: number;
-}
-
-interface FirstRunStatusResponse {
-  needs_setup: boolean;
-  // Legacy fields kept for transitional safety
-  recommended_model_id: string | null;
-  recommended_model_name: string | null;
-  estimated_size_bytes: number | null;
-  // New shape
-  embedding_model: RecommendedModel | null;
-  chat_model: RecommendedModel | null;
-  total_estimated_size_bytes: number | null;
 }
 
 function formatGb(bytes: number): string {
@@ -66,7 +48,8 @@ export function ModelSetupModal({
 }: ModelSetupModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<FirstRunStatusResponse | null>(null);
+  const [status, setStatus] = useState<FirstRunStatus | null>(null);
+  const { downloadEmbeddingModel, downloadChatModel } = useFirstRunDownloads();
   const { systemCapabilities } = useModelCatalog({
     autoLoadCapabilities: true,
     autoLoadModels: false,
@@ -78,13 +61,13 @@ export function ModelSetupModal({
       setLoading(true);
       setError(null);
       try {
-        const result = await VaultAPI.checkFirstRunStatus();
+        const result = await fetchFirstRunStatus();
         if (!alive) return;
         if (!result.ok) {
           setError(result.error);
           return;
         }
-        setStatus(JSON.parse(result.data));
+        setStatus(result.data);
       } catch (err) {
         if (alive) setError(getErrorMessage(err));
       } finally {
@@ -122,7 +105,7 @@ export function ModelSetupModal({
 
     if (status.embedding_model) {
       tasks.push(
-        VaultAPI.downloadDefaultEmbeddingModel().then((result) => {
+        downloadEmbeddingModel().then((result) => {
           if (!result.ok) {
             console.error('embedding download failed:', result.error);
             toast.error('Embedding model download failed', { message: result.error });
@@ -133,7 +116,7 @@ export function ModelSetupModal({
 
     if (status.chat_model) {
       tasks.push(
-        VaultAPI.downloadModel(status.chat_model.model_id).then((result) => {
+        downloadChatModel(status.chat_model.model_id).then((result) => {
           if (!result.ok) {
             console.error('chat download failed:', result.error);
             toast.error('Chat model download failed', { message: result.error });

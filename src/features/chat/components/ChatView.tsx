@@ -9,10 +9,10 @@ import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar';
 import { ConversationSpotlight } from '@/features/chat/components/ConversationSpotlight';
 import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
+import { fetchDocumentFileName, useLinkDocumentToSpaceMutation } from '@/features/chat/hooks/useDocumentLinkRequest';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
-import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
@@ -63,6 +63,7 @@ export function ChatView() {
     loadConversationLinkedDocuments,
   } = useConversationsStore();
   const { fetchDownloadedModels } = useDownloadedModels();
+  const { mutateAsync: linkDocumentToSpace } = useLinkDocumentToSpaceMutation();
   const [isSpotlightOpen, setIsSpotlightOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -225,15 +226,14 @@ export function ChatView() {
       // Space membership is the one scoping lever the backend enforces, so
       // that is what we set. No space is created here: silently narrowing
       // every future answer in a thread is not something a URL should do.
-      const linked = await VaultAPI.setDocumentSpaceMembership(documentId, spaceId, true);
+      const linked = await linkDocumentToSpace({ documentId, spaceId });
       if (!linked.ok) {
         toast.error("Couldn't attach that document", { message: linked.error });
         return;
       }
       await loadConversationLinkedDocuments(conversationId);
 
-      const document = await VaultAPI.getDocument(documentId);
-      const fileName = document.ok ? document.data.fileName : null;
+      const fileName = await fetchDocumentFileName(documentId);
       if (!fileName) return;
       // Only claim scoping when retrieval really is scoped.
       toast.success(
@@ -243,6 +243,7 @@ export function ChatView() {
   }, [
     activeConversationId,
     conversations,
+    linkDocumentToSpace,
     loadConversationLinkedDocuments,
     pendingDocumentLink,
   ]);

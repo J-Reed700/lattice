@@ -6,11 +6,11 @@ import { X, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
+import { chooseFiles } from '@/features/files/hooks/filePickers';
 import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/features/files/hooks/useCustomCollectionsQuery';
 import { hasUnsettledItems, useIndexing } from '@/features/files/hooks/useIndexing';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { useToast } from '@/hooks/useToast';
-import VaultAPI from '@/lib/api';
 import type { SourceGroup } from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { cn } from '@/lib/utils';
@@ -164,7 +164,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
 
   const handleFileSelect = useCallback(async () => {
     try {
-      const selectedPaths = await VaultAPI.selectMultipleFiles();
+      const selectedPaths = await chooseFiles();
       addFilePaths(selectedPaths);
     } catch (error) {
       toastRef.current.error(`Couldn't choose files: ${getErrorMessage(error)}`);

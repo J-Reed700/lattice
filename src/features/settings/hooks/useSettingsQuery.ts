@@ -65,3 +65,45 @@ export function useUpdateSettingsMutation() {
     queryClient
   );
 }
+
+/**
+ * Settings writes that replace the document wholesale. Each answers with the
+ * command's result; a success refreshes the settings cache so every tab reads
+ * the backend's state.
+ */
+export function useSettingsTransfer() {
+  const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
+  const refreshOnSuccess = (result: { ok: boolean }) => {
+    if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+  };
+  const reset = useMutation({ mutationFn: () => VaultAPI.resetSettings(), onSuccess: refreshOnSuccess }, queryClient);
+  const importJson = useMutation(
+    {
+      mutationFn: (json: string) => VaultAPI.importSettings(json, false),
+      onSuccess: refreshOnSuccess,
+    },
+    queryClient
+  );
+  const exportJson = useMutation({ mutationFn: () => VaultAPI.exportSettings() }, queryClient);
+  return { resetSettings: reset.mutateAsync, importSettings: importJson.mutateAsync, exportSettings: exportJson.mutateAsync };
+}
+
+/**
+ * Adds or removes a watched folder. The backend validates the path and
+ * serializes concurrent changes; a success refreshes the settings cache.
+ */
+export function useWatchFolderMutations() {
+  const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
+  const refreshOnSuccess = (result: { ok: boolean }) => {
+    if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+  };
+  const add = useMutation(
+    { mutationFn: (path: string) => VaultAPI.addWatchFolder(path), onSuccess: refreshOnSuccess },
+    queryClient
+  );
+  const remove = useMutation(
+    { mutationFn: (path: string) => VaultAPI.removeWatchFolder(path), onSuccess: refreshOnSuccess },
+    queryClient
+  );
+  return { addWatchFolder: add.mutateAsync, removeWatchFolder: remove.mutateAsync };
+}

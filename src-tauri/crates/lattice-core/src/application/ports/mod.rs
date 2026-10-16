@@ -158,7 +158,9 @@ pub use settings_port::merge_json_update;
 pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
 pub use sparse_term_store_port::{ChunkSparseTerms, SparseTermStorePort};
-pub use system_info::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort};
+pub use system_info::{
+    AcceleratorProbe, ComputeType, GpuInfo, NoAcceleratorProbe, SystemInfo, SystemInfoPort,
+};
 pub use text_search_port::TextSearchPort;
 pub use transcription_port::{Transcript, TranscriptSegment, TranscriptionPort};
 pub use unit_of_work::{UnitOfWork, UnitOfWorkFactory};

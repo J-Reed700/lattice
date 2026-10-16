@@ -394,7 +394,7 @@ impl ReindexDocumentUseCase {
         // SQLite has committed; report publication failures instead of claiming success.
         let stale_keys: Vec<_> = stale_chunk_ids
             .iter()
-            .map(|id| crate::features::embedding::encoding::vector_key(id))
+            .map(|id| lattice_core::shared::persistence::embedding_encoding::vector_key(id))
             .collect();
         let entries = document
             .chunks()
@@ -402,7 +402,9 @@ impl ReindexDocumentUseCase {
             .zip(embeddings)
             .map(|(chunk, embedding)| {
                 lattice_core::application::ports::vector_search_port::VectorIndexEntry {
-                    id: crate::features::embedding::encoding::vector_key(chunk.id().as_str()),
+                    id: lattice_core::shared::persistence::embedding_encoding::vector_key(
+                        chunk.id().as_str(),
+                    ),
                     embedding,
                     content: chunk.content().to_owned(),
                     chunk_id: chunk.id().to_string(),

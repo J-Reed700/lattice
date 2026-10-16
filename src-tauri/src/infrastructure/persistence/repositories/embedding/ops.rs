@@ -3,9 +3,9 @@
 //! Generic SQL operations for embedding persistence that work with any SQLite executor.
 //! These functions can be used with both connection pools and transactions.
 
-use crate::features::embedding::entity::Embedding as DomainEmbedding;
-use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapper};
+use super::mapper::{EmbeddingDTO, EmbeddingMapper};
 use chrono::{DateTime, Utc};
+use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
@@ -28,7 +28,8 @@ pub async fn save(
 
     let dto = EmbeddingMapper::to_dto(entity, vector);
 
-    let embedding_bytes = crate::features::embedding::encoding::encode_embedding(&dto.embedding);
+    let embedding_bytes =
+        lattice_core::shared::persistence::embedding_encoding::encode_embedding(&dto.embedding);
 
     let id = format!("emb_{}", dto.chunk_id);
     let dimension = dto.dimension as i32;
@@ -83,7 +84,9 @@ pub async fn save_batch(
         .map(|(entity, vector)| {
             let dto = EmbeddingMapper::to_dto(&entity, vector);
             let embedding_bytes =
-                crate::features::embedding::encoding::encode_embedding(&dto.embedding);
+                lattice_core::shared::persistence::embedding_encoding::encode_embedding(
+                    &dto.embedding,
+                );
             let id = format!("emb_{}", dto.chunk_id);
             let dimension = dto.dimension as i32;
             let created_at = dto.computed_at.to_rfc3339();
@@ -170,7 +173,9 @@ pub async fn find_by_chunk_id(
     match record {
         Some(rec) => {
             let vector: Vec<f32> =
-                crate::features::embedding::encoding::decode_embedding(&rec.embedding)?;
+                lattice_core::shared::persistence::embedding_encoding::decode_embedding(
+                    &rec.embedding,
+                )?;
 
             let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
                 .map_err(|e| AppError::Parsing(e.to_string()))?
@@ -213,7 +218,9 @@ pub async fn find_by_document_id(
     let mut results = Vec::new();
     for rec in records {
         let vector: Vec<f32> =
-            crate::features::embedding::encoding::decode_embedding(&rec.embedding)?;
+            lattice_core::shared::persistence::embedding_encoding::decode_embedding(
+                &rec.embedding,
+            )?;
 
         let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
             .map_err(|e| AppError::Parsing(e.to_string()))?

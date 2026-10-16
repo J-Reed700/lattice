@@ -3,5 +3,6 @@
 
 mod driver_error;
 
+pub mod embedding_encoding;
 pub mod sql_like;
 pub mod timestamps;
