@@ -3,12 +3,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { ChevronDown, ChevronRight, ExternalLink, Library, Trash2 } from 'lucide-react';
 
+import { useConversationSourceFiling } from '@/features/chat/hooks/useConversationSourceFiling';
+import { openDocumentFile } from '@/features/files/hooks/useLibraryDocumentActions';
 import {
   fromConversationLinkedDocument,
   fromConversationWebSource,
 } from '@/features/reading/model/sourceAdapter';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
-import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -41,6 +42,7 @@ export function ConversationLinkedDocumentsPanel({
     loadDocumentSpaceMemberships,
     setDocumentSpaceMembership,
   } = useConversationsStore();
+  const { addDocumentsToLibrary, ingestWebSource } = useConversationSourceFiling(conversationId);
 
   const [expanded, setExpanded] = useState(false);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
@@ -150,7 +152,7 @@ export function ConversationLinkedDocumentsPanel({
     }
     setOpeningDocumentId(documentId);
     try {
-      const result = await VaultAPI.openFileById(documentId);
+      const result = await openDocumentFile(documentId);
       if (!result.ok) {
         toast.error("Couldn't open document", { message: result.error });
       }
@@ -175,12 +177,11 @@ export function ConversationLinkedDocumentsPanel({
   const handleAddToLibrary = async (documentId: string, fileName: string) => {
     setFilingDocumentId(documentId);
     try {
-      const result = await VaultAPI.addDocumentsToLibrary([documentId]);
+      const result = await addDocumentsToLibrary([documentId]);
       if (!result.ok) {
         toast.error("Couldn't add this to the library", { message: result.error });
         return;
       }
-      await loadConversationLinkedDocuments(conversationId);
       toast.success(`Added ${fileName} to the library`, {
         message: 'It now shows up in your library and in search.',
       });
@@ -269,9 +270,10 @@ export function ConversationLinkedDocumentsPanel({
   ): Promise<boolean> => {
     setIngestingSourceKey(source.key);
     try {
-      const result = await VaultAPI.ingestWebUrl(source.url, {
-        conversationId,
+      const result = await ingestWebSource({
+        url: source.url,
         spaceId: conversation?.spaceId ?? undefined,
+        skipRefresh: options?.skipRefresh,
       });
 
       if (!result.ok) {
@@ -284,10 +286,6 @@ export function ConversationLinkedDocumentsPanel({
         next.add(source.key);
         return next;
       });
-
-      if (!options?.skipRefresh) {
-        await loadConversationLinkedDocuments(conversationId);
-      }
       return true;
     } finally {
       setIngestingSourceKey(null);

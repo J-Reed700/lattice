@@ -104,3 +104,13 @@ export function useSetJournalEntryPinnedMutation() {
       client.invalidateQueries({ queryKey: journalEntryPinsKey(journalSpaceId) }),
   });
 }
+
+/**
+ * The space a saved conversation searches; null for General or a row that
+ * cannot be read. Reads the saved row, not the sidebar's list, which may be
+ * showing another space.
+ */
+export async function fetchConversationSpaceId(conversationId: string): Promise<string | null> {
+  const result = await VaultAPI.getConversation(conversationId);
+  return result.ok ? (result.data.conversation?.spaceId ?? null) : null;
+}

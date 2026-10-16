@@ -14,6 +14,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
+import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { getErrorMessage } from '@/lib/errorUtils';
@@ -31,7 +32,6 @@ import {
 } from './catalogUtils';
 import { ModelVariantPicker } from './ModelVariantPicker';
 import { hasModelVersions, modelQuantization } from './quantization';
-import { startModelDownload } from './startModelDownload';
 import {
   GHOST_BUTTON_CLASS,
   PRIMARY_BUTTON_CLASS,

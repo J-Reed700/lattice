@@ -8,15 +8,20 @@ import type { SourceWithMetadata } from '@/types/conversation';
 
 
 const mocks = vi.hoisted(() => ({
-  getFilePathById: vi.fn(),
+  resolveSourcePath: vi.fn(),
   readFileContent: vi.fn(),
   getWebPageSnapshot: vi.fn(),
   activeConversationId: null as string | null,
 }));
 
 vi.mock('@/lib/api', () => ({
-  default: { getFilePathById: mocks.getFilePathById },
   VaultAPI: { readFileContent: mocks.readFileContent },
+}));
+vi.mock('@/features/reading/hooks/sourceFileActions', () => ({
+  resolveSourcePath: mocks.resolveSourcePath,
+  openSourceDocument: vi.fn(),
+  openSourcePath: vi.fn(),
+  revealSourcePath: vi.fn(),
 }));
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
@@ -101,7 +106,7 @@ beforeEach(() => {
   mocks.activeConversationId = null;
   mocks.getWebPageSnapshot.mockResolvedValue(null);
   useWebPageSnapshotStore.setState({ mode: null });
-  mocks.getFilePathById.mockImplementation(async (documentId: string) => ({
+  mocks.resolveSourcePath.mockImplementation(async (documentId: string) => ({
     ok: true,
     data: documentId.startsWith('223e') ? '/vault/current/second.txt' : '/vault/current/notes.txt',
   }));
@@ -113,7 +118,7 @@ describe('SourceReaderBody local citations', () => {
     renderBody(source());
 
     expect(await screen.findByText('Full file at its current path')).toBeTruthy();
-    expect(mocks.getFilePathById).toHaveBeenCalledWith(DOCUMENT_ID);
+    expect(mocks.resolveSourcePath).toHaveBeenCalledWith(DOCUMENT_ID);
     expect(mocks.readFileContent).toHaveBeenCalledWith('/vault/current/notes.txt');
   });
 
@@ -172,11 +177,11 @@ describe('SourceReaderBody local citations', () => {
 
   it('ignores a late path lookup from the previous citation after switching sources', async () => {
     let finishFirstLookup!: (value: { ok: true; data: string }) => void;
-    mocks.getFilePathById
+    mocks.resolveSourcePath
       .mockImplementationOnce(() => new Promise((resolve) => { finishFirstLookup = resolve; }))
       .mockResolvedValueOnce({ ok: true, data: '/vault/current/second.txt' });
     const view = renderBody(source({ fileName: 'first.txt' }));
-    await waitFor(() => expect(mocks.getFilePathById).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.resolveSourcePath).toHaveBeenCalledTimes(1));
 
     view.rerender(
       <QueryClientProvider client={new QueryClient()}>

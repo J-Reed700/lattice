@@ -11,11 +11,19 @@ const storeState = vi.hoisted(() => ({
 
 const api = vi.hoisted(() => ({
   addDocumentsToLibrary: vi.fn(),
-  openFileById: vi.fn(),
+  ingestWebSource: vi.fn(),
+  openDocumentFile: vi.fn(),
 }));
 
-vi.mock('@/lib/api', () => ({
-  VaultAPI: api,
+vi.mock('@/features/chat/hooks/useConversationSourceFiling', () => ({
+  useConversationSourceFiling: () => ({
+    addDocumentsToLibrary: api.addDocumentsToLibrary,
+    ingestWebSource: api.ingestWebSource,
+  }),
+}));
+
+vi.mock('@/features/files/hooks/useLibraryDocumentActions', () => ({
+  openDocumentFile: api.openDocumentFile,
 }));
 
 vi.mock('@/shared/conversations/conversationsStore', () => ({

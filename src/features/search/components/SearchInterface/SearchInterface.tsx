@@ -1,11 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 
 import { PageHeader, SidebarTabs } from '@/components/ui';
+import { openDocumentFile, openFilePath } from '@/features/files/hooks/useLibraryDocumentActions';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromSearchResult, type ResolvedReaderTarget } from '@/features/reading/model/sourceAdapter';
 import { useSearchQuery } from '@/features/search/hooks/useSearchQuery';
 import { useDebounce } from '@/hooks/useDebounce';
-import VaultAPI from '@/lib/api';
 import type { SearchResult } from '@/types';
 
 import { SearchEmptyState } from './SearchEmptyState';
@@ -161,7 +161,7 @@ export function SearchInterface() {
 
     const targetId = result.documentId || result.id || target.source.documentId;
     if (targetId) {
-      const byId = await VaultAPI.openFileById(targetId);
+      const byId = await openDocumentFile(targetId);
       if (byId.ok) {
         if (byId.data.action === 'render_internal') {
           setPreviewTarget({
@@ -176,7 +176,7 @@ export function SearchInterface() {
       }
 
       if (typeof result.path === 'string' && result.path.length > 0) {
-        const byPath = await VaultAPI.openFile(result.path);
+        const byPath = await openFilePath(result.path);
         if (byPath.ok) {
           if (byPath.data.action === 'render_internal') {
             setPreviewTarget({
