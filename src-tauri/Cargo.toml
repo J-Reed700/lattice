@@ -163,7 +163,7 @@ wasmtime-wasi = { version = "=48.0.6", default-features = false, features = ["p1
 lopdf = { version = "0.44", default-features = false }
 docx-rs = "0.4"
 encoding_rs = "0.8"
-zip = "0.6"
+zip = "7.4"
 unicode-segmentation = "1.10"
 urlencoding = { workspace = true }  # URL decoding for path validation (CWE-22)
 dirs = { workspace = true }
