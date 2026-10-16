@@ -285,7 +285,7 @@ describe('Your folders', () => {
   it('edits a folder’s system prompt and keeps its space', async () => {
     const user = userEvent.setup();
     const space = (id: string, name: string, sortOrder: number) => ({
-      id, name, description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null,
+      id, name, description: null, icon: null, accentColor: null, spacePrompt: null,
       toolPreferencesJson: null, isArchived: false, sortOrder, createdAt: ago(1), updatedAt: ago(1),
     });
     mocks.spaces.mockResolvedValue({ ok: true, data: [space('space_music', 'Music', 1), space('space_general', 'General', 0)] });
