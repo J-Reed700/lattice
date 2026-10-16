@@ -113,7 +113,6 @@ pub async fn read_web_page(
 /// # Returns
 ///
 /// * `Ok(UrlPreview)` - Rich metadata including title, description, images
-/// * `Err(AppError::RateLimitExceeded)` - Too many preview requests
 /// * `Err(AppError)` - Preview failed (network, parsing errors)
 ///
 /// # Example
@@ -179,7 +178,6 @@ pub async fn read_web_page(
 ///
 /// # Security
 ///
-/// **Rate Limiting (CWE-770)**: Web capture operations rate limited
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -196,7 +194,7 @@ pub async fn read_web_page(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `GetUrlPreviewUseCase` with rate limiting
+/// Thin controller delegating to `GetUrlPreviewUseCase`
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn fetch_url_preview(
     url: String,
@@ -246,7 +244,6 @@ pub async fn fetch_url_preview(
 /// # Returns
 ///
 /// * `Ok(CleanArticle)` - Extracted article with clean content and metadata
-/// * `Err(AppError::RateLimitExceeded)` - Too many extraction requests
 /// * `Err(AppError)` - Extraction failed (network, parsing, not an article)
 ///
 /// # Example
@@ -323,7 +320,6 @@ pub async fn fetch_url_preview(
 ///
 /// # Security
 ///
-/// **Rate Limiting (CWE-770)**: Web ingest operations rate limited
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -347,7 +343,7 @@ pub async fn fetch_url_preview(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `ArticleExtractorService` with rate limiting
+/// Thin controller delegating to `ArticleExtractorService`
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn extract_article(
     url: String,
