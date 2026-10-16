@@ -5,8 +5,11 @@ use super::ports::*;
 use crate::features::conversation::mocks::MockConversationService;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, ModelRequirements, PinnedModel,
+};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::collections::VecDeque;
@@ -76,6 +79,20 @@ impl Default for FakeRuntime {
 #[async_trait::async_trait]
 impl ChatModels for FakeRuntime {
     async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
+        Ok(Arc::clone(self.llm.as_ref().expect(UNUSED)))
+    }
+    async fn chat_llm_for(
+        &self,
+        _conversation_id: &str,
+        _request_override: Option<&ModelRef>,
+        _requirements: ModelRequirements,
+    ) -> Result<PinnedModel> {
+        unreachable!("{UNUSED}")
+    }
+    async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {
+        unreachable!("{UNUSED}")
+    }
+    async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
         Ok(Arc::clone(self.llm.as_ref().expect(UNUSED)))
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {

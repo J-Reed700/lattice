@@ -69,6 +69,11 @@ pub(super) async fn finalize_turn(
         model: Some(TurnModelDto {
             id: turn.llm.model_name().to_string(),
             name: turn.llm.model_name().to_string(),
+            model: None,
+            origin: None,
+            provider: None,
+            context_tokens: None,
+            degraded: None,
         }),
         steps: turn.recorder.steps(),
         timing: TurnTimingDto {

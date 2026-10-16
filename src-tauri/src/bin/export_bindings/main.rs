@@ -221,6 +221,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::model_management::plugin::commands::clear_active_utility_model,
             lattice::features::model_management::plugin::commands::warm_up_active_chat_model,
             lattice::features::model_management::plugin::commands::warm_up_active_utility_model,
+            lattice::features::model_management::plugin::commands::warm_up_learning_model,
+            lattice::features::model_management::plugin::commands::list_loaded_models,
             // Catalog/discovery commands
             lattice::features::model_management::commands::detect_system_capabilities,
             lattice::features::model_management::commands::get_compatible_models,

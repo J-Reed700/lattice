@@ -233,6 +233,7 @@ export const COMMAND_PLUGINS = {
   list_journals: 'conversation',
   list_learning_programs: 'learning',
   list_learning_tangents: 'learning',
+  list_loaded_models: 'model',
   list_message_bookmarks: 'conversation',
   list_passage_references: 'references',
   list_space_documents: 'conversation',
@@ -371,6 +372,7 @@ export const COMMAND_PLUGINS = {
   validate_folder_path: 'settings',
   warm_up_active_chat_model: 'model',
   warm_up_active_utility_model: 'model',
+  warm_up_learning_model: 'model',
 } as const;
 
 export type CommandName = keyof typeof COMMAND_PLUGINS;

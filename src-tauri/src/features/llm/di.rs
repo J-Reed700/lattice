@@ -25,11 +25,16 @@ use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::llm_port::{
+    ModelRequirements, OptionalLlmLoader, PinnedModel,
+};
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
 };
+use lattice_core::application::services::chat_model_resolution::{default_chat_model, resolve};
+use lattice_core::domain::conversation::ChatModelChoice;
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -187,6 +192,60 @@ impl Container {
             })
             .await?
             .ok_or_else(|| AppError::AiModelsNotInstalled("Chat model unavailable".into()))
+    }
+
+    /// The model a turn in `conversation_id` runs on, pinned for the turn:
+    /// `request_override`, else the chat's choice, else the Settings default.
+    pub async fn chat_llm_for(
+        &self,
+        _conversation_id: &str,
+        _request_override: Option<&ModelRef>,
+        _requirements: ModelRequirements,
+    ) -> Result<PinnedModel> {
+        // A1 replaces: the chat's choice, the override and the requirements
+        // are not read yet; every turn runs on the Settings default.
+        self.pinned_default_chat_llm().await
+    }
+
+    /// The Learning model, pinned for one job. Never a chat's choice or the
+    /// chat default.
+    pub async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {
+        // A1 replaces: runs on the Settings chat default until the Learning
+        // role is loaded.
+        self.pinned_default_chat_llm().await
+    }
+
+    /// The Settings default chat model, for work that belongs to no chat.
+    pub async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
+        // A1 replaces
+        self.get_or_load_llm().await
+    }
+
+    // A1 replaces
+    async fn pinned_default_chat_llm(&self) -> Result<PinnedModel> {
+        let settings = self
+            .system
+            .get_settings_use_case()
+            .execute()
+            .await
+            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
+        let active = self
+            .ai
+            .downloaded_model_repo()
+            .get_active_chat_model()
+            .await?;
+        let active_local = active
+            .as_ref()
+            .filter(|model| model.location().is_local())
+            .map(|model| model.model_id());
+        let default = default_chat_model(&settings.llm, active_local);
+        let resolved = resolve(None, &ChatModelChoice::Default, &default)?;
+        Ok(PinnedModel {
+            llm: self.get_or_load_llm().await?,
+            resolved,
+            instance_id: 0,
+            degraded: None,
+        })
     }
 
     /// Gets the router LLM service, loading it lazily if needed.

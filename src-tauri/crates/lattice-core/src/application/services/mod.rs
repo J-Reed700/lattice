@@ -1,3 +1,4 @@
+pub mod chat_model_resolution;
 pub mod claim_verification;
 pub mod completion_input;
 pub mod context_assembler;

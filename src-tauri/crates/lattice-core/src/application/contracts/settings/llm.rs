@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::models::model_ref::ModelRef;
+
 use super::generation::{
     LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
 };
@@ -150,6 +152,13 @@ pub struct LLMSettingsDto {
     /// Router settings for conversation scope and intent routing
     #[serde(default)]
     pub router: RouterSettingsDto,
+
+    /// The model every learning job runs on: lesson preparation, outlines,
+    /// practice, study decks, assessments, diagnostics, learning memory.
+    /// `None` means not set, and learning work refuses until it is; it never
+    /// borrows the chat default.
+    #[serde(default)]
+    pub learning_model: Option<ModelRef>,
 
     /// Additional directories to scan for externally managed local models
     #[serde(default)]
@@ -457,6 +466,7 @@ impl Default for LLMSettingsDto {
             verification: LLMVerificationSettingsDto::default(),
             tool_output: ToolOutputSettingsDto::default(),
             router: RouterSettingsDto::default(),
+            learning_model: None,
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
             bounded_conversation_memory: true,

@@ -1177,6 +1177,29 @@ async warmUpActiveUtilityModel() : Promise<Result<null, ApiError>> {
 }
 },
 /**
+ * Loads the Learning model ahead of the first learning job. A failure is
+ * reported and changes no setting.
+ */
+async warmUpLearningModel() : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|warm_up_learning_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The models loaded right now, with who holds each.
+ */
+async listLoadedModels() : Promise<Result<LoadedModelDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|list_loaded_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Detect system hardware capabilities.
  *
  * Returns comprehensive system information:
@@ -4653,7 +4676,12 @@ step?: TurnStepDto | null;
  * A grounding check that finished after the turn returned. Arrives once
  * per verified answer, possibly well after `done`.
  */
-verification?: VerificationReadyDto | null }
+verification?: VerificationReadyDto | null;
+/**
+ * The model this turn is pinned to. Sent once, as soon as the turn has
+ * it, so the reader knows what is answering before the first token.
+ */
+model?: TurnModelDto | null }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
@@ -4698,6 +4726,10 @@ publishedDate?: string | null;
  * Excerpt (first ~200 characters of text)
  */
 excerpt?: string | null }
+/**
+ * A cloud provider, each with its own keyring entry and endpoint.
+ */
+export type CloudProvider = "openai" | "anthropic" | "google"
 /**
  * Summary of a cluster for list views. Centroid + full member list are
  * intentionally omitted — those are internal.
@@ -5383,7 +5415,15 @@ export type DownloadStatusResponse = { id: string; url: string; destination: str
 /**
  * Response for get_models_with_metadata command
  */
-export type DownloadedModelResponse = { id: string; model_name: string; model_id: string; file_path: string; file_size_bytes: number; model_type: string; downloaded_at: string; last_used_at: string | null; use_count: number; is_active_for_chat: boolean; is_active_for_embedding: boolean; is_active_for_utility: boolean; backend: string; trained_context_length?: number | null }
+export type DownloadedModelResponse = { id: string; model_name: string; model_id: string; file_path: string; file_size_bytes: number; model_type: string; downloaded_at: string; last_used_at: string | null; use_count: number; is_active_for_chat: boolean; is_active_for_embedding: boolean; is_active_for_utility: boolean; backend: string; trained_context_length?: number | null;
+/**
+ * Whether the GGUF's chat template declares tool calling.
+ */
+supports_tool_calling?: boolean | null;
+/**
+ * The context window saved for this model in Settings; `None` is Auto.
+ */
+configured_context_length?: number | null }
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
@@ -6373,6 +6413,13 @@ toolOutput: ToolOutputSettingsDto;
  */
 router: RouterSettingsDto;
 /**
+ * The model every learning job runs on: lesson preparation, outlines,
+ * practice, study decks, assessments, diagnostics, learning memory.
+ * `None` means not set, and learning work refuses until it is; it never
+ * borrows the chat default.
+ */
+learningModel: ModelRef | null;
+/**
  * Additional directories to scan for externally managed local models
  */
 externalModelDirectories: string[];
@@ -6850,6 +6897,22 @@ journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
 /**
+ * A model loaded right now, for diagnostics.
+ */
+export type LoadedModelDto = { model: ModelRef; provider: string; context_tokens: number;
+/**
+ * Turns and jobs holding it now.
+ */
+in_flight: number;
+/**
+ * Who holds it: a role and the conversation or job it serves.
+ */
+pinned_by: string[]; loaded_at: string; last_used_at: string; gpu_bytes: number | null;
+/**
+ * Why it runs degraded (on CPU), when it does.
+ */
+degraded: string | null }
+/**
  * Per-model launch configuration for a bundled local GGUF model.
  */
 export type LocalModelConfigDto = {
@@ -7070,6 +7133,26 @@ embedding_dimensions: number | null;
  */
 embedding_compatibility: EmbeddingCompatibilityDto | null }
 /**
+ * Why a turn or job runs on the model it runs on.
+ */
+export type ModelOrigin =
+/**
+ * The chat model set in Settings.
+ */
+"default" |
+/**
+ * The chat's own choice.
+ */
+"chat_override" |
+/**
+ * This request only; nothing is persisted.
+ */
+"request_override" |
+/**
+ * The Learning model set in Settings.
+ */
+"learning_role"
+/**
  * Model recommendation DTO for frontend.
  */
 export type ModelRecommendationDto = {
@@ -7093,6 +7176,31 @@ popularity_downloads?: number | null;
  * Popularity metric from upstream provider (likes)
  */
 popularity_likes?: number | null }
+/**
+ * A model a chat or a role can name.
+ *
+ * Endpoints are connection configuration, not identity: `Ollama` and
+ * `LlamaCpp` carry the model only, and the URL and auth header come from
+ * Settings when the model is loaded, so moving a server moves every chat
+ * that names it.
+ */
+export type ModelRef =
+/**
+ * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
+ */
+{ kind: "local"; model_id: string } |
+/**
+ * A tag served by the Ollama endpoint configured in Settings.
+ */
+{ kind: "ollama"; model: string } |
+/**
+ * A model name served by the llama.cpp endpoint configured in Settings.
+ */
+{ kind: "llama_cpp"; model: string } |
+/**
+ * A cloud provider's model; the key comes from the keyring.
+ */
+{ kind: "cloud"; provider: CloudProvider; model: string }
 /**
  * Model search result DTO for frontend.
  */
@@ -8414,7 +8522,16 @@ messages: MessageDto[] }
  * The model that answered **this** turn, which is not necessarily the one the
  * conversation is filed under: a chat can be re-pointed between turns.
  */
-export type TurnModelDto = { id: string; name: string }
+export type TurnModelDto = { id: string; name: string;
+/**
+ * The model the turn was pinned to. Absent only from records written
+ * before turns recorded it.
+ */
+model?: ModelRef | null; origin?: ModelOrigin | null; provider?: string | null; contextTokens?: number | null;
+/**
+ * Why the model ran degraded (on CPU), when it did.
+ */
+degraded?: string | null }
 /**
  * The whole record of one turn.
  */

@@ -15,8 +15,11 @@ pub(crate) use lattice_core::application::contracts::web::FetchUrlContentOutput;
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort,
 };
-use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::llm_port::{
+    ModelRequirements, OptionalLlmLoader, PinnedModel,
+};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -24,6 +27,19 @@ use std::sync::Arc;
 #[async_trait]
 pub trait ChatModels: Send + Sync {
     async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>>;
+    /// The model a turn in `conversation_id` runs on, pinned for the turn:
+    /// `request_override`, else the chat's choice, else the Settings default.
+    async fn chat_llm_for(
+        &self,
+        conversation_id: &str,
+        request_override: Option<&ModelRef>,
+        requirements: ModelRequirements,
+    ) -> Result<PinnedModel>;
+    /// The Learning model, pinned for one job. Never a chat's choice or the
+    /// chat default.
+    async fn learning_llm(&self, requirements: ModelRequirements) -> Result<PinnedModel>;
+    /// The Settings default chat model, for work that belongs to no chat.
+    async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>>;
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>>;
     /// The utility model, or `None` when none is configured. Loaders exist so
     /// work that outlives the turn can load it later; this is the eager form

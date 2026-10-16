@@ -15,7 +15,7 @@ use crate::features::model_management::commands_extra::{
     get_active_chat_model_impl, get_active_embedding_model_impl, get_models_with_metadata_impl,
     is_model_already_downloaded_impl, set_active_chat_model_impl, set_active_embedding_model_impl,
     set_active_utility_model_impl, warm_up_active_chat_model_impl,
-    warm_up_active_utility_model_impl,
+    warm_up_active_utility_model_impl, LoadedModelDto,
 };
 use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl, download_model_impl,
@@ -286,6 +286,23 @@ pub async fn warm_up_active_utility_model(container: State<'_, Container>) -> Re
     warm_up_active_utility_model_impl(container.inner())
         .await
         .map_err(warm_up_api_error)
+}
+
+/// Loads the Learning model ahead of the first learning job. A failure is
+/// reported and changes no setting.
+#[tauri::command]
+#[specta::specta]
+pub async fn warm_up_learning_model() -> Result<(), ApiError> {
+    // A1 replaces
+    Ok(())
+}
+
+/// The models loaded right now, with who holds each.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_loaded_models() -> Result<Vec<LoadedModelDto>, ApiError> {
+    // A1 replaces
+    Ok(vec![])
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

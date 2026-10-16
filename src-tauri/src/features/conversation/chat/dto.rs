@@ -1,5 +1,8 @@
 use super::retrieval::WEB_SOURCE_PREFIX;
-use super::{RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnStepDto, VerificationReadyDto};
+use super::{
+    RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnModelDto, TurnStepDto,
+    VerificationReadyDto,
+};
 pub(crate) use crate::features::explorer::dto::ExplorerFocusDto;
 pub(super) use crate::features::qa::dto::SourceDto;
 use serde::{Deserialize, Serialize};
@@ -170,6 +173,11 @@ pub struct ChatStreamEventDto {
     /// per verified answer, possibly well after `done`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationReadyDto>,
+
+    /// The model this turn is pinned to. Sent once, as soon as the turn has
+    /// it, so the reader knows what is answering before the first token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<TurnModelDto>,
 }
 
 impl ChatStreamEventDto {

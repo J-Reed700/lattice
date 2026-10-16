@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use lattice_core::application::ports::llm_port::ModelOrigin;
+use lattice_core::domain::models::model_ref::ModelRef;
 use serde::{Deserialize, Serialize};
 
 use super::ChatStreamEventDto;
@@ -131,6 +133,19 @@ pub struct TurnStepDto {
 pub struct TurnModelDto {
     pub id: String,
     pub name: String,
+    /// The model the turn was pinned to. Absent only from records written
+    /// before turns recorded it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ModelOrigin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u32>,
+    /// Why the model ran degraded (on CPU), when it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]

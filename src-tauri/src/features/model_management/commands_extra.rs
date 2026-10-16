@@ -24,6 +24,7 @@ use chrono::Utc;
 use lattice_core::application::ports::ModelFileInspector;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::metadata::ModelType;
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -63,9 +64,32 @@ pub struct DownloadedModelResponse {
     pub backend: String,
     #[serde(default)]
     pub trained_context_length: Option<u32>,
+    /// Whether the GGUF's chat template declares tool calling.
+    #[serde(default)]
+    pub supports_tool_calling: Option<bool>,
+    /// The context window saved for this model in Settings; `None` is Auto.
+    #[serde(default)]
+    pub configured_context_length: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[specta(skip)]
     pub metadata: Option<serde_json::Value>,
+}
+
+/// A model loaded right now, for diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct LoadedModelDto {
+    pub model: ModelRef,
+    pub provider: String,
+    pub context_tokens: u32,
+    /// Turns and jobs holding it now.
+    pub in_flight: u32,
+    /// Who holds it: a role and the conversation or job it serves.
+    pub pinned_by: Vec<String>,
+    pub loaded_at: String,
+    pub last_used_at: String,
+    pub gpu_bytes: Option<u64>,
+    /// Why it runs degraded (on CPU), when it does.
+    pub degraded: Option<String>,
 }
 
 impl DownloadedModelResponse {
@@ -98,6 +122,9 @@ impl DownloadedModelResponse {
             is_active_for_utility: model.is_active_for_utility(),
             backend: backend.to_string(),
             trained_context_length,
+            // A1 replaces
+            supports_tool_calling: None,
+            configured_context_length: None,
             metadata: model.metadata().cloned(),
         }
     }

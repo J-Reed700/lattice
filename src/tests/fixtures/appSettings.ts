@@ -109,6 +109,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         promptTemplate: '',
         clarifyPromptTemplate: '',
       },
+      learningModel: null,
       externalModelDirectories: [],
       customTools: [],
       boundedConversationMemory: true,
