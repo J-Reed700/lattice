@@ -4,12 +4,13 @@
 use crate::features::learning::{
     curriculum_repository::{lesson_failure, LearningCurriculumRepository},
     dto::{LearningPreparation, LearningProgramStatus},
+    model_requirements,
     repository::LearningRepository,
     service,
 };
 use futures::future::BoxFuture;
 use lattice_core::{
-    application::ports::LLMPort,
+    application::ports::llm_port::PinnedModel,
     shared::{
         error::{AppError, Result},
         runtime::jobs::{JobContext, JobFailure, JobHandler, JobOutcome, JobRecord},
@@ -18,7 +19,8 @@ use lattice_core::{
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<Arc<dyn LLMPort>>> + Send + Sync>;
+/// The Learning model, pinned for the whole job.
+type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> + Send + Sync>;
 type SourceRefresh = Arc<dyn Fn(String) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// The library search for document references, once the embedding model
@@ -30,6 +32,26 @@ type LibraryLoader = Arc<
         > + Send
         + Sync,
 >;
+
+/// `llm` pinned as the Learning model, for workers a test builds.
+#[cfg(test)]
+pub(in crate::features::learning) fn pinned_for_test(
+    llm: Arc<dyn lattice_core::application::ports::LLMPort>,
+) -> PinnedModel {
+    use lattice_core::application::ports::llm_port::{ModelOrigin, ResolvedModel};
+    use lattice_core::domain::models::model_ref::ModelRef;
+    PinnedModel {
+        resolved: ResolvedModel {
+            model: ModelRef::Local {
+                model_id: llm.model_name().to_string(),
+            },
+            origin: ModelOrigin::LearningRole,
+        },
+        llm,
+        instance_id: 0,
+        degraded: None,
+    }
+}
 
 #[derive(Clone)]
 pub(in crate::features::learning) struct LessonGenerationWorker {
@@ -194,8 +216,17 @@ impl LessonGenerationWorker {
             )
             .await?;
         crate::features::learning::lesson_progress::stage("Getting the lesson model ready");
-        let llm = (self.load_llm)().await?;
+        // Held until every lesson is prepared: a model chosen meanwhile never
+        // reaches this job.
+        let pin = (self.load_llm)().await?;
+        let llm = Arc::clone(&pin.llm);
         crate::features::learning::lesson_progress::model(llm.model_name());
+        // Refused once, before any lesson research or model call.
+        model_requirements::ensure_window(
+            llm.as_ref(),
+            &model_requirements::lesson_preparation(),
+            &format!("Preparing '{}'", program.summary.title),
+        )?;
         // Own the targets so source snapshots can refresh between lessons.
         let candidates: Vec<_> = candidates.into_iter().cloned().collect();
         let mut staged = Vec::new();

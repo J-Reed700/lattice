@@ -6,6 +6,7 @@ use crate::features::learning::{
     lesson_drafts,
     plan_dto::LearningGenerationJobActionRequestDto,
 };
+use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
 
@@ -399,4 +400,87 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     assert!(repo.job_content_is_current(&retry.id).await?);
     pool.close().await;
     Ok(())
+}
+
+/// A Learning model that is only a window: a refused job never calls it.
+struct Window(usize);
+
+#[async_trait::async_trait]
+impl LLMPort for Window {
+    async fn complete(
+        &self,
+        _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        unreachable!("a refused job makes no model call")
+    }
+    fn model_name(&self) -> &str {
+        "Ornith-1.5-9B"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// Runs the queued lesson job once with `load_llm`, and returns it settled.
+async fn run_with_model(
+    load_llm: super::ModelLoader,
+) -> crate::features::learning::curriculum::LearningGenerationJob {
+    let pool = crate::features::learning::tests::pool().await.unwrap();
+    let (repo, job) = repository_tests::queued_job(&pool).await;
+    let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        pool: pool.clone(),
+        load_llm,
+        load_library: Arc::new(|| Box::pin(async { None })),
+        refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
+        research_web: None,
+    };
+    run_attempt(worker, &job.id).await.unwrap();
+    repo.job(&job.id).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_lesson_job_with_no_learning_model_fails_once_with_the_fix() {
+    let settled = run_with_model(Arc::new(|| {
+        Box::pin(async {
+            let unset = lattice_core::application::contracts::settings::LLMSettingsDto::default();
+            lattice_core::application::services::chat_model_resolution::resolve_learning(&unset)
+                .map(|_| unreachable!("no Learning model is set"))
+        })
+    }))
+    .await;
+
+    assert_eq!(settled.status, Status::Failed, "a refusal is not retried");
+    assert!(settled.finished_at.is_some());
+    assert!(
+        settled
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("No Learning model is set")),
+        "{:?}",
+        settled.error
+    );
+}
+
+#[tokio::test]
+async fn a_learning_model_too_small_for_a_lesson_fails_once_before_any_model_call() {
+    let settled = run_with_model(Arc::new(|| {
+        Box::pin(async { Ok(pinned_for_test(Arc::new(Window(8_704)))) })
+    }))
+    .await;
+
+    let needed = crate::features::learning::model_requirements::lesson_preparation()
+        .min_context_tokens
+        .unwrap();
+    assert_eq!(settled.status, Status::Failed, "a refusal is not retried");
+    let error = settled.error.unwrap_or_default();
+    assert!(
+        error.contains(&format!(
+            "needs a context window of at least {needed} tokens"
+        )) && error.contains("Your Learning model, Ornith-1.5-9B, has a 8704-token window"),
+        "{error}"
+    );
 }
