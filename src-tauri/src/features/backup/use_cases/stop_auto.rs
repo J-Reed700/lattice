@@ -1,5 +1,5 @@
 use crate::features::backup::archive::service::ArchiveService;
-use crate::features::settings::dto::SettingsCategory;
+use lattice_core::application::contracts::settings::SettingsCategory;
 use lattice_core::application::ports::{BackupSchedulerPort, SettingsRepositoryPort};
 use lattice_core::shared::error::Result;
 use serde_json::json;

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::features::conversation::chat::ports::ChatRetrieval;
 use crate::features::search::dto::SearchResponseDto;
 use crate::features::search::use_cases::RerankOptions;
-use crate::features::settings::dto::RetrievalTuningSettingsDto;
+use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 
 /// Rerank the shortlist through the search orchestrator's cross-encoder
 /// stage, reporting whether cross-encoder scores were actually applied.

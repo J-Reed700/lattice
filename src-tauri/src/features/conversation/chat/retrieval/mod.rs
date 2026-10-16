@@ -4,7 +4,7 @@ use crate::features::function_calling::dto::WikiSearchOutput;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
-use crate::features::settings::dto::{
+use lattice_core::application::contracts::settings::{
     RetrievalTuningSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
 };
 use lattice_core::application::contracts::web::WebSearchResult;
@@ -474,7 +474,7 @@ pub(super) async fn load_recent_document_metadata(
 }
 
 fn build_router_clarify_response(
-    settings: &crate::features::settings::dto::RouterSettingsDto,
+    settings: &lattice_core::application::contracts::settings::RouterSettingsDto,
     recent_doc_meta: &Option<RecentDocumentMetadata>,
     _message: &str,
     override_question: Option<&str>,

@@ -199,13 +199,27 @@ for reverse dependencies.
 
 It also ratchets outer-ring rules against
 `scripts/rust-architecture-check/baseline.txt`: infrastructure importing
-features, feature-to-feature edges and cycles, `Container` imports outside
-adapter files, the composition root (`bootstrap`) referenced outside the
-entry points, raw spawns outside `shared/runtime`, global state, and file
-length; the header of `baseline.txt` lists each rule. A new or rising count fails; so does a
+features, feature-to-feature edges and cycles, feature re-exports of
+`lattice_core` or another feature (`pub use`/`pub(crate) use`; callers should
+import from the source), `Container` imports outside adapter files, the
+composition root (`bootstrap`) referenced outside the entry points, raw spawns
+outside `shared/runtime`, global state, and file length; the header of
+`baseline.txt` lists each rule. A new or rising count fails; so does a
 falling one, until `bash scripts/check-rust-layer-boundaries.sh --write-baseline`
 records it. That command also rewrites `scripts/tauri-command-orphans.baseline`.
 Commit the smaller file; never add lines to get a change through.
+
+Feature edges are meant to reach zero, except a few where one feature is built
+on a lower-level one. Those are allowed in
+`scripts/rust-architecture-check/feature-graph.txt`, one
+`allow features::<a> features::<b>  # <reason>` line each, reason required.
+Their references leave `feature-edge` but still count toward `feature-cycle`;
+the allowed edges must not form a cycle, and an allowed edge with no
+references left fails as stale. The plan for the rest is
+`docs/design/2026-10-16-feature-coupling-plan.md`. To see every site of a
+rule, baselined, allowed or new, run
+`bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`; the
+subject is a feature (`conversation`), a file or a directory.
 
 ## Conversation memory
 

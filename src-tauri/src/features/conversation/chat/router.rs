@@ -1,4 +1,4 @@
-use crate::features::settings::dto::RouterSettingsDto;
+use lattice_core::application::contracts::settings::RouterSettingsDto;
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::completion_input::{complete_text, TextCall};

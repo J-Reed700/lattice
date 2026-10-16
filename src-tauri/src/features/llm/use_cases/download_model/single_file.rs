@@ -19,7 +19,7 @@ impl DownloadModelUseCase {
     pub(super) async fn download_single_file_model(
         &self,
         model_id: &str,
-        curated: &crate::features::model_management::domain::ModelMetadata,
+        curated: &lattice_core::domain::models::selection::ModelMetadata,
         model_path: &std::path::Path,
         paths: &ModelPaths,
     ) -> Result<DownloadModelResponseDto, AppError> {
@@ -73,7 +73,7 @@ impl DownloadModelUseCase {
         // Inspect the selected file before persisting a download or fetching
         // gigabytes of weights. A GGUF extension alone says nothing about
         // whether the bundled engine recognizes its architecture.
-        if curated.category == crate::features::model_management::domain::ModelCategory::LLM {
+        if curated.category == lattice_core::domain::models::selection::ModelCategory::LLM {
             crate::features::llm::engine::compatibility::check_download(
                 &model_file_url,
                 auth_token.as_deref(),
@@ -96,16 +96,16 @@ impl DownloadModelUseCase {
                 total_size_bytes: curated.total_size_bytes as i64,
                 architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
                 model_type: match curated.category {
-                    crate::features::model_management::domain::ModelCategory::LLM => {
+                    lattice_core::domain::models::selection::ModelCategory::LLM => {
                         "chat".to_string()
                     }
-                    crate::features::model_management::domain::ModelCategory::Embedding => {
+                    lattice_core::domain::models::selection::ModelCategory::Embedding => {
                         "embedding".to_string()
                     }
-                    crate::features::model_management::domain::ModelCategory::OCR => {
+                    lattice_core::domain::models::selection::ModelCategory::OCR => {
                         "ocr".to_string()
                     }
-                    crate::features::model_management::domain::ModelCategory::Transcription => {
+                    lattice_core::domain::models::selection::ModelCategory::Transcription => {
                         // See ModelType::to_db_string: the models-table CHECK
                         // constraint has no `transcription` value yet.
                         "custom".to_string()

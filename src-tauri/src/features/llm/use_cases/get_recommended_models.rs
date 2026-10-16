@@ -27,8 +27,8 @@ use crate::features::llm::dto::{
     RecommendedModelsDto,
 };
 use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
-use crate::features::model_management::domain::ModelMetadata;
 use lattice_core::application::ports::model_catalog::ModelCatalogPort;
+use lattice_core::domain::models::selection::ModelMetadata;
 use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 

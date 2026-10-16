@@ -8,6 +8,18 @@
 //! counted by the component's size, so a new cycle or a cycle that pulls in
 //! another feature fails exactly like a new reference does.
 //!
+//! `feature-graph.txt` allows a few feature edges outright, each with a
+//! reason: one feature built on a lower-level one (see `feature_graph`).
+//! Their references leave `feature-edge` but still feed the cycle check; the
+//! allowed edges must form no cycle, and one with no references left is
+//! STALE. `feature-reexport` counts the `use` items through which a feature
+//! hands out core's or another feature's items, since every caller that
+//! imports through one becomes a feature edge of its own.
+//!
+//! `--list <rule> [subject]` prints every finding of a rule with its
+//! location, whether or not the baseline or the allowlist covers it; a
+//! normal run prints locations only for violations.
+//!
 //! Only production code counts: the walk follows `mod` declarations from the
 //! crate roots and skips `#[cfg(test)]` modules and items, so test files are
 //! never read. File length is the exception: it reads every `.rs` file below
@@ -29,22 +41,24 @@ use syn::{
     Attribute, ImplItem, Item, TraitItem, UseTree,
 };
 
-use crate::{item_attrs, test_only};
+use crate::{feature_graph, item_attrs, test_only};
 
 pub const REGENERATE: &str = "bash scripts/check-rust-layer-boundaries.sh --write-baseline";
 
 pub const INFRASTRUCTURE_IMPORTS_FEATURE: &str = "infrastructure-imports-feature";
 pub const FEATURE_EDGE: &str = "feature-edge";
 pub const FEATURE_CYCLE: &str = "feature-cycle";
+pub const FEATURE_REEXPORT: &str = "feature-reexport";
 pub const CONTAINER_IMPORT: &str = "container-import";
 pub const RAW_SPAWN: &str = "raw-spawn";
 pub const GLOBAL_STATE: &str = "global-state";
 pub const FILE_LENGTH: &str = "file-length";
 pub const COMPOSITION_ROOT_IMPORT: &str = "composition-root-import";
-const RULES: [&str; 8] = [
+const RULES: [&str; 9] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
     FEATURE_CYCLE,
+    FEATURE_REEXPORT,
     CONTAINER_IMPORT,
     COMPOSITION_ROOT_IMPORT,
     RAW_SPAWN,
@@ -113,10 +127,22 @@ const HEADER: &str = "\
 # Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
 # then split it by responsibility.
 #
+# A feature edge that is one feature built on a lower-level one may instead be
+# allowed in scripts/rust-architecture-check/feature-graph.txt, one
+# `allow features::<a> features::<b>  # <reason>` line each. Its references
+# leave feature-edge but still count toward feature-cycle. To see every site
+# of a rule, baselined or not:
+#
+#     bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]
+#
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
-#   feature-edge <features::a> <features::b>              references from one feature into another
+#   feature-edge <features::a> <features::b>              references from one feature into another,
+#                                                         except edges in feature-graph.txt
 #   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
 #                                                         its strongly connected component
+#   feature-reexport <file> <lattice_core|features::b>    a `use` in a feature, visible outside it,
+#                                                         that re-exports core or another feature;
+#                                                         callers should import from the source
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
 #                                                         DI, desktop, bootstrap and interfaces files
 #   composition-root-import <file> bootstrap              the composition root named outside itself
@@ -136,7 +162,7 @@ pub struct Key {
 }
 
 impl Key {
-    fn new(rule: &str, subject: impl Into<String>, target: impl Into<String>) -> Self {
+    pub(crate) fn new(rule: &str, subject: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
             rule: rule.to_string(),
             subject: subject.into(),
@@ -423,6 +449,8 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
         lines: &lines,
         anchors: Vec::new(),
         references: Vec::new(),
+        reexporting: false,
+        reexports: Vec::new(),
         spawns: Vec::new(),
         statics: Vec::new(),
     };
@@ -438,17 +466,24 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
                 || "features".to_string(),
                 |feature| format!("features::{feature}"),
             );
+            // The site and the path it names, so a list shows what to move.
+            let named = format!(
+                "{} {}{}",
+                at(reference.line),
+                path.join("::"),
+                if reference.glob { "::*" } else { "" }
+            );
             if file.module.first().is_some_and(|s| s == "infrastructure") {
                 found.push(Finding {
                     key: Key::new(INFRASTRUCTURE_IMPORTS_FEATURE, relative, target.clone()),
-                    location: at(reference.line),
+                    location: named.clone(),
                 });
             }
             if let (Some(owner), Some(other)) = (feature_of(&file.module), path.get(1)) {
                 if owner != other {
                     found.push(Finding {
                         key: Key::new(FEATURE_EDGE, format!("features::{owner}"), target),
-                        location: at(reference.line),
+                        location: named,
                     });
                 }
             }
@@ -465,6 +500,12 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
                 location: at(reference.line),
             });
         }
+    }
+    for (target, line, named) in collector.reexports {
+        found.push(Finding {
+            key: Key::new(FEATURE_REEXPORT, relative, target),
+            location: format!("{} {named}", at(line)),
+        });
     }
     if !relative.starts_with(SUPERVISOR) {
         for (target, line) in collector.spawns {
@@ -693,6 +734,10 @@ struct Collector<'a> {
     /// First lines of the enclosing statements and fns, innermost last.
     anchors: Vec<usize>,
     references: Vec<Reference>,
+    /// Whether the `use` being walked is visible outside the owning feature.
+    reexporting: bool,
+    /// Re-exports of core or another feature: target, line and the path named.
+    reexports: Vec<(String, usize, String)>,
     spawns: Vec<(String, usize)>,
     /// Unmarked statics that hold state, by name, with their lines.
     statics: Vec<(String, usize)>,
@@ -743,6 +788,56 @@ impl Collector<'_> {
         }
     }
 
+    /// A name a `use` imports: a reference, and a re-export when the `use` is
+    /// visible outside the owning feature and names core or another feature.
+    fn use_leaf(&mut self, segments: &[String], leading_colon: bool, glob: bool, line: usize) {
+        self.reference(segments, leading_colon, glob, line);
+        if !self.reexporting {
+            return;
+        }
+        let target = if segments.first().is_some_and(|s| s == CORE_LIBRARY) {
+            Some(CORE_LIBRARY.to_string())
+        } else {
+            self.resolve(segments, leading_colon).and_then(|path| {
+                match (path.as_slice(), feature_of(&self.module)) {
+                    ([features, other, ..], Some(owner))
+                        if features == "features" && other != owner =>
+                    {
+                        Some(format!("features::{other}"))
+                    }
+                    _ => None,
+                }
+            })
+        };
+        if let Some(target) = target {
+            let named = format!("{}{}", segments.join("::"), if glob { "::*" } else { "" });
+            self.reexports.push((target, line, named));
+        }
+    }
+
+    /// Whether code outside the owning feature may name what a `use` with
+    /// this visibility imports: `pub`, `pub(crate)`, or a `pub(in ..)` or
+    /// `pub(super)` whose scope reaches past the feature.
+    fn visible_outside_feature(&self, visibility: &syn::Visibility) -> bool {
+        let Some(owner) = feature_of(&self.module) else {
+            return false;
+        };
+        match visibility {
+            syn::Visibility::Inherited => false,
+            syn::Visibility::Public(_) => true,
+            syn::Visibility::Restricted(restricted) => {
+                let scope: Vec<String> = restricted
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                self.resolve(&scope, false)
+                    .is_none_or(|scope| feature_of(&scope) != Some(owner))
+            }
+        }
+    }
+
     /// A non-`use` path: a reference, and possibly a spawn call.
     fn expression_path(&mut self, segments: &[String], leading_colon: bool, line: usize) {
         self.reference(segments, leading_colon, false, line);
@@ -790,16 +885,16 @@ impl Collector<'_> {
                 if n.ident != "self" {
                     prefix.push(n.ident.to_string());
                 }
-                self.reference(&prefix, leading_colon, false, n.ident.span().start().line);
+                self.use_leaf(&prefix, leading_colon, false, n.ident.span().start().line);
             }
             UseTree::Rename(r) => {
                 if r.ident != "self" {
                     prefix.push(r.ident.to_string());
                 }
-                self.reference(&prefix, leading_colon, false, r.ident.span().start().line);
+                self.use_leaf(&prefix, leading_colon, false, r.ident.span().start().line);
             }
             UseTree::Glob(g) => {
-                self.reference(&prefix, leading_colon, true, g.star_token.span.start().line);
+                self.use_leaf(&prefix, leading_colon, true, g.star_token.span.start().line);
             }
         }
     }
@@ -878,7 +973,9 @@ impl<'ast> Visit<'ast> for Collector<'_> {
         self.anchored(line, |this| visit::visit_stmt(this, stmt));
     }
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        self.reexporting = self.visible_outside_feature(&item.vis);
         self.use_tree(&item.tree, Vec::new(), item.leading_colon.is_some());
+        self.reexporting = false;
     }
     fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
         let mutable = matches!(item.mutability, syn::StaticMutability::Mut(_));
@@ -1173,28 +1270,89 @@ fn summary(counts: &Counts) -> String {
         .join("; ")
 }
 
+/// The checker's data files.
+pub struct Files<'a> {
+    pub baseline: &'a Path,
+    /// The feature graph allowlist.
+    pub feature_graph: &'a Path,
+}
+
+/// What the rules find in the tree, before and after the allowlist.
+struct Current {
+    found: Vec<Finding>,
+    /// Counts the baseline is compared with: allowed edges removed, cycles
+    /// derived from every edge, allowed or not.
+    counts: Counts,
+    allowed: Vec<feature_graph::Allowed>,
+    /// The references each allowed edge still has.
+    allowed_counts: Counts,
+}
+
+fn current(roots: &[&Path], feature_graph_path: &Path) -> Result<Current, Error> {
+    let allowed = feature_graph::load(feature_graph_path)?;
+    let found = findings(roots)?;
+    let mut counts = counts(&found);
+    let cycles = cycle_counts(&counts);
+    let allowed_counts = feature_graph::take_allowed(&mut counts, &allowed);
+    counts.extend(cycles);
+    Ok(Current {
+        found,
+        counts,
+        allowed,
+        allowed_counts,
+    })
+}
+
+fn read_baseline(path: &Path) -> Result<Counts, Error> {
+    let text = fs::read_to_string(path)
+        .map_err(|e| format!("{}: {e}; run `{REGENERATE}` to create it", path.display()))?;
+    Ok(parse_baseline(&text).map_err(|e| format!("{}: {e}", path.display()))?)
+}
+
+/// Fails each allowed edge on a cycle of allowed edges, and each allowed edge
+/// with no references left.
+fn check_feature_graph(current: &Current, path: &Path, failures: &mut usize) {
+    for route in feature_graph::cycles(&current.allowed) {
+        *failures += 1;
+        eprintln!(
+            "VIOLATION: {}: the allowed edges form a cycle: {route}",
+            path.display()
+        );
+    }
+    for edge in &current.allowed {
+        if !current.allowed_counts.contains_key(&edge.key()) {
+            *failures += 1;
+            eprintln!(
+                "STALE: {}: allowed edge {} -> {} has no references left; delete its line",
+                path.display(),
+                edge.subject,
+                edge.target
+            );
+        }
+    }
+}
+
 pub fn check(
     roots: &[&Path],
-    baseline_path: &Path,
+    files: &Files,
     write: bool,
     failures: &mut usize,
 ) -> Result<(), Error> {
-    let found = findings(roots)?;
-    let mut current = counts(&found);
-    current.extend(cycle_counts(&current));
+    let baseline_path = files.baseline;
+    let current_tree = current(roots, files.feature_graph)?;
+    check_feature_graph(&current_tree, files.feature_graph, failures);
+    let Current {
+        found,
+        counts: current,
+        allowed_counts,
+        ..
+    } = current_tree;
     if write {
         fs::write(baseline_path, render_baseline(&current))?;
         println!("Wrote {} ({}).", baseline_path.display(), summary(&current));
         return Ok(());
     }
-    let text = fs::read_to_string(baseline_path).map_err(|e| {
-        format!(
-            "{}: {e}; run `{REGENERATE}` to create it",
-            baseline_path.display()
-        )
-    })?;
-    let baseline =
-        parse_baseline(&text).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
+    let baseline = read_baseline(baseline_path)?;
     let mut shrank = 0;
     for (key, change) in compare(&baseline, &current) {
         *failures += 1;
@@ -1241,8 +1399,80 @@ pub fn check(
             if shrank == 1 { "y" } else { "ies" }
         );
     }
-    println!("Ratchet: {}.", summary(&current));
+    println!(
+        "Ratchet: {}; feature-graph allows {} edges ({} references).",
+        summary(&current),
+        allowed_counts.len(),
+        allowed_counts.values().sum::<usize>()
+    );
     Ok(())
+}
+
+/// Whether a key's subject is the one `--list` asked for: the exact subject,
+/// a feature by its bare name, or a directory of files.
+fn subject_matches(subject: &str, wanted: &str) -> bool {
+    let directory = format!("{}/", wanted.trim_end_matches('/'));
+    subject == wanted
+        || subject.strip_prefix("features::") == Some(wanted)
+        || subject.starts_with(&directory)
+}
+
+/// Every finding of `rule`, grouped by entry with its locations, and whether
+/// the baseline or the allowlist covers it. Returns the text to print.
+pub fn list(
+    roots: &[&Path],
+    files: &Files,
+    rule: &str,
+    subject: Option<&str>,
+) -> Result<String, Error> {
+    if !RULES.contains(&rule) {
+        return Err(format!("unknown rule {rule}; the rules are {}", RULES.join(", ")).into());
+    }
+    let current = current(roots, files.feature_graph)?;
+    let baseline = read_baseline(files.baseline)?;
+    let wanted =
+        |key: &Key| key.rule == rule && subject.is_none_or(|s| subject_matches(&key.subject, s));
+    let mut entries: BTreeMap<&Key, usize> = BTreeMap::new();
+    for (key, &count) in current.counts.iter().chain(&current.allowed_counts) {
+        if wanted(key) {
+            entries.insert(key, count);
+        }
+    }
+    let mut text = String::new();
+    let mut total = 0;
+    for (key, count) in &entries {
+        total += count;
+        let status = if current.allowed_counts.contains_key(*key) {
+            "allowed by feature-graph.txt".to_string()
+        } else {
+            baseline
+                .get(*key)
+                .map_or("not in the baseline".to_string(), |was| {
+                    format!("baseline {was}")
+                })
+        };
+        text.push_str(&format!("{key}: {count} ({status})\n"));
+        // A cycle entry's sites are the references behind its edge.
+        let site = if key.rule == FEATURE_CYCLE {
+            // Every edge, allowed or not, as the cycles were derived.
+            let edges = counts(&current.found);
+            if let Some(route) = cycle_route(&edges, &key.subject, &key.target) {
+                text.push_str(&format!("    cycle {route}\n"));
+            }
+            Key::new(FEATURE_EDGE, key.subject.clone(), key.target.clone())
+        } else {
+            (*key).clone()
+        };
+        for finding in current.found.iter().filter(|finding| finding.key == site) {
+            text.push_str(&format!("    at {}\n", finding.location));
+        }
+    }
+    text.push_str(&if rule == FEATURE_CYCLE {
+        format!("{rule}: {} edges.\n", entries.len())
+    } else {
+        format!("{rule}: {total} in {} entries.\n", entries.len())
+    });
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -1847,6 +2077,8 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             lines: &[],
             anchors: Vec::new(),
             references: Vec::new(),
+            reexporting: false,
+            reexports: Vec::new(),
             spawns: Vec::new(),
             statics: Vec::new(),
         };
@@ -2033,11 +2265,17 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         )
         .unwrap();
         let baseline = root.join("baseline.txt");
+        let feature_graph = root.join("feature-graph.txt");
+        fs::write(&feature_graph, "# nothing allowed\n").unwrap();
+        let files = Files {
+            baseline: &baseline,
+            feature_graph: &feature_graph,
+        };
 
         let mut failures = 0;
-        check(&[&root], &baseline, true, &mut failures).unwrap();
+        check(&[&root], &files, true, &mut failures).unwrap();
         let written = fs::read_to_string(&baseline).unwrap();
-        check(&[&root], &baseline, false, &mut failures).unwrap();
+        check(&[&root], &files, false, &mut failures).unwrap();
         let clean = failures;
 
         // A baseline that records the edges but not the cycle they form.
@@ -2047,7 +2285,7 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             .map(|line| format!("{line}\n"))
             .collect();
         fs::write(&baseline, without_cycles).unwrap();
-        check(&[&root], &baseline, false, &mut failures).unwrap();
+        check(&[&root], &files, false, &mut failures).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert!(written.contains("feature-cycle features::a features::b 2\n"));
@@ -2172,5 +2410,217 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
                 1
             )])
         );
+    }
+
+    #[test]
+    fn feature_reexports_count_uses_visible_outside_the_feature_that_name_core_or_another_feature()
+    {
+        let file = source(
+            "features/settings/dto/mod.rs",
+            &["features", "settings", "dto"],
+            r#"
+            pub use lattice_core::application::contracts::settings::*;
+            pub(crate) use ::lattice_core::domain::{Model, Role as ModelRole};
+            pub use crate::features::llm::dto::LlmDto;
+            pub(crate) use super::super::web::Page;
+            pub use lattice::features::qa::SourceDto;
+            pub(in crate::features) use crate::features::search::Hit;
+            pub use crate::features::settings::repository::Store;
+            pub use super::types::*;
+            pub(super) use crate::features::tags::Tag;
+            pub(in crate::features::settings) use lattice_core::shared::Text;
+            use lattice_core::shared::error::Result;
+            use crate::features::download::Progress;
+            pub use serde::Serialize;
+            #[cfg(test)] pub use crate::features::embedding::Mock;
+            mod inner { pub(super) use crate::features::vault::Note; }
+            "#,
+        );
+        let reexports: Vec<_> = file_findings(&file, &HashSet::new())
+            .into_iter()
+            .filter(|finding| finding.key.rule == FEATURE_REEXPORT)
+            .map(|finding| format!("{} {}", finding.key.target, finding.location))
+            .collect();
+        let at = "features/settings/dto/mod.rs";
+        assert_eq!(
+            reexports,
+            vec![
+                format!("lattice_core {at}:2 lattice_core::application::contracts::settings::*"),
+                format!("lattice_core {at}:3 lattice_core::domain::Model"),
+                format!("lattice_core {at}:3 lattice_core::domain::Role"),
+                format!("features::llm {at}:4 crate::features::llm::dto::LlmDto"),
+                format!("features::web {at}:5 super::super::web::Page"),
+                format!("features::qa {at}:6 lattice::features::qa::SourceDto"),
+                format!("features::search {at}:7 crate::features::search::Hit"),
+            ]
+        );
+        let outside = source(
+            "interfaces/di/mod.rs",
+            &["interfaces", "di"],
+            "pub use lattice_core::application::ports::*; pub use crate::features::llm::Engine;",
+        );
+        assert!(file_findings(&outside, &HashSet::new())
+            .iter()
+            .all(|finding| finding.key.rule != FEATURE_REEXPORT));
+    }
+
+    /// A tree where `a` uses `b` and `c`, `b` uses `c`, and `c` uses `a`
+    /// only when `back` is set.
+    fn graph_tree(name: &str, back: bool) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "lattice-ratchet-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        for feature in ["a", "b", "c"] {
+            fs::create_dir_all(root.join("features").join(feature)).unwrap();
+        }
+        fs::write(root.join("lib.rs"), "pub mod features;").unwrap();
+        fs::write(
+            root.join("features/mod.rs"),
+            "pub mod a; pub mod b; pub mod c;",
+        )
+        .unwrap();
+        fs::write(
+            root.join("features/a/mod.rs"),
+            "pub fn run() { crate::features::b::run(); crate::features::b::stop(); crate::features::c::run(); }",
+        )
+        .unwrap();
+        fs::write(
+            root.join("features/b/mod.rs"),
+            "pub fn run() { crate::features::c::run(); } pub fn stop() {}",
+        )
+        .unwrap();
+        let c = if back {
+            "pub fn run() { crate::features::a::run(); }"
+        } else {
+            "pub fn run() {}"
+        };
+        fs::write(root.join("features/c/mod.rs"), c).unwrap();
+        root
+    }
+
+    #[test]
+    fn allowed_edges_leave_feature_edge_but_still_close_cycles() {
+        let root = graph_tree("allowed", false);
+        let baseline = root.join("baseline.txt");
+        let feature_graph = root.join("feature-graph.txt");
+        let files = Files {
+            baseline: &baseline,
+            feature_graph: &feature_graph,
+        };
+        fs::write(
+            &feature_graph,
+            "allow features::a features::b  # a is built on b\n",
+        )
+        .unwrap();
+        let mut failures = 0;
+        check(&[&root], &files, true, &mut failures).unwrap();
+        let written = fs::read_to_string(&baseline).unwrap();
+        check(&[&root], &files, false, &mut failures).unwrap();
+        let clean = failures;
+
+        // c now uses a: the allowed a -> b edge is on the new cycle too.
+        fs::write(
+            root.join("features/c/mod.rs"),
+            "pub fn run() { crate::features::a::run(); }",
+        )
+        .unwrap();
+        let cyclic = current(&[&root], &feature_graph).unwrap().counts;
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(!written.contains("feature-edge features::a features::b"));
+        assert!(written.contains("feature-edge features::a features::c 1\n"));
+        assert!(written.contains("feature-edge features::b features::c 1\n"));
+        assert_eq!(clean, 0);
+        assert_eq!(
+            cyclic.get(&key(FEATURE_EDGE, "features::a", "features::b")),
+            None
+        );
+        assert_eq!(cyclic.get(&cycle("a", "b")), Some(&3));
+        assert_eq!(cyclic.get(&cycle("c", "a")), Some(&3));
+    }
+
+    #[test]
+    fn an_allowlist_that_forms_a_cycle_or_has_a_stale_edge_fails() {
+        let root = graph_tree("allowlist", false);
+        let baseline = root.join("baseline.txt");
+        let feature_graph = root.join("feature-graph.txt");
+        let files = Files {
+            baseline: &baseline,
+            feature_graph: &feature_graph,
+        };
+        let run = |allowlist: &str| {
+            fs::write(&feature_graph, allowlist).unwrap();
+            let mut failures = 0;
+            check(&[&root], &files, true, &mut failures)
+                .map(|()| failures)
+                .map_err(|e| e.to_string())
+        };
+        let clean = run("allow features::a features::b # a is built on b\n");
+        // c -> a has no references, so it is stale as well as on a cycle
+        // with the other two.
+        let tangled = run("\
+allow features::a features::b # r
+allow features::b features::c # r
+allow features::c features::a # r
+");
+        let stale = run("allow features::b features::a # b was built on a\n");
+        let unexplained = run("allow features::a features::b\n");
+        fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(clean, Ok(0));
+        assert_eq!(tangled, Ok(4));
+        assert_eq!(stale, Ok(1));
+        assert!(unexplained.unwrap_err().contains("reason"));
+    }
+
+    #[test]
+    fn list_prints_every_site_with_its_baseline_or_allowlist_status() {
+        let root = graph_tree("list", true);
+        let baseline = root.join("baseline.txt");
+        let feature_graph = root.join("feature-graph.txt");
+        let files = Files {
+            baseline: &baseline,
+            feature_graph: &feature_graph,
+        };
+        fs::write(&feature_graph, "allow features::a features::b # r\n").unwrap();
+        fs::write(&baseline, "feature-edge features::a features::c 1\n").unwrap();
+        let edges = list(&[&root], &files, FEATURE_EDGE, None).unwrap();
+        let from_a = list(&[&root], &files, FEATURE_EDGE, Some("a")).unwrap();
+        let cycles = list(&[&root], &files, FEATURE_CYCLE, Some("features::c")).unwrap();
+        let unknown = list(&[&root], &files, "feature-edges", None);
+        fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(
+            edges,
+            "\
+[feature-edge] features::a -> features::b: 2 (allowed by feature-graph.txt)
+    at features/a/mod.rs:1 features::b::run
+    at features/a/mod.rs:1 features::b::stop
+[feature-edge] features::a -> features::c: 1 (baseline 1)
+    at features/a/mod.rs:1 features::c::run
+[feature-edge] features::b -> features::c: 1 (not in the baseline)
+    at features/b/mod.rs:1 features::c::run
+[feature-edge] features::c -> features::a: 1 (not in the baseline)
+    at features/c/mod.rs:1 features::a::run
+feature-edge: 5 in 4 entries.
+"
+        );
+        assert!(from_a.starts_with("[feature-edge] features::a -> features::b"));
+        assert!(from_a.ends_with("feature-edge: 3 in 2 entries.\n"));
+        assert_eq!(
+            cycles,
+            "\
+[feature-cycle] features::c -> features::a: 3 (not in the baseline)
+    cycle features::c -> features::a -> features::c
+    at features/c/mod.rs:1 features::a::run
+feature-cycle: 1 edges.
+"
+        );
+        assert!(unknown.unwrap_err().to_string().contains("unknown rule"));
     }
 }
