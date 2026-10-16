@@ -35,7 +35,8 @@ impl CompactionJob {
         Ok((read.messages, read.cursor >= latest_sequence))
     }
 
-    /// Page the source a dropped summary covered, oldest first.
+    /// Page the source below the watermark a fold covers, after
+    /// `refold_after` and through `through`, oldest first.
     ///
     /// Bounded by the work cap's message count and by the smaller refold byte
     /// budget. Progress needs no column of its own: the summary this run
@@ -49,27 +50,27 @@ impl CompactionJob {
         &self,
         conversation_id: &str,
         refold_after: i64,
-        start_after: i64,
+        through: i64,
         snapshot: &MemorySnapshot,
     ) -> std::result::Result<Refold, CompactionError> {
         let read = self
             .read_range(
                 conversation_id,
                 refold_after,
-                start_after,
+                through,
                 self.config
                     .max_refold_bytes_per_attempt
                     .min(self.config.max_source_bytes_per_attempt),
             )
             .await?;
-        let finished = !read.capped || read.cursor >= start_after;
+        let finished = !read.capped || read.cursor >= through;
         let foldable = snapshot.summary.is_some()
             || read.messages.iter().any(SourceMessage::is_eligible_source);
         if !finished && (read.messages.is_empty() || !foldable) {
             warn!(
                 conversation_id,
                 refold_after,
-                start_after,
+                through,
                 "Summary refold cannot advance within one attempt; leaving that range to the ledger and recall"
             );
             return Ok(Refold::none());

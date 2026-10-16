@@ -57,6 +57,7 @@ fn request(turn: &PreparedTurn) -> PlannedRequest {
         max_output_tokens: turn.budget.output_tokens,
         input_budget: turn.budget.input_budget,
         memory_usage: None,
+        summary_refold: None,
     }
 }
 

@@ -271,6 +271,18 @@ impl ConversationRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+        } else {
+            // Extraction moved on without refolding the summary. It still
+            // describes the same messages, so it is carried into the new
+            // revision rather than left naming one the ledger has passed.
+            sqlx::query(
+                "UPDATE conversation_summaries SET memory_revision = ? WHERE conversation_id = ?",
+            )
+            .bind(next_revision)
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
         }
 
         sqlx::query(

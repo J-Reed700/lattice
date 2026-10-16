@@ -21,6 +21,7 @@ pub(super) async fn finalize_turn(
         retrieval_trace,
         mut tokens,
         memory_usage,
+        summary_refold,
     } = generated;
     tracing::info!(
         conversation_id = turn.conv_id.as_str(),
@@ -107,6 +108,7 @@ pub(super) async fn finalize_turn(
             memory_usage,
             retrieval_trace,
             turn_record: Some(turn_record),
+            summary_refold,
         },
     )
     .await?;

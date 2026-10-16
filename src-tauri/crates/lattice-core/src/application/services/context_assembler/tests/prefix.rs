@@ -116,8 +116,9 @@ fn two_turns(reaches_start: bool) -> (ContextPlan, ContextPlan) {
         shared: r#"{"memory_id":"shared-b","fact":"change freeze"}"#,
         today: day().succ_opt().expect("a next day"),
     };
-    // Consolidation after N's answer records a second requirement and refolds
-    // the summary, as it does after every answer.
+    // Consolidation after N's answer records a second requirement. The
+    // summary differs too, as it would after a refold: while the window holds
+    // the whole conversation it plays no part.
     let before = snapshot(Vec::new(), Some("Planning a two-region rollout."), 4);
     let mut after = snapshot(
         Vec::new(),
@@ -196,19 +197,179 @@ fn the_summary_stays_out_while_the_window_holds_the_whole_conversation() {
     }
 }
 
-/// The mirror case, and the one change this layout cannot absorb: once older
-/// turns have left the window the summary is carried, and consolidation
-/// refolds it after every answer, so the request diverges at its second
-/// message. Fixing that needs a summary that changes only when the window's
-/// start moves (see the 2026-10-12 audit notes, track B1).
+/// Long turns, more than a small window holds, oldest first.
+fn long_transcript(count: i64) -> Vec<SourceMessage> {
+    (1..=count)
+        .map(|index| {
+            let role = if index % 2 == 1 {
+                SourceRole::User
+            } else {
+                SourceRole::Assistant
+            };
+            message(
+                index,
+                role,
+                &format!("Turn {index}: {}", "detail ".repeat(60)),
+            )
+        })
+        .collect()
+}
+
+/// Memory whose summary ends at `through`, with extraction at `watermark`.
+fn summarized(through: i64, watermark: i64) -> MemorySnapshot {
+    let mut memory = snapshot(Vec::new(), Some("Earlier work summarized."), watermark);
+    memory.summary_through_sequence = Some(through);
+    memory
+}
+
+/// One turn on a window that cannot hold the whole conversation.
+fn small_plan(
+    memory: &MemorySnapshot,
+    recent: &[SourceMessage],
+    question: &str,
+    today: chrono::NaiveDate,
+) -> ContextPlan {
+    let mut request = request(Some(memory), recent, 8_192);
+    request.recent_reaches_start = true;
+    request.current_input = question;
+    request.today = today;
+    assembler().assemble(&request).expect("plan")
+}
+
+/// The sequence of the oldest turn carried verbatim.
+fn window_start(plan: &ContextPlan) -> Option<i64> {
+    text_of(plan).iter().find_map(|(_, content)| {
+        content
+            .strip_prefix("Turn ")?
+            .split(':')
+            .next()?
+            .parse()
+            .ok()
+    })
+}
+
+/// Once older turns have left the window, the summary heads the history and
+/// the window opens right after the last message it covers. Consolidation
+/// leaves both alone while the window has room, so the next request repeats
+/// this one up to its newest answer, summary included.
 #[test]
-fn a_refolded_summary_ahead_of_the_history_breaks_the_shared_prefix() {
-    let (n, next) = two_turns(false);
-    let (n_text, next_text) = (text_of(&n), text_of(&next));
-    assert!(n_text[1].1.starts_with("[generated summary"));
-    assert_eq!(n_text[0], next_text[0], "the system policy is stable");
-    assert_ne!(n_text[1], next_text[1]);
-    assert!(!extends(&n, &next));
+fn consecutive_turns_past_the_window_share_every_message_up_to_the_newest_answer() {
+    let transcript = long_transcript(40);
+    let n = small_plan(
+        &summarized(24, 38),
+        &transcript[..38],
+        "What did turn 39 decide?",
+        day(),
+    );
+    // N's answer was extracted after it was saved, and the summary kept.
+    let mut after = summarized(24, 40);
+    after.state.memory_revision = 4;
+    let next = small_plan(
+        &after,
+        &transcript,
+        "And what follows from it?",
+        day().succ_opt().expect("a next day"),
+    );
+
+    for plan in [&n, &next] {
+        assert!(plan.accounting.fits());
+        assert_eq!(
+            window_start(plan),
+            Some(25),
+            "the window opens where the summary ends"
+        );
+        assert!(text_of(plan)[1].1.starts_with("[generated summary"));
+        assert!(plan.summary_refold.is_none(), "{:?}", plan.summary_refold);
+    }
+    // There was room to reach further back. Without the anchor the window
+    // takes it, and its start then moves with every turn added.
+    let unanchored = small_plan(
+        &summarized(0, 38),
+        &transcript[..38],
+        "What did turn 39 decide?",
+        day(),
+    );
+    assert!(window_start(&unanchored).is_some_and(|start| start < 25));
+
+    assert!(
+        extends(&n, &next),
+        "turn N+1 must begin with turn N's request up to its newest answer:\nN:   {:#?}\nN+1: {:#?}",
+        text_of(&n),
+        text_of(&next)
+    );
+    // Then N's exchange, verbatim, and the new final message.
+    let rest = text_of(&next).split_off(n.messages.len() - 1);
+    assert_eq!(rest.len(), 3, "{rest:#?}");
+    assert!(rest[0].1.starts_with("Turn 39:"));
+    assert!(rest[1].1.starts_with("Turn 40:"));
+}
+
+/// When the window no longer fits after the summary it has to start later,
+/// and the turns in between are carried by nothing. The plan asks for the
+/// summary to cover them, and a little more: the newest half of the window
+/// stays verbatim, so the requests after the refold extend one another again.
+#[test]
+fn the_summary_refolds_when_the_window_start_moves() {
+    let transcript = long_transcript(40);
+    let moved = small_plan(&summarized(4, 40), &transcript, "Next question", day());
+    let start = window_start(&moved).expect("a window");
+    assert!(start > 5, "the anchored window no longer fits: {start}");
+    let refold = moved
+        .summary_refold
+        .expect("turns between the summary and the window are carried by nothing");
+    assert_eq!(refold.window_start_sequence, start);
+    assert!(refold.through_sequence >= start - 1 && refold.through_sequence < 40);
+    assert_eq!(
+        refold.through_sequence % 2,
+        0,
+        "the next window opens on a user turn"
+    );
+    assert!(
+        (40 - refold.through_sequence) * 2 <= 40 - start + 1,
+        "at most half the window stays verbatim: {refold:?}"
+    );
+
+    // Consolidation refolds through that point. The next request opens right
+    // after it, asks for nothing, and the one after extends it.
+    let after = small_plan(
+        &summarized(refold.through_sequence, 42),
+        &long_transcript(42),
+        "Another question",
+        day(),
+    );
+    assert_eq!(window_start(&after), Some(refold.through_sequence + 1));
+    assert!(after.summary_refold.is_none());
+    let following = small_plan(
+        &summarized(refold.through_sequence, 44),
+        &long_transcript(44),
+        "And another",
+        day(),
+    );
+    assert!(following.summary_refold.is_none());
+    assert!(extends(&after, &following));
+}
+
+/// A window that holds every turn after the summary but cannot reach back to
+/// it, because the turns in between were never offered, still asks for the
+/// refold: it would otherwise slide by one turn with every request.
+#[test]
+fn candidates_that_start_past_the_summary_ask_for_a_refold() {
+    // Messages 31 to 40, the newest five short: half the window's tokens
+    // would keep seven of them, half its messages keeps five.
+    let mut transcript = long_transcript(40).split_off(30);
+    for message in transcript.iter_mut().skip(5) {
+        message.content = format!("Turn {}: short.", message.sequence);
+    }
+    let memory = summarized(4, 40);
+    let mut request = request(Some(&memory), &transcript, 32_768);
+    request.recent_reaches_start = false;
+    let plan = assembler().assemble(&request).expect("plan");
+    assert_eq!(window_start(&plan), Some(31));
+    let refold = plan.summary_refold.expect("turns 5 to 30 were never read");
+    assert_eq!(refold.window_start_sequence, 31);
+    // The candidate list ended the window, so the room it leaves is counted
+    // in messages too, and the next window opens on the user turn at 37.
+    assert_eq!(refold.through_sequence, 36, "{refold:?}");
 }
 
 #[test]

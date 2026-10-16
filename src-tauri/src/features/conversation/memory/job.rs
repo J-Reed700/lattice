@@ -243,8 +243,9 @@ impl CompactionJob {
         drop(slot);
     }
 
-    /// [`Self::run_with_retry`], again for each further page of a dropped
-    /// summary while consolidation's deadline has room for one.
+    /// [`Self::run_with_retry`], again for each further page of a fold over
+    /// source below the watermark while consolidation's deadline has room for
+    /// one.
     ///
     /// Only consolidation keeps going: it runs after an answer with no one
     /// waiting, while a `/compact` or the compaction a turn waits on takes one
@@ -333,19 +334,74 @@ impl CompactionJob {
 
 /// Where the working summary's coverage ends, never past the watermark.
 ///
-/// Normally that is the watermark itself: every commit ends the summary on the
-/// last message it processed. But a delete drops a summary whose boundary is at
-/// or after the deleted message (by trigger, or by its `up_to_message_id`
-/// cascade), and a user correction clears it, while the ledger stays usable and
-/// the watermark stays put. With no summary every eligible message at or below
-/// the watermark is then covered by extraction and by no summary, so it is
-/// folded again from the start. A summary whose boundary cannot be placed is
-/// trusted to reach the watermark, as it always was.
+/// Usually behind the watermark: extraction runs after every answer, and the
+/// summary moves only when a run folds it ([`FoldTarget`]). A delete also drops
+/// a summary whose boundary is at or after the deleted message (by trigger, or
+/// by its `up_to_message_id` cascade), and a user correction clears it, while
+/// the ledger stays usable and the watermark stays put. With no summary every
+/// eligible message at or below the watermark is covered by extraction and by
+/// no summary, so the next fold starts from the beginning. A summary whose
+/// boundary cannot be placed is trusted to reach the watermark, as it always
+/// was.
 fn summary_resume_point(snapshot: &MemorySnapshot, start_after: i64) -> i64 {
-    match (&snapshot.summary, snapshot.summary_through_sequence) {
-        (None, _) => 0,
-        (Some(_), Some(through)) => through.min(start_after),
-        (Some(_), None) => start_after,
+    snapshot.summary_covers_through().min(start_after)
+}
+
+/// What a run does with the working summary.
+///
+/// The prompt opens its verbatim window where the summary ends, so a summary
+/// that moved after every answer would change the head of every request.
+/// Consolidation after an answer therefore refolds only when that turn's
+/// prompt asked: its window had to drop turns the summary does not cover. A
+/// request a refold since then already satisfied is not repeated. `/compact`
+/// and the compaction a turn waits on fold everything they extract, as they
+/// always have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FoldTarget {
+    /// Leave the summary as it is; extraction moves on without it.
+    Keep,
+    /// Refold through this sequence.
+    Through(i64),
+    /// Fold everything this run extracts.
+    Extracted,
+}
+
+impl FoldTarget {
+    /// The fold `request` asks for, with the summary covering through `covered`.
+    fn for_run(request: &CompactionRequest, covered: i64) -> Self {
+        match (request.summary_refold, request.trigger) {
+            (Some(refold), _) if refold.is_needed(covered) => {
+                Self::Through(refold.through_sequence)
+            }
+            (Some(_), _) | (None, CompactionTrigger::Maintenance) => Self::Keep,
+            (None, CompactionTrigger::Manual | CompactionTrigger::Automatic) => Self::Extracted,
+        }
+    }
+
+    /// The end of the source below the watermark this fold reads back, after
+    /// `covered` and through at most `start_after`, or `None` when it reads
+    /// none. Earlier runs extracted it; a fold reads it again, never
+    /// re-extracts it.
+    fn below_watermark(self, covered: i64, start_after: i64) -> Option<i64> {
+        let through = match self {
+            Self::Keep => return None,
+            Self::Through(through) => through.min(start_after),
+            Self::Extracted => start_after,
+        };
+        Some(through).filter(|through| *through > covered)
+    }
+
+    /// Where the fold ends once extraction accepted through
+    /// `accepted_through`, or `None` when the summary stays as it is. It never
+    /// runs past the watermark: a message beyond it has no memory record, and
+    /// the window has to keep carrying it verbatim.
+    fn end(self, covered: i64, accepted_through: i64) -> Option<i64> {
+        let end = match self {
+            Self::Keep => return None,
+            Self::Through(through) => through.min(accepted_through),
+            Self::Extracted => accepted_through,
+        };
+        Some(end).filter(|end| *end > covered)
     }
 }
 
@@ -372,14 +428,15 @@ fn redact_forgotten(
         .collect()
 }
 
-/// One page of `(summary boundary, watermark]`: source the ledger covers and
-/// the summary must cover again. It is folded, never re-extracted.
+/// One page of `(summary boundary, fold end]` below the watermark: source the
+/// ledger covers and the summary is to cover. It is folded, never
+/// re-extracted.
 struct Refold {
     /// Everything read, eligible or not. The last message is where the new
     /// summary ends, so the next refold starts after it.
     read: Vec<SourceMessage>,
-    /// The read reached the watermark, so fresh source can follow it into the
-    /// same fold without leaving a gap.
+    /// The read reached the end it was asked for, so fresh source can follow
+    /// it into the same fold without leaving a gap.
     finished: bool,
     /// There is something to write: eligible source, or an earlier summary to
     /// carry forward to a later boundary. Without either the range holds only
