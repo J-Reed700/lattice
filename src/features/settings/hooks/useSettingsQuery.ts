@@ -72,16 +72,19 @@ export function useUpdateSettingsMutation() {
  * the backend's state.
  */
 export function useSettingsTransfer() {
-  const queryClient = useQueryClient();
+  const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
   const refreshOnSuccess = (result: { ok: boolean }) => {
     if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
   };
-  const reset = useMutation({ mutationFn: () => VaultAPI.resetSettings(), onSuccess: refreshOnSuccess });
-  const importJson = useMutation({
-    mutationFn: (json: string) => VaultAPI.importSettings(json, false),
-    onSuccess: refreshOnSuccess,
-  });
-  const exportJson = useMutation({ mutationFn: () => VaultAPI.exportSettings() });
+  const reset = useMutation({ mutationFn: () => VaultAPI.resetSettings(), onSuccess: refreshOnSuccess }, queryClient);
+  const importJson = useMutation(
+    {
+      mutationFn: (json: string) => VaultAPI.importSettings(json, false),
+      onSuccess: refreshOnSuccess,
+    },
+    queryClient
+  );
+  const exportJson = useMutation({ mutationFn: () => VaultAPI.exportSettings() }, queryClient);
   return { resetSettings: reset.mutateAsync, importSettings: importJson.mutateAsync, exportSettings: exportJson.mutateAsync };
 }
 
@@ -90,11 +93,17 @@ export function useSettingsTransfer() {
  * serializes concurrent changes; a success refreshes the settings cache.
  */
 export function useWatchFolderMutations() {
-  const queryClient = useQueryClient();
+  const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
   const refreshOnSuccess = (result: { ok: boolean }) => {
     if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
   };
-  const add = useMutation({ mutationFn: (path: string) => VaultAPI.addWatchFolder(path), onSuccess: refreshOnSuccess });
-  const remove = useMutation({ mutationFn: (path: string) => VaultAPI.removeWatchFolder(path), onSuccess: refreshOnSuccess });
+  const add = useMutation(
+    { mutationFn: (path: string) => VaultAPI.addWatchFolder(path), onSuccess: refreshOnSuccess },
+    queryClient
+  );
+  const remove = useMutation(
+    { mutationFn: (path: string) => VaultAPI.removeWatchFolder(path), onSuccess: refreshOnSuccess },
+    queryClient
+  );
   return { addWatchFolder: add.mutateAsync, removeWatchFolder: remove.mutateAsync };
 }
