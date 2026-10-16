@@ -24,10 +24,6 @@
 //! }
 //! ```
 
-use crate::features::embedding::entity::Embedding as DomainEmbedding;
-use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapper};
-use crate::features::embedding::repository::Embedding;
-use crate::features::mentions::entity::Mention;
 // Tag removed - migrated to DDD (MockTagRepository now in shared/traits.rs)
 // Chunk removed - migrated to DDD (use lattice_core::domain::entities::chunk::Chunk)
 // Document removed - migrated to DDD (use lattice_core::domain::entities::Document at line ~380)
@@ -36,13 +32,9 @@ use crate::features::mentions::entity::Mention;
 
 mod chunk;
 mod document;
-mod embedding;
-mod mention;
 
 pub use chunk::MockChunkRepository;
 pub use document::MockDocumentRepository;
-pub use embedding::MockEmbeddingRepository;
-pub use mention::MockMentionRepository;
 
 // MockTagRepository REMOVED - migrated to DDD
 // The old MockTagRepository using crate::models::tag::Tag has been removed.

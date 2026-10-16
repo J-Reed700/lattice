@@ -3,9 +3,9 @@
 //! Transaction-based implementation of EmbeddingRepository that delegates to ops.rs.
 //! This enables transactional operations within a broader unit of work.
 
-use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
+use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Sqlite, Transaction};
 use std::sync::{Arc, Weak};

@@ -6,15 +6,15 @@
 //! existing call site's behaviour unchanged.
 
 use crate::features::indexing::engine::extraction::ContentExtractor;
-use crate::features::transcription::engine::{
-    group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
-};
 use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use async_trait::async_trait;
 use lattice_core::application::ports::content_extraction_port::{
     ContentExtractionPort, ExtractedContentData,
 };
 use lattice_core::application::ports::{OcrPort, TranscriptionPort};
+use lattice_core::application::services::transcript::{
+    group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
+};
 use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
 use std::sync::Arc;

@@ -350,14 +350,6 @@ impl lattice_core::application::ports::UnitOfWork for MockUnitOfWork {
         Ok(Box::new(MockEmbeddingRepo))
     }
 
-    fn search_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::domain::repositories::SearchRepository + Send + '_>> {
-        Err(AppError::InvalidState(
-            "Search repository not used in test".to_string(),
-        ))
-    }
-
     fn system_repository(
         &self,
     ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>> {

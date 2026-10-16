@@ -10,7 +10,11 @@ use parking_lot::RwLock;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
 use lattice_core::shared::error::Result;
 
-use super::{DomainEmbedding, Embedding, EmbeddingDTO, EmbeddingMapper};
+use crate::features::embedding::repository::Embedding;
+use crate::infrastructure::persistence::repositories::embedding::mapper::{
+    EmbeddingDTO, EmbeddingMapper,
+};
+use lattice_core::domain::entities::Embedding as DomainEmbedding;
 
 /// In-memory mock implementation of EmbeddingRepositoryTrait
 #[derive(Clone)]

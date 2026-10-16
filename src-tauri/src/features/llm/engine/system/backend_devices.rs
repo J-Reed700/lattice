@@ -27,6 +27,7 @@
 
 use std::time::Duration;
 
+use lattice_core::application::ports::{AcceleratorProbe, ComputeType, GpuInfo};
 use tauri::AppHandle;
 use tokio::sync::OnceCell;
 
@@ -190,6 +191,32 @@ impl BackendDevices {
     /// has probed yet, which is different from "no devices".
     pub fn cached(&self) -> Option<&[BackendDevice]> {
         self.probed.get().map(Vec::as_slice)
+    }
+}
+
+/// The system-info adapter's view of the probe: the largest accelerator the
+/// sidecar listed, or `None` before anything has probed.
+impl AcceleratorProbe for BackendDevices {
+    fn probed_gpu(&self) -> Option<GpuInfo> {
+        let device = self
+            .cached()?
+            .iter()
+            .filter(|device| device.is_accelerator())
+            .max_by_key(|device| device.total_mib)?;
+
+        Some(GpuInfo {
+            name: device.name.clone(),
+            vram_gb: (device.total_mib > 0).then(|| device.total_gb()),
+            compute_type: match device.vendor() {
+                GPUVendor::Apple => ComputeType::Metal,
+                GPUVendor::Nvidia => ComputeType::Cuda,
+                GPUVendor::AMD => ComputeType::Rocm,
+                // The port models only these three backends, and Intel/Arc runs
+                // through SYCL or Vulkan; `None` here would read as "no GPU",
+                // which is worse than naming the nearest neighbour.
+                GPUVendor::Intel | GPUVendor::Unknown => ComputeType::None,
+            },
+        })
     }
 }
 

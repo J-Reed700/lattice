@@ -51,9 +51,9 @@ impl FileOpsModule {
         core: Arc<CoreModule>,
         extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
     ) -> lattice_core::shared::error::Result<Self> {
+        use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
         use crate::features::indexing::engine::extraction::ContentExtractor;
         use crate::features::tags::service::TagService;
-        use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
         use crate::infrastructure::file_system::file_storage::SecureFileStorage;
         use crate::infrastructure::file_system::FileSystemAdapter;
         use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;

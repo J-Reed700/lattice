@@ -25,6 +25,7 @@
 //! No port or plugin — indexing flows through other plugins.
 
 pub mod commands;
+pub mod content_extraction_adapter;
 pub mod di;
 pub mod dto;
 pub mod library_gc;
@@ -37,6 +38,7 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
+pub use content_extraction_adapter::ContentExtractionAdapter;
 pub use library_gc::{LibraryGc, SweepReport};
 pub use trait_def::IndexStorageTrait;
 pub mod engine;

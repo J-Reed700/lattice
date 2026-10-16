@@ -315,14 +315,6 @@ impl lattice_core::application::ports::UnitOfWork for MockUnitOfWork {
         Ok(Box::new(MockUowEmbeddingRepo))
     }
 
-    fn search_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::domain::repositories::SearchRepository + Send + '_>> {
-        Err(AppError::InvalidState(
-            "Search repository not used in test".to_string(),
-        ))
-    }
-
     fn system_repository(
         &self,
     ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>> {
@@ -496,7 +488,9 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
     let stale_keys: Vec<String> = aggregate
         .chunks()
         .iter()
-        .map(|c| crate::features::embedding::encoding::vector_key(&c.id().to_string()))
+        .map(|c| {
+            lattice_core::shared::persistence::embedding_encoding::vector_key(&c.id().to_string())
+        })
         .collect();
     assert!(!stale_keys.is_empty(), "fixture must start with chunks");
 

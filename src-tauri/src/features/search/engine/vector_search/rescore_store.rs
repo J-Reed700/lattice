@@ -51,7 +51,7 @@ use parking_lot::{Mutex, RwLock};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 
-/// Width of one `f32` on disk. Matches `features::embedding::encoding`.
+/// Width of one `f32` on disk. Matches `lattice_core::shared::persistence::embedding_encoding`.
 const F32_BYTES: usize = 4;
 
 /// The lazily opened slot file.

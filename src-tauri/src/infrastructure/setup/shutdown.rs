@@ -1,5 +1,4 @@
 use super::background_workers::BackgroundWorkers;
-use crate::features::llm::engine::sidecar_manager::SidecarRegistry;
 use crate::interfaces::di::Container;
 use std::time::Duration;
 use tauri::Manager;
@@ -8,12 +7,21 @@ use tokio_util::sync::CancellationToken;
 // Extended timeouts to handle SQLite busy conditions
 const DB_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+/// The synchronous sweep shutdown runs before any async cleanup: it kills
+/// every sidecar process the app registered and returns how many, or `None`
+/// when no registry is managed.
+///
+/// The processes belong to a feature, so the composition root manages this
+/// hook with that feature's sweep instead of shutdown naming the feature.
+#[derive(Clone, Copy)]
+pub struct SidecarSweep(pub fn(&tauri::AppHandle) -> Option<usize>);
+
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     tracing::info!("Exit requested, starting graceful shutdown");
 
     // Close background admission and broadcast cancellation before sweeping
     // sidecars. In-flight model starts can still cross the process boundary,
-    // but SidecarRegistry closes admission atomically during kill_all() and
+    // but the sidecar registry closes admission atomically during kill_all() and
     // kills any child that tries to register afterwards.
     if let Some(tasks) = app_handle
         .try_state::<std::sync::Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
@@ -29,17 +37,17 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     // anti-zombie hook — by the time the tokio runtime starts tearing
     // down (which makes Drop-based kills race-y), every sidecar PID
     // is already SIGKILL'd. Survives panics in the rest of shutdown.
-    if let Some(registry) = app_handle.try_state::<SidecarRegistry>() {
-        let killed = registry.kill_all();
-        if killed > 0 {
-            tracing::info!(
-                count = killed,
-                "Killed {} llama-server sidecar(s) during shutdown",
-                killed
-            );
-        }
-    } else {
-        tracing::debug!("SidecarRegistry not managed; skipping sidecar shutdown");
+    match app_handle
+        .try_state::<SidecarSweep>()
+        .and_then(|sweep| (sweep.0)(app_handle))
+    {
+        Some(killed) if killed > 0 => tracing::info!(
+            count = killed,
+            "Killed {} llama-server sidecar(s) during shutdown",
+            killed
+        ),
+        Some(_) => {}
+        None => tracing::debug!("No sidecar registry managed; skipping sidecar shutdown"),
     }
 
     tauri::async_runtime::block_on(async {

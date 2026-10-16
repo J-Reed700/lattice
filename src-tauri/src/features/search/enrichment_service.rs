@@ -24,8 +24,8 @@
 //! - 4 concurrent batches for 3-4x speedup over sequential
 //! - Typical enrichment time: ~50ms for 100 chunks
 
+use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::infrastructure::persistence::database::connection::query_with_timeout;
-use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use lattice_core::shared::error::AppError;

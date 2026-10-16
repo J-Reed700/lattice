@@ -227,7 +227,11 @@ impl DeleteDocumentUseCase {
         // shared with the writers and the startup rebuild.
         let embedding_keys: Vec<String> = chunks
             .iter()
-            .map(|chunk| crate::features::embedding::encoding::vector_key(&chunk.id().to_string()))
+            .map(|chunk| {
+                lattice_core::shared::persistence::embedding_encoding::vector_key(
+                    &chunk.id().to_string(),
+                )
+            })
             .collect();
         let vector_search = Arc::clone(&self.vector_search);
         tokio::task::spawn_blocking(move || vector_search.remove_embeddings(&embedding_keys))

@@ -6,13 +6,13 @@ use sqlx::SqlitePool;
 
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
+use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::engine::extraction::{ContentExtractor, ExtractionWorkers};
 use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
 };
 use crate::features::indexing::LibraryGc;
-use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::infrastructure::persistence::repositories::{
