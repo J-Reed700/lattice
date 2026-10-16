@@ -15,9 +15,11 @@
 //! crate, which this crate depends on and which never depends on it.
 //!
 //! [`infrastructure`] contains reusable technical implementations: persistence,
-//! messaging, model caching, filesystem access, security, and app setup.
+//! messaging, model caching, filesystem access, security, and setup steps.
 //! [`interfaces`] wires dependencies and exposes shared command adapters;
-//! [`plugins`] registers the feature-owned Tauri plugins.
+//! [`plugins`] registers the feature-owned Tauri plugins. [`bootstrap`] is the
+//! composition root: the startup sequence and shutdown, which only the entry
+//! points call.
 //!
 //! Features still reference each other directly in places; the checker counts
 //! those edges against a baseline that may only shrink.
@@ -36,8 +38,11 @@ pub mod features;
 
 pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 
-/// Reusable technical implementations and application setup.
+/// Reusable technical implementations and setup steps.
 pub mod infrastructure;
+
+/// The composition root: startup and shutdown. Only entry points use it.
+pub mod bootstrap;
 
 pub use infrastructure::{
     extraction, file_system, ml, observability, persistence, security, services,

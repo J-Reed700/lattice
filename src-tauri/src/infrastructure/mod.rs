@@ -4,7 +4,8 @@
 //! - `events`: in-process commands, broadcast notifications, and event bridges
 //! - `ml`: shared model caching and embedding exports
 //! - `persistence`: SQLite setup, migrations, and cross-feature repositories
-//! - `setup`: startup, background workers, and shutdown
+//! - `setup`: directories, database, tracing and tokenizer setup steps, and the
+//!   renderer shutdown hook; the startup sequence is in `crate::bootstrap`
 //! - Other named modules own filesystem, security, and observability work.
 //!
 //! Feature-specific loaders and repositories belong with their owning feature.

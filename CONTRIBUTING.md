@@ -96,9 +96,10 @@ environment, `application` imports no feature, infrastructure or interfaces
 module, and `shared/error` imports no layer or driver. It also ratchets the
 outer ring against `scripts/rust-architecture-check/baseline.txt`:
 infrastructure importing a feature, one feature referencing another, the DI
-`Container` imported outside plugin, command, DI, desktop, setup and
-interfaces files, and raw `tokio`/`tauri`/`std::thread` spawns outside
-`shared/runtime`. A new or rising count fails. After removing violations, run
+`Container` imported outside plugin, command, DI, desktop, bootstrap and
+interfaces files, the composition root (`bootstrap`, startup and shutdown)
+referenced from anywhere but `main.rs`, `lib.rs` and `bin/*`, and raw
+`tokio`/`tauri`/`std::thread` spawns outside `shared/runtime`. A new or rising count fails. After removing violations, run
 `bash scripts/check-rust-layer-boundaries.sh --write-baseline` and commit the
 smaller baselines; never add a line to get a change through.
 
