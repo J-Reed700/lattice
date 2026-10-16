@@ -20,6 +20,11 @@ export interface ModelPickerPopoverProps {
   onSelect: (_modelId: string, _modelLabel: string) => void | Promise<void>;
   children: ReactNode;
   align?: 'start' | 'end';
+  /** Controlled open state, for a picker opened from somewhere other than its child. */
+  open?: boolean;
+  onOpenChange?: (_open: boolean) => void;
+  /** The child only positions the picker; it does not toggle it (an overflow menu opens it). */
+  anchorOnly?: boolean;
 }
 
 const labelFor = (model: DownloadedModel): string => model.model_name || model.model_id;
@@ -29,8 +34,16 @@ export function ModelPickerPopover({
   onSelect,
   children,
   align = 'end',
+  open: openProp,
+  onOpenChange,
+  anchorOnly = false,
 }: ModelPickerPopoverProps) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = openProp ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const { downloadedModels } = useDownloadedModels();
 
   const chatModels = useMemo(
@@ -52,7 +65,11 @@ export function ModelPickerPopover({
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>{children}</Popover.Trigger>
+      {anchorOnly ? (
+        <Popover.Anchor asChild>{children}</Popover.Anchor>
+      ) : (
+        <Popover.Trigger asChild>{children}</Popover.Trigger>
+      )}
       <Popover.Portal>
         <Popover.Content
           sideOffset={6}
