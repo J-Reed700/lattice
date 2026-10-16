@@ -139,7 +139,7 @@ pub use config::{SidecarBinary, SidecarConfig, SpeculativeDecoding};
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;
 pub(super) use process::SpawnedChild;
-pub use registry::{reap_orphan_sidecars, SidecarRegistry};
+pub use registry::{kill_registered_sidecars, reap_orphan_sidecars, SidecarRegistry};
 pub use startup::SidecarManager;
 
 use config::*;

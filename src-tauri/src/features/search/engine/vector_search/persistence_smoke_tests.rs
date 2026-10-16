@@ -1,6 +1,6 @@
 //! Opt-in real-model lifecycle check. All state lives in a temporary directory.
 use super::*;
-use crate::features::embedding::{candle_service::CandleEmbeddingService, encoding, generation};
+use crate::features::embedding::{candle_service::CandleEmbeddingService, generation};
 use crate::features::indexing::use_cases::embedding_input::{
     embed_prepared_chunks, prepare_structured_with_spans,
 };
@@ -9,6 +9,7 @@ use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::entities::document::Document;
 use lattice_core::domain::value_objects::{ChunkingStrategy, FileMetadata};
+use lattice_core::shared::persistence::embedding_encoding;
 use lattice_core::shared::types::ValidatedFilePath;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
@@ -68,8 +69,8 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
             .bind(chunk.embedding_text()).bind(chunk.chunk_index() as i64)
             .execute(&mut *tx).await.unwrap();
         sqlx::query("INSERT INTO text_embeddings (id, chunk_id, embedding, model_name, dimension) VALUES (?, ?, ?, ?, ?)")
-            .bind(encoding::vector_key(chunk.id().as_str())).bind(chunk.id().as_str())
-            .bind(encoding::encode_embedding(vector)).bind(&identity).bind(dimension as i64)
+            .bind(embedding_encoding::vector_key(chunk.id().as_str())).bind(chunk.id().as_str())
+            .bind(embedding_encoding::encode_embedding(vector)).bind(&identity).bind(dimension as i64)
             .execute(&mut *tx).await.unwrap();
     }
     tx.commit().await.unwrap();

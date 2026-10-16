@@ -1,6 +1,7 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::embedding_encoding;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
@@ -78,7 +79,7 @@ pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usi
             }
             // The source may have been deleted or edited while inference ran.
             sqlx::query("INSERT OR REPLACE INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) SELECT ?, id, ?, ?, ? FROM text_chunks WHERE id = ? AND COALESCE(NULLIF(contextualized_content, ''), content) = ?")
-                .bind(&identity).bind(&hash).bind(super::encoding::encode_embedding(&combined)).bind(model.dimension() as i64).bind(&id).bind(&text).execute(pool).await?;
+                .bind(&identity).bind(&hash).bind(embedding_encoding::encode_embedding(&combined)).bind(model.dimension() as i64).bind(&id).bind(&text).execute(pool).await?;
             completed += 1;
         }
         tracing::info!(completed, model_identity = %identity, "Preparing embedding generation");
@@ -134,12 +135,12 @@ pub async fn restore_page(
         {
             continue;
         }
-        let vector = super::encoding::decode_embedding(&bytes)?;
+        let vector = embedding_encoding::decode_embedding(&bytes)?;
         if vector.len() != dimension || vector.iter().any(|v| !v.is_finite()) {
             return Err(AppError::InvalidState("Invalid persisted embedding".into()));
         }
         result.push((
-            super::encoding::vector_key(&id),
+            embedding_encoding::vector_key(&id),
             vector,
             String::new(),
             id,

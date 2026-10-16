@@ -113,8 +113,12 @@ export function DisplayTab() {
                   )}
                 >
                   <span className="theme-preview" data-preview={theme.value} aria-hidden="true">
-                    <span className="theme-preview-sidebar"><span /><span /><span /></span>
-                    <span className="theme-preview-page"><span /><span /><span /></span>
+                    {(theme.value === 'system' ? (['light', 'dark'] as const) : [theme.value]).map((scene) => (
+                      <span key={scene} className="theme-preview-scene" data-scene={scene}>
+                        <span className="theme-preview-sidebar"><span /><span /><span /></span>
+                        <span className="theme-preview-page"><span /><span /><span /></span>
+                      </span>
+                    ))}
                   </span>
                   <span className="mt-2 flex flex-wrap items-center justify-center gap-1.5 py-1 text-xs font-medium">
                     <Icon className="h-3.5 w-3.5" aria-hidden="true" />{theme.label}

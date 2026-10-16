@@ -1,4 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as renderView, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +10,9 @@ import VaultAPI from '@/lib/api';
 
 
 vi.mock('@/lib/api', () => ({ default: { quickCapture: vi.fn() } }));
+
+const render = (view: ReactElement) =>
+  renderView(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>{view}</QueryClientProvider>);
 
 describe('JournalCapturePreview', () => {
   it('keeps the preview on failure and opens the acknowledged note after retry', async () => {

@@ -236,7 +236,7 @@ async fn semantic_recall_finds_paraphrases_but_never_foreign_or_incompatible_vec
         )
         .await;
         sqlx::query("INSERT INTO conversation_memory_vectors(id,conversation_id,message_id,role,content,embedding,dimension,embedding_model) VALUES (?,?,?,'user',?,?,2,?)")
-            .bind(id).bind(conversation).bind(id).bind(text).bind(crate::features::embedding::encoding::encode_embedding(&[1.0,0.0])).bind(model).execute(&pool).await.unwrap();
+            .bind(id).bind(conversation).bind(id).bind(text).bind(lattice_core::shared::persistence::embedding_encoding::encode_embedding(&[1.0,0.0])).bind(model).execute(&pool).await.unwrap();
     }
     let repo = repo.with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
     let found = repo

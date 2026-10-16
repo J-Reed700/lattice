@@ -4,8 +4,6 @@
 //! service types in the system. Feature-specific traits live with their
 //! feature (e.g. `crate::features::tags::TagServiceTrait`).
 
-mod context;
 mod model;
 
-pub use context::*;
 pub use model::*;

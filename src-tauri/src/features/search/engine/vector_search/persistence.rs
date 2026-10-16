@@ -263,7 +263,7 @@ async fn hydrate_content(
         cursor = last.clone();
         filled += index.hydrate_content(
             rows.into_iter()
-                .map(|id| crate::features::embedding::encoding::vector_key(&id)),
+                .map(|id| lattice_core::shared::persistence::embedding_encoding::vector_key(&id)),
         );
     }
     Ok(filled)

@@ -281,3 +281,59 @@ export function useExplorerIndexCommands() {
     },
   }), [client]);
 }
+
+/**
+ * Files read once stay in memory for half an hour, so a link back to one
+ * opens it at once. A file older than a minute (or any, when the window
+ * regains focus) is read again behind what is shown, so edits made in
+ * another editor still come through.
+ */
+const FILE_CACHE = { staleTime: 60_000, gcTime: 30 * 60_000 } as const;
+
+export const explorerDirKey = (root: string, path: string) => ['explorer', 'dir', root, path] as const;
+
+/** One listing per directory in `dirs`, in the same order. Only open directories are read. */
+export function useExplorerDirListings(root: string, dirs: readonly string[]) {
+  return useQueries({
+    queries: dirs.map((path) => ({
+      queryKey: explorerDirKey(root, path),
+      queryFn: async () => unwrapApiResult(await VaultAPI.explorerListDir(root, path)),
+      staleTime: 10_000,
+    })),
+  });
+}
+
+/** The open file's text, or why it is not shown; idle until a file is open. */
+export function useExplorerFileQuery(root: string, path: string | null) {
+  return useQuery({
+    queryKey: ['explorer', 'file', root, path],
+    queryFn: async () => unwrapApiResult(await VaultAPI.explorerReadFile(root, path!)),
+    enabled: Boolean(path),
+    ...FILE_CACHE,
+  });
+}
+
+/**
+ * Files in the folder that a missing path may have meant. `exists` says the
+ * path itself came back: the file is there but would not read.
+ */
+export function useExplorerLocateQuery(root: string, path: string) {
+  return useQuery({
+    queryKey: ['explorer', 'locate', root, path],
+    queryFn: async () => {
+      const found = unwrapApiResult(await VaultAPI.explorerLocateFile(root, path));
+      return { exists: found.includes(path), matches: found.filter((match) => match !== path) };
+    },
+    ...FILE_CACHE,
+  });
+}
+
+/** Text matches in the folder; idle until `enabled`. */
+export function useExplorerSearchQuery(root: string, query: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['explorer', 'search', root, query],
+    queryFn: async () => unwrapApiResult(await VaultAPI.explorerSearch(root, query, { maxResults: 200 })),
+    enabled,
+    staleTime: 5_000,
+  });
+}

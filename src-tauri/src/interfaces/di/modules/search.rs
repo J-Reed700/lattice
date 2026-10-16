@@ -11,8 +11,8 @@ use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseC
 use lattice_core::application::ports::{DocumentRepository, VectorSearchPort};
 
 // Service Traits
+use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
-use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 
 /// Search module for semantic, hybrid, and file search
 ///

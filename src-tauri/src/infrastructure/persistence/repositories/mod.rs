@@ -10,6 +10,8 @@ pub mod file_library;
 // Transaction-aware repository implementations (Tx modules)
 pub mod chunk;
 pub mod document;
+pub mod embedding;
+pub mod model;
 pub mod model_file;
 pub mod system;
 

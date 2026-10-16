@@ -21,6 +21,11 @@ export interface ModelPickerPopoverProps {
   children: ReactNode;
   align?: 'start' | 'end';
   side?: 'top' | 'bottom';
+  /** Controlled open state, for a picker opened from somewhere other than its child. */
+  open?: boolean;
+  onOpenChange?: (_open: boolean) => void;
+  /** The child only positions the picker; it does not toggle it (an overflow menu opens it). */
+  anchorOnly?: boolean;
 }
 
 const GROUP_ORDER: Array<ChatModelOption['group']> = ['Local', 'llama.cpp', 'Ollama', 'Cloud'];
@@ -31,8 +36,16 @@ export function ModelPickerPopover({
   children,
   align = 'end',
   side = 'top',
+  open: openProp,
+  onOpenChange,
+  anchorOnly = false,
 }: ModelPickerPopoverProps) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = openProp ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const { downloadedModels } = useDownloadedModels();
   const { data: settings } = useSettingsQuery();
 
@@ -62,7 +75,11 @@ export function ModelPickerPopover({
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>{children}</Popover.Trigger>
+      {anchorOnly ? (
+        <Popover.Anchor asChild>{children}</Popover.Anchor>
+      ) : (
+        <Popover.Trigger asChild>{children}</Popover.Trigger>
+      )}
       <Popover.Portal>
         <Popover.Content
           side={side}

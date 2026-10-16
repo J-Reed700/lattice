@@ -204,7 +204,9 @@ mod tests {
     use std::path::Path;
 
     fn preview_extractor() -> Arc<dyn ContentExtractionPort> {
-        Arc::new(crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter::new())
+        Arc::new(
+            crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter::new(),
+        )
     }
 
     struct MockFileStorage {

@@ -17,8 +17,8 @@
 //! the legacy bincode layout so rows written before this change keep working —
 //! see `looks_like_bincode` for how the two are told apart.
 
-use lattice_core::shared::error::AppError;
-use lattice_core::shared::error::Result;
+use crate::shared::error::AppError;
+use crate::shared::error::Result;
 
 /// Width of one `f32` on disk.
 const F32_BYTES: usize = 4;

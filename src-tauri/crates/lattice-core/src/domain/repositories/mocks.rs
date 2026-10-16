@@ -37,9 +37,7 @@ use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
-use crate::domain::repositories::{
-    model_repository::ModelRepository, SearchRepository, SystemRepository,
-};
+use crate::domain::repositories::{model_repository::ModelRepository, SystemRepository};
 
 use crate::domain::entities::Embedding;
 use crate::domain::entities::{Chunk, Document};
@@ -47,8 +45,6 @@ use crate::domain::entities::{Chunk, Document};
 use crate::domain::entities::model::Model;
 
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
-
-use crate::domain::repositories::search_repository::SearchResult;
 
 use crate::application::ports::repository_port::Filter;
 use crate::application::ports::repository_port::RepositoryPort;
@@ -267,23 +263,6 @@ mock! {
 }
 
 mock! {
-    /// Mock implementation of SearchRepository
-    pub SearchRepo {}
-
-    impl std::fmt::Debug for SearchRepo {
-        fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result;
-    }
-
-    #[async_trait]
-    impl SearchRepository for SearchRepo {
-        async fn search_bm25(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>>;
-        async fn count_searchable_chunks(&self) -> Result<i64>;
-        async fn optimize_index(&self) -> Result<()>;
-        async fn rebuild_index(&self) -> Result<()>;
-    }
-}
-
-mock! {
     /// Mock implementation of SystemRepository
     pub SystemRepo {}
 
@@ -411,7 +390,6 @@ mock! {
         fn chunk_repository<'a>(&'a self) -> Result<Box<dyn ChunkRepositoryPort + Send + 'a>>;
         fn document_repository<'a>(&'a self) -> Result<Box<dyn DocumentRepositoryPort + Send + 'a>>;
         fn embedding_repository<'a>(&'a self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + 'a>>;
-        fn search_repository<'a>(&'a self) -> Result<Box<dyn SearchRepository + Send + 'a>>;
         fn system_repository<'a>(&'a self) -> Result<Box<dyn SystemRepository + Send + 'a>>;
         fn model_repository<'a>(&'a self) -> Result<Box<dyn ModelRepositoryPort + 'a>>;
         fn model_file_repository<'a>(&'a self) -> Result<Box<dyn ModelFileRepositoryPort + 'a>>;

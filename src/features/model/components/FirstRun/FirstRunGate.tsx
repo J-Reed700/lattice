@@ -10,13 +10,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useFirstRunDismissal } from '@/features/model/hooks/useFirstRunDismissal';
-import { VaultAPI } from '@/lib/api';
+import { fetchFirstRunStatus } from '@/features/model/hooks/useFirstRunSetup';
 
 import { ModelSetupModal } from './ModelSetupModal';
-
-interface FirstRunStatusResponse {
-  needs_setup: boolean;
-}
 
 export function FirstRunGate() {
   const { dismissed, isPending, dismiss } = useFirstRunDismissal();
@@ -31,14 +27,12 @@ export function FirstRunGate() {
 
     void (async () => {
       try {
-        // Returns a JSON string to keep the Future small (stack overflow fix).
-        const result = await VaultAPI.checkFirstRunStatus();
+        const result = await fetchFirstRunStatus();
         if (!result.ok) {
           console.error('Failed to check first-run status:', result.error);
           return;
         }
-        const status: FirstRunStatusResponse = JSON.parse(result.data);
-        if (status.needs_setup) setOpen(true);
+        if (result.data.needs_setup) setOpen(true);
       } catch (error) {
         console.error('Failed to check first-run status:', error);
       }

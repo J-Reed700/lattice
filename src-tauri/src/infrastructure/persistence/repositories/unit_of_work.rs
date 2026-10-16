@@ -42,17 +42,16 @@ use lattice_core::application::ports::{
 use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
-use lattice_core::domain::repositories::{SearchRepository, SystemRepository};
+use lattice_core::domain::repositories::SystemRepository;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
+use super::embedding::SqliteEmbeddingRepositoryTx;
+use super::model::SqliteModelRepositoryTx;
 use super::model_file::SqliteModelFileRepositoryTx;
 use super::system::SqliteSystemRepositoryTx;
-use crate::features::embedding::repository_tx::SqliteEmbeddingRepositoryTx;
-use crate::features::model_management::repository_tx::SqliteModelRepositoryTx;
-use crate::features::search::repository_tx::SqliteSearchRepositoryTx;
 
 pub struct SqliteUnitOfWork {
     pub(crate) transaction: Option<Arc<Mutex<Transaction<'static, Sqlite>>>>,
@@ -122,15 +121,6 @@ impl UnitOfWorkTrait for SqliteUnitOfWork {
             .ok_or_else(|| AppError::InvalidState("Transaction already consumed".to_string()))?
             .clone();
         Ok(Box::new(SqliteEmbeddingRepositoryTx::new(tx)))
-    }
-
-    fn search_repository(&self) -> Result<Box<dyn SearchRepository + Send + '_>> {
-        let tx = self
-            .transaction
-            .as_ref()
-            .ok_or_else(|| AppError::InvalidState("Transaction already consumed".to_string()))?
-            .clone();
-        Ok(Box::new(SqliteSearchRepositoryTx::new(tx)))
     }
 
     fn system_repository(&self) -> Result<Box<dyn SystemRepository + Send + '_>> {

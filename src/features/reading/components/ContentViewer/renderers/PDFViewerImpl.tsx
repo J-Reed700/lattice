@@ -3,11 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut , Loader2, AlertCircle } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 
+import { readSourceBytes } from '@/features/reading/hooks/readSourceFile';
 import {
   buildItemTextRenderer,
   findPassagePage,
 } from '@/features/reading/model/pdfPassageSearch';
-import VaultAPI from '@/lib/api';
 import type { PassageLocator, PassageMatchTier } from '@/types/conversation';
 import { isRemoteFileSource, resolveLocalPathFromViewerSource } from '@/utils/fileSources';
 
@@ -81,7 +81,7 @@ export function PDFViewer({
 
     const loadPdfBytes = async () => {
       const resolvedPath = resolveLocalPathFromViewerSource(filePath);
-      const fileResult = await VaultAPI.readFileBytes(resolvedPath);
+      const fileResult = await readSourceBytes(resolvedPath);
 
       if (!fileResult.ok) {
         throw new Error(fileResult.error || 'Failed to read PDF bytes');
