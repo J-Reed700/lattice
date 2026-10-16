@@ -7,29 +7,27 @@
  * is gone.
  *
  * Watch folder add/remove still go through dedicated Tauri commands
- * (`VaultAPI.addWatchFolder` / `removeWatchFolder`) so the backend can
- * run path validation (CWE-22 / CWE-158) and serialize concurrent
- * mutations. Both commands invalidate the SETTINGS query cache on
- * success — React Query refetches the canonical state.
+ * (`useWatchFolderMutations`) so the backend can run path validation
+ * (CWE-22 / CWE-158) and serialize concurrent mutations. Both invalidate
+ * the SETTINGS query cache on success — React Query refetches the
+ * canonical state.
  */
 
 import { useEffect, useState } from 'react';
 
-import { useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';
 import { IndexingActivitySection } from '@/features/files/components/IndexingStatus/IndexingActivitySection';
-import VaultAPI from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 
 import { NUMBER_FIELD_CLASS, ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
 import {
-  SETTINGS_QUERY_KEY,
   useSettingsQuery,
   useUpdateSettingsMutation,
+  useWatchFolderMutations,
 } from '../hooks/useSettingsQuery';
 
 const DEFAULT_BATCH_SIZE = 32;
@@ -37,7 +35,7 @@ const DEFAULT_BATCH_SIZE = 32;
 export function IndexingTab() {
   const { data: settings, isLoading } = useSettingsQuery();
   const updateSettingsMutation = useUpdateSettingsMutation();
-  const queryClient = useQueryClient();
+  const { addWatchFolder, removeWatchFolder } = useWatchFolderMutations();
 
   const [newPattern, setNewPattern] = useState('');
   const [isAddingFolder, setIsAddingFolder] = useState(false);
@@ -56,10 +54,6 @@ export function IndexingTab() {
   const watchFolders = settings?.indexing.indexedPaths ?? [];
   const excludePatterns = settings?.indexing.excludePatterns ?? [];
   const autoIndex = settings?.indexing.autoIndexNewFiles ?? true;
-
-  const invalidateSettings = () => {
-    void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-  };
 
   const handleAutoIndexChange = (checked: boolean) => {
     updateSettingsMutation.mutate(
@@ -84,12 +78,10 @@ export function IndexingTab() {
       if (selected && typeof selected === 'string') {
         if (watchFolders.includes(selected)) return;
 
-        const result = await VaultAPI.addWatchFolder(selected);
+        const result = await addWatchFolder(selected);
         if (!result.ok) {
           toast.error("Couldn't add watch folder", { message: result.error });
-          return;
         }
-        invalidateSettings();
       }
     } catch (error) {
       console.error("Couldn't select folder:", error);
@@ -99,12 +91,10 @@ export function IndexingTab() {
   };
 
   const handleRemoveFolder = async (folder: string) => {
-    const result = await VaultAPI.removeWatchFolder(folder);
+    const result = await removeWatchFolder(folder);
     if (!result.ok) {
       toast.error("Couldn't remove watch folder", { message: result.error });
-      return;
     }
-    invalidateSettings();
   };
 
   const handleAddPattern = async () => {

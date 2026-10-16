@@ -15,16 +15,19 @@ import type { CustomCollection, DocumentMetadata } from '@/types/fileBrowser';
 export const LIBRARY_DOCUMENTS_QUERY_KEY = ['library-documents'] as const;
 const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
 
+/** Every document in the library, up to 10,000. */
+export async function fetchLibraryDocuments(): Promise<DocumentMetadata[]> {
+  const result = await VaultAPI.listAllDocuments(10_000);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  return result.data;
+}
+
 export function useLibraryDocumentsQuery() {
   const query = useQuery<DocumentMetadata[]>({
     queryKey: LIBRARY_DOCUMENTS_QUERY_KEY,
-    queryFn: async () => {
-      const result = await VaultAPI.listAllDocuments(10_000);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-      return result.data;
-    },
+    queryFn: fetchLibraryDocuments,
     staleTime: 15_000,
     // Imports continue after leaving the import screen. Refresh on every visit
     // and while the library is visible so their results cannot stay hidden in

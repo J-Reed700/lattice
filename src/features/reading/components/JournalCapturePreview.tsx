@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { Check, NotebookPen, X } from 'lucide-react';
 
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import VaultAPI from '@/lib/api';
+import { useCaptureToJournalMutation } from '@/features/reading/hooks/useCaptureToJournalMutation';
 
 interface JournalCapturePreviewProps {
   content: string;
@@ -12,6 +12,7 @@ interface JournalCapturePreviewProps {
 }
 
 export function JournalCapturePreview({ content, onClose, onOpenNote }: JournalCapturePreviewProps) {
+  const { mutateAsync: captureToJournal } = useCaptureToJournalMutation();
   const pendingRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export function JournalCapturePreview({ content, onClose, onOpenNote }: JournalC
     setIsSaving(true);
     setError(null);
     try {
-      const result = await VaultAPI.quickCapture(content);
+      const result = await captureToJournal(content);
       if (result.ok) setSaved(result.data);
       else setError(result.error);
     } catch (cause) {

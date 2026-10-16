@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { SettingsRow, SettingsSection } from '@/components/ui';
-import { VaultAPI } from '@/lib/api';
+import { probeLlamaCppServer } from '@/features/settings/hooks/connectionProbes';
 import type { LlamaCppSettingsDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 
@@ -37,7 +37,7 @@ export function LlamaCppConnection() {
   const test = async () => {
     setTesting(true);
     try {
-      const result = await VaultAPI.testLlamaCppConnection(draft);
+      const result = await probeLlamaCppServer(draft);
       if (!result.ok) {
         toast.error('Could not connect to llama.cpp', { message: typeof result.details?.details === 'string' ? result.details.details : result.error });
         setModels([]);

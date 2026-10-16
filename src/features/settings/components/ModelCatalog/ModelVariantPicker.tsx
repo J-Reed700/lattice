@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
 import { Check, ExternalLink } from 'lucide-react';
 
 import { settingsFieldClass } from '@/components/ui';
-import { modelApi } from '@/features/model/api/client';
+import { useModelVariantsQuery } from '@/features/model/hooks/useModelVariantsQuery';
 import { cn } from '@/lib/utils';
 import type { SystemCapabilities } from '@/types/api/models';
 import type { ModelMetadata } from '@/types/modelCatalog';
@@ -25,16 +24,7 @@ export function ModelVariantPicker({ model, selected, capabilities, onSelect }: 
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('size');
   const repoId = model.model_id!;
-  const variants = useQuery({
-    queryKey: ['model-catalog', 'variants', repoId],
-    queryFn: async () => {
-      const result = await modelApi.getModelVariants(repoId);
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    staleTime: 5 * 60_000,
-    retry: false,
-  });
+  const variants = useModelVariantsQuery(repoId);
   const files = useMemo(() => (variants.data ?? [])
     .filter(file => `${file.default_filename} ${modelQuantization(file)}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => sort === 'name'
