@@ -137,8 +137,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("letter.docx");
         let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
-        zip.start_file("word/document.xml", zip::write::FileOptions::default())
-            .unwrap();
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
         zip.write_all(DOCUMENT_XML.as_bytes()).unwrap();
         zip.finish().unwrap();
 

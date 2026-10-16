@@ -566,7 +566,7 @@ mod tests {
             ("xl/worksheets/sheet1.xml", NOTES),
             ("xl/worksheets/sheet2.xml", BUDGET),
         ] {
-            zip.start_file(name, zip::write::FileOptions::default())
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
                 .unwrap();
             zip.write_all(body.as_bytes()).unwrap();
         }
