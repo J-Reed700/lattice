@@ -19,6 +19,12 @@ export interface ChatModelNoticeProps {
    * the retrieval trace. Never inferred in the frontend.
    */
   retrievalUnavailableReason?: string | null;
+  /**
+   * This chat chose a model it cannot use now (deleted, or its connection
+   * removed): the reason, and the way back to the app default. The chat is
+   * never moved to another model by itself.
+   */
+  unavailableModel?: { reason: string; onUseDefault: () => void } | null;
 }
 
 const ROW_CLASS =
@@ -30,8 +36,25 @@ export function ChatModelNotice({
   hasChatModel,
   warmupPhase,
   retrievalUnavailableReason,
+  unavailableModel,
 }: ChatModelNoticeProps) {
   // First match wins: the most blocking problem is the one worth naming.
+  if (unavailableModel) {
+    return (
+      <div className={ROW_CLASS}>
+        <span>{unavailableModel.reason}</span>
+        <span className="flex shrink-0 items-center gap-3">
+          <button type="button" onClick={unavailableModel.onUseDefault} className={ACTION_CLASS}>
+            Use default
+          </button>
+          <Link to="/settings" className={ACTION_CLASS}>
+            Open model settings
+          </Link>
+        </span>
+      </div>
+    );
+  }
+
   if (warmupPhase === 'failed') {
     return (
       <div className={ROW_CLASS}>

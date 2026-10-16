@@ -7,7 +7,7 @@
 import { z } from 'zod';
 
 import type { SearchResult } from './searchResult';
-import type { ExplorerFocusDto } from '../lib/bindings';
+import type { ChatModelChoice, ExplorerFocusDto } from '../lib/bindings';
 
 /**
  * SourceWithMetadata - Rich source metadata for citations
@@ -241,7 +241,8 @@ export interface WebPage {
 export interface Conversation {
   id: string;
   title: string;
-  modelName?: string;
+  /** The model this chat asked for: the Settings default, live, or its own. */
+  modelChoice?: ChatModelChoice;
   systemPrompt?: string | null;
   spaceId?: string | null;
   isSaved?: boolean | null;
@@ -333,7 +334,6 @@ export interface ConversationalAnswer {
 
 export interface CreateConversationParams {
   title: string;
-  modelName: string;
   systemPrompt?: string | null;
 }
 
@@ -513,12 +513,38 @@ export const TurnStepSchema = z.object({
 
 export type TurnStep = z.infer<typeof TurnStepSchema>;
 
+/** A model a chat or a role names; mirrors the generated `ModelRef`. */
+export const ModelRefSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('local'), model_id: z.string().max(400) }).strict(),
+  z.object({ kind: z.literal('ollama'), model: z.string().max(400) }).strict(),
+  z.object({ kind: z.literal('llama_cpp'), model: z.string().max(400) }).strict(),
+  z.object({
+    kind: z.literal('cloud'),
+    provider: z.enum(['openai', 'anthropic', 'google']),
+    model: z.string().max(400),
+  }).strict(),
+]);
+
+/**
+ * The model a turn was pinned to; mirrors the generated `TurnModelDto`.
+ * Everything past `id` and `name` is absent on turns recorded before a turn
+ * named its model, and `degraded` is set only when it ran on the CPU.
+ */
+export const TurnModelSchema = z.object({
+  id: z.string().max(400),
+  name: z.string().max(400),
+  model: ModelRefSchema.nullable().optional(),
+  origin: z.enum(['default', 'chat_override', 'request_override', 'learning_role']).nullable().optional(),
+  provider: z.string().max(64).nullable().optional(),
+  contextTokens: z.number().int().min(0).nullable().optional(),
+  degraded: z.string().max(4000).nullable().optional(),
+}).strict();
+
+export type TurnModel = z.infer<typeof TurnModelSchema>;
+
 export const TurnRecordSchema = z.object({
   /** The model that answered **this** turn, which the conversation's may not be. */
-  model: z.object({
-    id: z.string().max(400),
-    name: z.string().max(400),
-  }).strict().nullable(),
+  model: TurnModelSchema.nullable(),
   steps: z.array(TurnStepSchema).max(200),
   timing: z.object({
     /** Time to the persisted answer, not to the last token. */

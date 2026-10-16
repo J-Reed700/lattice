@@ -7,7 +7,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { AnswerActionsMenu } from '@/features/chat/components/actions/AnswerActionsMenu';
 import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
 import { TangentReplyAction, type TangentReplySource } from '@/features/chat/components/tangents/TangentReplyAction';
+import type { ChatModelChoice } from '@/lib/bindings';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
+
+const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 
 
 /**
@@ -28,7 +31,8 @@ interface MessageActionsProps {
   isBookmarked: boolean;
   /** A generation is in flight; every mutating verb waits. */
   isBusy: boolean;
-  activeModelId?: string | null;
+  /** The chat's own model choice, which "Try with another model" shows checked. */
+  modelChoice?: ChatModelChoice;
   /**
    * The answer's cited passages. Present only on an assistant turn that has
    * any; without them there is nothing to put in a journal or compare, so the
@@ -151,7 +155,7 @@ export function MessageActions({
   canBranch,
   isBookmarked,
   isBusy,
-  activeModelId,
+  modelChoice = DEFAULT_CHOICE,
   answerSources,
   answerMarkdown,
   answerVerification = null,
@@ -392,7 +396,8 @@ export function MessageActions({
       {inline('tryWith') && (
         <span data-verb="tryWith" className="inline-flex shrink-0">
           <ModelPickerPopover
-            activeModelId={activeModelId}
+            choice={modelChoice}
+            label="Answer again with"
             onSelect={(modelId, modelLabel) => onTryWithModel?.(modelId, modelLabel)}
           >
             <button
@@ -436,7 +441,8 @@ export function MessageActions({
             if (!open) requestAnimationFrame(() => moreRef.current?.focus());
           }}
           align="start"
-          activeModelId={activeModelId}
+          choice={modelChoice}
+          label="Answer again with"
           onSelect={(modelId, modelLabel) => onTryWithModel?.(modelId, modelLabel)}
         >
           {moreMenu}

@@ -55,22 +55,38 @@ export const chatApi = {
    * Initializes a conversation thread that maintains context across multiple
    * question-answering interactions.
    *
+   * A new chat answers with the Settings default until it chooses a model
+   * of its own, so creating one needs no model and never fails for want of
+   * one: the first turn reports what is missing.
+   *
    * @param title - Human-readable conversation title
-   * @param modelName - LLM model to use (e.g., "gpt-4", "claude-3-opus")
    * @param systemPrompt - Optional system instructions to guide LLM behavior
    * @returns Response with created conversation and status
    */
   createConversation: async (
     title: string,
-    modelName: string,
     systemPrompt?: string,
   ): Promise<ApiResult<CreateConversationResponse>> =>
     apiCall<Wire.CreateConversationResponseDto>('create_conversation', {
       request: {
         title,
-        modelName,
         systemPrompt,
       },
+    }),
+
+  /**
+   * Sets the model this one conversation answers with: a model of its own,
+   * or the Settings default. Validates that the model can be used now and
+   * returns the saved conversation; never loads a model, and never touches
+   * Settings or any other conversation.
+   */
+  setConversationModelChoice: async (
+    conversationId: string,
+    choice: Wire.ChatModelChoice,
+  ): Promise<ApiResult<Wire.ConversationDto>> =>
+    apiCall<Wire.ConversationDto>('set_conversation_model_choice', {
+      conversationId,
+      choice,
     }),
 
   /**
@@ -643,17 +659,21 @@ export const chatApi = {
 
   /**
    * Re-runs the last user message. Streams over `llm-stream` exactly like
-   * `chatWithConversation`; the user message is not duplicated.
+   * `chatWithConversation`; the user message is not duplicated. `model`
+   * answers this one regeneration with that model and persists nothing: the
+   * chat's own choice and Settings stay as they are.
    */
   regenerateResponse: async (
     conversationId: string,
     toolPreferences?: ToolPreferences,
     requestId?: string,
+    model?: Wire.ModelRef,
   ): Promise<ApiResult<Wire.ChatResponse>> =>
     apiCall<Wire.ChatResponse>('regenerate_response', {
       conversationId,
       toolPreferences,
       requestId,
+      model: model ?? null,
     }),
 
   /**

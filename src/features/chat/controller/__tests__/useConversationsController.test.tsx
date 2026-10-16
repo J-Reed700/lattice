@@ -12,7 +12,7 @@ import { conversationUiStore } from '@/features/chat/stores/conversationUiStore'
 import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
-import { makeAppSettings } from '@/tests/fixtures/appSettings';
+import { stubGlobalChatModelWrites } from '@/tests/fixtures/globalChatModelWrites';
 import { ErrorCode } from '@/types/api/errorCodes';
 
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -106,16 +106,43 @@ describe('useConversationsController optimistic cleanup', () => {
     expect(result.current.lastMessageSources.get('saved-answer')?.[0]?.content).toBe('Saved search excerpt');
   });
 
-  it('creates a llama.cpp conversation without a downloaded local model', async () => {
-    const settings = makeAppSettings();
-    settings.llm.provider = 'llamacpp';
-    settings.llm.llamaCpp.model = 'qwen.gguf';
-    api.getActiveModels = vi.fn().mockResolvedValue({ ok: true, data: { chat_model: null } });
-    api.getSettings = vi.fn().mockResolvedValue({ ok: true, data: settings });
-    api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, id: 'remote-conversation' } } });
+  it('creates a conversation without asking for a model: it starts on the Settings default', async () => {
+    api.getActiveModels = vi.fn();
+    api.getSettings = vi.fn();
+    api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, id: 'new-chat' } } });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
-    await act(async () => { await result.current.createConversation('Remote chat'); });
-    expect(api.createConversation).toHaveBeenCalledWith('Remote chat', 'qwen.gguf');
+    await act(async () => { await result.current.createConversation('New chat'); });
+    expect(api.createConversation).toHaveBeenCalledWith('New chat');
+    expect(api.getActiveModels).not.toHaveBeenCalled();
+    expect(api.getSettings).not.toHaveBeenCalled();
+    expect(result.current.activeConversationId).toBe('new-chat');
+  });
+
+  it("sets one chat's model from the saved conversation and touches nothing global", async () => {
+    const choice = { kind: 'explicit' as const, model: { kind: 'local' as const, model_id: 'ornith-1.5-9b' } };
+    api.setConversationModelChoice = vi.fn().mockResolvedValue({ ok: true, data: { ...conversation, modelChoice: choice } });
+    api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, modelChoice: choice } } });
+    const expectNoGlobalWrite = stubGlobalChatModelWrites(api);
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await act(async () => { await result.current.selectConversation(conversation.id); });
+
+    await act(async () => { await result.current.setConversationModelChoice(conversation.id, choice); });
+
+    expect(api.setConversationModelChoice).toHaveBeenCalledWith(conversation.id, choice);
+    expectNoGlobalWrite();
+    await waitFor(() => expect(result.current.conversations.find(c => c.id === conversation.id)?.modelChoice).toEqual(choice));
+  });
+
+  it("throws the backend's reason when a chat's model cannot be used", async () => {
+    api.setConversationModelChoice = vi.fn().mockResolvedValue({
+      ok: false, error: 'Ornith-1.5-9B is not downloaded any more. Download it in Settings → Models or pick another model.',
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await act(async () => {
+      await expect(result.current.setConversationModelChoice(conversation.id, { kind: 'default' }))
+        .rejects.toThrow('Ornith-1.5-9B is not downloaded any more.');
+    });
   });
 
   it('marks the user message failed and removes the assistant placeholder on transport errors', async () => {
@@ -135,11 +162,9 @@ describe('useConversationsController optimistic cleanup', () => {
   });
 
   it('opens a new chat only after verifying its saved selected space', async () => {
-    const selected = { id: 'patent', name: 'Patent Training', defaultModelName: 'qwen.gguf' };
+    const selected = { id: 'patent', name: 'Patent Training' };
     conversationUiStore.setState({ selectedSpaceId: selected.id });
     api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [selected] });
-    api.getActiveModels = vi.fn().mockResolvedValue({ ok: true, data: { chat_model: null } });
-    api.getSettings = vi.fn().mockResolvedValue({ ok: true, data: makeAppSettings() });
     const created = { ...conversation, id: 'new-chat', spaceId: 'space_general' };
     api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: created } });
     api.moveConversationToSpace = vi.fn().mockResolvedValue({ ok: true, data: {} });
@@ -153,9 +178,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
   it('surfaces a failed space assignment without opening the General chat', async () => {
     conversationUiStore.setState({ selectedSpaceId: 'patent' });
-    api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [{ id: 'patent', name: 'Patent Training', defaultModelName: 'qwen.gguf' }] });
-    api.getActiveModels = vi.fn().mockResolvedValue({ ok: true, data: { chat_model: null } });
-    api.getSettings = vi.fn().mockResolvedValue({ ok: true, data: makeAppSettings() });
+    api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [{ id: 'patent', name: 'Patent Training' }] });
     api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, id: 'new-chat', spaceId: 'space_general' } } });
     api.moveConversationToSpace = vi.fn().mockResolvedValue({ ok: false, error: 'database unavailable' });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });

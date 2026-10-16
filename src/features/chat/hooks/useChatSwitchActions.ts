@@ -1,55 +1,35 @@
-import { useCallback, useContext } from 'react';
-
-import { QueryClientContext } from '@tanstack/react-query';
+import { useCallback } from 'react';
 
 import type { useComposer } from '@/features/chat/hooks/useComposer';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
-import VaultAPI from '@/lib/api';
+import type { ChatModelChoice } from '@/lib/bindings';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
-import type { LLMSettings } from '@/types/api/settings';
-import type { DownloadedModel } from '@/types/downloadedModels';
-import {
-  buildChatModelOptions,
-  LLAMACPP_SERVER_MODEL_ID,
-  OLLAMA_SERVER_MODEL_ID,
-  resolveActiveChatOption,
-} from '@/utils/chatModelSelection';
+import { buildChatModelOptions, resolveDefaultChatOption, sameModelRef } from '@/utils/chatModelSelection';
+import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
-type DownloadedModels = ReturnType<typeof useDownloadedModels>;
+const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 
-/** Moving the open chat to another space, and switching the app-wide chat model. */
+/**
+ * Moving the open chat to another space, and choosing the model this chat
+ * answers with. A choice here changes this chat and nothing else: the
+ * app-wide default is set in Settings, never from a chat.
+ */
 export function useChatSwitchActions({
   activeConversationId,
   applyFocusDocuments,
-  activeModel,
-  setActiveChatModel,
-  downloadedModels: propDownloadedModels,
 }: {
   activeConversationId: string | null;
   applyFocusDocuments: ReturnType<typeof useComposer>['applyFocusDocuments'];
-  activeModel: DownloadedModels['activeModel'];
-  setActiveChatModel: DownloadedModels['setActiveChatModel'];
-  downloadedModels?: DownloadedModel[];
 }) {
   const moveConversationToSpace = useConversationsStore((state) => state.moveConversationToSpace);
+  const setConversationModelChoice = useConversationsStore((state) => state.setConversationModelChoice);
+  const createConversation = useConversationsStore((state) => state.createConversation);
+  const conversations = useConversationsStore((state) => state.conversations);
   const { data: settings } = useSettingsQuery();
-  const queryClient = useContext(QueryClientContext);
-  const updateProvider = useCallback(
-    async (provider: LLMSettings['provider']) => {
-      const result = await VaultAPI.updateSettings({ category: 'llm', updates: { provider } });
-      if (!result.ok) throw new Error(result.error);
-      if (queryClient) {
-        queryClient.setQueryData(['settings'], result.data);
-        void queryClient.invalidateQueries({ queryKey: ['settings'] });
-      }
-    },
-    [queryClient]
-  );
-  const { downloadedModels: hookDownloadedModels = [] } = useDownloadedModels();
-  const downloadedModels = propDownloadedModels ?? hookDownloadedModels;
+  const { downloadedModels } = useDownloadedModels();
 
   /**
    * Move this chat to another space, which changes the documents every later
@@ -76,82 +56,63 @@ export function useChatSwitchActions({
     [handleChangeSpace]
   );
 
-  const handleSwitchActiveModel = useCallback(
-    async (modelId: string, modelLabel: string) => {
-      const previousOption = resolveActiveChatOption(
-        settings?.llm,
-        downloadedModels,
-        activeModel?.model_id ?? null
-      );
-      const previousProvider = settings?.llm.provider;
-      const previousLocalModelId = activeModel?.model_id ?? null;
-      const previousLabel = previousOption?.triggerLabel ?? activeModel?.model_name ?? previousLocalModelId;
-
+  /**
+   * Save a choice on this chat, making the chat first when none is open: a
+   * pick in the empty state belongs to the chat the first message will land
+   * in. Resolves false when nothing was saved; the toast says why.
+   */
+  const saveChoice = useCallback(
+    async (choice: ChatModelChoice): Promise<boolean> => {
       try {
-        const targetOption = buildChatModelOptions(settings?.llm, downloadedModels).find(
-          (o) => o.id === modelId
-        );
-        if (targetOption?.isActive && previousOption?.id === modelId) {
-          return;
-        }
-
-        if (modelId === LLAMACPP_SERVER_MODEL_ID || targetOption?.backend === 'llamacpp') {
-          await updateProvider('llamacpp');
-        } else if (modelId === OLLAMA_SERVER_MODEL_ID || targetOption?.backend === 'ollama') {
-          if (targetOption?.downloadedModelId || downloadedModels.some((m) => m.model_id === modelId)) {
-            await setActiveChatModel(modelId);
-          }
-          if (settings?.llm && settings.llm.provider !== 'ollama') {
-            await updateProvider('ollama');
-          }
-        } else {
-          await setActiveChatModel(modelId);
-          if (settings?.llm && settings.llm.provider !== 'local') {
-            await updateProvider('local');
-          }
-        }
+        const conversationId =
+          activeConversationId ?? (await createConversation(createDefaultConversationTitle()));
+        await setConversationModelChoice(conversationId, choice);
+        return true;
       } catch (error) {
-        toast.error("Couldn't switch model", {
+        toast.error("Couldn't change this chat's model", {
           message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    },
+    [activeConversationId, createConversation, setConversationModelChoice]
+  );
+
+  const currentChoice =
+    conversations.find((conversation) => conversation.id === activeConversationId)?.modelChoice ??
+    DEFAULT_CHOICE;
+
+  /** Answer this chat with the model of the picked row, from its next turn on. */
+  const handleChooseChatModel = useCallback(
+    async (modelId: string, modelLabel: string) => {
+      const option = buildChatModelOptions(settings?.llm, downloadedModels).find((o) => o.id === modelId);
+      if (!option) {
+        toast.error("Couldn't change this chat's model", {
+          message: `${modelLabel} is no longer available. Pick another model.`,
         });
         return;
       }
-
-      const canSwitchBack = Boolean(
-        (previousLocalModelId && previousLocalModelId !== modelId) ||
-        (previousOption && previousOption.id !== modelId) ||
-        (previousProvider && settings?.llm)
-      );
-
-      // The switch is app-wide, so always offer the way back — same as the
-      // "Try with another model" toast on a message.
-      toast.success(`Switched to ${modelLabel}`, {
-        ...(canSwitchBack
-          ? {
-              action: {
-                label: 'Switch back',
-                onClick: () => {
-                  void (async () => {
-                    if (
-                      previousLocalModelId &&
-                      previousLocalModelId !== modelId &&
-                      (previousOption?.downloadedModelId || !settings?.llm)
-                    ) {
-                      await setActiveChatModel(previousLocalModelId);
-                    }
-                    if (previousProvider && settings?.llm) {
-                      await updateProvider(previousProvider);
-                    }
-                    toast.success(`Back to ${previousLabel}`);
-                  })();
-                },
-              },
-            }
-          : {}),
-      });
+      if (currentChoice.kind === 'explicit' && sameModelRef(currentChoice.model, option.ref)) return;
+      if (await saveChoice({ kind: 'explicit', model: option.ref })) {
+        toast.success(`This chat now uses ${modelLabel}`);
+      }
     },
-    [activeModel, downloadedModels, setActiveChatModel, settings, updateProvider]
+    [currentChoice, downloadedModels, saveChoice, settings?.llm]
   );
 
-  return { handleChangeSpace, handleSearchGeneral, handleSwitchActiveModel };
+  /** Put this chat back on the Settings default, which it then follows. */
+  const handleUseDefault = useCallback(async () => {
+    // A chat starts on the default, so with none open there is nothing to change.
+    if (!activeConversationId || currentChoice.kind === 'default') return;
+    if (!(await saveChoice(DEFAULT_CHOICE))) return;
+    const defaultOption = resolveDefaultChatOption(settings?.llm, downloadedModels);
+    toast.success(
+      defaultOption
+        ? `This chat now uses the app default (${defaultOption.triggerLabel})`
+        : 'This chat now uses the app default',
+      defaultOption ? undefined : { message: 'No chat model is selected in Settings → Models.' }
+    );
+  }, [activeConversationId, currentChoice.kind, downloadedModels, saveChoice, settings?.llm]);
+
+  return { handleChangeSpace, handleSearchGeneral, handleChooseChatModel, handleUseDefault };
 }

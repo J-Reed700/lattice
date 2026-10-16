@@ -10,6 +10,10 @@ import type { SourceWithMetadata } from '@/types/conversation';
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: [] }),
 }));
+vi.mock('@/features/model/hooks/useLoadedModels', () => ({
+  useLoadedModels: () => [],
+  degradedReasonFor: () => null,
+}));
 
 const noop = () => {};
 

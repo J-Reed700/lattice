@@ -13,6 +13,7 @@ import { conversationUiStore } from '@/features/chat/stores/conversationUiStore'
 import type { ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
+import type { RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessage, ToolPreferences } from '@/types/conversation';
 
@@ -76,8 +77,11 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
     messageBookmarkMap: new Map((bookmarksQuery.data ?? []).map(bookmark => [bookmark.messageId, bookmark])),
     composerDraft: null,
     setComposerDraft: (value: string | null) => saveDraft(value ?? ''),
-    regenerateResponse: async (conversationId: string, preferences?: ToolPreferences) => {
-      const outcome = await base.regenerateResponse(conversationId, preferences ?? toolPreferences);
+    regenerateResponse: async (conversationId: string, options?: RegenerateOptions) => {
+      const outcome = await base.regenerateResponse(conversationId, {
+        ...options,
+        toolPreferences: options?.toolPreferences ?? toolPreferences,
+      });
       if (outcome === 'failed') saveDraft([...persisted].reverse().find(message => message.role === 'user')?.content ?? '');
       return outcome;
     },

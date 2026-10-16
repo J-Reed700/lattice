@@ -73,6 +73,75 @@ describe('TurnRecord', () => {
     expect(line).toHaveTextContent('12.4s');
   });
 
+  it.each([
+    ['default', 'Qwen3.5-27B · app default'],
+    ['chat_override', 'Qwen3.5-27B · chosen for this chat'],
+    ['request_override', 'Qwen3.5-27B · one-off'],
+    ['learning_role', 'Qwen3.5-27B · Learning model'],
+  ] as const)('says why the model that answered was the one: %s', (origin, words) => {
+    render(
+      <TurnRecord
+        trace={null}
+        record={record({ model: { id: 'qwen', name: 'Qwen3.5-27B', origin, model: { kind: 'local', model_id: 'qwen' } } })}
+        liveSteps={null}
+        isPending={false}
+        isWriting={false}
+        verification={null}
+      />
+    );
+    expect(screen.getByRole('button')).toHaveTextContent(`${words} · 12.4s`);
+  });
+
+  it('says a model ran on the CPU, and why, in the record itself', () => {
+    render(
+      <TurnRecord
+        trace={null}
+        record={record({ model: { id: 'o', name: 'Ornith-1.5-9B', origin: 'chat_override', degraded: 'Metal buffer limit' } })}
+        liveSteps={null}
+        isPending={false}
+        isWriting={false}
+        verification={null}
+      />
+    );
+    expect(screen.getByRole('button')).toHaveTextContent(
+      'Ornith-1.5-9B · chosen for this chat · ran on CPU: Metal buffer limit'
+    );
+  });
+
+  it('names the model a running turn is pinned to before any text arrives', () => {
+    render(
+      <TurnRecord
+        trace={null}
+        record={null}
+        liveSteps={[]}
+        liveModel={{ id: 'o', name: 'Ornith-1.5-9B', origin: 'chat_override', degraded: 'Metal buffer limit' }}
+        isPending
+        isWriting={false}
+        verification={null}
+      />
+    );
+    const line = screen.getByRole('button');
+    expect(line).toHaveTextContent('Answering with Ornith-1.5-9B · on CPU');
+    expect(within(line).getByTitle(
+      'Ornith-1.5-9B is running on the CPU: Metal buffer limit. Answers will be slow.'
+    )).toBeInTheDocument();
+  });
+
+  it('stops saying "Answering with" once the answer is saved', () => {
+    render(
+      <TurnRecord
+        trace={null}
+        record={record({ model: { id: 'o', name: 'Ornith-1.5-9B' } })}
+        liveSteps={null}
+        liveModel={{ id: 'o', name: 'Ornith-1.5-9B' }}
+        isPending={false}
+        isWriting
+        verification={null}
+      />
+    );
+    expect(screen.getByRole('button')).not.toHaveTextContent('Answering with');
+  });
+
   /**
    * The honesty rule carried over from `RetrievalTrace`: a turn that did not
    * search did not search zero documents.

@@ -23,17 +23,21 @@ import { useComposer } from '@/features/chat/hooks/useComposer';
 import { useThreadMessages } from '@/features/chat/hooks/useThreadMessages';
 import { useThreadScroll } from '@/features/chat/hooks/useThreadScroll';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
 import { selectIsChatWarming, useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import type { ChatModelChoice } from '@/lib/bindings';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import {
   buildChatModelOptions,
-  resolveActiveChatOption,
-  resolveChatModel,
+  isUnavailableChatModel,
+  resolveDefaultChatOption,
+  resolveEffectiveChatOption,
+  sameModelRef,
 } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
@@ -44,14 +48,18 @@ interface ChatPanelProps {
   composerChips?: ReactNode;
 }
 
+const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
+
 export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}) {
-  const { activeModel, downloadedModels, setActiveChatModel } = useDownloadedModels();
+  const { downloadedModels } = useDownloadedModels();
+  const loadedModels = useLoadedModels();
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
   const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
   const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
   const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
+  const liveModel = useConversationsStore((state) => state.liveModel);
   const messageRetrieval = useConversationsStore((state) => state.messageRetrieval);
   const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
   const createConversation = useConversationsStore((state) => state.createConversation);
@@ -129,26 +137,40 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
     activeConversationId && conversationSpaceName && (openSpaces.length > 1 || isScopedToLinkedFiles)
   );
 
-  // Mask the input during warmup, and while there is no model to answer with.
-  const isChatWarming = useModelWarmupStore(selectIsChatWarming);
-  const chatWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
-
+  // This chat's model: its own choice, or the Settings default it follows.
   const llmSettings = settings?.llm;
-  const activeChatOption = useMemo(
-    () => resolveActiveChatOption(llmSettings, downloadedModels),
+  const modelChoice = activeConversation?.modelChoice ?? DEFAULT_CHOICE;
+  const onDefaultModel = modelChoice.kind === 'default';
+  const effectiveModel = useMemo(
+    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels),
+    [modelChoice, llmSettings, downloadedModels]
+  );
+  const defaultModelOption = useMemo(
+    () => resolveDefaultChatOption(llmSettings, downloadedModels),
     [llmSettings, downloadedModels]
   );
   const chatModelOptions = useMemo(
     () => buildChatModelOptions(llmSettings, downloadedModels),
     [llmSettings, downloadedModels]
   );
-  const resolvedModel = resolveChatModel(llmSettings, activeModel?.model_id ?? null);
-  const activeModelLabel =
-    activeChatOption?.triggerLabel ??
-    (resolvedModel &&
-      (downloadedModels.find((model) => model.model_id === resolvedModel)?.model_name ||
-        resolvedModel));
-  const hasChatModel = activeModelLabel !== null;
+  const effectiveRef = effectiveModel && !isUnavailableChatModel(effectiveModel) ? effectiveModel.ref : null;
+  // While a turn runs, the model it is pinned to says whether it fell back to
+  // the CPU; otherwise the loaded models do. A choice changed mid-turn is not
+  // the pinned model, so only a match counts.
+  const pinnedModel = activeConversationId && isSending ? liveModel.get(activeConversationId) : undefined;
+  const degradedReason = pinnedModel && sameModelRef(pinnedModel.model, effectiveRef)
+    ? pinnedModel.degraded ?? null
+    : degradedReasonFor(effectiveRef, loadedModels);
+  const activeModelLabel = effectiveModel?.label ?? null;
+  const hasChatModel = effectiveModel !== null;
+
+  // Mask the input while the default model warms up, and while there is no
+  // model to answer with. Warm-up is the default model's: a chat on a model
+  // of its own neither waits for it nor fails with it.
+  const isDefaultWarming = useModelWarmupStore(selectIsChatWarming);
+  const defaultWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
+  const isChatWarming = onDefaultModel && isDefaultWarming;
+  const chatWarmupPhase = onDefaultModel ? defaultWarmupPhase : 'idle';
   const isChatUnavailable = isChatWarming || !hasChatModel;
 
   // Report the completed turn. Initial retrieval can fail and a later tool
@@ -180,11 +202,9 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   });
   const { applyFocusDocuments, resolveEffectiveToolPreferences } = composer;
   const { chooseFiles } = attachments;
-  const { handleChangeSpace, handleSearchGeneral, handleSwitchActiveModel } = useChatSwitchActions({
+  const { handleChangeSpace, handleSearchGeneral, handleChooseChatModel, handleUseDefault } = useChatSwitchActions({
     activeConversationId,
     applyFocusDocuments,
-    activeModel,
-    setActiveChatModel,
   });
 
   const handleCreateEmptyStateConversation = async () => {
@@ -193,8 +213,9 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
     try {
       await createConversation(createDefaultConversationTitle());
     } catch (error) {
-      // The controller's message names the actual fix ("Select a local model in
-      // Settings or configure Ollama"); swallowing it left a dead button.
+      // The controller's message names the actual fix (an unavailable space,
+      // a database error); swallowing it left a dead button. A missing model
+      // no longer stops a chat being made: its first turn says so.
       toast.error("Couldn't start a conversation", {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -387,15 +408,25 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
       <Composer
         composer={composer}
         attachments={attachments}
-        modelNotice={{ hasChatModel, warmupPhase: chatWarmupPhase, retrievalUnavailableReason }}
+        modelNotice={{
+          hasChatModel,
+          warmupPhase: chatWarmupPhase,
+          retrievalUnavailableReason,
+          unavailableModel: isUnavailableChatModel(effectiveModel)
+            ? { reason: effectiveModel.reason, onUseDefault: () => void handleUseDefault() }
+            : null,
+        }}
         notice={composerNotice}
         chips={composerChips}
         space={showSpacePicker ? { id: conversationSpaceId, name: conversationSpaceName, onChange: handleChangeSpace } : null}
         model={{
-          id: activeChatOption?.id ?? activeModel?.model_id ?? null,
-          label: activeModelLabel ?? (chatModelOptions.length > 0 ? 'Choose model' : null),
-          backend: activeChatOption?.backend ?? null,
-          onSelect: handleSwitchActiveModel,
+          choice: modelChoice,
+          effective: effectiveModel,
+          defaultOption: defaultModelOption,
+          degraded: degradedReason,
+          canChoose: chatModelOptions.length > 0,
+          onSelect: handleChooseChatModel,
+          onUseDefault: handleUseDefault,
           triggerRef: modelLabelRef,
         }}
         isSending={isSending}

@@ -57,9 +57,11 @@ export const forgetRequestedConversation = (id: string): void => {
     const inFlightGenerations = new Map(state.inFlightGenerations);
     const liveRetrieval = new Map(state.liveRetrieval);
     const liveSteps = new Map(state.liveSteps);
+    const liveModel = new Map(state.liveModel);
     inFlightGenerations.delete(id);
     liveRetrieval.delete(id);
     liveSteps.delete(id);
-    return { requestedLinkedConversationIds: linked, requestedWebSourceConversationIds: web, optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps };
+    liveModel.delete(id);
+    return { requestedLinkedConversationIds: linked, requestedWebSourceConversationIds: web, optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, liveModel };
   });
 };
