@@ -73,12 +73,10 @@ async fn pruning_cannot_delete_another_conversations_messages_or_bookmarks() {
     setup_schema(&pool).await;
     let id = seed_thread(&pool).await;
     seed_pruning_bookmarks(&pool).await;
-    sqlx::query(
-        "INSERT INTO conversations (id, title, model_name) VALUES ('other', 'Other', 'model')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO conversations (id, title) VALUES ('other', 'Other')")
+        .execute(&pool)
+        .await
+        .unwrap();
     seed_message(
         &pool,
         "other",
@@ -163,8 +161,8 @@ async fn test_truncate_after_same_second_ordering() {
     setup_schema(&pool).await;
 
     sqlx::query(
-            "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-             VALUES ('conv-2', 'Tied', 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+            "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+             VALUES ('conv-2', 'Tied', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -238,8 +236,8 @@ async fn test_take_last_user_turn_none_when_no_user_message() {
     setup_schema(&pool).await;
 
     sqlx::query(
-            "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-             VALUES ('conv-3', 'System only', 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+            "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+             VALUES ('conv-3', 'System only', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
         )
         .execute(&pool)
         .await

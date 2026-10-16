@@ -39,6 +39,7 @@ pub async fn run_headless_turn(
         None,
         None,
         None,
+        None,
         events,
     )
     .await

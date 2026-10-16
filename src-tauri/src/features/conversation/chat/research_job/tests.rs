@@ -79,7 +79,7 @@ struct FirstAttempt {
 async fn first_attempt(runtime: &FakeRuntime) -> FirstAttempt {
     let conversations = runtime.conversations.clone();
     let conversation = conversations
-        .create_conversation("Research".into(), "scripted".into(), None)
+        .create_conversation("Research".into(), None)
         .await
         .unwrap();
     let request = research(&conversation.id.to_string());
@@ -282,6 +282,7 @@ async fn the_chat_stop_cancels_a_running_research_job() {
         None,
         Some(true),
         attempt.request.request_id.clone(),
+        None,
         None,
         None,
         silent(),

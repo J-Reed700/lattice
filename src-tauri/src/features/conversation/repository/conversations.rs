@@ -3,30 +3,26 @@
 use super::ConversationRepository;
 use crate::features::conversation::persistence_mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
+    ModelChoiceColumn,
 };
 use chrono::Utc;
-use lattice_core::domain::conversation::{CompactionRecord, Conversation, ConversationAggregate};
+use lattice_core::domain::conversation::{
+    ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ConversationId;
 
 impl ConversationRepository {
-    /// Alias for create_conversation with no system prompt
+    /// Alias for create_conversation
     ///
     /// # Arguments
     /// * `title` - Conversation title
-    /// * `model_name` - LLM model identifier
     /// * `system_prompt` - Optional system prompt
     ///
     /// # Returns
-    /// Newly created conversation entity
-    pub async fn create(
-        &self,
-        title: &str,
-        model_name: &str,
-        system_prompt: Option<&str>,
-    ) -> Result<Conversation> {
-        self.create_conversation(title, model_name, system_prompt)
-            .await
+    /// Newly created conversation entity, following the Settings default model
+    pub async fn create(&self, title: &str, system_prompt: Option<&str>) -> Result<Conversation> {
+        self.create_conversation(title, system_prompt).await
     }
 
     /// List all conversations with pagination
@@ -84,7 +80,6 @@ impl ConversationRepository {
     pub async fn create_conversation(
         &self,
         title: &str,
-        model_name: &str,
         system_prompt: Option<&str>,
     ) -> Result<Conversation> {
         let id = ConversationId::new();
@@ -95,12 +90,11 @@ impl ConversationRepository {
 
         sqlx::query!(
             r#"
-            INSERT INTO conversations (id, title, model_name, system_prompt, created_at, updated_at, message_count, total_tokens)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+            INSERT INTO conversations (id, title, system_prompt, created_at, updated_at, message_count, total_tokens)
+            VALUES (?, ?, ?, ?, ?, 0, 0)
             "#,
             id_str,
             title,
-            model_name,
             system_prompt,
             now,
             now
@@ -112,7 +106,7 @@ impl ConversationRepository {
         Ok(Conversation {
             id,
             title: title.to_string(),
-            model_name: model_name.to_string(),
+            model_choice: ChatModelChoice::Default,
             system_prompt: system_prompt.map(|s| s.to_string()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -124,7 +118,7 @@ impl ConversationRepository {
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
         let db_model = sqlx::query_as::<_, ConversationModel>(
             r#"
-            SELECT id, title, model_name, system_prompt, created_at, updated_at,
+            SELECT id, title, model_choice, system_prompt, created_at, updated_at,
                    message_count, total_tokens
             FROM conversations
             WHERE id = ?
@@ -199,7 +193,7 @@ impl ConversationRepository {
 
         let db_models = sqlx::query_as::<_, ConversationModel>(
             r#"
-            SELECT id, title, model_name, system_prompt, created_at, updated_at,
+            SELECT id, title, model_choice, system_prompt, created_at, updated_at,
                    message_count, total_tokens
             FROM conversations
             WHERE tangent_parent_id IS NULL
@@ -269,6 +263,47 @@ impl ConversationRepository {
             return Err(AppError::NotFound(format!(
                 "Conversation not found: {}",
                 id
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// The model this chat asked for.
+    pub async fn model_choice(&self, conversation_id: &str) -> Result<ChatModelChoice> {
+        let column: Option<String> =
+            sqlx::query_scalar("SELECT model_choice FROM conversations WHERE id = ?")
+                .bind(conversation_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to read model choice: {}", e)))?
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+                })?;
+        ModelChoiceColumn::from_column(conversation_id, column.as_deref())
+    }
+
+    /// Records the model this chat asks for. Settings and every other chat are
+    /// untouched; a turn already running keeps the model it pinned.
+    pub async fn set_model_choice(
+        &self,
+        conversation_id: &str,
+        choice: &ChatModelChoice,
+    ) -> Result<()> {
+        let column = ModelChoiceColumn::to_column(choice)?;
+        let result =
+            sqlx::query("UPDATE conversations SET model_choice = ?, updated_at = ? WHERE id = ?")
+                .bind(column)
+                .bind(Utc::now().to_rfc3339())
+                .bind(conversation_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to set model choice: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
             )));
         }
 

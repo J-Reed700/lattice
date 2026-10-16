@@ -1,10 +1,11 @@
 use super::*;
+use crate::features::conversation::persistence_mapper::ModelChoiceColumn;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct ConversationExplorerRow {
     pub(super) id: String,
     pub(super) title: String,
-    pub(super) model_name: String,
+    pub(super) model_choice: Option<String>,
     pub(super) system_prompt: Option<String>,
     pub(super) created_at: String,
     pub(super) updated_at: String,
@@ -23,6 +24,36 @@ pub(super) struct ConversationExplorerRow {
     pub(super) forked_from_conversation_id: Option<String>,
     pub(super) forked_from_message_id: Option<String>,
     pub(super) explorer_root: Option<String>,
+}
+
+impl ConversationExplorerRow {
+    pub(super) fn into_dto(self) -> Result<ConversationDto, AppError> {
+        Ok(ConversationDto {
+            model_choice: ModelChoiceColumn::from_column(&self.id, self.model_choice.as_deref())?,
+            id: self.id,
+            title: self.title,
+            system_prompt: self.system_prompt,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            message_count: self.message_count,
+            total_tokens: self.total_tokens,
+            space_id: Some(self.space_id),
+            is_saved: Some(self.is_saved != 0),
+            is_bookmarked: Some(self.is_bookmarked != 0),
+            is_pinned: Some(self.is_pinned != 0),
+            is_archived: Some(self.is_archived != 0),
+            saved_at: self.saved_at,
+            bookmarked_at: self.bookmarked_at,
+            pinned_at: self.pinned_at,
+            archived_at: self.archived_at,
+            last_message_preview: self.last_message_preview,
+            compaction: None,
+            forked_from_conversation_id: self.forked_from_conversation_id,
+            forked_from_message_id: self.forked_from_message_id,
+            explorer_root: self.explorer_root,
+            tangent_parent_id: None,
+        })
+    }
 }
 pub(super) fn build_fts_query(raw: &str) -> Option<String> {
     let terms = raw
@@ -59,7 +90,7 @@ impl ConversationRepository {
         SELECT
             c.id,
             c.title,
-            c.model_name,
+            c.model_choice,
             c.system_prompt,
             c.created_at,
             c.updated_at,
@@ -163,32 +194,8 @@ impl ConversationRepository {
 
         let conversations = rows
             .into_iter()
-            .map(|row| crate::features::conversation::dto::ConversationDto {
-                id: row.id,
-                title: row.title,
-                model_name: row.model_name,
-                system_prompt: row.system_prompt,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                message_count: row.message_count,
-                total_tokens: row.total_tokens,
-                space_id: Some(row.space_id),
-                is_saved: Some(row.is_saved != 0),
-                is_bookmarked: Some(row.is_bookmarked != 0),
-                is_pinned: Some(row.is_pinned != 0),
-                is_archived: Some(row.is_archived != 0),
-                saved_at: row.saved_at,
-                bookmarked_at: row.bookmarked_at,
-                pinned_at: row.pinned_at,
-                archived_at: row.archived_at,
-                last_message_preview: row.last_message_preview,
-                compaction: None,
-                forked_from_conversation_id: row.forked_from_conversation_id,
-                forked_from_message_id: row.forked_from_message_id,
-                explorer_root: row.explorer_root,
-                tangent_parent_id: None,
-            })
-            .collect::<Vec<_>>();
+            .map(ConversationExplorerRow::into_dto)
+            .collect::<Result<Vec<_>, AppError>>()?;
 
         Ok(ListConversationsResponseDto {
             total: conversations.len(),

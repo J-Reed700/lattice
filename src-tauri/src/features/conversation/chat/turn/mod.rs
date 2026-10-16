@@ -21,6 +21,7 @@
 //! assembler's plan when the request is assembled.
 use super::dto::SourceDto;
 use super::*;
+use lattice_core::domain::models::model_ref::ModelRef;
 
 mod assemble;
 mod budget;
@@ -48,6 +49,10 @@ pub(super) struct TurnRequest {
     pub(super) request_id: Option<String>,
     pub(super) attachment_names: Vec<String>,
     pub(super) attachment_document_ids: Vec<String>,
+    /// A model for this request only, over the chat's own choice. Never
+    /// persisted on the chat; a research turn carries it in its job so a
+    /// resumed turn answers with the same model.
+    pub(super) model: Option<ModelRef>,
 }
 
 /// Run one chat turn.
@@ -75,6 +80,7 @@ pub(super) async fn run_turn(
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
     attachment_document_ids: Option<Vec<String>>,
+    model: Option<ModelRef>,
     emit: ChatEventSink,
 ) -> Result<ChatResponse> {
     if cancel_only.unwrap_or(false) {
@@ -114,6 +120,7 @@ pub(super) async fn run_turn(
         request_id,
         attachment_names: attachment_names.unwrap_or_default(),
         attachment_document_ids: attachment_document_ids.unwrap_or_default(),
+        model,
     };
     if SearchFlags::from_preferences(request.tool_preferences.as_ref()).deep_research_mode {
         return super::research_job::run(container, request, emit).await;

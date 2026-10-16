@@ -25,7 +25,7 @@ async fn database() -> SqlitePool {
 async fn seed(pool: &SqlitePool, count: usize) -> String {
     let repository = ConversationRepository::new(pool.clone());
     let conversation = repository
-        .create_conversation("Memory turn", "test-model", None)
+        .create_conversation("Memory turn", None)
         .await
         .unwrap();
     let id = conversation.id.to_string();
@@ -500,7 +500,7 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
     let pool = database().await;
     let repository = ConversationRepository::new(pool.clone());
     let id = repository
-        .create_conversation("Big pastes", "test-model", None)
+        .create_conversation("Big pastes", None)
         .await
         .unwrap()
         .id

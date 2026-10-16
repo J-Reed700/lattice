@@ -109,12 +109,11 @@ impl ConversationServiceTrait for MockConversationService {
     async fn create_conversation(
         &self,
         title: String,
-        model_name: String,
         system_prompt: Option<String>,
     ) -> Result<lattice_core::domain::conversation::Conversation> {
         use lattice_core::domain::conversation::ConversationAggregate;
 
-        let aggregate = ConversationAggregate::new(title, model_name, system_prompt)?;
+        let aggregate = ConversationAggregate::new(title, system_prompt)?;
         let conversation = aggregate.conversation().clone();
 
         self.conversations

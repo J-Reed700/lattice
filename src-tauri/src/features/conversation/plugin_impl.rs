@@ -36,10 +36,12 @@ pub use super::synthesis::{
 pub use super::workspace_dto::*;
 
 mod memory;
+mod model_choice;
 mod sources;
 mod spaces;
 
 pub use memory::{compact_conversation_impl, get_conversation_memory_impl, manage_knowledge_impl};
+pub use model_choice::set_conversation_model_choice_impl;
 pub use sources::{
     add_conversation_web_source_impl, add_documents_to_library_impl,
     list_conversation_linked_documents_impl, list_conversation_web_sources_impl,
@@ -62,14 +64,10 @@ pub async fn create_conversation_impl(
     request: CreateConversationRequestDto,
     container: &Container,
 ) -> Result<CreateConversationResponseDto, ApiError> {
-    let conversation = conversation::create_conversation_impl(
-        container,
-        request.title,
-        request.model_name,
-        request.system_prompt,
-    )
-    .await
-    .map_err(ApiError::from)?;
+    let conversation =
+        conversation::create_conversation_impl(container, request.title, request.system_prompt)
+            .await
+            .map_err(ApiError::from)?;
 
     Ok(CreateConversationResponseDto {
         conversation: ConversationRepository::new(container.db_pool().clone())
@@ -205,6 +203,7 @@ pub async fn chat_with_conversation_wrapper_impl(
         request_id,
         attachment_names,
         attachment_document_ids,
+        None,
         window,
     );
     match Box::pin(fut).await {

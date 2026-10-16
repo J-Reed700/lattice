@@ -139,8 +139,8 @@ async fn conversation_counts(pool: &SqlitePool, conversation_id: &str) -> (i64, 
 /// A four-message thread: user → assistant → user → assistant.
 async fn seed_thread(pool: &SqlitePool) -> String {
     sqlx::query(
-            "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-             VALUES ('conv-1', 'Thread', 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+            "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+             VALUES ('conv-1', 'Thread', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
         )
         .execute(pool)
         .await

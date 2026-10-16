@@ -26,7 +26,6 @@
 //! // Create conversation
 //! let conversation = service.create_conversation(
 //!     "My Chat".to_string(),
-//!     "claude-sonnet-4-5-20250929".to_string(),
 //!     Some("You are helpful.".to_string())
 //! ).await?;
 //!
@@ -69,14 +68,13 @@ impl ConversationService {
     ///
     /// # Arguments
     /// * `title` - Human-readable conversation title
-    /// * `model_name` - LLM model identifier (e.g., "claude-sonnet-4-5-20250929")
     /// * `system_prompt` - Optional system instructions for the LLM
     ///
     /// # Returns
-    /// The created conversation entity
+    /// The created conversation entity; it follows the Settings default model
     ///
     /// # Errors
-    /// - `AppError::InvalidInput` if title or model_name is empty
+    /// - `AppError::InvalidInput` if the title is empty
     /// - `AppError::Database` if database insert fails
     ///
     /// # Example
@@ -85,7 +83,6 @@ impl ConversationService {
     /// # async fn example(service: ConversationService) -> Result<(), Box<dyn std::error::Error>> {
     /// let conversation = service.create_conversation(
     ///     "My Chat".to_string(),
-    ///     "claude-sonnet-4-5-20250929".to_string(),
     ///     Some("You are a helpful assistant.".to_string())
     /// ).await?;
     /// # Ok(())
@@ -94,15 +91,13 @@ impl ConversationService {
     pub async fn create_conversation(
         &self,
         title: String,
-        model_name: String,
         system_prompt: Option<String>,
     ) -> Result<Conversation> {
-        let _aggregate =
-            ConversationAggregate::new(title.clone(), model_name.clone(), system_prompt.clone())?;
+        let _aggregate = ConversationAggregate::new(title.clone(), system_prompt.clone())?;
 
         // Persist to database
         self.repository
-            .create(&title, &model_name, system_prompt.as_deref())
+            .create(&title, system_prompt.as_deref())
             .await
     }
 
@@ -540,11 +535,9 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
     async fn create_conversation(
         &self,
         title: String,
-        model_name: String,
         system_prompt: Option<String>,
     ) -> Result<Conversation> {
-        self.create_conversation(title, model_name, system_prompt)
-            .await
+        self.create_conversation(title, system_prompt).await
     }
 
     async fn get_conversation(&self, id: &str) -> Result<Option<ConversationAggregate>> {

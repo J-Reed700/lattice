@@ -14,7 +14,7 @@
 //! # Conversational Q&A Pattern
 //!
 //! Conversations enable stateful Q&A:
-//! 1. **Create conversation** with title and model selection
+//! 1. **Create conversation** with a title (it follows the Settings default model)
 //! 2. **Ask questions** that reference previous context
 //! 3. **Maintain message history** for context window
 //! 4. **Manage conversations** (list, rename, delete)
@@ -54,7 +54,6 @@ pub use space::create_conversation_space_impl;
 ///
 /// * `container` - Service container with conversation service and security context
 /// * `title` - Human-readable conversation title
-/// * `model_name` - LLM model to use (e.g., "gpt-4", "claude-3-opus")
 /// * `system_prompt` - Optional system instructions to guide LLM behavior
 ///
 /// # Returns
@@ -75,7 +74,7 @@ pub use space::create_conversation_space_impl;
 /// interface Conversation {
 ///   id: string;
 ///   title: string;
-///   modelName: string;
+///   modelChoice: ChatModelChoice;
 ///   systemPrompt?: string;
 ///   createdAt: string;
 ///   updatedAt: string;
@@ -86,7 +85,6 @@ pub use space::create_conversation_space_impl;
 /// // Create a new conversation
 /// const conversation = await invoke<Conversation>('create_conversation', {
 ///   title: 'Research Discussion',
-///   modelName: 'gpt-4',
 ///   systemPrompt: 'You are a helpful research assistant focused on academic papers.'
 /// });
 ///
@@ -114,7 +112,7 @@ pub use space::create_conversation_space_impl;
 ///
 /// # Conversation Lifecycle
 ///
-/// 1. **Create**: Initialize with title and model
+/// 1. **Create**: Initialize with a title
 /// 2. **Ask Questions**: Add messages with context
 /// 3. **Maintain History**: Messages preserved for context window
 /// 4. **Rename**: Update title as conversation evolves
@@ -136,7 +134,6 @@ pub use space::create_conversation_space_impl;
 pub async fn create_conversation_impl(
     container: &Container,
     title: String,
-    model_name: String,
     system_prompt: Option<String>,
 ) -> Result<Conversation> {
     // 1. Input validation
@@ -149,28 +146,27 @@ pub async fn create_conversation_impl(
     // 2. Delegate to service
     let service = container.conversation_service();
     let conversation = service
-        .create_conversation(sanitized_title, model_name, system_prompt)
+        .create_conversation(sanitized_title, system_prompt)
         .await?;
 
     Ok(conversation)
 }
 
 /// Tauri command wrapper
-#[tracing::instrument(skip(container), fields(title = %title, model = %model_name))]
+#[tracing::instrument(skip(container), fields(title = %title))]
 pub async fn create_conversation(
     container: State<'_, Container>,
     title: String,
-    model_name: String,
     system_prompt: Option<String>,
 ) -> Result<Conversation> {
-    create_conversation_impl(container.inner(), title, model_name, system_prompt).await
+    create_conversation_impl(container.inner(), title, system_prompt).await
 }
 
 /// Lists all conversations with pagination support
 ///
 /// Retrieves all conversations ordered by most recently updated first. Supports
 /// pagination for efficient loading of large conversation lists. Returns metadata
-/// only (title, model, timestamps, counts) - use `get_conversation_messages` to
+/// only (title, model choice, timestamps, counts) - use `get_conversation_messages` to
 /// retrieve actual message history.
 ///
 /// # Arguments
@@ -196,7 +192,7 @@ pub async fn create_conversation(
 /// interface Conversation {
 ///   id: string;
 ///   title: string;
-///   modelName: string;
+///   modelChoice: ChatModelChoice;
 ///   systemPrompt?: string;
 ///   createdAt: string;
 ///   updatedAt: string;
@@ -286,7 +282,7 @@ pub async fn list_conversations(
 
 /// Retrieves a single conversation by ID
 ///
-/// Fetches conversation metadata (title, model, timestamps, message count, token usage)
+/// Fetches conversation metadata (title, model choice, timestamps, message count, token usage)
 /// without loading the actual message history. Use `get_conversation_messages` to
 /// retrieve the full message history. Returns `None` if conversation ID not found.
 ///
@@ -313,7 +309,7 @@ pub async fn list_conversations(
 /// interface Conversation {
 ///   id: string;
 ///   title: string;
-///   modelName: string;
+///   modelChoice: ChatModelChoice;
 ///   systemPrompt?: string;
 ///   createdAt: string;
 ///   updatedAt: string;
@@ -328,7 +324,7 @@ pub async fn list_conversations(
 ///
 /// if (conversation) {
 ///   console.log(`Conversation: ${conversation.title}`);
-///   console.log(`Model: ${conversation.modelName}`);
+///   console.log(`Model: ${conversation.modelChoice.kind}`);
 ///   console.log(`Messages: ${conversation.messageCount}`);
 ///   console.log(`Tokens used: ${conversation.totalTokens}`);
 ///
@@ -343,7 +339,7 @@ pub async fn list_conversations(
 ///
 /// # Use Cases
 ///
-/// - **Conversation Header**: Display title, model, stats in UI
+/// - **Conversation Header**: Display title, model choice, stats in UI
 /// - **Validation**: Check if conversation exists before operations
 /// - **Stats Display**: Show message count and token usage
 /// - **Lazy Loading**: Load metadata first, messages on demand
@@ -380,7 +376,7 @@ pub async fn get_conversation_impl(
     Ok(aggregate.map(|agg| Conversation {
         id: agg.id().clone(),
         title: agg.title().to_string(),
-        model_name: agg.model_name().to_string(),
+        model_choice: agg.model_choice().clone(),
         system_prompt: agg.system_prompt().map(|s| s.to_string()),
         created_at: agg.created_at(),
         updated_at: agg.updated_at(),

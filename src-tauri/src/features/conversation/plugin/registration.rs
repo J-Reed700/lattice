@@ -34,6 +34,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
         })
         .invoke_handler(tauri::generate_handler![
             create_conversation,
+            set_conversation_model_choice,
             generate_chat_starters,
             get_conversation,
             list_conversations,

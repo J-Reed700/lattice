@@ -96,6 +96,7 @@
     "search:allow-reranker-status",
     "search:allow-download-reranker",
     "conversation:allow-create-conversation",
+    "conversation:allow-set-conversation-model-choice",
     "conversation:allow-generate-chat-starters",
     "conversation:allow-create-conversation-tangent",
     "conversation:allow-list-conversation-tangents",

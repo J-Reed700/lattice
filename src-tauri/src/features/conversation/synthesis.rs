@@ -312,13 +312,13 @@ impl SynthesisWork for AppSynthesis {
         plan_synthesis(&*self.runtime, selection).await
     }
 
+    /// A scratch chat follows the Settings default, the model the plan was
+    /// sized for.
     async fn open_scratch(&self) -> Result<String> {
-        let llm = self.runtime.get_or_load_llm().await?;
         Ok(ChatPolicy::create_conversation(
             &*self.runtime,
             CreateConversationRequestDto {
                 title: "Journal synthesis".to_string(),
-                model_name: llm.model_name().to_string(),
                 system_prompt: None,
             },
         )

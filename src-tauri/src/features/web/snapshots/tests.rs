@@ -54,8 +54,8 @@ async fn fixture() -> Fixture {
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES (?, 'Snap', 'model', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')",
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES (?, 'Snap', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')",
     )
     .bind(CONVERSATION)
     .execute(&pool)

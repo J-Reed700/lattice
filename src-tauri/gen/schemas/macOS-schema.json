@@ -1017,6 +1017,12 @@
           "markdownDescription": "Enables the set_conversation_bookmarked command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_conversation_model_choice command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-set-conversation-model-choice",
+          "markdownDescription": "Enables the set_conversation_model_choice command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_conversation_pinned command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-set-conversation-pinned",
@@ -1381,6 +1387,12 @@
           "type": "string",
           "const": "conversation:deny-set-conversation-bookmarked",
           "markdownDescription": "Denies the set_conversation_bookmarked command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_conversation_model_choice command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-set-conversation-model-choice",
+          "markdownDescription": "Denies the set_conversation_model_choice command without any pre-configured scope."
         },
         {
           "description": "Denies the set_conversation_pinned command without any pre-configured scope.",

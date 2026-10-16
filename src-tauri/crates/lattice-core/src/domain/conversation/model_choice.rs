@@ -18,6 +18,26 @@ pub enum ChatModelChoice {
     Explicit { model: ModelRef },
 }
 
+impl ChatModelChoice {
+    /// The stored form: `None` (SQL NULL) for `Default`, otherwise the chosen
+    /// model as JSON. One form per choice, so `Default` is never also `null`.
+    pub fn to_stored(&self) -> serde_json::Result<Option<String>> {
+        match self {
+            Self::Default => Ok(None),
+            Self::Explicit { model } => serde_json::to_string(model).map(Some),
+        }
+    }
+
+    /// Reads [`Self::to_stored`]'s form back. Anything that is not a model is
+    /// an error, never `Default`: reading it as `Default` would move the chat
+    /// to another model without anyone choosing that.
+    pub fn from_stored(stored: Option<&str>) -> serde_json::Result<Self> {
+        stored.map_or(Ok(Self::Default), |json| {
+            serde_json::from_str(json).map(|model| Self::Explicit { model })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,6 +76,45 @@ mod tests {
             assert!(
                 serde_json::from_value::<ChatModelChoice>(unreadable.clone()).is_err(),
                 "{unreadable} was read as a choice"
+            );
+        }
+    }
+
+    #[test]
+    fn default_is_stored_as_null_and_an_explicit_choice_as_its_model() {
+        assert_eq!(ChatModelChoice::Default.to_stored().unwrap(), None);
+        assert_eq!(
+            ChatModelChoice::from_stored(None).unwrap(),
+            ChatModelChoice::Default
+        );
+        let explicit = ChatModelChoice::Explicit {
+            model: ModelRef::Ollama {
+                model: "qwen3:8b".into(),
+            },
+        };
+        let stored = explicit.to_stored().unwrap();
+        assert_eq!(
+            stored.as_deref(),
+            Some(r#"{"kind":"ollama","model":"qwen3:8b"}"#)
+        );
+        assert_eq!(
+            ChatModelChoice::from_stored(stored.as_deref()).unwrap(),
+            explicit
+        );
+    }
+
+    #[test]
+    fn a_stored_value_that_is_not_a_model_is_an_error_not_the_default() {
+        for unreadable in [
+            "",
+            "null",
+            "local:ornith",
+            r#"{"kind":"local"}"#,
+            r#"{"kind":"default"}"#,
+        ] {
+            assert!(
+                ChatModelChoice::from_stored(Some(unreadable)).is_err(),
+                "{unreadable:?} was read as a choice"
             );
         }
     }

@@ -10,10 +10,7 @@ async fn test_add_message() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     let message = repo
         .add_message(
@@ -45,10 +42,7 @@ async fn test_get_messages() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     repo.add_message(
         &conversation.id.to_string(),

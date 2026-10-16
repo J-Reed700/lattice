@@ -19,6 +19,7 @@ use lattice_core::application::ports::llm_port::{
     ModelRequirements, OptionalLlmLoader, PinnedModel,
 };
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::Result;
 use std::collections::HashSet;
@@ -56,6 +57,12 @@ pub trait ChatModels: Send + Sync {
 /// the memory ledger and its recall index.
 #[async_trait]
 pub trait ChatRecords: ConversationMemoryPort + ConversationMemoryReadPort {
+    /// The model this chat asked for.
+    async fn model_choice(&self, conversation_id: &str) -> Result<ChatModelChoice>;
+    /// Record the model this chat asks for. Settings, every other chat and a
+    /// turn already running are untouched.
+    async fn set_model_choice(&self, conversation_id: &str, choice: &ChatModelChoice)
+        -> Result<()>;
     /// The conversation's space and the documents a turn may read in it.
     async fn retrieval_document_scope(
         &self,

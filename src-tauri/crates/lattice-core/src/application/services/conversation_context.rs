@@ -297,12 +297,9 @@ mod tests {
             (Some(" "), Some(" space "), "global", "System: space"),
             (None, Some(" "), " global ", "System: global"),
         ] {
-            let mut aggregate = ConversationAggregate::new(
-                "Title".into(),
-                "model".into(),
-                conversation.map(str::to_string),
-            )
-            .unwrap();
+            let mut aggregate =
+                ConversationAggregate::new("Title".into(), conversation.map(str::to_string))
+                    .unwrap();
             aggregate
                 .add_message(MessageRole::User, "hello".into(), 1)
                 .unwrap();

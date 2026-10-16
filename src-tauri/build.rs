@@ -131,6 +131,7 @@ fn main() {
                 "conversation",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "create_conversation",
+                    "set_conversation_model_choice",
                     "generate_chat_starters",
                     "get_conversation",
                     "list_conversations",

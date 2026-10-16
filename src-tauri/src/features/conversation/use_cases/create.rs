@@ -25,7 +25,7 @@ impl CreateConversationUseCase {
     ///
     /// # Arguments
     ///
-    /// * `request` - CreateConversationRequestDto containing title, model_name, and optional system_prompt
+    /// * `request` - CreateConversationRequestDto containing title and optional system_prompt
     ///
     /// # Returns
     ///
@@ -33,7 +33,7 @@ impl CreateConversationUseCase {
     ///
     /// # Errors
     ///
-    /// - `AppError::InvalidInput` if title or model_name is empty
+    /// - `AppError::InvalidInput` if the title is empty
     /// - `AppError::Database` if database insert fails
     pub async fn execute(
         &self,
@@ -41,7 +41,7 @@ impl CreateConversationUseCase {
     ) -> Result<CreateConversationResponseDto> {
         let conversation = self
             .conversation_service
-            .create_conversation(request.title, request.model_name, request.system_prompt)
+            .create_conversation(request.title, request.system_prompt)
             .await?;
 
         let conversation_dto = ConversationDtoMapper::to_dto(&conversation);
@@ -59,6 +59,7 @@ mod tests {
     use crate::features::conversation::ConversationServiceTrait;
     use async_trait::async_trait;
     use chrono::Utc;
+    use lattice_core::domain::conversation::ChatModelChoice;
     use lattice_core::domain::Conversation;
     use lattice_core::shared::error::AppError;
     use lattice_core::shared::types::ConversationId;
@@ -95,7 +96,6 @@ mod tests {
         async fn create_conversation(
             &self,
             title: String,
-            model_name: String,
             system_prompt: Option<String>,
         ) -> Result<Conversation> {
             if self.should_fail {
@@ -105,7 +105,7 @@ mod tests {
             Ok(Conversation {
                 id: ConversationId::new(),
                 title,
-                model_name,
+                model_choice: ChatModelChoice::Default,
                 system_prompt,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -226,7 +226,6 @@ mod tests {
 
         let request = CreateConversationRequestDto {
             title: "My Conversation".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
             system_prompt: Some("You are helpful".to_string()),
         };
 
@@ -234,10 +233,7 @@ mod tests {
 
         assert_eq!(response.status, "success");
         assert_eq!(response.conversation.title, "My Conversation");
-        assert_eq!(
-            response.conversation.model_name,
-            "claude-sonnet-4-5-20250929"
-        );
+        assert_eq!(response.conversation.model_choice, ChatModelChoice::Default);
         assert_eq!(response.conversation.message_count, 0);
         assert_eq!(response.conversation.total_tokens, 0);
     }
@@ -249,7 +245,6 @@ mod tests {
 
         let request = CreateConversationRequestDto {
             title: "My Conversation".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
             system_prompt: None,
         };
 
@@ -264,7 +259,6 @@ mod tests {
 
         let request = CreateConversationRequestDto {
             title: "Simple Chat".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
             system_prompt: None,
         };
 

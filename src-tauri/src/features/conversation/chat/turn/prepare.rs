@@ -132,7 +132,7 @@ pub(super) async fn prepare_turn(
 
     let conversation_init_start = Instant::now();
     let conv_id =
-        get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
+        get_or_create_conversation_id(container, conversation_id, &validated_message).await?;
     let guard = match turn_guard.take() {
         Some(guard) => guard,
         None => TurnCancellationGuard::start(
