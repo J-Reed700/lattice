@@ -554,6 +554,8 @@ fn main() {
                     "review_study_card",
                     "update_study_card",
                     "delete_study_deck",
+                    "create_learning_tangent",
+                    "list_learning_tangents",
                 ]),
             )
             .plugin(

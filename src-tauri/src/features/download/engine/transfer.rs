@@ -337,6 +337,19 @@ impl HttpDownloadEngine {
             let actual_downloaded = bytes_downloaded.saturating_sub(resume_offset);
             let expected_download = expected_total.saturating_sub(resume_offset);
 
+            if actual_downloaded < expected_download {
+                error!(
+                    url = %url,
+                    expected = expected_download,
+                    actual = actual_downloaded,
+                    "Download stream ended prematurely before expected length"
+                );
+                return Err(DownloadError::NetworkError(format!(
+                    "Stream ended prematurely: downloaded {} bytes of expected {} bytes",
+                    actual_downloaded, expected_download
+                )));
+            }
+
             if actual_downloaded != expected_download {
                 error!(
                     url = %url,

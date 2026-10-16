@@ -24,8 +24,6 @@ struct DownloadSessionRow {
     #[allow(dead_code)]
     max_retries: i32,
     created_at: String,
-    // reason: sqlx::FromRow column mapped from `SELECT *`; kept to mirror the table schema.
-    #[allow(dead_code)]
     updated_at: String,
     started_at: Option<String>,
     completed_at: Option<String>,
@@ -112,6 +110,14 @@ impl TryFrom<DownloadSessionRow> for DownloadSession {
             .map_err(|e| DownloadError::InvalidUrl(format!("Invalid created_at: {}", e)))?
             .with_timezone(&Utc);
 
+        let updated_at = DateTime::parse_from_rfc3339(&row.updated_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(&row.updated_at, "%Y-%m-%d %H:%M:%S")
+                    .map(|ndt| ndt.and_utc())
+            })
+            .map_err(|e| DownloadError::InvalidUrl(format!("Invalid updated_at: {}", e)))?;
+
         let started_at = row.started_at.as_ref().and_then(|s| {
             DateTime::parse_from_rfc3339(s)
                 .map(|dt| dt.with_timezone(&Utc))
@@ -153,7 +159,7 @@ impl TryFrom<DownloadSessionRow> for DownloadSession {
             "retry_count": row.retry_count,
             "max_retries": 3u32,
             "created_at": created_at,
-            "updated_at": Utc::now(),
+            "updated_at": updated_at,
             "started_at": started_at,
             "completed_at": completed_at,
             "model_name": row.model_name,
@@ -285,7 +291,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         .bind(session.retry_count() as i32)
         .bind(3i32) // max_retries
         .bind(session.created_at().to_rfc3339())
-        .bind(session.created_at().to_rfc3339()) // updated_at initially same as created_at
+        .bind(session.updated_at().to_rfc3339())
         .bind(session.started_at().map(|dt| dt.to_rfc3339()))
         .bind(session.completed_at().map(|dt| dt.to_rfc3339()))
         .bind(session.model_name())

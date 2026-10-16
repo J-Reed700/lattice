@@ -69,14 +69,6 @@ pub async fn download_default_embedding_model_impl(
     let model_id = default.curated_id.to_string();
     let model_name = default.display_name.to_string();
 
-    container
-        .security_context()
-        .rate_limiters()
-        .indexing
-        .check_rate_limit(&model_id)
-        .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
-
     let response = container
         .download_model_use_case()
         .execute(DownloadModelRequestDto {
@@ -116,22 +108,20 @@ pub async fn download_default_embedding_model_impl(
 ///
 /// Initiates download of a model from remote storage to local filesystem. Provides
 /// real-time progress updates via events, validates downloaded file integrity, and
-/// handles network errors gracefully with retry logic. This is a resource-intensive
-/// operation protected by rate limiting to prevent abuse and ensure system stability.
+/// handles network errors gracefully with retry logic.
 ///
 /// # Arguments
 ///
 /// * `model_id` - Unique identifier of the model to download (e.g., "llama-3-8b")
-/// * `container` - Service container with use cases and security context
+/// * `container` - Service container with use cases
 ///
 /// # Returns
 ///
 /// * `Ok(DownloadModelResponseDto)` - Download completion status with path
-/// * `Err(AppError)` - If rate limited, download fails, or verification fails
+/// * `Err(AppError)` - If download fails or verification fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many download requests (CWE-770 mitigation)
 /// * `AppError::InvalidInput` - Model ID invalid or not in catalog
 /// * `AppError::Other` - Network error, storage full, or integrity check failed
 ///
@@ -186,11 +176,10 @@ pub async fn download_default_embedding_model_impl(
 /// # Download Process
 ///
 /// **Workflow**:
-/// 1. **Rate Limit Check**: Prevents excessive downloads (CWE-770)
-/// 2. **Model Validation**: Verify model ID exists in catalog
-/// 3. **Storage Check**: Ensure sufficient disk space
-/// 4. **Network Download**: Stream model file with progress events
-/// 5. **Integrity Verification**: Validate checksum after download
+/// 1. **Model Validation**: Verify model ID exists in catalog
+/// 2. **Storage Check**: Ensure sufficient disk space
+/// 3. **Network Download**: Stream model file with progress events
+/// 4. **Integrity Verification**: Validate checksum after download
 ///
 /// **Progress Events**:
 /// - Emitted every 1 second or 10MB, whichever comes first
@@ -202,11 +191,9 @@ pub async fn download_default_embedding_model_impl(
 /// - **Network Failure**: Automatic retry up to 3 times with exponential backoff
 /// - **Storage Full**: Clean error message, suggests freeing disk space
 /// - **Integrity Failure**: Deletes corrupted file, suggests retry
-/// - **Rate Limited**: Suggests waiting before retrying
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Max 5 downloads per hour to prevent DoS
 /// - **Integrity Verification**: SHA-256 checksum validation
 /// - **Path Validation**: Downloads only to safe, validated paths (CWE-22)
 /// - **Size Limits**: Rejects downloads exceeding maximum size (100GB)
@@ -226,17 +213,14 @@ pub async fn download_default_embedding_model_impl(
 ///
 /// # Architecture
 ///
-/// Thin controller with cross-cutting concerns:
-/// 1. **Rate Limiting**: Applied before execution
-/// 2. **Use Case Execution**: DownloadModelUseCase handles business logic
+/// Thin controller delegating to `DownloadModelUseCase`.
 ///
 /// # Command Flow
 ///
-/// 1. Check rate limit (prevent abuse)
-/// 2. Get use case from container
-/// 3. Create request DTO with model ID
-/// 4. Execute download (validate, download, verify)
-/// 5. Return DownloadModelResponseDto with path
+/// 1. Get use case from container
+/// 2. Create request DTO with model ID
+/// 3. Execute download (validate, download, verify)
+/// 4. Return DownloadModelResponseDto with path
 ///
 /// # Note
 ///
@@ -247,15 +231,6 @@ pub async fn download_model_impl(
     container: &Container,
 ) -> Result<DownloadModelResponseDto, AppError> {
     tracing::info!(model_id = %model_id, "Command: download_model - ENTRY");
-
-    // Rate limiting (resource-intensive operation)
-    container
-        .security_context()
-        .rate_limiters()
-        .indexing
-        .check_rate_limit(&model_id)
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = container.download_model_use_case();
     let request = DownloadModelRequestDto {

@@ -355,11 +355,28 @@ fn deep_research_keeps_its_searches_after_the_first_round() {
     assert!(!kept_with_grounded_context("wiki_search", true, false));
     assert!(kept_with_grounded_context("fetch_url_content", true, false));
     assert!(kept_with_grounded_context("semantic_search", false, false));
+    assert!(kept_with_grounded_context("get_document", false, false));
+    assert!(kept_with_grounded_context("list_attachments", false, false));
     // Deep research goes back for more.
     assert!(kept_with_grounded_context("web_search", true, true));
     assert!(kept_with_grounded_context("wiki_search", true, true));
     assert!(kept_with_grounded_context("wiki_summary", true, true));
     assert!(!kept_with_grounded_context("list_documents", true, true));
+}
+
+#[test]
+fn every_registered_builtin_tool_is_classified_for_chat_turns() {
+    use crate::features::function_calling::trait_def::FunctionRegistryTrait;
+
+    let registry = crate::features::function_calling::registry::init_function_registry().unwrap();
+    for tool in registry.list_tools() {
+        let name = tool.name.as_str();
+        assert!(
+            CORE_TOOL_NAMES.contains(&name) || OPTIONAL_BUILTIN_TOOL_NAMES.contains(&name),
+            "built-in tool '{name}' is registered in init_function_registry() but missing from \
+             CORE_TOOL_NAMES and OPTIONAL_BUILTIN_TOOL_NAMES, so build_llm_tool_definitions would drop it"
+        );
+    }
 }
 
 #[test]

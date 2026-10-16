@@ -4,7 +4,7 @@
 //! `ask_question` commands were removed with the use case behind them.
 
 use crate::interfaces::di::Container;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use tauri::State;
 
 /// Checks LLM availability and returns health status information
@@ -16,20 +16,9 @@ use tauri::State;
 pub async fn check_llm_health(
     container: State<'_, Container>,
 ) -> Result<super::dto::LLMHealthStatusDto> {
-    // 1. Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .qa
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    // 2. Check LLM service availability
     let llm = container.get_or_load_llm().await?;
     let is_ready = llm.is_ready().await?;
 
-    // 3. Build health response
     let health_response = super::dto::LLMHealthStatusDto {
         available: is_ready,
         model: llm.model_name().to_string(),

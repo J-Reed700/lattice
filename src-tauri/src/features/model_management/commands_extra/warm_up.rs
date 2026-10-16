@@ -6,14 +6,6 @@ use super::*;
 /// This eagerly loads the LLM into memory so first chat response is faster.
 pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = GetActiveChatModelUseCase::new(repository.clone());
     let active_model = use_case.execute().await?.ok_or_else(|| {
@@ -85,15 +77,6 @@ pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(),
 /// to warm up. Returns `Err` only when a model IS configured but fails
 /// to load.
 pub async fn warm_up_active_utility_model_impl(container: &Container) -> Result<(), AppError> {
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let start = Instant::now();
     match container.get_or_load_utility_llm().await {
         Ok(Some(_llm)) => {

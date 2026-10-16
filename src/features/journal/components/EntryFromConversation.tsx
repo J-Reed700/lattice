@@ -22,14 +22,15 @@ import {
   type JournalSourceSummary,
 } from '@/features/journal/hooks/useJournalSources';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import {
+  fromJournalSource,
+  type ResolvedReaderTarget,
+} from '@/features/reading/model/sourceAdapter';
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
-import { openExternalUrl } from '@/utils/openExternalUrl';
 
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface EntryFromConversationProps {
   entry: JournalEntrySummary | null;
@@ -70,45 +71,29 @@ export function EntryFromConversation({
   const createConversation = useConversationsStore((s) => s.createConversation);
   const addConversationWebSource = useConversationsStore((s) => s.addConversationWebSource);
 
+  const conversationId = entry?.id;
   const assistantMessages = useMemo(
     () => messages.filter((m) => m.role === 'assistant'),
     [messages],
   );
   const entrySources = useMemo(() => collectEntrySources(messages), [messages]);
+  const readerTargets = useMemo(
+    () => entrySources.map((s) => fromJournalSource(s, conversationId)),
+    [entrySources, conversationId],
+  );
+  const [previewTarget, setPreviewTarget] = useState<{
+    target: ResolvedReaderTarget;
+    index?: number;
+  } | null>(null);
 
-  const openSource = async (source: JournalMessageSource | JournalSourceSummary) => {
-    const sourceUrl = getSourceOpenUrl(source);
-    if (sourceUrl) {
-      const opened = await openExternalUrl(sourceUrl);
-      if (!opened) onNotify('error', 'Unable to open source URL in browser.');
-      return;
-    }
-    const rawPath = source.filePath.trim();
-    const pathFromFileUri = rawPath.startsWith('file://')
-      ? decodeURIComponent(rawPath.replace(/^file:\/\//, ''))
-      : rawPath;
-
-    if (source.documentId && UUID_PATTERN.test(source.documentId)) {
-      const byId = await VaultAPI.openFileById(source.documentId);
-      if (byId.ok) {
-        if (byId.data.action === 'render_internal' && byId.data.contentPath) {
-          const internal = await VaultAPI.openFile(byId.data.contentPath);
-          if (!internal.ok) onNotify('error', `Unable to open source: ${internal.error}`);
-        }
-        return;
-      }
-      const metadataResult = await VaultAPI.getDocument(source.documentId);
-      if (metadataResult.ok && metadataResult.data.filePath) {
-        const byMetadata = await VaultAPI.openFile(metadataResult.data.filePath);
-        if (byMetadata.ok) return;
-      }
-    }
-    if (!pathFromFileUri || pathFromFileUri === 'unknown://source') {
-      onNotify('error', 'Source path unavailable for this citation.');
-      return;
-    }
-    const byPath = await VaultAPI.openFile(pathFromFileUri);
-    if (!byPath.ok) onNotify('error', `Unable to open source: ${byPath.error}`);
+  const openSource = (source: JournalMessageSource | JournalSourceSummary) => {
+    const target = fromJournalSource(source, conversationId);
+    const idx = readerTargets.findIndex(
+      (r) =>
+        (r.source.documentId && r.source.documentId === target.source.documentId) ||
+        (r.source.filePath && r.source.filePath === target.source.filePath),
+    );
+    setPreviewTarget({ target, index: idx >= 0 ? idx : undefined });
   };
 
   const startNewChatFromEntrySources = async () => {
@@ -174,7 +159,8 @@ export function EntryFromConversation({
   const hasAssistantYet = insightCount > 0;
 
   return (
-    <section className={embedded ? '' : 'mt-12 border-t border-[hsl(var(--border-subtle))] pt-6'}>
+    <>
+      <section className={embedded ? '' : 'mt-12 border-t border-[hsl(var(--border-subtle))] pt-6'}>
       {embedded ? (
         <div className="mb-1">
           <h3 className="font-serif text-[17px] font-medium leading-snug tracking-[-0.01em] text-text-primary">{entry.title}</h3>
@@ -431,6 +417,20 @@ export function EntryFromConversation({
         )}
       </AnimatePresence>
     </section>
+
+      <FilePreviewModal
+        isOpen={previewTarget !== null}
+        onClose={() => setPreviewTarget(null)}
+        source={previewTarget?.target.source ?? null}
+        initialLocator={previewTarget?.target.locator ?? null}
+        citations={previewTarget?.index !== undefined ? readerTargets.map((r) => r.source) : undefined}
+        citationIndex={previewTarget?.index}
+        onCitationIndexChange={(nextIdx) => {
+          const next = readerTargets[nextIdx];
+          if (next) setPreviewTarget({ target: next, index: nextIdx });
+        }}
+      />
+    </>
   );
 }
 

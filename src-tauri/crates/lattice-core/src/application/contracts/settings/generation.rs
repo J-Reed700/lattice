@@ -107,3 +107,24 @@ impl SpeculativeDecodingDto {
         }
     }
 }
+
+/// Per-model launch configuration for a bundled local GGUF model.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModelConfigDto {
+    /// Context length in tokens. `None` means Auto (dynamically sized to the
+    /// model's trained maximum and the machine's available memory).
+    #[serde(default)]
+    pub context_length: Option<u32>,
+    /// Max concurrent predictions (`-np` parallel slots on `llama-server`).
+    /// `None` uses the server default (4).
+    #[serde(default)]
+    pub max_concurrent_predictions: Option<u32>,
+    /// Fixed RNG seed (`-s` on `llama-server`). `None` uses a random seed.
+    #[serde(default)]
+    pub seed: Option<u32>,
+    /// Quantize the KV cache (`-ctk q8_0 -ctv q8_0`) to roughly halve KV cache
+    /// memory usage and allow a larger context window to fit in memory.
+    #[serde(default)]
+    pub kv_cache_quantization: bool,
+}

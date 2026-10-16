@@ -35,10 +35,10 @@ describe('startModelDownload', () => {
     vi.mocked(VaultAPI.downloadModel).mockClear();
   });
 
-  it('asks the user to wait when the backend rate-limits downloads', async () => {
+  it('shows an error toast when the backend fails to start the download', async () => {
     vi.mocked(VaultAPI.downloadModel).mockResolvedValueOnce({
       ok: false,
-      error: 'Rate limit reached for model downloads',
+      error: 'Disk space insufficient',
     });
     const addToast = vi.fn(() => 'toast-id');
 
@@ -51,9 +51,9 @@ describe('startModelDownload', () => {
     expect(result).toEqual({ alreadyDownloaded: false });
     expect(VaultAPI.downloadModel).toHaveBeenCalledWith('qwen3-4b');
     expect(addToast).toHaveBeenCalledWith({
-      type: 'warning',
-      title: 'Too many downloads at once',
-      message: 'Wait a moment, then try again.',
+      type: 'error',
+      title: "Couldn't start the download",
+      message: 'Disk space insufficient',
     });
   });
 

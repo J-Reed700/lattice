@@ -20,11 +20,10 @@ use std::path::PathBuf;
 /// # Returns
 ///
 /// * `Ok(String)` - Path to the created backup file
-/// * `Err(AppError)` - If rate limited, path validation fails, or backup creation fails
+/// * `Err(AppError)` - If path validation fails or backup creation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many backup requests (rate limited to 50/min)
 /// * `AppError::InvalidInput` - Invalid backup path (directory traversal detected)
 /// * `AppError::Other` - Failed to create backup file or database access error
 ///
@@ -49,7 +48,6 @@ use std::path::PathBuf;
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Backup rate limiter (50 req/min) prevents resource exhaustion
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 ///
 /// # Use Cases
@@ -77,32 +75,21 @@ use std::path::PathBuf;
 /// # Architecture
 ///
 /// Command flow:
-/// 1. Rate limiting via SecurityContext (CWE-770)
-/// 2. Path validation via ValidatedFilePath (CWE-22)
-/// 3. Backup creation (database snapshot)
+/// 1. Path validation via ValidatedFilePath (CWE-22)
+/// 2. Backup creation (database snapshot)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check (backup limiter, 50/min)
-/// 2. Path validation if custom path provided
-/// 3. Generate default path if needed
-/// 4. Create database backup file
-/// 5. Return backup file path
+/// 1. Path validation if custom path provided
+/// 2. Generate default path if needed
+/// 3. Create database backup file
+/// 4. Return backup file path
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn create_backup_impl(
     backup_path: Option<String>,
     container: &Container,
 ) -> Result<String, AppError> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .backup
-        .check_rate_limit("backup")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let validated_path = if let Some(path_str) = backup_path {
         let validated = ValidatedFilePath::new(PathBuf::from(&path_str))
             .map_err(|e| AppError::InvalidInput(format!("Invalid backup path: {}", e)))?;

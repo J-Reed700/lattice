@@ -7,6 +7,7 @@
 //! with a hand-built [`ResolvedResources`].
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use lol_html::html_content::{ContentType, Element, TextChunk};
@@ -21,9 +22,11 @@ use super::resources::{
 use super::{MAX_EMITTED_BYTES, PLACEHOLDER_DATA_URL_LEN};
 use crate::features::web::traits::page_snapshot::{CaptureRequest, DataUri};
 
+mod archival;
 mod collect;
 mod srcset;
 
+pub use archival::synthesize_archival_html;
 pub(super) use collect::collect;
 pub(super) use srcset::choose_srcset;
 
@@ -68,7 +71,12 @@ const REMOVED_WITH_CONTENT: &[&str] = &[
 ];
 
 /// `meta[name]` values only the envelope may declare.
-const ENVELOPE_META_NAMES: &[&str] = &["referrer", "lattice-snapshot", "memento-datetime"];
+const ENVELOPE_META_NAMES: &[&str] = &[
+    "referrer",
+    "lattice-snapshot",
+    "memento-datetime",
+    "color-scheme",
+];
 
 /// Removed from every element (§6.4), besides every `on*`.
 const REMOVED_ATTRIBUTES: &[&str] = &[
@@ -120,7 +128,19 @@ const SRCSET_MAX_W: u32 = 1600;
 const SRCSET_MAX_X: f32 = 2.0;
 
 const CSP: &str = "default-src 'none'; img-src data:; media-src data:; font-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
-const BASE_LAYER: &str = "html { scrollbar-gutter: stable; }\nimg[data-lattice-missing] { background: repeating-linear-gradient(45deg, #eee 0 6px, #f6f6f6 6px 12px); min-height: 2em; }";
+const BASE_LAYER: &str = ":root { color-scheme: light; }\n\
+    :where(html) { color-scheme: light; background-color: #ffffff; color: #111827; scrollbar-gutter: stable; }\n\
+    html, body { visibility: visible !important; opacity: 1 !important; }\n\
+    img[data-lattice-missing] { background: repeating-linear-gradient(45deg, #eee 0 6px, #f6f6f6 6px 12px); min-height: 2em; }\n\
+    #__next > div[style*=\"visibility:hidden\"], #__next > div[style*=\"visibility: hidden\"], \
+    [data-reactroot] > div[style*=\"visibility:hidden\"], [data-reactroot] > div[style*=\"visibility: hidden\"], \
+    #root > div[style*=\"visibility:hidden\"], #root > div[style*=\"visibility: hidden\"], \
+    #app > div[style*=\"visibility:hidden\"], #app > div[style*=\"visibility: hidden\"], \
+    body > div[style*=\"visibility:hidden\"][style*=\"100vh\"], body > div[style*=\"visibility: hidden\"][style*=\"100vh\"], \
+    main[style*=\"opacity:0\"], main[style*=\"opacity: 0\"], \
+    article[style*=\"opacity:0\"], article[style*=\"opacity: 0\"], \
+    [data-w-id][style*=\"opacity:0\"], [data-w-id][style*=\"opacity: 0\"], \
+    [data-aos][style*=\"opacity:0\"], [data-aos][style*=\"opacity: 0\"] { visibility: visible !important; opacity: 1 !important; }";
 
 /// Reads an attribute by lowercase name, entity-decoded.
 type AttrFn<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -173,12 +193,14 @@ fn element_resource(tag: &str, svg: bool, attr: AttrFn<'_>) -> Option<(String, R
     }
 }
 
-/// `link[rel~=stylesheet]` (not alternate) or `link[rel~=icon]` / `apple-touch-icon`.
+/// `link[rel~=stylesheet]` (not alternate) or `link[rel~=preload][as=style]` or `link[rel~=icon]` / `apple-touch-icon`.
 fn link_resource(attr: AttrFn<'_>) -> Option<(String, ResourceKind)> {
     let rel = attr("rel").unwrap_or_default().to_ascii_lowercase();
     let tokens: Vec<&str> = rel.split_ascii_whitespace().collect();
     let href = non_empty(attr("href"))?;
-    if tokens.contains(&"stylesheet") && !tokens.contains(&"alternate") {
+    let is_preload_style = tokens.contains(&"preload")
+        && attr("as").is_some_and(|a| a.trim().eq_ignore_ascii_case("style"));
+    if (tokens.contains(&"stylesheet") && !tokens.contains(&"alternate")) || is_preload_style {
         Some((href, ResourceKind::Stylesheet))
     } else if tokens.contains(&"icon") || tokens.contains(&"apple-touch-icon") {
         Some((href, ResourceKind::Favicon))
@@ -325,7 +347,14 @@ pub(super) fn noscript_images(text: &str) -> Option<String> {
     let found = Cell::new(false);
     let settings = RewriteStrSettings::new()
         .append_element_content_handler(element!("*", |el| {
-            if matches!(el.tag_name().as_str(), "img" | "picture") {
+            let tag = el.tag_name();
+            let keep = matches!(tag.as_str(), "img" | "picture")
+                || (tag == "link"
+                    && matches!(
+                        link_resource(&|name| attribute(el, name)),
+                        Some((_, ResourceKind::Stylesheet))
+                    ));
+            if keep {
                 found.set(true);
             } else {
                 el.remove_and_keep_content();
@@ -364,6 +393,7 @@ struct Context<'a> {
     snapshot_id: &'a str,
     emitted: Cell<usize>,
     over_budget: Cell<bool>,
+    inlined_sheets: RefCell<HashSet<String>>,
 }
 
 /// Pass 2: apply §6.4 and §8.3 to `html`, substitute the fetched resources,
@@ -382,6 +412,7 @@ pub(super) fn sanitize_with_resources(
         snapshot_id: &request.snapshot_id,
         emitted: Cell::new(0),
         over_budget: Cell::new(false),
+        inlined_sheets: RefCell::new(HashSet::new()),
     };
     let envelope = envelope(doc_url, captured_at);
     let written = Cell::new(false);
@@ -451,7 +482,14 @@ fn rewrite(
         }))
         .append_element_content_handler(element!("noscript *", |el| {
             // Only reached if a parser ever hands noscript content over as elements.
-            if !matches!(el.tag_name().as_str(), "img" | "picture") {
+            let tag = el.tag_name();
+            let keep = matches!(tag.as_str(), "img" | "picture")
+                || (tag == "link"
+                    && matches!(
+                        link_resource(&|name| attribute(el, name)),
+                        Some((_, ResourceKind::Stylesheet))
+                    ));
+            if !keep {
                 el.remove_and_keep_content();
             }
             Ok(())
@@ -520,10 +558,28 @@ fn rewrite_element(el: &mut Element<'_, '_>, context: &Context<'_>) {
 fn rewrite_link(el: &mut Element<'_, '_>, context: &Context<'_>) {
     let attr = |name: &str| attribute(el, name);
     let sheet = match link_resource(&attr) {
-        Some((href, ResourceKind::Stylesheet)) => context
-            .stylesheet(&href, &context.base)
-            .map(|(text, url)| css::rewrite_sheet(&text, &url, context, 0))
-            .and_then(|css_text| css::wrap_media(css_text, &attr("media").unwrap_or_default())),
+        Some((href, ResourceKind::Stylesheet)) => {
+            if let Ok(resolved) = resolve_reference(&context.base, &href) {
+                if context.inlined_sheets.borrow().contains(&resolved) {
+                    el.remove();
+                    return;
+                }
+            }
+            if let Some((text, url)) = context.stylesheet(&href, &context.base) {
+                context.inlined_sheets.borrow_mut().insert(url.to_string());
+                let css_text = css::rewrite_sheet(&text, &url, context, 0);
+                let raw_media = attr("media").unwrap_or_default();
+                let media =
+                    if raw_media.trim().eq_ignore_ascii_case("print") && attr("onload").is_some() {
+                        ""
+                    } else {
+                        &raw_media
+                    };
+                css::wrap_media(css_text, media)
+            } else {
+                None
+            }
+        }
         _ => None,
     };
     match sheet {

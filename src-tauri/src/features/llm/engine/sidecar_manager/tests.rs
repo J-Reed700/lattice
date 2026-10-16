@@ -370,13 +370,28 @@ fn corrupt_model_is_a_startup_failure_not_a_binary_failure() {
 
 #[test]
 fn unknown_architectures_report_the_engine_mismatch_without_cpu_retries() {
-    for architecture in ["laguna", "future-model-family"] {
-        let output = lines(&format!(
-            "llama_model_load: error loading model architecture: unknown model architecture: '{architecture}'"
-        ));
+    for (line, expected) in [
+        (
+            "llama_model_load: error loading model architecture: unknown model architecture: 'laguna'",
+            "laguna",
+        ),
+        (
+            "llama_model_load: error loading model architecture: unknown model architecture: 'future-model-family'",
+            "future-model-family",
+        ),
+        (
+            "gguf_init_from_reader: tensor 'output.weight' has invalid ggml type 142. should be in [0, 43)",
+            "invalid ggml type 142",
+        ),
+        (
+            "gguf_init_from_reader: tensor 'output_norm.weight' has offset 165015872, expected 174722688",
+            "has offset 165015872, expected 174722688",
+        ),
+    ] {
+        let output = lines(line);
         let err = classify(SidecarBinary::Primary, &exited(Some(1), None), &output);
         assert_eq!(err.kind, AttemptFailure::Fatal);
-        assert!(err.message.contains(architecture));
+        assert!(err.message.contains(expected), "{}", err.message);
         assert!(err.message.contains("Update Lattice's model engine"));
         assert!(!err.message.contains("corrupt"));
         assert_eq!(

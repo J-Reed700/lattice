@@ -61,13 +61,6 @@ pub async fn search_with_recency_impl(
 ) -> Result<Vec<SearchResultDto>, AppError> {
     container
         .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
-
-    container
-        .security_context()
         .input_validator()
         .validate_search_query(&options.query)?;
 

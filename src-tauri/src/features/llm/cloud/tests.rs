@@ -49,6 +49,12 @@ fn provider_wire_formats_preserve_tool_results() {
         anthropic.body(&request, false).unwrap()["messages"][0]["content"][0]["tool_use_id"],
         "abc"
     );
+    settings.provider = LLMProvider::Google;
+    let google = CloudLlm::new(&settings, "test".into()).unwrap();
+    assert_eq!(
+        google.body(&request, false).unwrap()["messages"][0]["tool_call_id"],
+        "abc"
+    );
 }
 
 /// A turn is replayed by appending the response's own replay items: the
@@ -109,6 +115,36 @@ fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
     assert_eq!(body["messages"][1]["content"][0]["signature"], "signed");
     assert_eq!(body["messages"][1]["content"][1]["id"], "call_7");
     assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call_7");
+
+    settings.provider = LLMProvider::Google;
+    let google = CloudLlm::new(&settings, "test".into()).unwrap();
+    let reply = parse_completion(
+        LLMProvider::Google,
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_7",
+                        "type": "function",
+                        "function": {
+                            "name": "search",
+                            "arguments": "{}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        }),
+    )
+    .unwrap();
+    let body = continue_with(&google, reply);
+    assert_eq!(body["messages"][1]["role"], "assistant");
+    assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_7");
+    assert_eq!(body["messages"][2]["role"], "tool");
+    assert_eq!(body["messages"][2]["tool_call_id"], "call_7");
 }
 
 fn anthropic_body(effort: &str) -> Value {
@@ -283,4 +319,71 @@ fn openai_requests_a_displayable_summary_only_for_reasoning_models() {
     assert_eq!(body("gpt-5.1")["reasoning"]["summary"], "auto");
     assert_eq!(body("gpt-6-sol")["reasoning"]["summary"], "auto");
     assert!(body("gpt-4o-mini").get("reasoning").is_none());
+}
+
+#[test]
+fn google_completion_parses_content_reasoning_and_tool_calls() {
+    let result = parse_completion(
+        LLMProvider::Google,
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "The answer.",
+                    "reasoning_content": "Thought step.",
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "search",
+                            "arguments": "{\"q\":\"rust\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 15,
+                "completion_tokens": 8
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(result.text, "The answer.");
+    assert_eq!(result.reasoning.as_deref(), Some("Thought step."));
+    assert_eq!(result.finish_reason, "tool_calls");
+    assert_eq!(result.input_tokens, 15);
+    assert_eq!(result.output_tokens, 8);
+    assert!(
+        matches!(&result.tool_calls[0], CompletionInput::ToolCall { id, name, arguments } if id == "call_123" && name == "search" && arguments["q"] == "rust")
+    );
+}
+
+#[test]
+fn google_sends_the_tool_choice_with_tools() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Google,
+        model: "gemini-2.5-flash".into(),
+        ..Default::default()
+    };
+    let google = CloudLlm::new(&settings, "test".into()).unwrap();
+    let request = CompletionRequest {
+        tools: vec![lattice_core::application::ports::ToolDefinition {
+            name: "search".into(),
+            description: "Search".into(),
+            parameters: json!({"type":"object"}),
+        }],
+        tool_choice: Some(ToolChoice::None),
+        ..Default::default()
+    };
+    assert_eq!(google.body(&request, false).unwrap()["tool_choice"], "none");
+    let bare = CompletionRequest {
+        tools: Vec::new(),
+        ..request
+    };
+    assert!(google
+        .body(&bare, false)
+        .unwrap()
+        .get("tool_choice")
+        .is_none());
 }

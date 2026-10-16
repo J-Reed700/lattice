@@ -155,4 +155,10 @@ pub trait PageCapturePort: Send + Sync {
         progress: ProgressSink,
         cancel: CancellationToken,
     ) -> std::result::Result<CapturedPage, CaptureError>;
+
+    fn attach_browser(
+        &self,
+        _browser: Arc<crate::features::web::services::browser_reader::BrowserReader>,
+    ) {
+    }
 }

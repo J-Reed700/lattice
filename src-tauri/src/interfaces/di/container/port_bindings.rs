@@ -216,16 +216,8 @@ impl crate::features::daily_notes::ports::NoteProjection for Container {
 /// here, where both may be named.
 #[async_trait::async_trait]
 impl crate::features::explorer::folders::FolderThreads for Container {
-    async fn check_delete_limit(&self) -> Result<()> {
-        crate::features::conversation::chat::ports::ChatPolicy::check_delete_rate_limit(
-            self,
-            "delete_conversation",
-        )
-        .await
-    }
-
     async fn delete_thread(&self, conversation_id: &str) -> Result<()> {
-        crate::features::conversation::chat::ports::ChatPolicy::delete_conversation_unmetered(
+        crate::features::conversation::chat::ports::ChatPolicy::delete_conversation(
             self,
             conversation_id,
         )

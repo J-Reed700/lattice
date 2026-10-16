@@ -977,6 +977,22 @@ async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async createLearningTangent(request: CreateLearningTangentRequestDto) : Promise<Result<LearningTangentDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_tangent", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listLearningTangents(request: ListLearningTangentsRequestDto) : Promise<Result<LearningTangentDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_learning_tangents", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Download a model by ID
  *
@@ -1365,11 +1381,10 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * # Returns
  *
  * * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
- * * `Err(ApiError)` - If rate limited, validation fails, or search execution fails
+ * * `Err(ApiError)` - If validation fails or search execution fails
  *
  * # Errors
  *
- * * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
  * * `AppError::InvalidInput` - Query validation failed (empty, too long, malicious content)
  * * `AppError::Other` - Embedding generation or search execution failed
  *
@@ -1402,7 +1417,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  *
  * # Security
  *
- * - **Rate Limiting (CWE-770)**: Prevents DoS attacks via excessive searches
  * - **Input Validation**: Sanitizes query to prevent injection attacks
  * - **Access Tracking**: Records document access asynchronously for usage analytics
  *
@@ -1421,15 +1435,14 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  *
  * # Command Flow
  *
- * 1. Rate limiting check (prevent DoS)
- * 2. Input validation (sanitize query)
- * 3. Generate cache key from query + options
- * 4. **Cache lookup** - if hit, return cached results immediately
- * 5. Embed query using embedding service
- * 6. Execute search based on mode (vector/keyword/hybrid)
- * 7. Enrich results with document metadata and snippets
- * 8. Store results in cache for future requests
- * 9. Track document access asynchronously
+ * 1. Input validation (sanitize query)
+ * 2. Generate cache key from query + options
+ * 3. **Cache lookup** - if hit, return cached results immediately
+ * 4. Embed query using embedding service
+ * 5. Execute search based on mode (vector/keyword/hybrid)
+ * 6. Enrich results with document metadata and snippets
+ * 7. Store results in cache for future requests
+ * 8. Track document access asynchronously
  */
 async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
@@ -1455,7 +1468,7 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
  * # Returns
  *
  * * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
- * * `Err(ApiError)` - If rate limited, validation fails, or search fails
+ * * `Err(ApiError)` - If validation fails or search fails
  *
  * # Example
  *
@@ -1475,7 +1488,6 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
  *
  * # Security
  *
- * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query
  *
  * # Performance
@@ -1532,11 +1544,10 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * # Returns
  *
  * * `Ok(Vec<SearchResultDto>)` - Similar documents ranked by semantic similarity
- * * `Err(AppError)` - If rate limited, chunk not found, or search fails
+ * * `Err(AppError)` - If chunk not found or search fails
  *
  * # Errors
  *
- * * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
  * * `AppError::NotFound` - Chunk ID not found in database
  * * `AppError::Other` - Embedding or search execution failed
  *
@@ -1557,10 +1568,6 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * });
  * ```
  *
- * # Security
- *
- * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
- *
  * # Algorithm
  *
  * 1. Retrieve source chunk content from database
@@ -1579,15 +1586,14 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  *
  * # Command Flow
  *
- * 1. Rate limiting check
- * 2. Fetch chunk content using enrichment service
- * 3. Error if chunk not found
- * 4. Embed chunk content
- * 5. Vector similarity search (limit + 1 to account for self-match)
- * 6. Filter out source chunk
- * 7. Take top `limit` results
- * 8. Enrich with metadata
- * 9. Return similar documents
+ * 1. Fetch chunk content using enrichment service
+ * 2. Error if chunk not found
+ * 3. Embed chunk content
+ * 4. Vector similarity search (limit + 1 to account for self-match)
+ * 5. Filter out source chunk
+ * 6. Take top `limit` results
+ * 7. Enrich with metadata
+ * 8. Return similar documents
  */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1627,11 +1633,10 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * # Returns
  *
  * * `Ok(Vec<SearchResultDto>)` - Search results ranked with recency boost
- * * `Err(AppError)` - If rate limited, validation fails, or execution fails
+ * * `Err(AppError)` - If validation fails or execution fails
  *
  * # Errors
  *
- * * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
  * * `AppError::InvalidInput` - Query validation failed, invalid recency weight, or negative max_age_days
  * * `AppError::Other` - Embedding or search execution failed
  *
@@ -1665,7 +1670,6 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  *
  * # Security
  *
- * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
  *
  * # Recency Scoring
@@ -1696,15 +1700,14 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  *
  * # Command Flow
  *
- * 1. Rate limiting check
- * 2. Input validation (query, recency_weight, max_age_days)
- * 3. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
- * 4. Validate recency_weight ∈ [0, 1]
- * 5. Validate max_age_days > 0
- * 6. Run the library search orchestrator
- * 7. Enrich results with metadata
- * 8. Boost recently updated documents
- * 9. Return time-boosted results
+ * 1. Input validation (query, recency_weight, max_age_days)
+ * 2. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
+ * 3. Validate recency_weight ∈ [0, 1]
+ * 4. Validate max_age_days > 0
+ * 5. Run the library search orchestrator
+ * 6. Enrich results with metadata
+ * 7. Boost recently updated documents
+ * 8. Return time-boosted results
  */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1735,7 +1738,6 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
  *
  * ## Security
  *
- * - Rate limiting applied once for the batch
  * - Each query validated individually
  *
  * ## Example
@@ -5134,6 +5136,7 @@ export type CreateLearningAssessmentBlueprintRequestDto = { operationId: string;
 export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
 export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
 export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
+export type CreateLearningTangentRequestDto = { programId: string; moduleId: string; lessonId: string; sectionIndex?: number | null; sectionTitle?: string | null; selectedText: string }
 export type CreatePassageReferenceRequestDto = { documentId: string; chunkId: string | null; filePath: string; fileName: string; locator: string | null; text: string; title: string | null; note: string | null }
 export type CreateTangentRequestDto = { conversationId: string; messageId: string; selectedText: string }
 export type CreateWorkspaceNoteRequestDto = { title: string | null;
@@ -5380,7 +5383,7 @@ export type DownloadStatusResponse = { id: string; url: string; destination: str
 /**
  * Response for get_models_with_metadata command
  */
-export type DownloadedModelResponse = { id: string; model_name: string; model_id: string; file_path: string; file_size_bytes: number; model_type: string; downloaded_at: string; last_used_at: string | null; use_count: number; is_active_for_chat: boolean; is_active_for_embedding: boolean; is_active_for_utility: boolean; backend: string }
+export type DownloadedModelResponse = { id: string; model_name: string; model_id: string; file_path: string; file_size_bytes: number; model_type: string; downloaded_at: string; last_used_at: string | null; use_count: number; is_active_for_chat: boolean; is_active_for_embedding: boolean; is_active_for_utility: boolean; backend: string; trained_context_length?: number | null }
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
@@ -6232,7 +6235,7 @@ noContextPromptTemplate: string }
 /**
  * LLM provider selection.
  */
-export type LLMProvider = "auto" | "local" | "ollama" | "llamacpp" | "openai" | "anthropic"
+export type LLMProvider = "auto" | "local" | "ollama" | "llamacpp" | "openai" | "anthropic" | "google"
 /**
  * LLM settings.
  */
@@ -6303,6 +6306,11 @@ contextWindow: number;
  * shrunk. `context_window` above governs remote providers, not this.
  */
 localContextWindow: number | null;
+/**
+ * Per-model launch overrides keyed by `model_id` (context length,
+ * concurrent predictions, seed, KV cache quantization).
+ */
+localModelConfigs: { [key in string]: LocalModelConfigDto };
 /**
  * Speculative decoding for the bundled local server. Experimental, and
  * applied only to a model that carries a multi-token-prediction head;
@@ -6779,6 +6787,7 @@ export type LearningSourceUsageDto = { lessonId: string; lessonTitle: string; re
 export type LearningSourceVersionDto = { sourceId: string; version: LearningSourceVersionSummaryDto; fullText: string; usage: LearningSourceUsageDto[] }
 export type LearningSourceVersionSummaryDto = { id: string; versionNumber: number; title: string; publisher: string | null; resolvedUrl: string | null; excerpt: string; contentSha256: string; wordCount: number; truncated: boolean; extractionVersion: string; acquiredAt: number }
 export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[] }
+export type LearningTangentDto = { conversationId: string; programId: string; programTitle: string; spaceId: string; moduleId: string; moduleTitle: string; lessonId: string; lessonTitle: string; sectionIndex: number | null; sectionTitle: string | null; selectedText: string; title: string; createdAt: number; updatedAt: string; messageCount: number; contextMessageCount: number }
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
 export type LearningTutorRequestKind = "hint" | "question" | "critique"
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
@@ -6828,6 +6837,7 @@ conversations: ConversationDto[];
  */
 total: number }
 export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+export type ListLearningTangentsRequestDto = { programId?: string | null }
 export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[]; total: number }
 export type ListWorkspaceNotesRequestDto = {
@@ -6839,6 +6849,29 @@ export type ListWorkspaceNotesRequestDto = {
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+/**
+ * Per-model launch configuration for a bundled local GGUF model.
+ */
+export type LocalModelConfigDto = {
+/**
+ * Context length in tokens. `None` means Auto (dynamically sized to the
+ * model's trained maximum and the machine's available memory).
+ */
+contextLength?: number | null;
+/**
+ * Max concurrent predictions (`-np` parallel slots on `llama-server`).
+ * `None` uses the server default (4).
+ */
+maxConcurrentPredictions?: number | null;
+/**
+ * Fixed RNG seed (`-s` on `llama-server`). `None` uses a random seed.
+ */
+seed?: number | null;
+/**
+ * Quantize the KV cache (`-ctk q8_0 -ctv q8_0`) to roughly halve KV cache
+ * memory usage and allow a larger context window to fit in memory.
+ */
+kvCacheQuantization?: boolean }
 export type MatchLearningSourceSelectorRequestDto = { programId: string; selectorId: string; targetVersionId: string }
 /**
  * One quoted passage behind a memory item.
@@ -8696,7 +8729,7 @@ progressMessage: string | null;
 /**
  * Ready rows: whether the file's hash was re-checked when this DTO was built.
  */
-verified: boolean | null }
+verified: boolean | null; readerText?: string | null }
 /**
  * Payload of [`LINK_EVENT`].
  */

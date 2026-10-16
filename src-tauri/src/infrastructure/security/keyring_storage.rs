@@ -203,6 +203,7 @@ impl SecureStorage {
         vec![
             "anthropic_api_key".to_string(),
             "openai_api_key".to_string(),
+            "google_api_key".to_string(),
             "database_password".to_string(),
         ]
     }

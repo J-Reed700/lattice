@@ -9,11 +9,13 @@ import { describeWeekCandidates } from '@/features/journal/components/Synthesize
 import { useWeeklySynthesisCandidatesQuery } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
 import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
-import { ContentViewer } from '@/features/reading/components/ContentViewer';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import { fromRecentDocument } from '@/features/reading/model/sourceAdapter';
 import VaultAPI from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { RecentDocument } from '@/types';
 import type { ConversationMessageBookmarkDto } from '@/types/api/conversation';
+import type { SourceWithMetadata } from '@/types/conversation';
 import { formatBytes, formatRelativeTime } from '@/utils/formatters';
 
 import { DashboardError } from './DashboardError';
@@ -109,7 +111,7 @@ export const Dashboard = () => {
   const { data: weekCandidates } = useWeeklySynthesisCandidatesQuery();
   const { data: corpusShape } = useCorpusShapeQuery();
   const navigate = useNavigate();
-  const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const [previewSource, setPreviewSource] = useState<SourceWithMetadata | null>(null);
 
   if (isLoading) return <DashboardSkeleton />;
   if (error) return <DashboardError error={error.message} />;
@@ -139,10 +141,17 @@ export const Dashboard = () => {
   const recentDocuments = (data?.recentDocuments ?? []).slice(0, 5);
 
   const openDocument = async (doc: RecentDocument) => {
+    const { source } = fromRecentDocument(doc);
+    if (/^https?:\/\//i.test(source.filePath)) {
+      setPreviewSource(source);
+      return;
+    }
     const id = doc.documentId || doc.id;
     if (!id) return;
     const opened = await VaultAPI.openFileById(id);
-    if (opened.ok && opened.data.action === 'render_internal') setViewerFilePath(opened.data.contentPath);
+    if (opened.ok && opened.data.action === 'render_internal') {
+      setPreviewSource({ ...source, filePath: opened.data.contentPath });
+    }
   };
 
   const goToConversation = (conversationId: string) => {
@@ -398,7 +407,7 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      <ContentViewer filePath={viewerFilePath} onClose={() => setViewerFilePath(null)} />
+      <FilePreviewModal isOpen={previewSource !== null} onClose={() => setPreviewSource(null)} source={previewSource} />
     </main>
   );
 };

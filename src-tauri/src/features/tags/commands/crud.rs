@@ -116,15 +116,6 @@ pub async fn create_tag_ddd(
     container: State<'_, Container>,
     request: CreateTagRequestDto,
 ) -> Result<CreateTagResponseDto> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .general
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     // Input validation
     if request.name.is_empty() || request.name.len() > 100 {
         return Err(AppError::InvalidInput(
@@ -217,15 +208,6 @@ pub async fn update_tag_ddd(
     container: State<'_, Container>,
     request: UpdateTagRequestDto,
 ) -> Result<TagDto> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .general
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.update_tag_use_case();
     let response = use_case.execute(request.clone()).await?;
 
@@ -297,15 +279,6 @@ pub async fn delete_tag_ddd(
     container: State<'_, Container>,
     request: DeleteTagRequestDto,
 ) -> Result<()> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .general
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.delete_tag_use_case();
     use_case.execute(request.clone()).await?;
 

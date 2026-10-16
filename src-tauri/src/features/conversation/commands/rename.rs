@@ -19,11 +19,10 @@ use tauri::State;
 /// # Returns
 ///
 /// * `Ok(())` - Conversation successfully renamed
-/// * `Err(AppError)` - If rate limited, validation fails, or conversation not found
+/// * `Err(AppError)` - If validation fails or conversation not found
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many rename requests (rate limited)
 /// * `AppError::InvalidInput` - Title validation failed (empty, too long, or XSS detected)
 /// * `AppError::NotFound` - Conversation ID not found
 /// * `AppError::Other` - Database update failed
@@ -59,7 +58,6 @@ use tauri::State;
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents rename spam
 /// - **Input Validation**: Title sanitized to prevent XSS attacks
 ///
 /// # Use Cases
@@ -93,16 +91,14 @@ use tauri::State;
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Validates and sanitizes title input (XSS prevention)
-/// 3. Delegates to `ConversationService.rename_conversation()`
+/// 1. Validates and sanitizes title input (XSS prevention)
+/// 2. Delegates to `ConversationService.rename_conversation()`
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation (sanitize title, prevent XSS)
-/// 3. Execute ConversationService.rename_conversation()
-/// 4. Return success
+/// 1. Input validation (sanitize title, prevent XSS)
+/// 2. Execute ConversationService.rename_conversation()
+/// 3. Return success
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn rename_conversation_impl(
@@ -110,23 +106,14 @@ pub async fn rename_conversation_impl(
     conversation_id: String,
     new_title: String,
 ) -> Result<()> {
-    // 1. Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_question
-        .check_rate_limit("rename_conversation")
-        .await
-        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
-
-    // 2. Input validation
+    // 1. Input validation
     let sanitized_title = container
         .security_context()
         .input_validator()
         .validate_search_query(&new_title)
         .map_err(|e| AppError::Other(format!("Invalid title: {}", e)))?;
 
-    // 3. Delegate to service
+    // 2. Delegate to service
     let service = container.conversation_service();
     service
         .rename_conversation(&conversation_id, sanitized_title.clone())

@@ -9,6 +9,7 @@ import { TaskList } from '@tiptap/extension-task-list';
 import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
 
+import { CalloutAlerts } from './calloutAlerts';
 import { fileRefFromHref } from './fileRefs';
 import { SlashMenu, type SlashMenuOptions } from './slashMenu';
 import { Wikilink } from './wikilink';
@@ -65,6 +66,7 @@ export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
     Wikilink.configure({
       onWikilinkClick: config.onWikilinkClick,
     }),
+    CalloutAlerts,
     ...(config.slashMenu ? [SlashMenu.configure(config.slashMenu)] : []),
     ...(config.placeholder
       ? [Placeholder.configure({ placeholder: config.placeholder })]

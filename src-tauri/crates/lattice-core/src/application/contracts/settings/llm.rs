@@ -1,8 +1,12 @@
 //! Model, prompt, verification, tool-output, router and custom-tool settings and their defaults.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-use super::generation::{SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto};
+use super::generation::{
+    LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
+};
 
 /// LLM provider selection.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
@@ -15,6 +19,7 @@ pub enum LLMProvider {
     Llamacpp,
     Openai,
     Anthropic,
+    Google,
 }
 
 /// LLM settings.
@@ -82,6 +87,11 @@ pub struct LLMSettingsDto {
     /// shrunk. `context_window` above governs remote providers, not this.
     #[serde(default)]
     pub local_context_window: Option<u32>,
+
+    /// Per-model launch overrides keyed by `model_id` (context length,
+    /// concurrent predictions, seed, KV cache quantization).
+    #[serde(default)]
+    pub local_model_configs: BTreeMap<String, LocalModelConfigDto>,
 
     /// Speculative decoding for the bundled local server. Experimental, and
     /// applied only to a model that carries a multi-token-prediction head;
@@ -433,6 +443,7 @@ impl Default for LLMSettingsDto {
             max_tokens: 131072,
             context_window: 131072,
             local_context_window: None,
+            local_model_configs: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,

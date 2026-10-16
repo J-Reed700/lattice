@@ -449,3 +449,139 @@ async fn link_clicks_answer_204_and_emit_the_link_event() {
     );
     assert_eq!(f.events.named(LINK_EVENT).len(), 1);
 }
+
+#[tokio::test]
+async fn viewer_resolves_snapshot_without_conversation_id() {
+    let f = fixture().await;
+    let ready = f.ready().await;
+    assert_eq!(ready.status, WebPageSnapshotStatus::Ready);
+
+    // get("", URL) finds the ready snapshot from CONVERSATION
+    let resolved = f.service.get("", URL).await.unwrap();
+    assert!(resolved.is_some());
+    let found = resolved.unwrap();
+    assert_eq!(found.id, ready.id);
+    assert_eq!(found.conversation_id, CONVERSATION);
+
+    // ensure_capture("", "https://example.com/standalone", false) succeeds when conversation_id is empty
+    let standalone = f
+        .service
+        .ensure_capture("", "https://example.com/standalone", false)
+        .await
+        .unwrap();
+    assert_eq!(standalone.status, WebPageSnapshotStatus::Pending);
+    assert!(!standalone.conversation_id.is_empty());
+}
+
+#[tokio::test]
+async fn dto_includes_reader_text_when_saved_in_conversation_sources() {
+    let f = fixture().await;
+    let _ready = f.ready().await;
+    let normalized = lattice_core::shared::http::normalize_web_source_url(URL);
+    sqlx::query(
+        "INSERT INTO conversation_web_sources (id, conversation_id, url, normalized_url, title, content, added_at) \
+         VALUES ('cws-1', ?, ?, ?, 'Article', 'Full saved page article text', '2026-10-15T00:00:00Z')",
+    )
+    .bind(CONVERSATION)
+    .bind(URL)
+    .bind(&normalized)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    let dto = f.service.get("", URL).await.unwrap().unwrap();
+    assert_eq!(
+        dto.reader_text.as_deref(),
+        Some("Full saved page article text")
+    );
+}
+
+#[tokio::test]
+async fn retry_true_on_ready_row_recaptures_it() {
+    let f = fixture().await;
+    let ready = f.ready().await;
+    assert_eq!(ready.status, WebPageSnapshotStatus::Ready);
+    assert_eq!(f.capture.calls(), 1);
+
+    // retry = false on ready row does nothing (returns existing row)
+    let same = f
+        .service
+        .ensure_capture(CONVERSATION, URL, false)
+        .await
+        .unwrap();
+    assert_eq!(same.status, WebPageSnapshotStatus::Ready);
+    assert_eq!(f.capture.calls(), 1);
+
+    // retry = true on ready row resets it to pending and triggers capture again
+    let recaptured = f
+        .service
+        .ensure_capture(CONVERSATION, URL, true)
+        .await
+        .unwrap();
+    assert_eq!(recaptured.id, ready.id);
+    let ready_again = f.settled(URL).await;
+    assert_eq!(ready_again.status, WebPageSnapshotStatus::Ready);
+    assert_eq!(f.capture.calls(), 2);
+}
+
+#[tokio::test]
+async fn failed_capture_with_saved_reader_text_falls_back_to_offline_archive() {
+    let f = fixture().await;
+    let normalized = lattice_core::shared::http::normalize_web_source_url(URL);
+    sqlx::query(
+        "INSERT INTO conversation_web_sources (id, conversation_id, url, normalized_url, title, content, added_at) \
+         VALUES ('cws-fallback', ?, ?, ?, 'Saved Article Title', 'Archived article body content for fallback test', '2026-10-15T00:00:00Z')",
+    )
+    .bind(CONVERSATION)
+    .bind(URL)
+    .bind(&normalized)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    // Mock capture to return a blocked error
+    f.capture.push(Err(CaptureError::Blocked { status: 403 }));
+
+    let first = f
+        .service
+        .ensure_capture(CONVERSATION, URL, false)
+        .await
+        .unwrap();
+    assert_eq!(first.status, WebPageSnapshotStatus::Pending);
+
+    let settled = f.settled(URL).await;
+    assert_eq!(settled.status, WebPageSnapshotStatus::Ready);
+    assert!(settled.partial);
+    assert!(settled
+        .partial_reasons
+        .contains(&"offline_archive".to_string()));
+    assert_eq!(settled.title.as_deref(), Some("Saved Article Title"));
+
+    // Check that the generated html on disk contains the archived content
+    let html = std::fs::read_to_string(f.root().join(format!("{}.html", settled.id))).unwrap();
+    assert!(html.contains("Archived article body content for fallback test"));
+}
+
+#[tokio::test]
+async fn find_for_viewer_matches_requested_and_final_url() {
+    let f = fixture().await;
+    let ready = f.ready().await;
+    assert_eq!(ready.status, WebPageSnapshotStatus::Ready);
+
+    let found_by_requested = f.service.get("", URL).await.unwrap().unwrap();
+    assert_eq!(found_by_requested.id, ready.id);
+
+    sqlx::query("UPDATE web_page_snapshots SET final_url = 'https://example.com/article?resolved=1' WHERE id = ?")
+        .bind(&ready.id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+
+    let found_by_final = f
+        .service
+        .get("", "https://example.com/article?resolved=1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found_by_final.id, ready.id);
+}

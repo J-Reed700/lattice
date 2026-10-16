@@ -5,7 +5,7 @@ import type { ApiResult, FunctionDefinition, FunctionResult } from '@/types';
 export const functionsApi = {
   /**
    * Executes an LLM function call with security checks.
-   * Executes a function from the registry with rate limiting and validation.
+   * Executes a function from the registry with validation.
    *
    * @param name - Function name to execute
    * @param args - Function arguments as JSON object

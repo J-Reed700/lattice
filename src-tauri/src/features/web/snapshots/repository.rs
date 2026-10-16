@@ -131,6 +131,200 @@ impl SnapshotRepository {
         .map_err(db)
     }
 
+    pub async fn find_for_viewer(
+        &self,
+        conversation_id: &str,
+        normalized_url: &str,
+    ) -> Result<Option<SnapshotRow>> {
+        let trimmed = conversation_id.trim();
+        if !trimmed.is_empty() {
+            if let Some(row) = self.find(trimmed, normalized_url).await? {
+                return Ok(Some(row));
+            }
+        }
+        sqlx::query_as::<_, SnapshotRow>(&format!(
+            "SELECT {COLUMNS} FROM web_page_snapshots \
+             WHERE normalized_url = ? \
+                OR LOWER(TRIM(requested_url)) = LOWER(TRIM(?)) \
+                OR LOWER(TRIM(COALESCE(final_url, ''))) = LOWER(TRIM(?)) \
+             ORDER BY CASE WHEN normalized_url = ? THEN 0 ELSE 1 END, \
+                      CASE status WHEN 'ready' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, \
+                      captured_at DESC, \
+                      created_at DESC, \
+                      id DESC \
+             LIMIT 1"
+        ))
+        .bind(normalized_url)
+        .bind(normalized_url)
+        .bind(normalized_url)
+        .bind(normalized_url)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)
+    }
+
+    pub async fn resolve_conversation_for_capture(
+        &self,
+        conversation_id: &str,
+        normalized_url: &str,
+    ) -> Result<String> {
+        let trimmed = conversation_id.trim();
+        if !trimmed.is_empty() {
+            let count: i64 =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversations WHERE id = ?")
+                    .bind(trimmed)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(db)?;
+            if count > 0 {
+                return Ok(trimmed.to_string());
+            }
+        }
+
+        if let Some(row) = self.find_for_viewer("", normalized_url).await? {
+            return Ok(row.conversation_id);
+        }
+
+        if let Some(cid) = sqlx::query_scalar::<_, String>(
+            "SELECT conversation_id FROM conversation_web_sources WHERE normalized_url = ? ORDER BY added_at DESC LIMIT 1"
+        )
+        .bind(normalized_url)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)? {
+            return Ok(cid);
+        }
+
+        if let Some(cid) = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?
+        {
+            return Ok(cid);
+        }
+
+        let space_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM conversation_spaces WHERE id = 'space_general' UNION ALL SELECT id FROM conversation_spaces LIMIT 1"
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT OR IGNORE INTO conversations (id, title, model_name, space_id, created_at, updated_at) VALUES ('__library_snapshots__', 'Saved Web Snapshots', 'system', ?, ?, ?)"
+        )
+        .bind(space_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(db)?;
+
+        Ok("__library_snapshots__".to_string())
+    }
+
+    pub async fn find_reader_text(
+        &self,
+        conversation_id: &str,
+        normalized_url: &str,
+        requested_url: &str,
+    ) -> Result<Option<String>> {
+        let from_web_sources: Option<String> = sqlx::query_scalar(
+            "SELECT content FROM conversation_web_sources \
+             WHERE normalized_url = ? AND content IS NOT NULL AND TRIM(content) != '' \
+             ORDER BY CASE WHEN conversation_id = ? THEN 0 ELSE 1 END, \
+                      content_fetched_at DESC, \
+                      added_at DESC \
+             LIMIT 1",
+        )
+        .bind(normalized_url)
+        .bind(conversation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+
+        if from_web_sources.is_some() {
+            return Ok(from_web_sources);
+        }
+
+        let from_learning_versions = sqlx::query_scalar::<_, String>(
+            "SELECT v.full_text FROM learning_source_versions v \
+             INNER JOIN learning_source_library s ON s.id = v.source_id \
+             WHERE ( \
+                 LOWER(TRIM(s.origin)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+                 OR LOWER(TRIM(s.requested_url)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+                 OR LOWER(TRIM(COALESCE(v.resolved_url, ''))) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+             ) \
+               AND TRIM(v.full_text) != '' \
+             ORDER BY v.acquired_at DESC \
+             LIMIT 1",
+        )
+        .bind(requested_url)
+        .bind(normalized_url)
+        .bind(requested_url)
+        .bind(normalized_url)
+        .bind(requested_url)
+        .bind(normalized_url)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+
+        Ok(from_learning_versions)
+    }
+
+    pub async fn find_reader_archive(
+        &self,
+        conversation_id: &str,
+        normalized_url: &str,
+        requested_url: &str,
+    ) -> Result<Option<(Option<String>, String)>> {
+        let Some(text) = self
+            .find_reader_text(conversation_id, normalized_url, requested_url)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let title: Option<String> = sqlx::query_scalar(
+            "SELECT title FROM conversation_web_sources \
+             WHERE normalized_url = ? AND title IS NOT NULL AND TRIM(title) != '' \
+             LIMIT 1",
+        )
+        .bind(normalized_url)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+
+        let title = if title.is_some() {
+            title
+        } else {
+            sqlx::query_scalar(
+                "SELECT v.title FROM learning_source_library s \
+                 JOIN learning_source_versions v \
+                   ON v.program_id = s.program_id AND v.source_id = s.id \
+                 WHERE TRIM(v.title) != '' \
+                   AND (LOWER(TRIM(COALESCE(s.requested_url, ''))) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+                    OR LOWER(TRIM(COALESCE(v.resolved_url, ''))) IN (LOWER(TRIM(?)), LOWER(TRIM(?)))) \
+                 LIMIT 1",
+            )
+            .bind(requested_url)
+            .bind(normalized_url)
+            .bind(requested_url)
+            .bind(normalized_url)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+        };
+
+        Ok(Some((title, text)))
+    }
+
     pub async fn list(&self, conversation_id: &str) -> Result<Vec<SnapshotRow>> {
         sqlx::query_as::<_, SnapshotRow>(&format!(
             "SELECT {COLUMNS} FROM web_page_snapshots WHERE conversation_id = ? \
@@ -150,6 +344,20 @@ impl SnapshotRepository {
             .await
             .map_err(db)?;
         Ok(())
+    }
+
+    /// Resets a row when status IN ('failed', 'ready') back to pending.
+    pub async fn reset_for_retry(&self, id: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE web_page_snapshots SET status = 'pending', error_code = NULL, \
+             error_message = NULL WHERE id = ? AND status IN ('failed', 'ready')",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(db)?
+        .rows_affected()
+            == 1)
     }
 
     /// A failed row goes back to pending for a user's retry. False when the

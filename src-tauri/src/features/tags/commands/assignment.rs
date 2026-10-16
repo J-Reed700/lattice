@@ -117,15 +117,6 @@ pub async fn apply_tags_impl(
     container: &Container,
     request: ApplyTagsRequestDto,
 ) -> Result<ApplyTagsResponseDto> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .general
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     for name in &request.tag_names {
         if name.is_empty() || name.len() > 100 {
             return Err(AppError::InvalidInput(
@@ -226,15 +217,6 @@ pub async fn remove_tag_from_document_impl(
     container: &Container,
     request: RemoveTagRequestDto,
 ) -> Result<()> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .general
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.remove_tag_from_document_use_case();
     use_case.execute(request.clone()).await?;
 

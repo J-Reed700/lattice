@@ -3,10 +3,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { ChevronDown, ChevronRight, ExternalLink, Library, Trash2 } from 'lucide-react';
 
+import {
+  fromConversationLinkedDocument,
+  fromConversationWebSource,
+} from '@/features/reading/model/sourceAdapter';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
-import { openExternalUrl } from '@/utils/openExternalUrl';
+import type { SourceWithMetadata } from '@/types/conversation';
 import { getSourceExternalUrl } from '@/utils/sourcePreview';
 
 interface ConversationLinkedDocumentsPanelProps {
@@ -127,7 +132,22 @@ export function ConversationLinkedDocumentsPanel({
     void loadConversationWebSources(conversationId);
   }, [conversationId, loadConversationWebSources]);
 
+  const conversationSources = useMemo(() => {
+    const list: SourceWithMetadata[] = [];
+    for (const message of conversation?.messages ?? []) {
+      if (message.role !== 'assistant') continue;
+      list.push(...(message.sources ?? []), ...(lastMessageSources.get(message.id) ?? []));
+    }
+    return list;
+  }, [conversation?.messages, lastMessageSources]);
+
   const handleOpenDocument = async (documentId: string) => {
+    const document = linkedDocuments.find((d) => d.documentId === documentId);
+    if (document) {
+      const { source } = fromConversationLinkedDocument(document, conversationId);
+      useChatReaderStore.getState().open(`linked-doc:${conversationId}`, [source], 0);
+      return;
+    }
     setOpeningDocumentId(documentId);
     try {
       const result = await VaultAPI.openFileById(documentId);
@@ -196,8 +216,23 @@ export function ConversationLinkedDocumentsPanel({
     }
   };
 
-  const handleOpenSourceUrl = async (url: string) => {
-    await openExternalUrl(url);
+  const handleOpenSourceUrl = (url: string) => {
+    const matched = citedWebSources.find(
+      (s) => s.url.trim().toLowerCase() === url.trim().toLowerCase(),
+    );
+    const matchedWeb = linkedWebSources.find(
+      (s) => (s.normalizedUrl ?? s.url).trim().toLowerCase() === url.trim().toLowerCase(),
+    );
+    const { source } = fromConversationWebSource(
+      {
+        url,
+        title: matched?.label ?? matchedWeb?.title,
+        excerpt: matchedWeb?.excerpt,
+      },
+      conversationId,
+      conversationSources,
+    );
+    useChatReaderStore.getState().open(`web-source:${conversationId}`, [source], 0);
   };
 
   const handleLinkSource = async (

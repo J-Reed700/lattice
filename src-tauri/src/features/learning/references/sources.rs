@@ -6,7 +6,6 @@ use crate::features::learning::dto::{
 };
 use crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION;
 use crate::features::web::traits::WebServiceTrait;
-use crate::infrastructure::security::RateLimiter;
 use lattice_core::application::ports::LibraryPassagesPort;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -28,8 +27,6 @@ pub struct SourceDeps {
     pub library: Arc<dyn LibraryPassagesPort>,
     /// The host's safe web service for URL references.
     pub web: Arc<dyn WebServiceTrait>,
-    /// Shared web-ingest budget for reference fetches.
-    pub web_ingest: RateLimiter,
     /// Source-library rows: before-use refreshes persist here.
     pub pool: SqlitePool,
 }
@@ -160,21 +157,20 @@ pub async fn acquire(
         });
     }
     let safe_web = &deps.web;
+    let mut acquisition_errors = Vec::new();
     for supplied_url in &request.source_urls {
         let url = supplied_url.trim();
-        deps.web_ingest
-            .check_rate_limit("learning_source_fetch")
-            .await
-            .map_err(|error| AppError::RateLimitExceeded(error.to_string()))?;
         // This safe host service validates the URL with its public-only
         // resolver, revalidates every redirect, and pins checked DNS answers
         // into the connection before performing the actual read.
-        let article = safe_web
-            .fetch_reference_content(url)
-            .await
-            .map_err(|error| {
-                AppError::Network(format!("Could not acquire source {url}: {error}"))
-            })?;
+        let article = match safe_web.fetch_reference_content(url).await {
+            Ok(article) => article,
+            Err(error) => {
+                tracing::warn!(url, %error, "Skipping unreachable or blocked reference URL");
+                acquisition_errors.push(format!("{url}: {error}"));
+                continue;
+            }
+        };
         let captured = crate::features::learning::source_library::CapturedLearningSource {
             title: article.title.unwrap_or_else(|| url.into()),
             publisher: None,
@@ -184,7 +180,11 @@ pub async fn acquire(
             truncated: article.content_truncated,
             extraction_version: REFERENCE_TEXT_EXTRACTION_VERSION.into(),
         };
-        validate_capture(&captured)?;
+        if let Err(error) = validate_capture(&captured) {
+            tracing::warn!(url, %error, "Skipping invalid captured reference content");
+            acquisition_errors.push(format!("{url}: {error}"));
+            continue;
+        }
         let id = uuid::Uuid::new_v4().to_string();
         sources.push(preview(&id, &captured));
         references.push(InitialReference {
@@ -194,9 +194,16 @@ pub async fn acquire(
         });
     }
     if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {
+        let details = if !acquisition_errors.is_empty() {
+            format!(
+                " The following errors occurred: {}",
+                acquisition_errors.join("; ")
+            )
+        } else {
+            String::new()
+        };
         return Err(AppError::InvalidInput(
-            "The selected materials did not provide usable text. Choose different materials or remove them to create a topic-based course."
-                .into(),
+            format!("The selected materials did not provide usable text. Choose different materials or remove them to create a topic-based course.{details}")
         ));
     }
     Ok(AcquiredSources {
@@ -227,12 +234,6 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
             expected_revision: source.revision,
         };
         let refreshed = async {
-            deps.web_ingest
-                .check_rate_limit("learning_source_before_use")
-                .await
-                .map_err(|e| {
-                    lattice_core::shared::error::AppError::RateLimitExceeded(e.to_string())
-                })?;
             let url = source.requested_url.as_deref().ok_or_else(|| {
                 lattice_core::shared::error::AppError::Database(
                     "Web source has no requested URL".into(),

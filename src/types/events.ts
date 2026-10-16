@@ -126,6 +126,7 @@ export namespace EventSchemas {
       faviconDataUrl: z.string().nullable(),
       progressMessage: z.string().nullable(),
       verified: z.boolean().nullable(),
+      readerText: z.string().nullable().optional(),
     });
 
     /// Every status flip and progress step of a capture, debounced by the backend.

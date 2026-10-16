@@ -79,13 +79,15 @@ impl DownloadManagerService {
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
 
-        if session.state().is_active() {
+        if self.active_downloads.read().await.contains_key(id) {
             return Ok(());
         }
 
         let mut session = session;
-        session.start()?;
-        self.repository.update(&session).await?;
+        if !session.state().is_active() {
+            session.start()?;
+            self.repository.update(&session).await?;
+        }
 
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<StopReason>(1);
 

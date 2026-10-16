@@ -235,13 +235,10 @@ pub(super) fn startup_failure(
         };
     }
 
-    if let Some(detail) = output.iter().find_map(|line| {
-        line.find("unknown model architecture:")
-            .and_then(|index| line.get(index..))
-            .map(|detail| clip(detail, ERROR_LINE_MAX_BYTES))
-    }) {
-        // CPU offload cannot add an architecture to the same executable.
-        // Name the incompatibility rather than suggesting a corrupt download.
+    if let Some(detail) = unsupported_model_detail(output) {
+        // CPU offload cannot add an architecture or custom quantization type to
+        // the same executable. Name the incompatibility rather than suggesting
+        // a corrupt download or retrying on CPU.
         return AttemptError::fatal(format!(
             "Lattice's bundled local model engine does not support this model ({detail}). \
              Update Lattice's model engine or select a compatible model. \
@@ -480,6 +477,31 @@ pub(super) fn line_is_model_loader(lower: &str) -> bool {
         "model loaded",
     ];
     NEEDLES.iter().any(|needle| lower.contains(needle))
+}
+
+/// Loader diagnostics that prove the GGUF uses an architecture or custom
+/// quantization format the bundled `llama-server` executable does not support.
+pub(super) fn unsupported_model_detail(output: &[String]) -> Option<&str> {
+    for line in output {
+        if let Some(index) = line.find("unknown model architecture:") {
+            if let Some(detail) = line.get(index..) {
+                return Some(clip(detail.trim(), ERROR_LINE_MAX_BYTES));
+            }
+        }
+        if let Some(index) = line.find("gguf_init_from_reader:") {
+            let detail = line
+                .get(index + "gguf_init_from_reader:".len()..)
+                .unwrap_or_default()
+                .trim();
+            if detail.contains("has invalid ggml type ")
+                || detail.contains("not a multiple of block size")
+                || (detail.contains("has offset ") && detail.contains(", expected "))
+            {
+                return Some(clip(detail, ERROR_LINE_MAX_BYTES));
+            }
+        }
+    }
+    None
 }
 
 /// Output lines that name a GPU backend together with a failure. Production

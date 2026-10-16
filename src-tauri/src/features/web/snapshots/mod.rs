@@ -96,7 +96,18 @@ impl Shared {
             (WebPageSnapshotStatus::Ready, None) => Some(false),
             _ => None,
         };
-        to_dto(row, progress_message, verified)
+        let mut dto = to_dto(row, progress_message, verified);
+        dto.reader_text = self
+            .repository
+            .find_reader_text(
+                &row.conversation_id,
+                &row.normalized_url,
+                &row.requested_url,
+            )
+            .await
+            .ok()
+            .flatten();
+        dto
     }
 
     pub(crate) fn emit_changed(&self, snapshot: WebPageSnapshotDto) {
@@ -159,6 +170,7 @@ pub(crate) fn to_dto(
             None
         },
         verified,
+        reader_text: None,
     }
 }
 
@@ -198,6 +210,13 @@ impl WebPageSnapshotService {
         &self.shared
     }
 
+    pub fn attach_browser(
+        &self,
+        browser: Arc<crate::features::web::services::browser_reader::BrowserReader>,
+    ) {
+        self.shared.capture.attach_browser(browser);
+    }
+
     /// Registers the `web_page_snapshot` job kind, which settles the jobs the
     /// last process left running and starts delivering saved work.
     pub async fn register_job(&self) -> Result<()> {
@@ -228,16 +247,29 @@ impl WebPageSnapshotService {
             ));
         }
         let normalized = normalize_web_source_url(requested);
+        let resolved_conversation_id = self
+            .shared
+            .repository
+            .resolve_conversation_for_capture(conversation_id, &normalized)
+            .await?;
         let (mut row, created) = self
             .shared
             .repository
-            .insert_or_get(&store::new_id(), conversation_id, &normalized, requested)
+            .insert_or_get(
+                &store::new_id(),
+                &resolved_conversation_id,
+                &normalized,
+                requested,
+            )
             .await?;
         let attempt = if created {
             None
         } else if retry
-            && row.status() == WebPageSnapshotStatus::Failed
-            && self.shared.repository.reset_failed(&row.id).await?
+            && matches!(
+                row.status(),
+                WebPageSnapshotStatus::Failed | WebPageSnapshotStatus::Ready
+            )
+            && self.shared.repository.reset_for_retry(&row.id).await?
         {
             Some(store::new_id())
         } else {
@@ -316,7 +348,7 @@ impl WebPageSnapshotService {
         match self
             .shared
             .repository
-            .find(conversation_id, &normalized)
+            .find_for_viewer(conversation_id, &normalized)
             .await?
         {
             Some(row) => Ok(Some(self.dto(&row).await)),

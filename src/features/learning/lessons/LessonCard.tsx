@@ -8,6 +8,7 @@ import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
+import { SectionTangentBar, StudyTangentSelection } from '@/features/learning/tangents/StudyTangentSelection';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
@@ -56,7 +57,11 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2"><span className="font-serif text-xl text-text-primary">{lesson.title}</span>{isCurrent && <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-accent">Resume here</span>}</span>
-          <span className="mt-1 block text-sm leading-6 text-text-secondary">{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span>
+          <span className="mt-1 block text-sm leading-6 text-text-secondary">
+            <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle="Lesson Objective">
+              <span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span>
+            </StudyTangentSelection>
+          </span>
           <span className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"><span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span className="shrink-0 whitespace-nowrap rounded-full bg-background px-2 py-0.5">{lesson.preparation === 'ready' ? 'Ready' : 'Outline'}</span><span className="shrink-0 whitespace-nowrap">{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></span>
         </span>
         <span className="mt-2 shrink-0 text-xs text-text-muted">{expanded ? 'Close' : 'Open'}</span>
@@ -81,14 +86,20 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                   <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="rounded-xl border border-border bg-surface p-5">
                     <div className="text-xs font-semibold uppercase tracking-[.12em] text-accent">{blockLabels[block.kind]}</div>
                     <h4 className="mt-1 font-serif text-lg text-text-primary">{block.title}</h4>
-                    <div className="prose prose-sm mt-3 max-w-none text-text-secondary dark:prose-invert"><MarkdownViewer content={block.body} /></div>
+                    <div className="prose prose-sm mt-3 max-w-none text-text-secondary dark:prose-invert">
+                      <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}>
+                        <MarkdownViewer content={block.body} />
+                      </StudyTangentSelection>
+                    </div>
                     {showCitations && <LessonSectionEvidence report={evidenceReport} sectionIndex={index} />}
                     {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}
                     {block.kind === 'guided_practice' && selected && program.summary.status === 'active' && <div id={`guided-${lesson.id}`}><PracticeWorkbenchPanel key={lesson.id} program={program} lesson={lesson} taskKind="guided" embedded onContinue={onPractice} /></div>}
                     {block.kind === 'independent_practice' && <button type="button" onClick={onPractice} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-full bg-accent px-4 text-sm font-semibold text-accent-fg">Work on this assignment <ArrowRight size={15} /></button>}
+                    <SectionTangentBar moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title} sectionText={`${block.title}\n\n${block.body}`} />
                   </section>
                 ))}
               </div>
+              <SectionTangentBar moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle={lesson.title} sectionText={`${lesson.title}\n\n${lesson.objective}`} label="Start a tangent on this lesson" />
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5"><button type="button" onClick={onPractice} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg hover:brightness-95">Practice this lesson <ArrowRight size={15} /></button><div className="flex flex-wrap items-center gap-3"><p className="max-w-lg text-xs leading-5 text-text-muted">Reading the lesson does not count as completion.</p><button type="button" disabled={lesson.completed || pending} onClick={onComplete} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-accent/40 px-4 py-2.5 text-sm font-medium text-accent hover:bg-accent/5 disabled:opacity-45">{lesson.completed ? <><CheckCircle2 size={15} /> Marked complete</> : pending ? 'Saving…' : <>Mark lesson complete <Check size={15} /></>}</button></div></div>
             </>
           )}

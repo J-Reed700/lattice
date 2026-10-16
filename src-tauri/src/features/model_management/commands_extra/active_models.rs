@@ -11,17 +11,10 @@ pub async fn set_active_chat_model_impl(
     model_id: &str,
 ) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-    let input_validator = security_arc.input_validator();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    let validated_model_id = input_validator.validate_model_name(model_id)?;
+    let validated_model_id = container
+        .security_context()
+        .input_validator()
+        .validate_model_name(model_id)?;
 
     let use_case = SetActiveChatModelUseCase::new(repository);
 
@@ -47,14 +40,6 @@ pub async fn set_active_chat_model_impl(
 /// Called by gateway - async dispatch.
 pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = ClearActiveChatModelUseCase::new(repository);
 
@@ -79,14 +64,6 @@ pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), A
 /// Called by gateway - async dispatch.
 pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = ClearActiveEmbeddingModelUseCase::new(repository);
 
@@ -108,20 +85,14 @@ pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<
 /// Called by gateway - async dispatch.
 pub async fn get_active_chat_model_impl(container: &Container) -> Result<String, AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = GetActiveChatModelUseCase::new(repository);
 
     match use_case.execute().await {
         Ok(maybe_model) => {
-            let response: Option<DownloadedModelResponse> = maybe_model.map(|m| m.into());
+            let inspector = container.model_file_inspector();
+            let response: Option<DownloadedModelResponse> =
+                maybe_model.map(|m| DownloadedModelResponse::from_model(m, inspector.as_ref()));
             serde_json::to_string(&response).map_err(|e| {
                 AppError::Serialization(format!("Failed to serialize chat model: {}", e))
             })
@@ -139,20 +110,14 @@ pub async fn get_active_chat_model_impl(container: &Container) -> Result<String,
 /// Called by gateway - async dispatch.
 pub async fn get_active_embedding_model_impl(container: &Container) -> Result<String, AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = GetActiveEmbeddingModelUseCase::new(repository);
 
     match use_case.execute().await {
         Ok(maybe_model) => {
-            let response: Option<DownloadedModelResponse> = maybe_model.map(|m| m.into());
+            let inspector = container.model_file_inspector();
+            let response: Option<DownloadedModelResponse> =
+                maybe_model.map(|m| DownloadedModelResponse::from_model(m, inspector.as_ref()));
             serde_json::to_string(&response).map_err(|e| {
                 AppError::Serialization(format!("Failed to serialize embedding model: {}", e))
             })
@@ -176,17 +141,10 @@ pub async fn set_active_utility_model_impl(
     model_id: &str,
 ) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-    let input_validator = security_arc.input_validator();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    let validated_model_id = input_validator.validate_model_name(model_id)?;
+    let validated_model_id = container
+        .security_context()
+        .input_validator()
+        .validate_model_name(model_id)?;
 
     let use_case = SetActiveUtilityModelUseCase::new(repository);
 
@@ -211,14 +169,6 @@ pub async fn set_active_utility_model_impl(
 /// Clear the active utility model — reverts HyDE/router back to the chat model.
 pub async fn clear_active_utility_model_impl(container: &Container) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = SetActiveUtilityModelUseCase::new(repository);
 
@@ -250,17 +200,10 @@ pub async fn set_active_embedding_model_impl(
     model_id: &str,
 ) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-    let input_validator = security_arc.input_validator();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    let validated_model_id = input_validator.validate_model_name(model_id)?;
+    let validated_model_id = container
+        .security_context()
+        .input_validator()
+        .validate_model_name(model_id)?;
 
     let use_case = SetActiveEmbeddingModelUseCase::new(repository);
 

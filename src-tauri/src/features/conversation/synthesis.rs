@@ -338,11 +338,7 @@ impl SynthesisWork for AppSynthesis {
     }
 
     async fn remove_scratch(&self, conversation_id: String) {
-        if let Err(error) = self
-            .runtime
-            .delete_conversation_unmetered(&conversation_id)
-            .await
-        {
+        if let Err(error) = self.runtime.delete_conversation(&conversation_id).await {
             warn!(%error, "Could not remove a synthesis scratch conversation");
         }
     }

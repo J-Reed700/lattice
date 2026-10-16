@@ -2,7 +2,7 @@
 //!
 //! Thin command controllers for health checks and system statistics following DDD pattern.
 //! Provides endpoints for monitoring application health, system resources, version info,
-//! and model status with rate limiting to prevent resource exhaustion.
+//! and model status.
 //!
 //! # Commands (3 total)
 //!
@@ -14,14 +14,9 @@
 //!
 //! All commands are routed through the Gateway pattern which provides async dispatch.
 //! The `*_impl` functions are the async implementations called by the gateway.
-//!
-//! ## Security Features
-//!
-//! - **Rate Limiting (CWE-770)**: Health checks limited to prevent DoS
 
 use crate::interfaces::di::Container;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Health check response
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,14 +40,6 @@ pub fn get_version() -> String {
 /// This async function is called directly by the gateway.
 pub async fn health_check_impl(container: &Container) -> std::result::Result<String, String> {
     let use_case = container.health_check_use_case();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .health_check
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
 
     let response = use_case
         .execute()
@@ -67,14 +54,6 @@ pub async fn health_check_impl(container: &Container) -> std::result::Result<Str
 /// This async function is called directly by the gateway.
 pub async fn get_system_stats_impl(container: &Container) -> std::result::Result<String, String> {
     let use_case = container.get_system_stats_use_case();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .health_check
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
 
     let stats = use_case
         .execute()

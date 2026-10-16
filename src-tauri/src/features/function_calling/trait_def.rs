@@ -21,6 +21,21 @@ pub trait FunctionRegistryTrait: Send + Sync {
     /// Returns error if tool name already exists or tool is invalid
     fn register(&self, tool: ToolDefinition) -> Result<()>;
 
+    /// Unregister a function/tool by name
+    ///
+    /// # Arguments
+    /// * `name` - Tool name to remove
+    ///
+    /// # Returns
+    /// True if the tool was present and removed, false otherwise
+    fn unregister(&self, name: &str) -> bool;
+
+    /// Record a function call for usage statistics
+    ///
+    /// # Arguments
+    /// * `function_name` - Name of function that was called
+    fn record_call(&self, function_name: &str);
+
     /// Get a tool definition by name
     ///
     /// # Arguments

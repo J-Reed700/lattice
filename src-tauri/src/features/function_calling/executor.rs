@@ -205,6 +205,8 @@ impl FunctionExecutorTrait for FunctionExecutor {
             return Ok(FunctionResult::error("INVALID_ARGUMENTS", e.to_string()));
         }
 
+        self.registry.record_call(&call.name);
+
         // Route to appropriate handler
         let result = match call.name.as_str() {
             TOOL_SEMANTIC_SEARCH => self.handle_semantic_search(&normalized_arguments).await,
@@ -248,6 +250,35 @@ impl FunctionExecutorTrait for FunctionExecutor {
 
     fn set_custom_tools(&self, custom_tools: HashMap<String, CustomToolSettingsDto>) {
         if let Ok(mut guard) = self.custom_tools.write() {
+            for old_name in guard.keys() {
+                if !matches!(
+                    old_name.as_str(),
+                    TOOL_SEMANTIC_SEARCH
+                        | TOOL_GET_DOCUMENT
+                        | TOOL_LIST_DOCUMENTS
+                        | "list_attachments"
+                        | TOOL_WEB_SEARCH
+                        | TOOL_FETCH_URL_CONTENT
+                        | TOOL_WIKI_SEARCH
+                        | TOOL_WIKI_SUMMARY
+                ) {
+                    self.registry.unregister(old_name);
+                }
+            }
+            let enabled_tools: Vec<CustomToolSettingsDto> = custom_tools
+                .values()
+                .filter(|tool| tool.enabled)
+                .cloned()
+                .collect();
+            for tool in &enabled_tools {
+                self.registry.unregister(&tool.name);
+            }
+            if let Err(e) = crate::features::function_calling::registry::register_custom_query_tools(
+                self.registry.as_ref(),
+                &enabled_tools,
+            ) {
+                error!("Failed to sync custom tools into function registry: {}", e);
+            }
             *guard = custom_tools;
         }
     }

@@ -63,7 +63,7 @@ use lattice_core::shared::error::AppError;
 /// Cache-key schema version.
 ///
 /// Bump this when cached payload semantics change to avoid stale result reuse.
-const CACHE_KEY_VERSION: &str = "v5";
+const CACHE_KEY_VERSION: &str = "v6";
 
 /// Model catalog cache adapter.
 ///

@@ -29,22 +29,12 @@ pub use lattice_core::application::contracts::file_library::{IndexedFolder, Inde
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks (50 file operations per minute)
 /// - **Path Validation (CWE-22)**: Validates path to prevent directory traversal attacks
 /// - **Command Injection Prevention (CWE-78)**: Uses `opener` crate with platform-specific APIs that don't invoke shell
 pub async fn open_file_impl(
     container: &Container,
     path: String,
 ) -> Result<OpenFileResponseDto, AppError> {
-    // SECURITY: Rate limiting to prevent DoS (CWE-770)
-    container
-        .security_context()
-        .rate_limiters()
-        .file_operations
-        .check_rate_limit("file_operations")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.open_file_use_case();
     let request = OpenFileRequestDto { path };
     use_case.execute(request).await
@@ -112,22 +102,12 @@ pub async fn open_file(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks (50 file operations per minute)
 /// - **Path Validation (CWE-22)**: Resolves and validates full path before opening
 /// - **Command Injection Prevention (CWE-78)**: Uses `opener` crate with safe platform APIs
 pub async fn open_file_by_id_impl(
     container: &Container,
     file_id: String,
 ) -> Result<OpenFileResponseDto, AppError> {
-    // SECURITY: Rate limiting to prevent DoS (CWE-770)
-    container
-        .security_context()
-        .rate_limiters()
-        .file_operations
-        .check_rate_limit("file_operations")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.open_file_by_id_use_case();
     let request = OpenFileByIdRequestDto {
         document_id: file_id,

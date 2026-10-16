@@ -1,6 +1,5 @@
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
-use crate::infrastructure::security::RateLimiter;
 use lattice_core::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::confinement::confine_to_root;
@@ -72,17 +71,11 @@ impl From<DownloadSession> for DownloadStatusResponse {
 
 pub struct DownloadCommandState {
     pub manager: Arc<dyn DownloadManager>,
-    pub start_rate_limiter: Arc<RateLimiter>,
-    pub query_rate_limiter: Arc<RateLimiter>,
 }
 
 impl DownloadCommandState {
     pub fn new(manager: Arc<dyn DownloadManager>) -> Self {
-        Self {
-            manager,
-            start_rate_limiter: Arc::new(RateLimiter::new(10, 60)),
-            query_rate_limiter: Arc::new(RateLimiter::new(100, 60)),
-        }
+        Self { manager }
     }
 }
 
@@ -189,12 +182,6 @@ async fn start_model_download_impl(
     state: &DownloadCommandState,
     request: StartDownloadRequest,
 ) -> Result<String> {
-    state
-        .start_rate_limiter
-        .check_rate_limit("start_download")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     validate_url(&request.url)?;
     let validated_path = validate_destination(&request.destination)?;
     let checksum = parse_checksum(request.checksum)?;
@@ -231,12 +218,6 @@ pub async fn start_model_download(
 }
 
 async fn pause_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Download ID cannot be empty".to_string(),
@@ -262,12 +243,6 @@ pub async fn pause_download(state: State<'_, DownloadCommandState>, id: String) 
 }
 
 async fn resume_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Download ID cannot be empty".to_string(),
@@ -293,12 +268,6 @@ pub async fn resume_download(state: State<'_, DownloadCommandState>, id: String)
 }
 
 async fn cancel_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Download ID cannot be empty".to_string(),
@@ -327,12 +296,6 @@ pub async fn get_download_status(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<Option<DownloadStatusResponse>> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Download ID cannot be empty".to_string(),
@@ -349,12 +312,6 @@ pub async fn get_download_status(
 pub async fn list_downloads(
     state: State<'_, DownloadCommandState>,
 ) -> Result<Vec<DownloadStatusResponse>> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     match state.manager.list_downloads().await {
         Ok(sessions) => Ok(sessions.into_iter().map(|s| s.into()).collect()),
         Err(e) => Err(AppError::from(e)),
@@ -363,13 +320,6 @@ pub async fn list_downloads(
 
 /// Retry a failed download
 pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
-    // Rate limiting
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     // Input validation
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput(
@@ -401,12 +351,6 @@ pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) 
 
 /// Remove a download (works for any state)
 pub async fn remove_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Download ID cannot be empty".to_string(),
@@ -429,12 +373,6 @@ pub async fn remove_download(state: State<'_, DownloadCommandState>, id: String)
 
 /// Clear all completed downloads
 pub async fn clear_completed_downloads(state: State<'_, DownloadCommandState>) -> Result<usize> {
-    state
-        .query_rate_limiter
-        .check_rate_limit("query")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     match state.manager.clear_completed_downloads().await {
         Ok(count) => {
             info!(count = %count, "Completed downloads cleared");

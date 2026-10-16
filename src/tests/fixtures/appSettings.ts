@@ -74,6 +74,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       maxTokens: 2048,
       contextWindow: 8192,
       localContextWindow: null,
+      localModelConfigs: {},
       ollamaUrl: 'http://localhost:11434',
       ollamaConfigured: false,
       ollamaUtilityModel: '',
