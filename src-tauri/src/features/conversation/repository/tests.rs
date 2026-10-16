@@ -9,6 +9,7 @@ mod fork;
 mod knowledge;
 mod memory;
 mod messages;
+mod model_choice;
 mod pruning;
 mod tangents;
 mod web_sources;
