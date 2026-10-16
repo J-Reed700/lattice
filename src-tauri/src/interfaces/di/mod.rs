@@ -20,13 +20,6 @@
 //!     container: tauri::State<'_, Container>,
 //!     query: String,
 //! ) -> Result<Vec<SearchResult>, AppError> {
-//!     // Rate limiting
-//!     container.security_context()
-//!         .rate_limiters
-//!         .search
-//!         .check()
-//!         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-//!
 //!     // Use DDD use cases
 //!     let use_case = container.semantic_search_use_case();
 //!     let results = use_case.execute(query, 10).await?;

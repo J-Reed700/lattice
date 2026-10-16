@@ -239,10 +239,6 @@ export function ReferenceInbox() {
 
   const handleViewSource = useCallback(
     (source: SourceWithMetadata) => {
-      if (source.filePath.startsWith('http://') || source.filePath.startsWith('https://')) {
-        window.open(source.filePath, '_blank', 'noopener,noreferrer');
-        return;
-      }
       // The preview modal is already mounted on this surface: open the file
       // rather than naming it. A control that only announces itself is a lie.
       setPreviewLocator(

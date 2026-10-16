@@ -1,7 +1,7 @@
 import type { ReactNode, RefObject } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
-import { ArrowUp, ChevronDown, Library, Paperclip, Settings2, Square } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cloud, HardDrive, Library, Network, Paperclip, Settings2, Square } from 'lucide-react';
 
 import { ChatDropStaging } from '@/features/chat/components/ChatDropStaging';
 import { ChatModelNotice, type ChatModelNoticeProps } from '@/features/chat/components/ChatModelNotice';
@@ -13,6 +13,7 @@ import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopove
 import type { AttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
 import type { ComposerState } from '@/features/chat/hooks/useComposer';
 import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
+import type { ChatModelBackend } from '@/utils/chatModelSelection';
 
 /** The textarea points at the suggestion list through this, for screen readers. */
 const SUGGEST_LIST_ID = 'composer-suggest-list';
@@ -30,6 +31,7 @@ interface ComposerProps {
   model: {
     id: string | null;
     label: string | null;
+    backend?: ChatModelBackend | null;
     onSelect: (_modelId: string, _modelLabel: string) => void | Promise<void>;
     /** The palette opens the picker by clicking this. */
     triggerRef: RefObject<HTMLButtonElement | null>;
@@ -219,6 +221,7 @@ export function Composer({
               <ModelPickerPopover
                 activeModelId={model.id}
                 onSelect={model.onSelect}
+                side="top"
                 align="start"
               >
                 <button
@@ -227,6 +230,13 @@ export function Composer({
                   title="Active chat model"
                   className="inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))]"
                 >
+                  {model.backend === 'llamacpp' || model.backend === 'ollama' ? (
+                    <Network className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
+                  ) : model.backend === 'cloud' ? (
+                    <Cloud className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
+                  ) : (
+                    <HardDrive className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
+                  )}
                   <span className="truncate">{model.label}</span>
                   <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} />
                 </button>

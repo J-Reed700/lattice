@@ -67,12 +67,6 @@ pub struct WebPageDto {
 /// the model actually read, and asking the site again could return something
 /// else. A page nobody has read yet costs one validated fetch.
 ///
-/// Deliberately not rate limited, unlike the ingest and preview commands: this
-/// is one page per click, most of them free, and the shared web-ingest limiter
-/// allows five a minute — a user reading through a turn's citations would hit
-/// it in seconds. The fetch underneath is still SSRF-validated and paced per
-/// site.
-///
 /// # Arguments
 ///
 /// * `url` - Web URL to read (http/https only)
@@ -208,17 +202,6 @@ pub async fn fetch_url_preview(
     url: String,
     container: State<'_, Container>,
 ) -> Result<UrlPreview, AppError> {
-    // Rate limiting
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .web_ingest
-        .check_rate_limit("web_capture")
-        .await
-    {
-        return Err(AppError::RateLimitExceeded(e.to_string()));
-    }
-
     let preview_use_case = container.get_url_preview_use_case();
 
     let preview = match preview_use_case
@@ -370,17 +353,6 @@ pub async fn extract_article(
     url: String,
     container: State<'_, Container>,
 ) -> Result<CleanArticle, AppError> {
-    // Rate limiting
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .web_ingest
-        .check_rate_limit("extract_article")
-        .await
-    {
-        return Err(AppError::RateLimitExceeded(e.to_string()));
-    }
-
     let article_extractor = container.article_extractor_service();
 
     let article = match article_extractor.extract_article_from_url(&url).await {

@@ -8,7 +8,6 @@
 
 import { useState, useCallback, useMemo } from 'react';
 
-import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useNavigate } from 'react-router';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
@@ -21,8 +20,10 @@ import {
 import { useLibraryDocumentsQuery } from '@/features/files/hooks/useLibraryDocumentsQuery';
 import { isHttpUrl, isWebDocument } from '@/features/files/model/documentMetadata';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
-import { ContentViewer } from '@/features/reading/components/ContentViewer';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import { fromDocumentMetadata } from '@/features/reading/model/sourceAdapter';
 import { toast } from '@/stores/toastStore';
+import type { SourceWithMetadata } from '@/types/conversation';
 import { type DocumentMetadata, type SortField, type SortOrder } from '@/types/fileBrowser';
 import { isSupportedFileType } from '@/utils/fileTypeDetector';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
@@ -88,7 +89,7 @@ export function FileBrowser() {
   const toggleNeighborhood = useFileBrowserStore(state => state.toggleNeighborhood);
 
   const [isRailOpen, setIsRailOpen] = useState(true);
-  const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const [previewSource, setPreviewSource] = useState<SourceWithMetadata | null>(null);
   const [renameDocument, setRenameDocument] = useState<DocumentMetadata | null>(null);
   const {
     savedSearchNameDialogMode,
@@ -164,43 +165,37 @@ export function FileBrowser() {
 
   const handleFileOpen = useCallback(async (doc: DocumentMetadata) => {
     setFocusedDocument(doc.id);
+
     if (isWebDocument(doc)) {
-      if (isHttpUrl(doc.filePath)) {
-        try {
-          await openExternal(doc.filePath);
-        } catch (error) {
-          toast.error('Failed to open URL', {
-            message: error instanceof Error ? error.message : String(error),
-          });
+      const { source } = fromDocumentMetadata(doc);
+      if (!isHttpUrl(doc.filePath)) {
+        const webOpen = await openDocumentFile(doc.id);
+        if (webOpen.ok && webOpen.data.action === 'render_internal') {
+          setPreviewSource({ ...source, filePath: webOpen.data.contentPath });
+          return;
         }
-        return;
       }
-
-      const webOpen = await openDocumentFile(doc.id);
-      if (!webOpen.ok) {
-        toast.error('Failed to open web article', { message: webOpen.error });
-        return;
-      }
-
-      if (webOpen.data.action === 'render_internal') {
-        setViewerFilePath(webOpen.data.contentPath);
-      }
+      setPreviewSource(source);
       return;
     }
 
     if (isSupportedFileType(doc.filePath)) {
-      if (isAbsolutePath(doc.filePath)) {
-        setViewerFilePath(doc.filePath);
+      const { source } = fromDocumentMetadata(doc);
+      if (!isHttpUrl(doc.filePath) && !isAbsolutePath(doc.filePath)) {
+        const resolvedPath = await resolveDocumentPath(doc);
+        if (resolvedPath) {
+          setPreviewSource({ ...source, filePath: resolvedPath });
+          return;
+        }
+        if (doc.id) {
+          setPreviewSource(source);
+          return;
+        }
+        toast.error('Failed to resolve file path', { message: 'No file path for this document.' });
         return;
       }
 
-      const resolvedPath = await resolveDocumentPath(doc);
-      if (resolvedPath) {
-        setViewerFilePath(resolvedPath);
-        return;
-      }
-
-      toast.error('Failed to resolve file path', { message: 'No file path for this document.' });
+      setPreviewSource(source);
       return;
     }
 
@@ -478,7 +473,7 @@ export function FileBrowser() {
         onSubmit={submitSavedSearchNameDialog}
       />
 
-      <ContentViewer filePath={viewerFilePath} onClose={() => setViewerFilePath(null)} />
+      <FilePreviewModal isOpen={previewSource !== null} onClose={() => setPreviewSource(null)} source={previewSource} />
 
       <LibraryCollectionDialogs collections={collections} documents={documents} />
 

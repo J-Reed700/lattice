@@ -15,7 +15,9 @@ use super::resources::{
     accept_body, fetch_resource, resolve_data_url, resolve_reference, Fetcher, ResolvedResource,
     ResolvedResources, ResourceKind, ResourceRef,
 };
-use super::sanitize::{choose_srcset, collect, noscript_images, sanitize_with_resources};
+use super::sanitize::{
+    choose_srcset, collect, noscript_images, sanitize_with_resources, synthesize_archival_html,
+};
 use crate::features::web::services::stealth;
 use crate::features::web::services::web::public_web_client;
 use crate::features::web::traits::page_snapshot::{
@@ -653,4 +655,186 @@ async fn the_resource_budget_sets_partial() {
     assert_eq!(report.inlined, 400);
     assert_eq!(report.dropped.len(), 1);
     assert_eq!(report.dropped[0].reason, "over_budget");
+}
+
+#[test]
+fn preload_style_with_noscript_fallback_inlines_once() {
+    let html = r#"<head>
+        <link rel="preload" as="style" onload="this.onload=null;this.rel='stylesheet'" href="/theme.css">
+        <noscript><link rel="stylesheet" href="/theme.css"></noscript>
+    </head><body><p>Hello</p></body>"#;
+
+    let collected = collect(html, &doc_url());
+    let urls: Vec<&str> = collected.refs.iter().map(|r| r.url.as_str()).collect();
+    assert!(
+        urls.contains(&"https://example.com/theme.css"),
+        "theme.css not collected: {urls:?}"
+    );
+
+    let map = resources(&[(
+        "https://example.com/theme.css",
+        sheet(".theme{background:#123;}"),
+    )]);
+    let out = sanitize(html, &map);
+    assert!(
+        out.contains(".theme{background:#123;}"),
+        "sheet content missing: {out}"
+    );
+    assert_eq!(
+        out.matches(".theme{background:#123;}").count(),
+        1,
+        "sheet should only be inlined once: {out}"
+    );
+    assert!(
+        !out.contains("rel=\"preload\"")
+            && !out.contains("rel=\"stylesheet\"")
+            && !out.contains("rel='stylesheet'"),
+        "link tags survived: {out}"
+    );
+    assert!(!out.contains("<noscript>"), "noscript tag survived: {out}");
+}
+
+#[test]
+fn deferred_print_stylesheet_with_onload_inlines_without_media_wrap() {
+    let html = r#"<head>
+        <link rel="stylesheet" href="/deferred.css" media="print" onload="this.media='all'">
+    </head><body><p>Hello</p></body>"#;
+
+    let map = resources(&[(
+        "https://example.com/deferred.css",
+        sheet(".deferred{display:block;}"),
+    )]);
+    let out = sanitize(html, &map);
+    assert!(out.contains(".deferred{display:block;}"), "{out}");
+    assert!(
+        !out.contains("@media print"),
+        "deferred sheet was wrapped in @media print: {out}"
+    );
+}
+
+#[test]
+fn color_scheme_meta_is_stripped_and_base_layer_has_light_and_fouc_rules() {
+    let html = r#"<head>
+        <meta name="color-scheme" content="dark light">
+    </head><body><p>Hello</p></body>"#;
+
+    let out = sanitize(html, &none());
+    assert!(
+        !out.contains("color-scheme\" content=\"dark light\""),
+        "color-scheme meta survived: {out}"
+    );
+    assert!(
+        out.contains("color-scheme: light"),
+        "base layer missing color-scheme: light: {out}"
+    );
+    assert!(
+        out.contains("visibility: visible !important"),
+        "base layer missing visibility: visible: {out}"
+    );
+    assert!(
+        out.contains("#__next > div[style*=\\\"visibility:hidden\\\"]")
+            || out.contains("#__next > div[style*=\"visibility:hidden\"]"),
+        "base layer missing FOUC visibility rules: {out}"
+    );
+}
+
+#[test]
+fn synthesize_archival_html_produces_valid_enveloped_document() {
+    let url = "https://example.com/article/1?foo=bar&baz=qux";
+    let title = Some("A \"Special\" <Article> & Tale");
+    let text =
+        "Paragraph one with <script>alert(1)</script> & special \"chars\".\n\nParagraph two with 'quotes'.";
+    let snapshot_id = "snap-test-42";
+    let captured = captured_at();
+
+    let out = synthesize_archival_html(url, title, text, snapshot_id, captured).unwrap();
+    assert!(
+        out.starts_with("<!doctype html>\n"),
+        "missing doctype: {out}"
+    );
+    assert!(
+        out.contains("<meta charset=\"utf-8\">"),
+        "missing charset: {out}"
+    );
+    assert!(
+        out.contains("<meta http-equiv=\"Content-Security-Policy\""),
+        "missing CSP: {out}"
+    );
+    assert!(
+        out.contains(r#"<meta name="lattice-snapshot" content="1">"#),
+        "missing lattice-snapshot: {out}"
+    );
+    assert!(
+        out.contains(r#"<meta name="memento-datetime" content="Tue, 13 Oct 2026 21:04:11 GMT">"#),
+        "missing memento: {out}"
+    );
+    assert!(
+        out.contains(
+            r#"<link rel="original" href="https://example.com/article/1?foo=bar&amp;baz=qux">"#
+        ),
+        "missing original link: {out}"
+    );
+    assert!(
+        out.contains("<title>A &quot;Special&quot; &lt;Article&gt; &amp; Tale</title>"),
+        "title not escaped properly: {out}"
+    );
+    assert!(
+        out.contains("<h1>A &quot;Special&quot; &lt;Article&gt; &amp; Tale</h1>"),
+        "h1 not escaped properly: {out}"
+    );
+    assert!(
+        out.contains(
+            r#"/l?u=https%3A%2F%2Fexample.com%2Farticle%2F1%3Ffoo%3Dbar%26baz%3Dqux&amp;s=snap-test-42"#
+        ),
+        "missing routed url: {out}"
+    );
+    assert!(
+        out.contains(
+            "<p>Paragraph one with &lt;script&gt;alert(1)&lt;/script&gt; &amp; special &quot;chars&quot;.</p>"
+        ),
+        "paragraph 1 not escaped: {out}"
+    );
+    assert!(
+        out.contains("<p>Paragraph two with &#39;quotes&#39;.</p>"),
+        "paragraph 2 not escaped: {out}"
+    );
+    assert!(
+        !out.contains("<script>alert(1)</script>"),
+        "unescaped script found: {out}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires live network access"]
+async fn live_devblogs_capture_inlines_preload_stylesheets() {
+    let engine = super::build_page_capture().unwrap();
+    let progress: ProgressSink = Arc::new(|_: CaptureProgress| {});
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let page = engine
+        .capture(
+            CaptureRequest {
+                url: "https://devblogs.microsoft.com/dotnet/how-async-await-really-works/"
+                    .to_string(),
+                snapshot_id: "e56f333fd5c64c6b9dc24dc6bee0e788".to_string(),
+            },
+            progress,
+            cancel,
+        )
+        .await
+        .expect("live capture of devblogs.microsoft.com should succeed");
+    assert!(
+        page.html.contains("--clr-body-bg:#F9F8FE") || page.html.contains("--clr-body-bg: #F9F8FE"),
+        "theme.min.css variables should be inlined into the snapshot"
+    );
+    assert!(
+        !page
+            .html
+            .contains("name=\"color-scheme\" content=\"dark light\""),
+        "dark light color-scheme meta should be stripped"
+    );
+    assert!(
+        page.resources.inlined >= 45,
+        "expected >= 45 resources (38 images + 11 stylesheets + fonts), got {}",
+        page.resources.inlined
+    );
 }

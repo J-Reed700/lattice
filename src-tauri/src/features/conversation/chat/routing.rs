@@ -82,7 +82,9 @@ pub(super) async fn infer_turn_intent_flags(
     context: &[String],
     cancel: tokio_util::sync::CancellationToken,
 ) -> SearchFlags {
-    if !should_infer_turn_intent(tool_preferences, search_flags) {
+    if !should_infer_turn_intent(tool_preferences, search_flags)
+        || is_trivial_conversational_message(validated_message)
+    {
         return search_flags;
     }
 
@@ -146,6 +148,36 @@ pub(super) fn should_infer_turn_intent(
         .filter(|mode| !mode.is_empty())
         .map(|mode| mode.to_ascii_lowercase());
     matches!(turn_mode.as_deref(), None | Some("auto"))
+}
+
+/// Pure greetings and polite acknowledgements with no subject matter do not
+/// need a 570-token LLM round-trip before the chat turn can start.
+fn is_trivial_conversational_message(message: &str) -> bool {
+    let normalized: String = message
+        .trim()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "hi there"
+            | "hello there"
+            | "hey there"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "thanks"
+            | "thank you"
+            | "ty"
+            | "ok"
+            | "okay"
+    )
 }
 
 /// Inference may add a vault search and follow-up mode to a turn, and never

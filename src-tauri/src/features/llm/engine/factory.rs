@@ -87,6 +87,12 @@ pub struct LocalServerOptions {
     /// Speculative decoding the user opted into; it reaches the server only
     /// for a model that can draft.
     pub speculative_decoding: SpeculativeDecoding,
+    /// Explicit `--parallel` (`-np`) slot count from per-model settings.
+    pub parallel_slots: Option<u32>,
+    /// Explicit RNG seed (`-s`) from per-model settings.
+    pub seed: Option<u32>,
+    /// Whether to quantize the KV cache (`-ctk q8_0 -ctv q8_0`).
+    pub kv_cache_quantization: bool,
 }
 
 impl LocalServerOptions {
@@ -99,7 +105,26 @@ impl LocalServerOptions {
                     SpeculativeDecoding::MtpDraft { n_max }
                 }
             },
+            parallel_slots: None,
+            seed: None,
+            kv_cache_quantization: false,
         }
+    }
+
+    /// Apply any saved per-model configuration for `model_id`.
+    pub fn with_model_config(
+        mut self,
+        model_config: Option<&lattice_core::application::contracts::settings::LocalModelConfigDto>,
+    ) -> Self {
+        if let Some(cfg) = model_config {
+            if cfg.context_length.is_some() {
+                self.context_window = cfg.context_length;
+            }
+            self.parallel_slots = cfg.max_concurrent_predictions;
+            self.seed = cfg.seed;
+            self.kv_cache_quantization = cfg.kv_cache_quantization;
+        }
+        self
     }
 }
 
@@ -246,14 +271,27 @@ async fn create_local_llm_sidecar(
         .try_state::<crate::features::llm::engine::sidecar_manager::SidecarRegistry>()
         .map_or(0, |registry| registry.resident_gpu_bytes(model_path));
     let mut config =
-        SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities, resident_bytes);
+        SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities, resident_bytes)
+            .with_kv_cache_quantization(
+                server.kv_cache_quantization,
+                &capabilities,
+                resident_bytes,
+            );
     if let Some(requested) = server.context_window {
         config = config.with_context_override(requested, &capabilities, resident_bytes);
     }
-    // Whether this GGUF can draft is the model catalog's to say; the user's
-    // choice only applies to a model that can.
+    config.parallel_slots = server.parallel_slots;
+    config.seed = server.seed;
+
+    let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
+    // Whether this GGUF can draft comes from the catalog or the GGUF header's
+    // `nextn_predict_layers`; the user's choice only applies to a model that can.
     config.mtp_capable =
-        lattice_core::domain::models::curated::chat_model_uses_mtp_draft(model_path);
+        lattice_core::domain::models::curated::chat_model_uses_mtp_draft(model_path)
+            || gguf_info
+                .as_ref()
+                .and_then(|info| info.nextn_predict_layers)
+                .is_some_and(|layers| layers > 0);
     config.speculative_decoding = server.speculative_decoding;
 
     if n_gpu_layers >= 0 {
@@ -290,7 +328,10 @@ async fn create_local_llm_sidecar(
     let supports_tools = model_path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling);
+        .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling)
+        || gguf_info
+            .as_ref()
+            .is_some_and(|info| info.supports_tool_calling());
 
     let model_thinking =
         crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);

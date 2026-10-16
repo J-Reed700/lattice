@@ -1,6 +1,5 @@
-//! `create_archive` / `restore_archive`: the two archive operations that need
-//! rate limiting, split from their Tauri wrappers the same
-//! way `create.rs` and `restore.rs` are.
+//! `create_archive` / `restore_archive`: the two archive operations split
+//! from their Tauri wrappers the same way `create.rs` and `restore.rs` are.
 //!
 //! Everything else in the archive command surface is configuration, which
 //! goes straight to `ArchiveService` from `plugin.rs`.
@@ -15,19 +14,7 @@ use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::{ApiError, ErrorCode};
 
 /// Write one archive now.
-///
-/// Shares the backup rate limiter with `create_backup`: both walk the whole
-/// corpus and both are one button click away, so a wedged UI must not be able
-/// to spin them.
 pub async fn create_archive_impl(container: &Container) -> Result<ArchiveRunDto, AppError> {
-    container
-        .security_context()
-        .rate_limiters()
-        .backup
-        .check_rate_limit("backup")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let result = container
         .archive_service()
         .create_now()

@@ -12,6 +12,7 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
+import type { JsonValue } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
@@ -47,7 +48,10 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
   const saveLlmUpdates = useCallback(
     async (updates: Partial<ApiLLMSettings>): Promise<boolean> => {
       try {
-        await mutateAsync({ category: 'llm', updates });
+        await mutateAsync({
+          category: 'llm',
+          updates: updates as unknown as Record<string, JsonValue>,
+        });
         return true;
       } catch (mutationError) {
         toast.error('Failed to update chat settings', {

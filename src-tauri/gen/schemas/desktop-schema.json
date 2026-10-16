@@ -4827,6 +4827,12 @@
           "markdownDescription": "Enables the create_learning_source_selector command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_learning_tangent command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-learning-tangent",
+          "markdownDescription": "Enables the create_learning_tangent command without any pre-configured scope."
+        },
+        {
           "description": "Enables the decide_learning_recall_duplicate command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-decide-learning-recall-duplicate",
@@ -5053,6 +5059,12 @@
           "type": "string",
           "const": "learning:allow-list-learning-programs",
           "markdownDescription": "Enables the list_learning_programs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_learning_tangents command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-list-learning-tangents",
+          "markdownDescription": "Enables the list_learning_tangents command without any pre-configured scope."
         },
         {
           "description": "Enables the list_study_decks command without any pre-configured scope.",
@@ -5421,6 +5433,12 @@
           "markdownDescription": "Denies the create_learning_source_selector command without any pre-configured scope."
         },
         {
+          "description": "Denies the create_learning_tangent command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-learning-tangent",
+          "markdownDescription": "Denies the create_learning_tangent command without any pre-configured scope."
+        },
+        {
           "description": "Denies the decide_learning_recall_duplicate command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-decide-learning-recall-duplicate",
@@ -5647,6 +5665,12 @@
           "type": "string",
           "const": "learning:deny-list-learning-programs",
           "markdownDescription": "Denies the list_learning_programs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_learning_tangents command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-list-learning-tangents",
+          "markdownDescription": "Denies the list_learning_tangents command without any pre-configured scope."
         },
         {
           "description": "Denies the list_study_decks command without any pre-configured scope.",

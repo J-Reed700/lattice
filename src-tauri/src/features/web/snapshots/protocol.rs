@@ -21,12 +21,19 @@ style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox";
 
 /// The clean layer of §6.6, added only for `?clean=1`; the file on disk is
 /// never modified.
-pub const CLEAN_CSS: &str = r#"[class*="cookie" i], [id*="cookie" i], [class*="consent" i], [id*="consent" i],
+pub const CLEAN_CSS: &str = r#":root { color-scheme: light !important; }
+:where(html) { color-scheme: light !important; background-color: #ffffff; color: #111827; }
+[class*="cookie" i], [id*="cookie" i], [class*="consent" i], [id*="consent" i],
 [class*="gdpr" i], [class*="newsletter" i][class*="modal" i], [class*="newsletter" i][class*="popup" i],
 [class*="paywall" i], [id*="paywall" i], [class*="subscribe-modal" i], [class*="interstitial" i],
 [class*="modal-backdrop" i], [class*="overlay" i][class*="modal" i], [role="dialog"], [aria-modal="true"],
 [class*="sticky-footer" i], [class*="smartbanner" i] { display: none !important; }
-html, body { overflow: auto !important; height: auto !important; position: static !important; }
+#__next > div[style*="visibility:hidden"], #__next > div[style*="visibility: hidden"],
+[data-reactroot] > div[style*="visibility:hidden"], [data-reactroot] > div[style*="visibility: hidden"],
+#root > div[style*="visibility:hidden"], #root > div[style*="visibility: hidden"],
+#app > div[style*="visibility:hidden"], #app > div[style*="visibility: hidden"],
+body > div[style*="visibility:hidden"][style*="100vh"], body > div[style*="visibility: hidden"][style*="100vh"] { visibility: visible !important; opacity: 1 !important; }
+html, body { overflow: auto !important; height: auto !important; position: static !important; visibility: visible !important; opacity: 1 !important; }
 * { cursor: default !important; }
 a, area { cursor: pointer !important; }"#;
 

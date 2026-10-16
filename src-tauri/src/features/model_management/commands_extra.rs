@@ -21,6 +21,7 @@ use crate::features::model_management::use_cases::{
 };
 use crate::interfaces::di::Container;
 use chrono::Utc;
+use lattice_core::application::ports::ModelFileInspector;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::metadata::ModelType;
 use lattice_core::shared::error::AppError;
@@ -28,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
 use tokio::task;
 use tracing::{debug, error, info, warn};
@@ -61,21 +61,27 @@ pub struct DownloadedModelResponse {
     pub is_active_for_embedding: bool,
     pub is_active_for_utility: bool,
     pub backend: String,
+    #[serde(default)]
+    pub trained_context_length: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[specta(skip)]
     pub metadata: Option<serde_json::Value>,
 }
 
-impl From<DownloadedModel> for DownloadedModelResponse {
-    fn from(model: DownloadedModel) -> Self {
+impl DownloadedModelResponse {
+    /// Maps a stored model, reading a local file's trained context length
+    /// through `inspector`.
+    pub fn from_model(model: DownloadedModel, inspector: &dyn ModelFileInspector) -> Self {
         let file_path = model
             .loadable_path()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let backend = if model.location().is_local() {
-            "local"
+        let is_local = model.location().is_local();
+        let backend = if is_local { "local" } else { "ollama" };
+        let trained_context_length = if is_local && !file_path.is_empty() {
+            inspector.trained_context_length(Path::new(&file_path))
         } else {
-            "ollama"
+            None
         };
         Self {
             id: model.id().to_string(),
@@ -91,6 +97,7 @@ impl From<DownloadedModel> for DownloadedModelResponse {
             is_active_for_embedding: model.is_active_for_embedding(),
             is_active_for_utility: model.is_active_for_utility(),
             backend: backend.to_string(),
+            trained_context_length,
             metadata: model.metadata().cloned(),
         }
     }
@@ -104,14 +111,6 @@ pub async fn get_models_with_metadata_impl(container: &Container) -> Result<Stri
     info!("Command: get_models_with_metadata - ENTRY");
 
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("list_models")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if let Err(e) = sync_external_model_directories(container, &repository).await {
         warn!(error = %e, "External model directory sync failed");
@@ -121,8 +120,11 @@ pub async fn get_models_with_metadata_impl(container: &Container) -> Result<Stri
 
     match use_case.execute().await {
         Ok(models) => {
-            let response: Vec<DownloadedModelResponse> =
-                models.into_iter().map(|m| m.into()).collect();
+            let inspector = container.model_file_inspector();
+            let response: Vec<DownloadedModelResponse> = models
+                .into_iter()
+                .map(|m| DownloadedModelResponse::from_model(m, inspector.as_ref()))
+                .collect();
 
             info!(count = response.len(), "Retrieved downloaded models");
 
@@ -146,17 +148,10 @@ pub async fn is_model_already_downloaded_impl(
     model_id: &str,
 ) -> Result<bool, AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-    let input_validator = security_arc.input_validator();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    let validated_model_id = input_validator.validate_model_name(model_id)?;
+    let validated_model_id = container
+        .security_context()
+        .input_validator()
+        .validate_model_name(model_id)?;
 
     let use_case = CheckIsDownloadedUseCase::new(repository);
     use_case.execute(&validated_model_id).await
@@ -172,14 +167,6 @@ pub async fn delete_downloaded_model_and_file_impl(
     delete_file: bool,
 ) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
-    let security_arc = Arc::clone(container.security_context());
-    let rate_limiters = security_arc.rate_limiters();
-
-    rate_limiters
-        .model_management
-        .check_rate_limit("model_management")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if model_id.trim().is_empty() {
         return Err(AppError::InvalidInput(

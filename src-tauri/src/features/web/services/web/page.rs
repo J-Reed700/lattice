@@ -213,23 +213,43 @@ impl WebService {
         let profile = stealth::random_profile();
         let headers = stealth::browser_headers(profile, None);
 
-        let response = self
+        let mut response = self
             .client
             .get(url)
-            .headers(headers)
+            .headers(headers.clone())
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
 
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            let retry_after_secs = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(2)
+                .min(5);
+            debug!(
+                url,
+                retry_after_secs, "Rate limited by host; retrying once after delay"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(retry_after_secs)).await;
+            if let Ok(retry_resp) = self.client.get(url).headers(headers).send().await {
+                response = retry_resp;
+            }
+        }
+
         if !response.status().is_success() {
             let status = response.status();
             warn!("URL fetch failed with status: {}", status);
-            // 403 and 503 are what a JavaScript check answers a plain client
+            // 403, 429 and 503 are what a JavaScript or rate-limiting check answers a plain client
             // with. The page may open in a browser, so it is tried there
             // before the refusal is believed.
             if matches!(
                 status,
-                StatusCode::FORBIDDEN | StatusCode::SERVICE_UNAVAILABLE
+                StatusCode::FORBIDDEN
+                    | StatusCode::SERVICE_UNAVAILABLE
+                    | StatusCode::TOO_MANY_REQUESTS
             ) {
                 if let Some(page) = self.read_through_browser(url, start, read).await {
                     return Ok(page);
@@ -297,14 +317,9 @@ impl WebService {
         &self,
         url: &str,
         start: Instant,
-        read: PageRead,
+        page_read: PageRead,
     ) -> Option<ReadPage> {
-        // Browser extraction is a bounded display read, not a complete reference
-        // capture. Do not silently certify a script-rendered prefix as a book.
-        if read != PageRead::Chat {
-            return None;
-        }
-        let read = match self.browser.get() {
+        let read_result = match self.browser.get() {
             Some(browser) => {
                 browser
                     .read(url, browser_reader::DEFAULT_READ_TIMEOUT)
@@ -312,7 +327,7 @@ impl WebService {
             }
             None => Err(browser_reader::unavailable()),
         };
-        match read {
+        match read_result {
             Ok(page) if !page.text.trim().is_empty() => {
                 // The browser follows redirects the HTTP client never saw.
                 if page.final_url != url && validate_url_resolved(&page.final_url).await.is_err() {
@@ -330,7 +345,7 @@ impl WebService {
                         page.title,
                         page.text,
                         Some("text/html".to_string()),
-                        (start, PageRead::Chat),
+                        (start, page_read),
                     )
                     .await,
                 )

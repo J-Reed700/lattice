@@ -28,6 +28,7 @@ const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
   { value: "llamacpp", label: "llama.cpp" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
+  { value: "google", label: "Google" },
 ];
 
 export function ChatTab() {
@@ -244,7 +245,12 @@ export function ChatTab() {
                           model: "claude-opus-5",
                           maxTokens: 8192,
                         }
-                      : {}),
+                      : event.target.value === "google"
+                        ? {
+                            model: "gemini-2.5-flash",
+                            maxTokens: 8192,
+                          }
+                        : {}),
                 })
               }
               className={INPUT_CLASS}
@@ -259,7 +265,10 @@ export function ChatTab() {
         )}
       </SettingsSection>
 
-      {llmSettings && (provider === "openai" || provider === "anthropic") && (
+      {llmSettings &&
+        (provider === "openai" ||
+          provider === "anthropic" ||
+          provider === "google") && (
         <SettingsSection title="Cloud connection">
           <p className="py-2 text-sm text-text-muted">
             Chat prompts and retrieved passages are sent to the selected
@@ -524,7 +533,8 @@ export function ChatTab() {
               provider === "llamacpp" ? llmSettings?.llamaCpp?.model || null :
               provider === "ollama" ||
               provider === "openai" ||
-              provider === "anthropic"
+              provider === "anthropic" ||
+              provider === "google"
                 ? llmSettings?.model || null
                 : (activeChatModel?.model_name ?? null)
             }
@@ -532,7 +542,8 @@ export function ChatTab() {
               provider === "llamacpp" ||
               provider === "ollama" ||
               provider === "openai" ||
-              provider === "anthropic"
+              provider === "anthropic" ||
+              provider === "google"
                 ? provider
                 : (activeChatModel?.model_id ?? null)
             }

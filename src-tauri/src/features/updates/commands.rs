@@ -15,11 +15,6 @@
 //! - **Check Frequency**: User-initiated or periodic background checks
 //! - **Update Mechanism**: User downloads and installs manually
 //!
-//! # Known Limitations
-//!
-//! **⚠️ Version Info Unthrottled**: Update checks are rate limited, but
-//! `get_version_info` is currently not throttled.
-//!
 //! # Architecture
 //!
 //! Commands delegate to update use cases which:
@@ -29,7 +24,7 @@
 
 use crate::features::updates::dto::{UpdateInfoDto, VersionInfoDto};
 use crate::interfaces::di::Container;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use tauri::State;
 
 /// Checks for available application updates
@@ -95,13 +90,6 @@ use tauri::State;
 /// 3. Compare with current version (from Cargo.toml)
 /// 4. Return `available: true` if newer version exists
 ///
-/// # Security
-///
-///
-/// **⚠️ Rate Limiting Disabled**: Currently commented out (TODO)
-/// - **Risk**: No protection against update check spam
-/// - **Mitigation**: Frontend should implement client-side rate limiting
-///
 /// # Use Cases
 ///
 /// - **Manual Check**: User clicks "Check for Updates" button
@@ -120,19 +108,7 @@ use tauri::State;
 ///
 /// Thin controller delegating to `CheckForUpdatesUseCase` (DDD pattern)
 pub async fn check_for_updates(container: State<'_, Container>) -> Result<UpdateInfoDto> {
-    // 1. Rate limiting (CWE-770 mitigation)
-    container
-        .security_context()
-        .rate_limiters()
-        .health_check
-        .check_rate_limit("updates")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    // 2. Get use case from container
     let use_case = container.check_for_updates_use_case();
-
-    // 3. Execute use case
     let update_info = use_case.execute().await?;
 
     Ok(update_info)
@@ -196,11 +172,6 @@ pub async fn check_for_updates(container: State<'_, Container>) -> Result<Update
 /// - **buildDate**: Optional build date string (currently not populated)
 /// - **commitHash**: Optional commit hash string (currently not populated)
 ///
-/// # Security
-///
-/// **No Rate Limiting**: Version info queries are intentionally unthrottled
-/// - **Risk**: Minimal (read-only, constant-time access)
-///
 /// # Use Cases
 ///
 /// - **About Dialog**: Display version in "About" window
@@ -232,13 +203,6 @@ pub async fn get_version_info(container: State<'_, Container>) -> Result<Version
 /// This async function is called directly by the gateway adapter.
 /// Takes &Container instead of State<'_, Container>.
 pub async fn check_for_updates_impl(container: &Container) -> Result<UpdateInfoDto> {
-    container
-        .security_context()
-        .rate_limiters()
-        .health_check
-        .check_rate_limit("updates")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
     let use_case = container.check_for_updates_use_case();
     let update_info = use_case.execute().await?;
 

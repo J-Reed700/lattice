@@ -342,17 +342,14 @@ pub async fn get_model_path(
 ///
 /// # Architecture
 ///
-/// Thin controller with cross-cutting concerns:
-/// 1. **Rate Limiting**: Applied before execution
-/// 2. **Use Case Execution**: DeleteModelUseCase handles business logic
+/// Thin controller delegating to `DeleteModelUseCase`.
 ///
 /// # Command Flow
 ///
-/// 1. Check rate limit (prevent abuse)
-/// 2. Get use case from container
-/// 3. Create request DTO with model ID
-/// 4. Execute deletion (validate, check existence, delete files)
-/// 5. Return DeleteModelResponseDto with freed space
+/// 1. Get use case from container
+/// 2. Create request DTO with model ID
+/// 3. Execute deletion (validate, check existence, delete files)
+/// 4. Return DeleteModelResponseDto with freed space
 ///
 /// # Warning
 ///
@@ -363,15 +360,6 @@ pub async fn delete_model(
     model_id: String,
     container: State<'_, Container>,
 ) -> Result<DeleteModelResponseDto, AppError> {
-    // Rate limiting (resource-intensive operation)
-    container
-        .security_context()
-        .rate_limiters()
-        .indexing
-        .check_rate_limit(&model_id)
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.delete_model_use_case();
     let request = DeleteModelRequestDto {
         model_id: model_id.clone(),

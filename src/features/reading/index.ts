@@ -27,3 +27,20 @@ export {
   escapeHtml,
   findPassagePage,
 } from './model/pdfPassageSearch';
+export {
+  fromConversationLinkedDocument,
+  fromConversationWebSource,
+  fromDocumentMetadata,
+  fromFilePath,
+  fromJournalSource,
+  fromLearningEvidencePassage,
+  fromLearningSource,
+  fromRecentDocument,
+  fromSearchResult,
+  fromStudySource,
+} from './model/sourceAdapter';
+export type {
+  JournalSourceInput,
+  ResolvedReaderTarget,
+  WebSourceInput,
+} from './model/sourceAdapter';

@@ -69,6 +69,21 @@ impl FunctionRegistryTrait for MockFunctionRegistry {
         Ok(())
     }
 
+    fn unregister(&self, name: &str) -> bool {
+        let mut tools = self.tools.write().unwrap();
+        let removed = tools.remove(name).is_some();
+        if removed {
+            let mut stats = self.stats.write().unwrap();
+            stats.total_functions = tools.len();
+        }
+        removed
+    }
+
+    fn record_call(&self, function_name: &str) {
+        let mut stats = self.stats.write().unwrap();
+        stats.record_call(function_name);
+    }
+
     fn get_tool(&self, name: &str) -> Option<ToolDefinition> {
         self.tools.read().unwrap().get(name).cloned()
     }

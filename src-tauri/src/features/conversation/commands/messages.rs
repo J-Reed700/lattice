@@ -21,11 +21,10 @@ use tauri::State;
 /// # Returns
 ///
 /// * `Ok(Vec<ConversationMessage>)` - List of messages in chronological order
-/// * `Err(AppError)` - If rate limited, conversation not found, or query fails
+/// * `Err(AppError)` - If conversation not found or query fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many message fetch requests (rate limited)
 /// * `AppError::NotFound` - Conversation ID not found
 /// * `AppError::Other` - Database query failed
 ///
@@ -65,10 +64,6 @@ use tauri::State;
 /// console.log(`Total tokens: ${totalTokens}`);
 /// ```
 ///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents excessive message fetching
-///
 /// # Message Ordering
 ///
 /// Messages are returned in chronological order (oldest first):
@@ -105,29 +100,21 @@ use tauri::State;
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `ConversationService.get_conversation()`
-/// 3. Extracts messages from conversation aggregate
+/// 1. Delegates to `ConversationService.get_conversation()`
+/// 2. Extracts messages from conversation aggregate
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Execute ConversationService.get_conversation()
-/// 3. If conversation not found, return NotFound error
-/// 4. Extract messages from aggregate
-/// 5. Return messages in chronological order
+/// 1. Execute ConversationService.get_conversation()
+/// 2. If conversation not found, return NotFound error
+/// 3. Extract messages from aggregate
+/// 4. Return messages in chronological order
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn get_conversation_messages_impl(
     runtime: &dyn ChatRuntime,
     conversation_id: String,
 ) -> Result<Vec<ConversationMessage>> {
-    // 1. Rate limiting
-    runtime
-        .check_read_rate_limit("get_conversation_messages")
-        .await?;
-
-    // 2. Delegate to service
     let service = runtime.conversation_service();
     let aggregate = service
         .get_conversation(&conversation_id)

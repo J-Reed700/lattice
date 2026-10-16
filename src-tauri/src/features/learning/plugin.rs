@@ -23,11 +23,6 @@ fn source_deps(container: &Container) -> crate::features::learning::sources::Sou
     crate::features::learning::sources::SourceDeps {
         library: container.library_passages(),
         web: container.web_service(),
-        web_ingest: container
-            .security_context()
-            .rate_limiters()
-            .web_ingest
-            .clone(),
         pool: container.db_pool().clone(),
     }
 }
@@ -58,6 +53,8 @@ mod practical;
 pub use practical::*;
 mod study;
 pub use study::*;
+mod tangents;
+pub use tangents::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -194,7 +191,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             generate_conversation_study_deck,
             review_study_card,
             update_study_card,
-            delete_study_deck
+            delete_study_deck,
+            create_learning_tangent,
+            list_learning_tangents
         ])
         .build()
 }

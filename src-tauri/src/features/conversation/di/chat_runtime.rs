@@ -122,6 +122,9 @@ impl ChatTools for RegisteredTools {
     async fn execute(&self, call: FunctionCall) -> Result<FunctionResult> {
         self.executor.execute(call).await
     }
+    fn record_call(&self, name: &str) {
+        self.registry.record_call(name);
+    }
 }
 
 #[async_trait]
@@ -172,14 +175,6 @@ impl ChatPolicy for Container {
     }
     async fn validate_message(&self, message: &str) -> Result<String> {
         self.security_context()
-            .rate_limiters()
-            .qa
-            .check_rate_limit(message)
-            .await
-            .map_err(|error| {
-                lattice_core::shared::error::AppError::RateLimitExceeded(error.to_string())
-            })?;
-        self.security_context()
             .input_validator()
             .validate_chat_message(message)
     }
@@ -207,27 +202,7 @@ impl ChatPolicy for Container {
             summary_refold,
         );
     }
-    async fn check_read_rate_limit(&self, name: &str) -> Result<()> {
-        self.security_context()
-            .rate_limiters()
-            .search
-            .check_rate_limit(name)
-            .await
-            .map_err(|e| {
-                lattice_core::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
-            })
-    }
-    async fn check_delete_rate_limit(&self, name: &str) -> Result<()> {
-        self.security_context()
-            .rate_limiters()
-            .llm_question
-            .check_rate_limit(name)
-            .await
-            .map_err(|e| {
-                lattice_core::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
-            })
-    }
-    async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()> {
+    async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
         // A turn already generating for this conversation should not continue
         // producing work after the user deletes it. Vector indexing is a
         // separate detached task; its final write checks the source rows

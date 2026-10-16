@@ -146,15 +146,6 @@ pub async fn generate_tags_impl(
     container: &Container,
     request: GenerateTagsRequestDto,
 ) -> Result<GenerateTagsResponseDto> {
-    // SECURITY: Rate limit LLM tag generation to prevent resource exhaustion (CWE-770)
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_tags
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     container.get_or_load_llm().await?;
 
     let use_case = container.generate_tags_use_case();
@@ -318,15 +309,6 @@ pub async fn auto_tag_all_documents_ddd(
     container: State<'_, Container>,
     request: AutoTagRequestDto,
 ) -> Result<AutoTagResponseDto> {
-    // SECURITY: Rate limit to prevent DoS attacks (CWE-770)
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_tags
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     // SECURITY: Enforce hard limit
     const MAX_AUTO_TAG_DOCUMENTS: usize = 100;
     if request.max_documents > MAX_AUTO_TAG_DOCUMENTS {

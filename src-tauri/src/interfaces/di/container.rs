@@ -437,9 +437,11 @@ impl Container {
         self.web_snapshot_events.attach(handle.clone());
         // A page that refuses the HTTP client is read in a hidden window of
         // the app's own browser engine, which exists only from here on.
-        self.web_service.attach_browser(Arc::new(
+        let browser = Arc::new(
             crate::features::web::services::browser_reader::BrowserReader::new(handle.clone()),
-        ));
+        );
+        self.web_service.attach_browser(Arc::clone(&browser));
+        self.web_page_snapshots.attach_browser(browser);
         // The vault writer starts before the container exists, so its corpus
         // sink is installed here, once the indexing pipeline is built. Until
         // then — and in tests that skip this step — the writer defers its

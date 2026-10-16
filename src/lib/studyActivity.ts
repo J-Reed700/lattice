@@ -3,8 +3,8 @@ import type { ApiResult } from '@/types';
 
 import { queryClient } from './queryClient';
 
-export type StudyTab = 'starting_point' | 'lessons' | 'sources' | 'quick-checks' | 'assess-evidence' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
-export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean };
+export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quick-checks' | 'assess-evidence' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
+export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string };
 // `withdrawsOn` names the result `outcome` tag that means the request did
 // nothing (a closed save or folder dialog), so its receipt is withdrawn.
 type TaskDescription = { title: string; detail: string; involves: string[]; tab?: StudyTab; quickStart?: boolean; withdrawsOn?: string };
@@ -64,7 +64,7 @@ function describe(command: string): TaskDescription {
           : command.includes('diagnostic') ? 'starting_point' : command.includes('curriculum') || command.includes('plan') ? 'plan'
             : command.includes('pack') || command.includes('portability') ? 'portability'
               : command.includes('memory') || command.includes('note') ? 'notebook' : 'lessons';
-  const names: Record<StudyTab, string> = { sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', 'quick-checks': 'quick checks', 'assess-evidence': 'assessment', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course' };
+  const names: Record<StudyTab, string> = { study: 'study guide', sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', 'quick-checks': 'quick checks', 'assess-evidence': 'assessment', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course' };
   return {
     title: `${read ? 'Loading' : 'Updating'} your ${command.includes('study_deck') ? 'flashcards' : names[tab]}`,
     tab, detail: read ? 'This is taking longer than usual. The request is still waiting for a response.' : 'Waiting for the app to finish this change.',

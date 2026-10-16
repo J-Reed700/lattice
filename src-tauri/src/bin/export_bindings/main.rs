@@ -200,6 +200,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::review_study_card,
             lattice::features::learning::plugin::update_study_card,
             lattice::features::learning::plugin::delete_study_deck,
+            lattice::features::learning::plugin::create_learning_tangent,
+            lattice::features::learning::plugin::list_learning_tangents,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,

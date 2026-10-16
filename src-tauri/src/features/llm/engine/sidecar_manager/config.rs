@@ -61,6 +61,16 @@ pub struct SidecarConfig {
     /// The speculative decoding the user opted into. It reaches the server
     /// only when the model is [`Self::mtp_capable`].
     pub speculative_decoding: SpeculativeDecoding,
+
+    /// Optional explicit `--parallel` (`-np`) slot count (LM Studio "Max Concurrent Predictions").
+    /// `None` uses llama-server's built-in default (4).
+    pub parallel_slots: Option<u32>,
+
+    /// Optional explicit RNG seed (`-s`). `None` uses a random seed.
+    pub seed: Option<u32>,
+
+    /// Whether to quantize the KV cache (`-ctk q8_0 -ctv q8_0`), halving KV cache memory.
+    pub kv_cache_quantization: bool,
 }
 
 /// Speculative decoding a bundled server can be launched with.
@@ -143,6 +153,15 @@ pub(super) fn auto_context_size(
     capabilities: &SystemCapabilities,
     resident_bytes: u64,
 ) -> Option<u32> {
+    auto_context_size_with_quantization(model_path, capabilities, resident_bytes, false)
+}
+
+pub(super) fn auto_context_size_with_quantization(
+    model_path: &std::path::Path,
+    capabilities: &SystemCapabilities,
+    resident_bytes: u64,
+    quantized: bool,
+) -> Option<u32> {
     use crate::features::llm::engine::gguf_metadata;
 
     let vram_gb = capabilities.gpu_vram_gb()?;
@@ -158,7 +177,14 @@ pub(super) fn auto_context_size(
     let info = gguf_metadata::read_model_info(model_path)?;
     let weights_bytes = std::fs::metadata(model_path).ok()?.len();
 
-    context_size_for(vram_gb, weights_bytes, resident_bytes, &info, shared)
+    context_size_for_quantized(
+        vram_gb,
+        weights_bytes,
+        resident_bytes,
+        &info,
+        shared,
+        quantized,
+    )
 }
 
 /// GPU memory a running server already holds: its weights plus the KV cache
@@ -180,12 +206,13 @@ fn largest_window_within(
     info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
     ceiling: u32,
     spare_bytes: u64,
+    quantized: bool,
 ) -> u32 {
     (1..=ceiling / 1024)
         .rev()
         .map(|thousands| thousands * 1024)
         .find(|&tokens| {
-            info.kv_cache_bytes(tokens)
+            info.kv_cache_bytes_with_quantization(tokens, quantized)
                 .is_some_and(|bytes| bytes <= spare_bytes)
         })
         .unwrap_or(0)
@@ -206,6 +233,7 @@ fn largest_window_within(
 ///   weights, still within the usable share and never past the trained length.
 ///   llama.cpp allocates the whole cache at load, so growth sized to installed
 ///   memory rather than available memory would push a busy machine into swap.
+#[cfg(test)]
 pub(super) fn context_size_for(
     vram_gb: f64,
     weights_bytes: u64,
@@ -213,12 +241,23 @@ pub(super) fn context_size_for(
     info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
     shared: Option<SharedMemory>,
 ) -> Option<u32> {
+    context_size_for_quantized(vram_gb, weights_bytes, resident_bytes, info, shared, false)
+}
+
+pub(super) fn context_size_for_quantized(
+    vram_gb: f64,
+    weights_bytes: u64,
+    resident_bytes: u64,
+    info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
+    shared: Option<SharedMemory>,
+    quantized: bool,
+) -> Option<u32> {
     let floor_ceiling = info
         .trained_context_length
         .unwrap_or(AUTO_FLOOR_CEILING)
         .min(AUTO_FLOOR_CEILING);
     // A header without KV dimensions declines here, before memory is looked at.
-    info.kv_cache_bytes(floor_ceiling)?;
+    info.kv_cache_bytes_with_quantization(floor_ceiling, quantized)?;
     let minimum = AUTO_MIN_CONTEXT_SIZE.min(floor_ceiling);
 
     let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
@@ -231,7 +270,7 @@ pub(super) fn context_size_for(
     else {
         return Some(minimum);
     };
-    let floor = largest_window_within(info, floor_ceiling, share_spare).max(minimum);
+    let floor = largest_window_within(info, floor_ceiling, share_spare, quantized).max(minimum);
 
     // Growth needs a trained length to stop at.
     let Some(trained) = info.trained_context_length else {
@@ -241,7 +280,7 @@ pub(super) fn context_size_for(
     let growth_spare = shared.map_or(share_spare, |shared| {
         share_spare.min(shared.spare_bytes().saturating_sub(weights_bytes))
     });
-    Some(largest_window_within(info, trained, growth_spare).max(floor))
+    Some(largest_window_within(info, trained, growth_spare, quantized).max(floor))
 }
 
 impl SidecarConfig {
@@ -255,6 +294,9 @@ impl SidecarConfig {
             context_size: DEFAULT_GPU_CONTEXT_SIZE,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
+            parallel_slots: None,
+            seed: None,
+            kv_cache_quantization: false,
         }
     }
 
@@ -277,6 +319,9 @@ impl SidecarConfig {
             context_size: self.context_size.min(DEFAULT_CPU_CONTEXT_SIZE),
             mtp_capable: self.mtp_capable,
             speculative_decoding: self.speculative_decoding,
+            parallel_slots: self.parallel_slots,
+            seed: self.seed,
+            kv_cache_quantization: self.kv_cache_quantization,
         }
     }
 
@@ -329,7 +374,32 @@ impl SidecarConfig {
             context_size,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
+            parallel_slots: None,
+            seed: None,
+            kv_cache_quantization: false,
         }
+    }
+
+    /// Enable or disable `q8_0` KV cache quantization and resize the auto
+    /// context window accordingly when running on an accelerator.
+    pub fn with_kv_cache_quantization(
+        mut self,
+        enabled: bool,
+        capabilities: &SystemCapabilities,
+        resident_bytes: u64,
+    ) -> Self {
+        self.kv_cache_quantization = enabled;
+        if enabled && self.n_gpu_layers > 0 && capabilities.total_ram_gb >= LOW_RAM_THRESHOLD_GB {
+            if let Some(resized) = auto_context_size_with_quantization(
+                &self.model_path,
+                capabilities,
+                resident_bytes,
+                true,
+            ) {
+                self.context_size = resized;
+            }
+        }
+        self
     }
 
     /// Replace the automatic choice with the one the user asked for.
@@ -349,8 +419,12 @@ impl SidecarConfig {
             return self;
         }
 
-        if let Some(affordable) = auto_context_size(&self.model_path, capabilities, resident_bytes)
-        {
+        if let Some(affordable) = auto_context_size_with_quantization(
+            &self.model_path,
+            capabilities,
+            resident_bytes,
+            self.kv_cache_quantization,
+        ) {
             if requested > affordable {
                 tracing::warn!(
                     requested,

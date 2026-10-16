@@ -246,4 +246,49 @@ describe('a page the answer cites from more than one sentence', () => {
     expect(screen.getByText(/snapshot was truncated when captured/i)).toBeTruthy();
     expect(mocks.readWebPage).not.toHaveBeenCalled();
   });
+
+  it('highlights and scrolls to initialLocator text when opened from non-chat surface without answer sentences', async () => {
+    conversations = [];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <WebArticleView
+            url={URL}
+            source={source}
+            initialLocator={{
+              text: 'Herbs are forgiving and will grow on almost any windowsill.',
+              chunkId: 'chunk-herbs',
+            }}
+          />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+
+    const mark = document.querySelector('.source-reader-passage');
+    expect(mark).not.toBeNull();
+    expect(mark?.textContent).toContain('Herbs are forgiving and will grow on almost any windowsill.');
+    expect(mark?.getAttribute('title')).toContain('Matches: Herbs are forgiving');
+    expect(mark?.classList.contains('is-lit')).toBe(true);
+  });
+
+  it('highlights saved excerpt on full page text when no initialLocator is provided and no answer sentences', async () => {
+    conversations = [];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const excerptSource: SourceWithMetadata = {
+      ...source,
+      excerpt: 'Dwarf tomato varieties set fruit indoors',
+    };
+    render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <WebArticleView url={URL} source={excerptSource} />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+
+    const mark = document.querySelector('.source-reader-passage');
+    expect(mark).not.toBeNull();
+    expect(mark?.textContent).toContain('Dwarf tomato varieties set fruit indoors');
+  });
 });

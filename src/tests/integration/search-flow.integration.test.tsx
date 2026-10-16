@@ -19,10 +19,8 @@ const searchState: {
   lastParams: null,
 };
 
-// react-pdf pulls in pdfjs, which needs a canvas DOM this environment lacks.
-// The viewer is not part of the search flow under test.
-vi.mock('@/features/reading/components/ContentViewer', () => ({
-  ContentViewer: () => null,
+vi.mock('@/features/reading/components/FilePreviewModal', () => ({
+  FilePreviewModal: () => null,
 }));
 
 vi.mock('@/features/search/hooks/useSearchQuery', () => ({

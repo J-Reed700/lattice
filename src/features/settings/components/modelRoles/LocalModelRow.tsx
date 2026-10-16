@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
-import { Box, Flame, Trash2 } from 'lucide-react';
+import { Box, Flame, SlidersHorizontal, Trash2 } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { IconButton } from '@/components/ui';
@@ -24,6 +24,7 @@ import { VaultAPI } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
+import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
 import { isChatModelSelected, ROLES } from './roleConfig';
@@ -52,6 +53,7 @@ export function LocalModelRow({ model }: Props) {
   const chatActive = isChatModelSelected(model, chatProvider);
   const { deleteDownloadedModel } = useDownloadedModels();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isWarming, setIsWarming] = useState(false);
   const chatWarmup = useModelWarmupStore((state) => state.chat);
@@ -147,6 +149,7 @@ export function LocalModelRow({ model }: Props) {
     .join(' · ');
 
   const canWarmUp = chatActive || model.is_active_for_utility;
+  const isLanguageModel = model.model_type !== 'embedding';
 
   return (
     <>
@@ -173,6 +176,14 @@ export function LocalModelRow({ model }: Props) {
           ))}
 
           <div className="ml-1 flex items-center gap-0.5 border-l border-border-subtle pl-1.5">
+            {isLanguageModel ? (
+              <IconButton
+                label="Configure model"
+                onClick={() => setShowConfigModal(true)}
+              >
+                <SlidersHorizontal />
+              </IconButton>
+            ) : null}
             {canWarmUp ? (
               <IconButton
                 label={isWarming ? 'Warming up…' : 'Warm up'}
@@ -193,6 +204,15 @@ export function LocalModelRow({ model }: Props) {
           </div>
         </div>
       </div>
+
+      {showConfigModal ? (
+        <LocalModelConfigModal
+          isOpen={showConfigModal}
+          model={model}
+          onClose={() => setShowConfigModal(false)}
+          onLoadModel={canWarmUp ? handleWarmUp : undefined}
+        />
+      ) : null}
 
       <ConfirmDialog
         isOpen={showDeleteConfirm}

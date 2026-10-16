@@ -7,7 +7,6 @@
 //!
 //! # Security
 //! - Aggregated metrics only, no user-identifiable information
-//! - Rate limited to prevent metric enumeration
 //!
 //! # Example
 //! ```rust,no_run

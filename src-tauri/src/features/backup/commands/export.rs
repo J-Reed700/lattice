@@ -60,11 +60,10 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 /// # Returns
 ///
 /// * `Ok(usize)` - Number of Markdown files successfully exported
-/// * `Err(AppError)` - If rate limited, path validation fails, or export fails
+/// * `Err(AppError)` - If path validation fails or export fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many export requests (rate limited)
 /// * `AppError::InvalidInput` - Invalid output directory path (directory traversal detected)
 /// * `AppError::Other` - Path exists but is not a directory, or filesystem errors
 ///
@@ -91,7 +90,6 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Backup rate limiter (50 req/min) prevents resource exhaustion
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 ///
 /// # Use Cases
@@ -118,32 +116,21 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 /// # Architecture
 ///
 /// Command flow:
-/// 1. Rate limiting via SecurityContext (CWE-770)
-/// 2. Path validation via ValidatedFilePath (CWE-22)
-/// 3. Async directory creation via tokio::fs
+/// 1. Path validation via ValidatedFilePath (CWE-22)
+/// 2. Async directory creation via tokio::fs
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check (backup limiter)
-/// 2. Path validation (prevent directory traversal)
-/// 3. Check/create output directory asynchronously
-/// 4. Export documents to Markdown files
-/// 5. Return export count
+/// 1. Path validation (prevent directory traversal)
+/// 2. Check/create output directory asynchronously
+/// 3. Export documents to Markdown files
+/// 4. Return export count
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_markdown_impl(
     output_dir: Option<String>,
     container: &Container,
 ) -> Result<ExportSummary, AppError> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .backup
-        .check_rate_limit("backup")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let output_root = resolve_export_root(output_dir, container)?;
 
     let result = export_use_case(container)
@@ -168,11 +155,10 @@ pub async fn export_markdown_impl(
 /// # Returns
 ///
 /// * `Ok(())` - Export completed successfully
-/// * `Err(AppError)` - If rate limited, path validation fails, or export fails
+/// * `Err(AppError)` - If path validation fails or export fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many export requests (rate limited)
 /// * `AppError::InvalidInput` - Invalid output path (directory traversal detected)
 /// * `AppError::Other` - Failed to create parent directory or filesystem errors
 ///
@@ -211,7 +197,6 @@ pub async fn export_markdown_impl(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Backup rate limiter (50 req/min) prevents resource exhaustion
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 ///
 /// # Use Cases
@@ -251,18 +236,16 @@ pub async fn export_markdown_impl(
 /// # Architecture
 ///
 /// Command flow:
-/// 1. Rate limiting via SecurityContext (CWE-770)
-/// 2. Path validation via ValidatedFilePath (CWE-22)
-/// 3. Async parent directory creation via tokio::fs
+/// 1. Path validation via ValidatedFilePath (CWE-22)
+/// 2. Async parent directory creation via tokio::fs
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check (backup limiter)
-/// 2. Path validation (prevent directory traversal)
-/// 3. Create parent directories asynchronously
-/// 4. Serialize documents to JSON (pretty or compact)
-/// 5. Write JSON to file atomically
-/// 6. Return success
+/// 1. Path validation (prevent directory traversal)
+/// 2. Create parent directories asynchronously
+/// 3. Serialize documents to JSON (pretty or compact)
+/// 4. Write JSON to file atomically
+/// 5. Return success
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_json_impl(
@@ -270,15 +253,6 @@ pub async fn export_json_impl(
     pretty: bool,
     container: &Container,
 ) -> Result<ExportSummary, AppError> {
-    // Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .backup
-        .check_rate_limit("backup")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let output_root = resolve_export_root(output_path, container)?;
 
     let result = export_use_case(container)

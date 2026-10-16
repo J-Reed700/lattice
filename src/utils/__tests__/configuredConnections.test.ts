@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 
-import { configuredConnections } from './configuredConnections';
+import { configuredConnections } from '../configuredConnections';
 
 describe('configured connections', () => {
   it('shows no connection before settings load', () => {
     expect(configuredConnections(undefined)).toEqual({ ollama: false, llamaCpp: false });
   });
 
-  it.each(['auto', 'local', 'llamacpp', 'openai', 'anthropic'] as const)(
+  it.each(['auto', 'local', 'llamacpp', 'openai', 'anthropic', 'google'] as const)(
     'does not mistake the shared model setting for an Ollama connection under %s', provider => {
       const { llm } = makeAppSettings();
       llm.provider = provider;

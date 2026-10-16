@@ -531,4 +531,42 @@ mod tests {
         let session = repository.get("live").await.unwrap().unwrap();
         assert_eq!(session.state(), &DownloadState::Downloading);
     }
+
+    #[tokio::test]
+    async fn sqlite_session_interrupted_before_relaunch_is_reconciled() {
+        use crate::features::download::download_repository::SqliteDownloadRepository;
+        use crate::infrastructure::persistence::database::connection::DatabaseConnection;
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = Arc::new(
+            DatabaseConnection::new(dir.path().join("reconcile.db"))
+                .await
+                .unwrap(),
+        );
+        sqlx::migrate!("./migrations")
+            .run(conn.pool())
+            .await
+            .unwrap();
+        let repository: Arc<dyn DownloadRepository> = Arc::new(SqliteDownloadRepository::new(conn));
+
+        let mut session = downloading("sqlite-interrupted");
+        session.update_progress(500, 100.0);
+        repository.create(&session).await.unwrap();
+
+        let startup = Utc::now() + chrono::Duration::milliseconds(10);
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            reconciled, 1,
+            "SqliteDownloadRepository must preserve updated_at so stale Downloading rows are reconciled"
+        );
+        let updated = repository.get("sqlite-interrupted").await.unwrap().unwrap();
+        assert_eq!(updated.state(), &DownloadState::Failed);
+        assert_eq!(
+            updated.error_message(),
+            Some("App restarted while downloading")
+        );
+    }
 }

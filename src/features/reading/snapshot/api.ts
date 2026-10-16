@@ -5,9 +5,10 @@
  * rather than a result object the caller has to remember to check.
  */
 
-import { type ApiError, commands, type Result, type WebPageSnapshotDto } from '@/lib/bindings';
+import { type ApiError, commands, type Result, type WebPageSnapshotDto as BindingsSnapshotDto } from '@/lib/bindings';
 
-export type { WebPageSnapshotDto, WebPageSnapshotStatus } from '@/lib/bindings';
+export type WebPageSnapshotDto = BindingsSnapshotDto & { readerText?: string | null };
+export type { WebPageSnapshotStatus } from '@/lib/bindings';
 
 function unwrap<T>(result: Result<T, ApiError>): T {
   if (result.status === 'ok') return result.data;

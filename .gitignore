@@ -75,6 +75,7 @@ target/
 node_modules/
 models/
 !/src-tauri/src/domain/models/
+!/src-tauri/crates/lattice-core/src/domain/models/
 .cache/
 .fastembed_cache/
 .turbo/

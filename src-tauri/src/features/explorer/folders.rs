@@ -216,17 +216,13 @@ pub async fn delete_index(manager: &FolderIndexManager, root: &str) -> Result<()
 /// binds it to the app's conversation delete.
 #[async_trait::async_trait]
 pub trait FolderThreads: Send + Sync {
-    /// Spends the rate limit a user-initiated delete spends.
-    async fn check_delete_limit(&self) -> Result<()>;
-    /// Deletes a thread with its in-flight turn, messages and attachments,
-    /// without spending the rate limit again.
+    /// Deletes a thread with its in-flight turn, messages and attachments.
     async fn delete_thread(&self, conversation_id: &str) -> Result<()>;
 }
 
 /// Removes a folder from the list: its own index, then, when asked, its
 /// threads, then its row. Threads go through the app's conversation delete,
-/// which takes their messages and attachments with them; one removal spends
-/// one delete's rate limit however many threads it takes. Threads that are
+/// which takes their messages and attachments with them. Threads that are
 /// kept stay bound to the folder and come back if it is added again. Returns
 /// how many threads were deleted.
 pub async fn remove(
@@ -241,9 +237,6 @@ pub async fn remove(
     } else {
         Vec::new()
     };
-    if !threads.is_empty() {
-        conversations.check_delete_limit().await?;
-    }
     manager.delete_index(root).await?;
     let deleted = threads.len();
     for conversation_id in threads {

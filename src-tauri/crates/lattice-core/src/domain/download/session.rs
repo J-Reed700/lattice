@@ -534,7 +534,9 @@ impl DownloadSession {
         self.state = new_state;
         self.updated_at = Utc::now();
 
-        if new_state.is_terminal() {
+        if new_state != DownloadState::Failed
+            && (new_state.is_terminal() || new_state == DownloadState::Downloading)
+        {
             self.error_message = None;
         }
 

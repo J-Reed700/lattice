@@ -4,6 +4,11 @@ import { ExternalLink, FileSearch, ShieldCheck } from 'lucide-react';
 
 import { useLearningLessonEvidence, type LessonEvidenceQuery } from '@/features/learning/api/evidenceQueries';
 import { passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import {
+  fromLearningEvidencePassage,
+  type ResolvedReaderTarget,
+} from '@/features/reading/model/sourceAdapter';
 import type {
   LearningClaimEvidenceDto,
   LearningEvidencePassageDto,
@@ -18,7 +23,15 @@ function safeUrl(value: string | null) {
   }
 }
 
-function Passage({ passage, number }: { passage: LearningEvidencePassageDto; number: number }) {
+function Passage({
+  passage,
+  number,
+  onOpenPassage,
+}: {
+  passage: LearningEvidencePassageDto;
+  number: number;
+  onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
+}) {
   const url = safeUrl(passage.url);
   return (
     <details className="rounded-lg bg-background p-3">
@@ -35,9 +48,13 @@ function Passage({ passage, number }: { passage: LearningEvidencePassageDto; num
         {passage.text}
       </blockquote>
       {url && (
-        <a href={url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-accent underline">
+        <button
+          type="button"
+          onClick={() => onOpenPassage?.(passage, number)}
+          className="mt-2 inline-flex items-center gap-1 text-xs text-accent underline"
+        >
           Open original page <ExternalLink size={12} />
-        </a>
+        </button>
       )}
     </details>
   );
@@ -53,9 +70,11 @@ function isGeneralKnowledge(claim: LearningClaimEvidenceDto) {
 function ClaimEvidence({
   claim,
   passageNumbers,
+  onOpenPassage,
 }: {
   claim: LearningClaimEvidenceDto;
   passageNumbers: Map<string, number>;
+  onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
 }) {
   return (
     <article className="wrap-anywhere rounded-lg border border-border p-3">
@@ -90,6 +109,7 @@ function ClaimEvidence({
             key={passageKey(passage)}
             passage={passage}
             number={passageNumbers.get(passageKey(passage)) ?? 0}
+            onOpenPassage={onOpenPassage}
           />
         ))}
       </div>
@@ -110,57 +130,76 @@ export function LessonEvidencePanel({
   report?: LessonEvidenceQuery;
 }) {
   const [open, setOpen] = useState(false);
+  const [previewTarget, setPreviewTarget] = useState<ResolvedReaderTarget | null>(null);
   const ownedReport = useLearningLessonEvidence(programId, lessonId, programRevision, !suppliedReport && open);
   const report = suppliedReport ?? ownedReport;
   const data = report.data;
   const passageNumbers = useMemo(() => passageNumbersFor(data), [data]);
 
+  const handleOpenPassage = (passage: LearningEvidencePassageDto, number: number) => {
+    setPreviewTarget(fromLearningEvidencePassage(passage, number - 1));
+  };
+
   return (
-    <section className="mb-5 rounded-xl border border-border bg-surface p-4" aria-label="Lesson evidence">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-10 w-full items-center gap-2 text-left text-sm font-semibold text-accent">
-        <FileSearch size={17} />
-        {open ? 'Hide lesson evidence' : 'View lesson evidence'}
-        {data && <span className="ml-auto text-xs font-normal text-text-muted">{data.teachingClaims.length} teaching {data.teachingClaims.length === 1 ? 'claim' : 'claims'}</span>}
-      </button>
-      {open && (
-        <div className="mt-3 space-y-4">
-          {report.isFetching && <p role="status" className="text-sm text-text-muted">Loading the saved verification report…</p>}
-          {report.error && (
-            <div role="alert" className="text-sm text-rose-700">
-              <p>{report.error.message}</p>
-              <button type="button" onClick={() => void report.refetch()} className="mt-2 underline">Retry evidence</button>
-            </div>
-          )}
-          {report.isSuccess && !data && <p className="text-sm text-text-secondary">This lesson has no saved verification report. New lessons prepared with references record their evidence here.</p>}
-          {data && (
-            <>
-              <p className="text-sm leading-6 text-text-secondary">
-                {data.claimCount - data.generalKnowledgeCount} claims checked against saved evidence
-                {data.generalKnowledgeCount > 0 && ` · ${data.generalKnowledgeCount} general knowledge, not checked against a source`} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
-              </p>
-              <p className="text-xs leading-5 text-text-muted">
-                {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical_fallback' ? 'Keyword retrieval — embeddings were unavailable' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
-              </p>
-              {data.unexecutedLanguages.length > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
-              {!data.sourcesCurrent && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
-              <details>
-                <summary className="cursor-pointer text-xs text-text-muted">Verification details</summary>
-                <dl className="mt-2 space-y-1 break-all text-xs text-text-secondary">
-                  <div><dt className="inline font-medium">Policy: </dt><dd className="inline">{data.policy}</dd></div>
-                  <div><dt className="inline font-medium">Lesson fingerprint: </dt><dd className="inline">{data.contentSha256}</dd></div>
-                  {data.embeddingModel && <div><dt className="inline font-medium">Embedding model: </dt><dd className="inline">{data.embeddingModel}</dd></div>}
-                </dl>
-              </details>
-              <div className="space-y-2">
-                {data.teachingClaims.map((claim, index) => (
-                  <ClaimEvidence key={`${claim.sectionIndex}:${claim.claim}:${index}`} claim={claim} passageNumbers={passageNumbers} />
-                ))}
+    <>
+      <section className="mb-5 rounded-xl border border-border bg-surface p-4" aria-label="Lesson evidence">
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-10 w-full items-center gap-2 text-left text-sm font-semibold text-accent">
+          <FileSearch size={17} />
+          {open ? 'Hide lesson evidence' : 'View lesson evidence'}
+          {data && <span className="ml-auto text-xs font-normal text-text-muted">{data.teachingClaims.length} teaching {data.teachingClaims.length === 1 ? 'claim' : 'claims'}</span>}
+        </button>
+        {open && (
+          <div className="mt-3 space-y-4">
+            {report.isFetching && <p role="status" className="text-sm text-text-muted">Loading the saved verification report…</p>}
+            {report.error && (
+              <div role="alert" className="text-sm text-rose-700">
+                <p>{report.error.message}</p>
+                <button type="button" onClick={() => void report.refetch()} className="mt-2 underline">Retry evidence</button>
               </div>
-            </>
-          )}
-        </div>
-      )}
-    </section>
+            )}
+            {report.isSuccess && !data && <p className="text-sm text-text-secondary">This lesson has no saved verification report. New lessons prepared with references record their evidence here.</p>}
+            {data && (
+              <>
+                <p className="text-sm leading-6 text-text-secondary">
+                  {data.claimCount - data.generalKnowledgeCount} claims checked against saved evidence
+                  {data.generalKnowledgeCount > 0 && ` · ${data.generalKnowledgeCount} general knowledge, not checked against a source`} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
+                </p>
+                <p className="text-xs leading-5 text-text-muted">
+                  {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical_fallback' ? 'Keyword retrieval — embeddings were unavailable' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
+                </p>
+                {data.unexecutedLanguages.length > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
+                {!data.sourcesCurrent && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
+                <details>
+                  <summary className="cursor-pointer text-xs text-text-muted">Verification details</summary>
+                  <dl className="mt-2 space-y-1 break-all text-xs text-text-secondary">
+                    <div><dt className="inline font-medium">Policy: </dt><dd className="inline">{data.policy}</dd></div>
+                    <div><dt className="inline font-medium">Lesson fingerprint: </dt><dd className="inline">{data.contentSha256}</dd></div>
+                    {data.embeddingModel && <div><dt className="inline font-medium">Embedding model: </dt><dd className="inline">{data.embeddingModel}</dd></div>}
+                  </dl>
+                </details>
+                <div className="space-y-2">
+                  {data.teachingClaims.map((claim, index) => (
+                    <ClaimEvidence
+                      key={`${claim.sectionIndex}:${claim.claim}:${index}`}
+                      claim={claim}
+                      passageNumbers={passageNumbers}
+                      onOpenPassage={handleOpenPassage}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      <FilePreviewModal
+        isOpen={previewTarget !== null}
+        onClose={() => setPreviewTarget(null)}
+        source={previewTarget?.source ?? null}
+        initialLocator={previewTarget?.locator ?? null}
+      />
+    </>
   );
 }
 
@@ -172,6 +211,7 @@ export function LessonSectionEvidence({
   report: LessonEvidenceQuery;
   sectionIndex: number;
 }) {
+  const [previewTarget, setPreviewTarget] = useState<ResolvedReaderTarget | null>(null);
   const data = report.data;
   const claims = data?.teachingClaims.filter((claim) => claim.sectionIndex === sectionIndex) ?? [];
   const passageNumbers = useMemo(() => passageNumbersFor(data), [data]);
@@ -179,24 +219,44 @@ export function LessonSectionEvidence({
   const general = claims.filter(isGeneralKnowledge).length;
   const checked = claims.length - general;
 
+  const handleOpenPassage = (passage: LearningEvidencePassageDto, number: number) => {
+    setPreviewTarget(fromLearningEvidencePassage(passage, number - 1));
+  };
+
   if (report.isFetching && !data) {
     return <p role="status" className="mt-4 text-xs text-text-muted">Loading citations for this section…</p>;
   }
   if (report.isError || !data || claims.length === 0) return null;
 
   return (
-    <details className="mt-4 border-t border-border pt-3">
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
-        <ShieldCheck size={14} />
-        Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
-        {general > 0 && ` · ${general} general knowledge`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
-        <span className="ml-auto flex gap-1" aria-label="Citations in this section">
-          {[...sectionPassages].map((key) => <span key={key} className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">{passageNumbers.get(key)}</span>)}
-        </span>
-      </summary>
-      <div className="mt-3 space-y-2">
-        {claims.map((claim, index) => <ClaimEvidence key={`${claim.claim}:${index}`} claim={claim} passageNumbers={passageNumbers} />)}
-      </div>
-    </details>
+    <>
+      <details className="mt-4 border-t border-border pt-3">
+        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
+          <ShieldCheck size={14} />
+          Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
+          {general > 0 && ` · ${general} general knowledge`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
+          <span className="ml-auto flex gap-1" aria-label="Citations in this section">
+            {[...sectionPassages].map((key) => <span key={key} className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">{passageNumbers.get(key)}</span>)}
+          </span>
+        </summary>
+        <div className="mt-3 space-y-2">
+          {claims.map((claim, index) => (
+            <ClaimEvidence
+              key={`${claim.claim}:${index}`}
+              claim={claim}
+              passageNumbers={passageNumbers}
+              onOpenPassage={handleOpenPassage}
+            />
+          ))}
+        </div>
+      </details>
+
+      <FilePreviewModal
+        isOpen={previewTarget !== null}
+        onClose={() => setPreviewTarget(null)}
+        source={previewTarget?.source ?? null}
+        initialLocator={previewTarget?.locator ?? null}
+      />
+    </>
   );
 }

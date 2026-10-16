@@ -50,6 +50,8 @@ export interface SourceWithMetadata {
    * happened to agree when every document contributed exactly one chunk.
    */
   citationId?: number;
+  /** Originating conversation ID when opened outside the active chat thread. */
+  conversationId?: string;
 }
 
 export interface SourceChunkExcerpt {
@@ -103,6 +105,7 @@ export const SourceWithMetadataSchema = z.object({
   fileSizeBytes: z.number().min(0),
   modifiedAt: z.string(), // ISO 8601
   citationId: z.number().int().min(1).optional(),
+  conversationId: z.string().optional(),
 }).strict(); // Reject unknown properties
 
 /**

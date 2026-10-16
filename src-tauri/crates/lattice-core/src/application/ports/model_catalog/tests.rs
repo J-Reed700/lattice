@@ -281,3 +281,51 @@ fn test_to_domain_model_uses_internal_hf_id_when_downloadable() {
     );
     assert!(domain.requires_auth);
 }
+
+#[test]
+fn non_llm_gguf_modalities_are_not_misclassified_as_chat_llms() {
+    for tags in [
+        vec!["text-to-speech", "gguf", "audio.cpp"],
+        vec!["music-generation", "text-generation", "gguf"],
+        vec!["image-text-to-video", "comfyui", "gguf"],
+        vec!["text-to-image", "gguf"],
+        vec!["object-detection", "locate-anything.cpp", "gguf"],
+    ] {
+        let external = ExternalModelMetadata {
+            id: "org/non-llm-gguf".into(),
+            name: "Non LLM".into(),
+            description: "".into(),
+            tags: tags.into_iter().map(String::from).collect(),
+            downloads: 100,
+            likes: 0,
+            download_url: None,
+            license: "apache-2.0".into(),
+            last_modified: "".into(),
+            gated: None,
+            preferred_filename: Some("model-Q4_K_M.gguf".into()),
+            preferred_size_bytes: Some(1_000_000_000),
+            embedding_compatibility: None,
+        };
+        assert!(external.to_domain_model().is_err());
+    }
+
+    let asr = ExternalModelMetadata {
+        id: "org/asr-gguf".into(),
+        name: "ASR".into(),
+        description: "".into(),
+        tags: vec!["automatic-speech-recognition".into(), "gguf".into()],
+        downloads: 100,
+        likes: 0,
+        download_url: None,
+        license: "apache-2.0".into(),
+        last_modified: "".into(),
+        gated: None,
+        preferred_filename: Some("asr-Q8_0.gguf".into()),
+        preferred_size_bytes: Some(500_000_000),
+        embedding_compatibility: None,
+    };
+    assert_eq!(
+        asr.to_domain_model().unwrap().category,
+        ModelCategory::Transcription
+    );
+}

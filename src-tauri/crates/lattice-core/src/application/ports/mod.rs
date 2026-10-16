@@ -97,6 +97,7 @@ pub mod mention_repository_port;
 pub mod metrics_port;
 pub mod mock_embedding_port;
 pub mod model_catalog;
+pub mod model_file_inspector;
 pub mod model_storage;
 pub mod note_index_sink;
 pub mod ocr_port;
@@ -147,6 +148,7 @@ pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWit
 pub use metrics_port::{MetricsPort, MetricsSnapshotData};
 pub use mock_embedding_port::MockEmbeddingPort;
 pub use model_catalog::{ExternalModelMetadata, MockModelCatalogPort, ModelCatalogPort};
+pub use model_file_inspector::ModelFileInspector;
 pub use model_storage::{DownloadedModel, ModelStoragePort};
 pub use note_index_sink::NoteIndexSink;
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};

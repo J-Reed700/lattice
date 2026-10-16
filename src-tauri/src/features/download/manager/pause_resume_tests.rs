@@ -76,11 +76,30 @@ async fn pausing_leaves_the_session_paused_and_resumable() {
         "pause must not turn into cancel when the task tears down"
     );
 
-    // And resume must be accepted rather than rejected.
+    let calls_before_resume = engine.get_download_calls().len();
+
+    // Resume must not only accept the state transition, it must actually spawn
+    // a new worker task and invoke the download engine again.
     manager
         .resume_download(&id)
         .await
         .expect("resume must be accepted after a pause");
+
+    assert!(
+        manager.active_downloads.read().await.contains_key(&id),
+        "resumed download must register an active transfer task"
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if engine.get_download_calls().len() > calls_before_resume {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("resumed download must invoke the download engine");
 }
 
 /// A paused download must give its concurrency slot back. The gate is
