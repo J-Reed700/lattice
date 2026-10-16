@@ -426,7 +426,9 @@ async fn live_corpus_retrieval_and_answer() {
     let mut minimum_cosine = 1.0_f32;
     for row in rows.iter().step_by((rows.len() / 12).max(1)).take(12) {
         let fresh = embedding.embed_single(&row.4).await.unwrap();
-        let stored = crate::features::embedding::encoding::decode_embedding(&row.1).unwrap();
+        let stored =
+            lattice_core::shared::persistence::embedding_encoding::decode_embedding(&row.1)
+                .unwrap();
         let cosine: f32 = fresh.iter().zip(&stored).map(|(a, b)| a * b).sum();
         minimum_cosine = minimum_cosine.min(cosine);
         assert!(
@@ -442,8 +444,11 @@ async fn live_corpus_retrieval_and_answer() {
             rows.into_iter()
                 .map(|(id, bytes, content, doc, _)| {
                     (
-                        crate::features::embedding::encoding::vector_key(&id),
-                        crate::features::embedding::encoding::decode_embedding(&bytes).unwrap(),
+                        lattice_core::shared::persistence::embedding_encoding::vector_key(&id),
+                        lattice_core::shared::persistence::embedding_encoding::decode_embedding(
+                            &bytes,
+                        )
+                        .unwrap(),
                         content,
                         id,
                         doc,

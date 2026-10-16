@@ -1,6 +1,6 @@
 use super::*;
 use crate::features::embedding::candle_service::CandleEmbeddingService;
-use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
+use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use lattice_core::application::ports::ContentExtractionPort;
 
 #[tokio::test]

@@ -4,10 +4,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::features::transcription::dto::TranscriptDto;
-use crate::features::transcription::engine::{
+use lattice_core::application::ports::TranscriptionPort;
+use lattice_core::application::services::transcript::{
     group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
 };
-use lattice_core::application::ports::TranscriptionPort;
 use lattice_core::shared::error::{AppError, Result};
 
 /// Explicit re-transcription of a single file.

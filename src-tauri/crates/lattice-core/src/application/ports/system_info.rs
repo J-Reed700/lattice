@@ -92,6 +92,28 @@ pub trait SystemInfoPort: Send + Sync {
     async fn get_system_info(&self) -> Result<SystemInfo, AppError>;
 }
 
+/// The accelerator the inference backend reported it can run on.
+///
+/// The backend's own device list beats guessing from the platform, so a
+/// system-info adapter asks this first and falls back to its own detection
+/// on `None`, which means the backend has not probed yet or found no
+/// accelerator.
+pub trait AcceleratorProbe: Send + Sync {
+    /// The largest accelerator the last probe found, if any.
+    fn probed_gpu(&self) -> Option<GpuInfo>;
+}
+
+/// An [`AcceleratorProbe`] that never has an answer, leaving callers on their
+/// platform fallback.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoAcceleratorProbe;
+
+impl AcceleratorProbe for NoAcceleratorProbe {
+    fn probed_gpu(&self) -> Option<GpuInfo> {
+        None
+    }
+}
+
 /// Mock implementation for testing.
 ///
 /// Allows configuring different hardware profiles for testing

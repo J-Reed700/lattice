@@ -468,7 +468,7 @@ fn spawn_memory_indexing(
 }
 
 fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
-    crate::features::embedding::encoding::encode_embedding(embedding)
+    lattice_core::shared::persistence::embedding_encoding::encode_embedding(embedding)
 }
 
 /// Keep the per-message vector while respecting the active model's token budget.

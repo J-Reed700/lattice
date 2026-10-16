@@ -7,7 +7,7 @@
 //! read back out by `MetadataExtractor::extract_section` to produce each chunk's
 //! `section`.
 
-use lattice_core::application::ports::transcription_port::TranscriptSegment;
+use crate::application::ports::transcription_port::TranscriptSegment;
 
 /// Target speech per transcript window, in seconds.
 pub const TRANSCRIPT_WINDOW_SECS: u64 = 45;

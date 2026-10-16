@@ -304,4 +304,9 @@ pub fn empty_hybrid_search() -> Arc<crate::features::search::use_cases::HybridSe
 }
 
 #[cfg(test)]
+mod enrichment;
+#[cfg(test)]
+pub use enrichment::MockSearchEnrichmentService;
+
+#[cfg(test)]
 mod tests;

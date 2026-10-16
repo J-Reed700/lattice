@@ -19,10 +19,10 @@ use crate::features::search::engine::vector_search::{
     IndexPersistence, USearchVectorIndex, VectorIndexCompression,
 };
 use crate::features::search::enrichment_service::SearchEnrichmentService;
+use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
-use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,

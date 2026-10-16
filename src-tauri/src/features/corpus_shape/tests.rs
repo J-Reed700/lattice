@@ -28,9 +28,8 @@ use crate::features::corpus_shape::repository::{ClusterRepositoryPort, SqliteClu
 use crate::features::corpus_shape::use_cases::run_clustering::DocumentContentPreviewPort;
 use crate::features::corpus_shape::use_cases::RunClusteringUseCase;
 use crate::features::embedding::entity::Embedding as EmbeddingEntity;
-use crate::infrastructure::persistence::repositories::mocks::{
-    MockDocumentRepository, MockEmbeddingRepository,
-};
+use crate::features::embedding::mock_repository::MockEmbeddingRepository;
+use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
 use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::{DocumentRepositoryPort, LLMPort};

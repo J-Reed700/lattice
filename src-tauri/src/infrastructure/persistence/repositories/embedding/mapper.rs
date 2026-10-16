@@ -6,8 +6,8 @@
 //!
 //! This separation keeps domain pure while allowing efficient vector storage.
 
-use crate::features::embedding::entity::Embedding;
 use chrono::{DateTime, Utc};
+use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ChunkId;
 
@@ -91,7 +91,7 @@ impl EmbeddingMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::embedding::entity::Embedding;
+    use lattice_core::domain::entities::Embedding;
     use lattice_core::shared::types::ChunkId;
 
     #[test]

@@ -64,6 +64,8 @@ pub use modules::{
 };
 
 #[cfg(test)]
+use crate::features::embedding::mock_repository::MockEmbeddingRepository;
+#[cfg(test)]
 use crate::features::embedding::mocks::MockEmbeddingService;
 #[cfg(test)]
 use crate::features::embedding::EmbeddingServiceTrait;
@@ -79,7 +81,7 @@ use crate::features::tags::mocks::MockTagRepository;
 use crate::features::tags::TagRepositoryTrait;
 #[cfg(test)]
 use crate::infrastructure::persistence::repositories::mocks::{
-    MockChunkRepository, MockDocumentRepository, MockEmbeddingRepository,
+    MockChunkRepository, MockDocumentRepository,
 };
 #[cfg(test)]
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;

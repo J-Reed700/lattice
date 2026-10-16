@@ -18,9 +18,7 @@
 //! - `crate::features::embedding::prefixes` — per-family query/document instruction prefixes
 //! - `crate::features::embedding::qwen3_encoder` — batched, cache-free Qwen3 forward pass
 //! - `crate::features::embedding::validator` — validation utilities
-//! - `crate::features::embedding::persistence_mapper` — EmbeddingMapper, EmbeddingDTO
 //! - `crate::features::embedding::repository` — Embedding, EmbeddingRepository (port impl)
-//! - `crate::features::embedding::repository_tx` — tx-wrapper
 //! - `crate::features::embedding::service` — EmbeddingService
 //! - `crate::features::embedding::commands` — Tauri command handlers
 //! - `crate::features::embedding::plugin::init()` — Tauri plugin
@@ -34,19 +32,16 @@ pub mod commands;
 pub mod compatibility;
 pub mod di;
 pub mod dto;
-pub mod encoding;
 pub mod entity;
 pub mod generator;
 pub mod input_policy;
 pub mod late_chunking;
 pub(crate) mod loading;
-pub mod persistence_mapper;
 pub mod plugin;
 pub mod prefixes;
 pub mod qwen3_encoder;
 pub mod remote_service;
 pub mod repository;
-pub mod repository_tx;
 pub(crate) mod runtime;
 pub mod service;
 pub mod sparse_head;
@@ -56,6 +51,9 @@ pub mod validator;
 
 #[cfg(test)]
 pub mod mocks;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod mock_repository;
 
 pub use trait_def::EmbeddingServiceTrait;
 

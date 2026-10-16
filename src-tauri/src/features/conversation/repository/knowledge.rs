@@ -474,7 +474,9 @@ impl ConversationRepository {
             let read = rows.len() as i64;
             for row in rows {
                 if let Ok(stored) =
-                    crate::features::embedding::encoding::decode_embedding(&row.embedding)
+                    lattice_core::shared::persistence::embedding_encoding::decode_embedding(
+                        &row.embedding,
+                    )
                 {
                     if let Some(score) = super::memory_semantic::cosine(&vector, &stored) {
                         let previous = scores.entry(row.item_id).or_insert(0.0_f32);
