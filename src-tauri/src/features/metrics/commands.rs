@@ -2,7 +2,7 @@
 //!
 //! Thin command controllers for collecting and reporting application metrics following
 //! DDD pattern. Provides comprehensive telemetry data for monitoring application health,
-//! performance, and usage patterns with rate limiting to prevent resource exhaustion.
+//! performance, and usage patterns.
 //!
 //! # Commands (1 total)
 //!
@@ -36,8 +36,7 @@ use tauri::State;
 /// Retrieves comprehensive snapshot of all application metrics
 ///
 /// Returns a complete snapshot of application metrics including performance counters,
-/// usage statistics, health indicators, and resource utilization. Rate limited to
-/// prevent resource exhaustion from excessive metrics collection.
+/// usage statistics, health indicators, and resource utilization.
 ///
 /// # Arguments
 ///
@@ -46,12 +45,10 @@ use tauri::State;
 /// # Returns
 ///
 /// * `Ok(MetricsSnapshotDto)` - Complete metrics snapshot with all telemetry data
-/// * `Err(AppError::RateLimitExceeded)` - Too many metrics requests
 /// * `Err(AppError)` - Metrics collection failed
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Rate limit exceeded (prevents DoS)
 /// * `AppError::Other` - Metrics collection or aggregation failed
 ///
 /// # Example
