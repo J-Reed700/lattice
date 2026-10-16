@@ -107,3 +107,19 @@ export function useWatchFolderMutations() {
   );
   return { addWatchFolder: add.mutateAsync, removeWatchFolder: remove.mutateAsync };
 }
+
+/**
+ * Stores a cloud provider's API key in the system keychain, never in the
+ * settings document. Answers with the command's result.
+ */
+export function useCloudApiKeyMutation() {
+  const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
+  const save = useMutation(
+    {
+      mutationFn: ({ provider, key }: { provider: string; key: string }) =>
+        VaultAPI.setCloudApiKey(provider, key),
+    },
+    queryClient
+  );
+  return { setCloudApiKey: save.mutateAsync };
+}

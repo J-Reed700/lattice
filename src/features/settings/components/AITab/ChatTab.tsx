@@ -7,7 +7,8 @@ import { useEffect, useState } from "react";
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from "@/components/ui";
 import { useDownloadedModels } from "@/features/model/hooks/useDownloadedModels";
-import { VaultAPI } from "@/lib/api";
+import { probeOllamaServer } from "@/features/settings/hooks/connectionProbes";
+import { useCloudApiKeyMutation } from "@/features/settings/hooks/useSettingsQuery";
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/toastStore";
 import type { LLMSettings as ApiLLMSettings } from "@/types/api/settings";
@@ -33,6 +34,7 @@ const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
 
 export function ChatTab() {
   const { llmSettings, isLoading, saveLlmUpdates, reload } = useLlmSettings();
+  const { setCloudApiKey } = useCloudApiKeyMutation();
 
   const [cloudKey, setCloudKey] = useState("");
   const [savingCloudKey, setSavingCloudKey] = useState(false);
@@ -175,7 +177,7 @@ export function ChatTab() {
     }
 
     setIsTestingOllamaConnection(true);
-    const result = await VaultAPI.testOllamaConnection({
+    const result = await probeOllamaServer({
       ollamaUrl,
       authHeaderName,
       authHeaderValue,
@@ -304,10 +306,10 @@ export function ChatTab() {
                 onClick={async () => {
                   setSavingCloudKey(true);
                   try {
-                    const result = await VaultAPI.setCloudApiKey(
+                    const result = await setCloudApiKey({
                       provider,
-                      cloudKey.trim(),
-                    );
+                      key: cloudKey.trim(),
+                    });
                     if (result.ok) {
                       setCloudKey("");
                       toast.success("API key saved");

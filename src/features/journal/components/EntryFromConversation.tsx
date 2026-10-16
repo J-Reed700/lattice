@@ -12,6 +12,7 @@ import {
 import { useNavigate } from 'react-router';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { fetchConversationSpaceId } from '@/features/journal/api/queries';
 import { InsightMessage } from '@/features/journal/components/InsightMessage';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import {
@@ -27,7 +28,6 @@ import {
   fromJournalSource,
   type ResolvedReaderTarget,
 } from '@/features/reading/model/sourceAdapter';
-import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 
@@ -109,8 +109,7 @@ export function EntryFromConversation({
       // A chat about this entry's sources searches what the entry searched.
       // Read from the saved row, not the sidebar's list, which may be showing
       // another space and would hand back nothing.
-      const source = await VaultAPI.getConversation(entry.id);
-      const entrySpaceId = source.ok ? (source.data.conversation?.spaceId ?? null) : null;
+      const entrySpaceId = await fetchConversationSpaceId(entry.id);
       const newConversationId = await createConversation(conversationTitle, entrySpaceId);
 
       const webSources = sources

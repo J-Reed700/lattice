@@ -65,13 +65,6 @@ const isBackendSource = (source) =>
 // the rule arrived. Do not add to this list: move the file's backend calls
 // into a query or mutation hook, then delete its entry.
 const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
-  'src/features/chat/components/ConversationLinkedDocumentsPanel.tsx',
-  'src/features/dashboard/components/Dashboard.tsx',
-  'src/features/journal/components/EntryFromConversation.tsx',
-  'src/features/reading/components/SourceReaderBody.tsx',
-  'src/features/search/components/SearchInterface/SearchInterface.tsx',
-  'src/features/settings/components/AITab/ChatTab.tsx',
-  'src/features/settings/components/ModelCatalog/startModelDownload.ts',
   'src/features/settings/components/modelRoles/LocalModelRow.tsx',
 ], (text) => valueImportSources(text).some(isBackendSource));
 
