@@ -4,12 +4,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, MessageSquarePlus, Square, Trash2 } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
-import { fetchBookmarks, fetchConversationDetail, fetchMessages, unwrap } from '@/features/chat/api/conversationQueryData';
+import { fetchBookmarks, fetchConversationDetail, fetchMessages } from '@/features/chat/api/conversationQueryData';
 import { Message } from '@/features/chat/components/Message';
 import { deriveMessageMetadata } from '@/features/chat/controller/messageMetadata';
 import { reconcilePersistedFailedMessages } from '@/features/chat/controller/optimisticMessages';
+import { usePromoteTangentMutation } from '@/features/chat/hooks/useConversationTangents';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
-import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
@@ -28,6 +28,7 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
   const id = tangent.conversationId;
   const base = useConversationsStore();
   const queryClient = useQueryClient();
+  const { mutateAsync: promoteTangent } = usePromoteTangentMutation();
   const [input, setInput] = useState(() => drafts.get(id) ?? '');
   const [mutating, setMutating] = useState(false);
   const submitting = useRef(false);
@@ -113,9 +114,7 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
     setMutating(true);
     try {
       if (action === 'promote') {
-        const conversation = unwrap(await VaultAPI.promoteConversationTangent(id));
-        queryClient.setQueryData(conversationKeys.detail(id), conversation);
-        await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
+        await promoteTangent(tangent);
         toast.success('Tangent is now a conversation', { action: { label: 'Open conversation', onClick: () => { void base.selectConversation(id); } } });
       } else {
         // The shared delete action also cancels listeners and evicts caches.

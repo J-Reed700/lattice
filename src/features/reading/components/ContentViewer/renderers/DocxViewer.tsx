@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
+import { readSourceBytes } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import VaultAPI from '@/lib/api';
 
 interface DocxViewerProps {
   filePath: string;
@@ -25,7 +25,7 @@ export function DocxViewer({ filePath, title }: DocxViewerProps) {
       setError(null);
 
       try {
-        const fileResult = await VaultAPI.readFileBytes(filePath);
+        const fileResult = await readSourceBytes(filePath);
         if (!fileResult.ok) {
           throw new Error(fileResult.error || 'Failed to read DOCX bytes');
         }

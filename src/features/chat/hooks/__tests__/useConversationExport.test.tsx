@@ -25,7 +25,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector(storeState.current),
 }));
 
-vi.mock('@/features/chat/components/sidebar/workspaceQueries', () => ({
+vi.mock('@/features/chat/hooks/workspaceQueries', () => ({
   useJournalsQuery: () => ({ journals: [{ id: 'journal-field', name: 'Field Log' }] }),
 }));
 

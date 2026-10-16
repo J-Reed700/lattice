@@ -54,6 +54,12 @@ export async function resolveDocumentPath(doc: LibraryDocument): Promise<string 
 /** Opens the document in the system viewer, or says to render a web article in the app. */
 export const openDocumentFile = (documentId: string) => VaultAPI.openFileById(documentId);
 
+/** A document's metadata, by id. */
+export const fetchDocument = (documentId: string) => VaultAPI.getDocument(documentId);
+
+/** Opens the file at `path` in the system's default app. */
+export const openFilePath = (path: string) => VaultAPI.openFile(path);
+
 /** The document's file as text, for searching inside it. */
 export const readDocumentText = (filePath: string) => VaultAPI.readFileContent(filePath);
 

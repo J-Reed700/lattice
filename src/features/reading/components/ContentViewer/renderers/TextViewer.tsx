@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
+import { readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import VaultAPI from '@/lib/api';
 
 import { PrismSyntaxHighlighter as SyntaxHighlighter } from './prism';
 
@@ -65,7 +65,7 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
       setError(null);
 
       try {
-        const result = await VaultAPI.readFileContent(filePath!);
+        const result = await readSourceText(filePath!);
         if (cancelled) return;
         if (result.ok) {
           setContent(result.data);

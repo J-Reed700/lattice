@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, GitBranch, Loader2, X } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
-import { unwrap } from '@/features/chat/api/conversationQueryData';
+import { useConversationTangentsQuery, useCreateTangentMutation } from '@/features/chat/hooks/useConversationTangents';
 import { conversationUiStore, useConversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
-import { VaultAPI } from '@/lib/api';
-import type { ConversationTangentDto } from '@/lib/bindings';
-import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { toast } from '@/stores/toastStore';
 import type { ToolPreferences } from '@/types';
 
@@ -25,7 +21,6 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
   unavailable: boolean;
   children: ReactNode;
 }) {
-  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -40,11 +35,8 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
   // Switching or closing a tangent preserves its unsent question.
   const drafts = useRef(new Map<string, string>());
   const toggleRef = useRef<HTMLButtonElement>(null);
-  const tangents = useQuery({
-    queryKey: conversationKeys.tangents(conversationId),
-    queryFn: async () => unwrap(await VaultAPI.listConversationTangents(conversationId)),
-    staleTime: 10_000,
-  });
+  const tangents = useConversationTangentsQuery(conversationId);
+  const { mutateAsync: createTangent } = useCreateTangentMutation(conversationId);
   const selected = tangents.data?.find(item => item.conversationId === selectedId);
   const close = () => { setOpen(false); toggleRef.current?.focus(); };
 
@@ -54,9 +46,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
     setCreating(true);
     void (async () => {
       try {
-        const tangent = unwrap(await VaultAPI.createConversationTangent(selection));
-        queryClient.setQueryData<ConversationTangentDto[]>(conversationKeys.tangents(conversationId), current =>
-          [tangent, ...(current ?? []).filter(item => item.conversationId !== tangent.conversationId)]);
+        const tangent = await createTangent(selection);
         setSelectedId(tangent.conversationId);
         setOpen(true);
       } catch (error) {
@@ -66,7 +56,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
         setCreating(false);
       }
     })();
-  }, [conversationId, queryClient]);
+  }, [createTangent]);
   const context = useMemo(() => ({ create, creating }), [create, creating]);
 
   return (

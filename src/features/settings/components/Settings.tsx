@@ -6,7 +6,6 @@
 
 import { useEffect, useState } from 'react';
 
-import { useQueryClient } from '@tanstack/react-query';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Layers3, MessageCircle, Palette, RotateCcw, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Wrench, type LucideIcon } from 'lucide-react';
@@ -14,7 +13,6 @@ import { useSearchParams } from 'react-router';
 
 import { SidebarHeader } from '@/components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import VaultAPI from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 
@@ -27,7 +25,7 @@ import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
 import { SpacesTab } from './SpacesTab';
 import { VaultTab } from './VaultTab';
-import { SETTINGS_QUERY_KEY } from '../hooks/useSettingsQuery';
+import { useSettingsTransfer } from '../hooks/useSettingsQuery';
 import './settings.css';
 
 type SettingsTab =
@@ -103,7 +101,7 @@ export function Settings() {
   const [isImporting, setIsImporting] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
-  const queryClient = useQueryClient();
+  const { resetSettings, exportSettings, importSettings } = useSettingsTransfer();
 
   // Other panes ask to jump here (e.g. "Browse catalog" from an empty
   // Downloaded list). Without this the request went nowhere.
@@ -118,20 +116,14 @@ export function Settings() {
     return () => window.removeEventListener('settings:navigate-tab', handleNavigate);
   }, []);
 
-  // Invalidate React Query caches whenever settings change on the backend
-  // (reset/import). Tabs that consume that cache refetch automatically.
-  const invalidateSettingsCaches = () => {
-    void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-  };
-
   const handleReset = async () => {
     setIsResetting(true);
-    const result = await VaultAPI.resetSettings();
+    // A reset or import refreshes the settings cache, so every tab rereads it.
+    const result = await resetSettings();
     setIsResetting(false);
     setShowResetDialog(false);
 
     if (result.ok) {
-      invalidateSettingsCaches();
       toast.success('Settings reset to defaults', { duration: 3000 });
     } else {
       toast.error("Couldn't reset settings", { message: result.error, duration: 5000 });
@@ -152,7 +144,7 @@ export function Settings() {
       });
 
       if (path) {
-        const result = await VaultAPI.exportSettings();
+        const result = await exportSettings();
         if (!result.ok) {
           throw new Error(result.error);
         }
@@ -182,10 +174,9 @@ export function Settings() {
 
       if (path && typeof path === 'string') {
         const json = await readTextFile(path);
-        const result = await VaultAPI.importSettings(json, false);
+        const result = await importSettings(json);
 
         if (result.ok) {
-          invalidateSettingsCaches();
           toast.success('Settings imported successfully', { duration: 3000 });
         } else {
           toast.error('Invalid settings file', { message: result.error, duration: 5000 });

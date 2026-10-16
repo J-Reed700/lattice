@@ -1,22 +1,13 @@
 import { useEffect } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FileQuestion, X } from 'lucide-react';
 
+import { useExplorerFileQuery, useExplorerLocateQuery } from '@/features/explorer/api/queries';
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
-import { VaultAPI } from '@/lib/api';
 import { resolveLanguage } from '@/lib/code/languages';
 
 import { CodeViewer } from './CodeViewer';
 import { describeLines } from '../model/describeLines';
-
-/**
- * Files read once stay in memory for half an hour, so a link back to one
- * opens it at once. A file older than a minute (or any, when the window
- * regains focus) is read again behind what is shown, so edits made in
- * another editor still come through.
- */
-const FILE_CACHE = { staleTime: 60_000, gcTime: 30 * 60_000 } as const;
 
 /**
  * The open path named no file. Answers often cite a file by its name alone
@@ -26,16 +17,7 @@ const FILE_CACHE = { staleTime: 60_000, gcTime: 30 * 60_000 } as const;
  */
 function MissingFile({ root, path, message }: { root: string; path: string; message: string }) {
   const retarget = useExplorerStore((state) => state.retarget);
-  const located = useQuery({
-    queryKey: ['explorer', 'locate', root, path],
-    queryFn: async () => {
-      const result = await VaultAPI.explorerLocateFile(root, path);
-      if (!result.ok) throw new Error(result.error);
-      // The path itself comes back when the file is there but would not read.
-      return { exists: result.data.includes(path), matches: result.data.filter((match) => match !== path) };
-    },
-    ...FILE_CACHE,
-  });
+  const located = useExplorerLocateQuery(root, path);
   const matches = located.data?.matches ?? [];
   const only = matches.length === 1 ? matches[0] : null;
 
@@ -114,16 +96,7 @@ export function ExplorerFileView({ root }: { root: string }) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [goBack, goForward]);
 
-  const file = useQuery({
-    queryKey: ['explorer', 'file', root, openPath],
-    queryFn: async () => {
-      const result = await VaultAPI.explorerReadFile(root, openPath!);
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    enabled: Boolean(openPath),
-    ...FILE_CACHE,
-  });
+  const file = useExplorerFileQuery(root, openPath);
 
   if (!openPath) {
     return (

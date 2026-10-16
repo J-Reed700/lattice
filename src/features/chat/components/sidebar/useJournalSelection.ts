@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { JOURNAL_SPACE_DEFAULT_ACCENT, JOURNAL_SPACE_DEFAULT_ICON } from '@/features/chat/components/sidebar/sidebarUtils';
-import { useAddConversationsToJournalMutation, useCreateJournalMutation, useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
+import { useAddConversationsToJournalMutation, useCreateJournalMutation, useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 

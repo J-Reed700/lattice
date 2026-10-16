@@ -5,6 +5,13 @@ import type { CorpusShapeDto } from '@/types';
 
 export const CORPUS_SHAPE_QUERY_KEY = ['corpus', 'shape'] as const;
 
+/** Vault-wide type mix and recent growth, read now. */
+export async function fetchCorpusShape(): Promise<CorpusShapeDto> {
+  const result = await VaultAPI.getCorpusShape();
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
 /**
  * Vault-wide type mix and recent growth.
  *
@@ -14,11 +21,7 @@ export const CORPUS_SHAPE_QUERY_KEY = ['corpus', 'shape'] as const;
 export function useCorpusShapeQuery() {
   return useQuery<CorpusShapeDto>({
     queryKey: CORPUS_SHAPE_QUERY_KEY,
-    queryFn: async () => {
-      const result = await VaultAPI.getCorpusShape();
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
+    queryFn: fetchCorpusShape,
     staleTime: 30_000,
   });
 }

@@ -3,8 +3,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-shell';
 import { Loader2, AlertCircle, ExternalLink, Link2 } from 'lucide-react';
 
+import { readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import VaultAPI from '@/lib/api';
 
 import { htmlReadingDocument } from './htmlReadingDocument';
 
@@ -50,7 +50,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
       setShowLinks(false);
 
       try {
-        const htmlResult = await VaultAPI.readFileContent(htmlPath);
+        const htmlResult = await readSourceText(htmlPath);
         if (htmlResult.ok) {
           setHtmlContent(htmlResult.data);
         } else {
@@ -60,7 +60,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
 
           let fallbackMarkdown: string | null = null;
           for (const candidate of fallbackCandidates) {
-            const fallbackResult = await VaultAPI.readFileContent(candidate);
+            const fallbackResult = await readSourceText(candidate);
             if (fallbackResult.ok) {
               fallbackMarkdown = fallbackResult.data;
               break;
@@ -85,7 +85,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
 
         if (htmlPath.endsWith('page.html')) {
           const metadataPath = `${htmlPath.slice(0, -'page.html'.length)}metadata.json`;
-          const metadataResult = await VaultAPI.readFileContent(metadataPath);
+          const metadataResult = await readSourceText(metadataPath);
           if (metadataResult.ok) {
             try {
               const metadata = JSON.parse(metadataResult.data) as WebArchiveMetadata;
