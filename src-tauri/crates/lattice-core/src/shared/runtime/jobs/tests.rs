@@ -499,6 +499,36 @@ async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
 }
 
 #[tokio::test]
+async fn cancelling_a_deferred_job_forgets_its_last_failure() -> Result<()> {
+    let runtime = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(10));
+    runtime
+        .register(
+            KIND,
+            Arc::new(Repeating {
+                error: AppError::ServiceNotAvailable("llama.cpp returned HTTP 500".into()),
+                saves: false,
+                attempts: Default::default(),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                initial: Duration::from_secs(3600),
+                max: Duration::from_secs(3600),
+            }),
+        )
+        .await?;
+    let id = runtime.submit(&new_job(KIND, "deferred", None)).await?.id;
+    saved_once(&runtime, &id, |job| {
+        job.retry_count == 1 && job.status == JobStatus::Pending
+    })
+    .await;
+    assert!(runtime.remembers_failure(&id));
+    runtime.cancel(&id).await?;
+    assert!(!runtime.remembers_failure(&id));
+    runtime.close();
+    runtime.drain().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn progress_between_failures_and_outages_keep_a_job_retrying_visibly() -> Result<()> {
     for (error, saves, shown) in [
         (

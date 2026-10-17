@@ -608,11 +608,21 @@ impl JobRuntime {
 
     /// For a cancellation a feature committed in its own transaction: signal
     /// the worker, whose later writes can no longer change the saved status.
+    /// A job cancelled while it waits out a deferral has no worker to forget
+    /// its last failure, so it is forgotten here.
     pub async fn cancelled(&self, id: &str) {
         if let Some(token) = lock(&self.active).get(id) {
             token.cancel();
         }
+        lock(&self.deferred).remove(id);
         self.events.publish(id).await;
+    }
+
+    /// Whether the runtime holds `id`'s last failure: only while it is
+    /// deferred.
+    #[cfg(test)]
+    pub(super) fn remembers_failure(&self, id: &str) -> bool {
+        lock(&self.deferred).contains_key(id)
     }
 
     /// Gives up a job's turn without ending it: its worker stops, while
