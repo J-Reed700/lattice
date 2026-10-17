@@ -44,16 +44,6 @@ impl ModelChoiceColumn {
             .to_stored()
             .map_err(|e| AppError::Serialization(format!("model choice {choice:?}: {e}")))
     }
-
-    /// An unreadable value is an error naming the conversation, never a
-    /// silent `Default`.
-    pub fn from_column(conversation_id: &str, column: Option<&str>) -> Result<ChatModelChoice> {
-        ChatModelChoice::from_stored(column).map_err(|e| {
-            AppError::Database(format!(
-                "conversation {conversation_id} has an unreadable model_choice: {e}"
-            ))
-        })
-    }
 }
 
 /// Database model for conversation messages.
@@ -153,7 +143,7 @@ impl ConversationRowMapper {
         Ok(Conversation {
             id,
             title: model.title.clone(),
-            model_choice: ModelChoiceColumn::from_column(&model.id, model.model_choice.as_deref())?,
+            model_choice: ChatModelChoice::from_column(&model.id, model.model_choice.as_deref())?,
             system_prompt: model.system_prompt.clone(),
             created_at,
             updated_at,
@@ -359,7 +349,7 @@ mod tests {
     #[test]
     fn an_unreadable_model_choice_names_its_conversation() {
         for unreadable in ["", r#"{"kind":"local"}"#] {
-            let error = ModelChoiceColumn::from_column("chat-7", Some(unreadable)).unwrap_err();
+            let error = ChatModelChoice::from_column("chat-7", Some(unreadable)).unwrap_err();
             assert!(
                 matches!(&error, AppError::Database(message)
                     if message.starts_with("conversation chat-7 has an unreadable model_choice: ")),

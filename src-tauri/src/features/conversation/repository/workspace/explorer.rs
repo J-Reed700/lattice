@@ -1,5 +1,4 @@
 use super::*;
-use crate::features::conversation::persistence_mapper::ModelChoiceColumn;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct ConversationExplorerRow {
@@ -29,7 +28,10 @@ pub(super) struct ConversationExplorerRow {
 impl ConversationExplorerRow {
     pub(super) fn into_dto(self) -> Result<ConversationDto, AppError> {
         Ok(ConversationDto {
-            model_choice: ModelChoiceColumn::from_column(&self.id, self.model_choice.as_deref())?,
+            model_choice: lattice_core::domain::conversation::ChatModelChoice::from_column(
+                &self.id,
+                self.model_choice.as_deref(),
+            )?,
             id: self.id,
             title: self.title,
             system_prompt: self.system_prompt,

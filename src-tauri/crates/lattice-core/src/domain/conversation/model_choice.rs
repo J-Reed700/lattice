@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::domain::models::model_ref::ModelRef;
+use crate::shared::error::AppError;
 
 /// A chat's model choice.
 ///
@@ -34,6 +35,17 @@ impl ChatModelChoice {
     pub fn from_stored(stored: Option<&str>) -> serde_json::Result<Self> {
         stored.map_or(Ok(Self::Default), |json| {
             serde_json::from_str(json).map(|model| Self::Explicit { model })
+        })
+    }
+
+    /// Reads conversation `conversation_id`'s `model_choice` column. Every
+    /// reader of the row reports an unreadable value the same way: an error
+    /// naming the conversation, never a silent `Default`.
+    pub fn from_column(conversation_id: &str, column: Option<&str>) -> Result<Self, AppError> {
+        Self::from_stored(column).map_err(|e| {
+            AppError::Database(format!(
+                "conversation {conversation_id} has an unreadable model_choice: {e}"
+            ))
         })
     }
 }

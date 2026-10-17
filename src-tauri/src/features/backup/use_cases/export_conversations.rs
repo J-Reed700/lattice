@@ -148,12 +148,7 @@ fn date_only(timestamp: &str) -> &str {
 /// The chat's own model choice. An unreadable one fails the export rather
 /// than being written as the default.
 fn model_choice(conversation: &ExportConversationRow) -> Result<ChatModelChoice, AppError> {
-    ChatModelChoice::from_stored(conversation.model_choice.as_deref()).map_err(|e| {
-        AppError::Database(format!(
-            "conversation {} has an unreadable model_choice: {e}",
-            conversation.id
-        ))
-    })
+    ChatModelChoice::from_column(&conversation.id, conversation.model_choice.as_deref())
 }
 
 /// The model that answered a message, from its turn record.

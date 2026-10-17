@@ -280,7 +280,7 @@ impl ConversationRepository {
                 .ok_or_else(|| {
                     AppError::NotFound(format!("Conversation not found: {}", conversation_id))
                 })?;
-        ModelChoiceColumn::from_column(conversation_id, column.as_deref())
+        ChatModelChoice::from_column(conversation_id, column.as_deref())
     }
 
     /// Records the model this chat asks for. Settings and every other chat are

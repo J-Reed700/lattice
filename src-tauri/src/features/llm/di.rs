@@ -423,15 +423,10 @@ async fn chat_model_choice(
             .ok_or_else(|| {
                 AppError::NotFound(format!("Conversation {conversation_id} not found"))
             })?;
-    let choice = match choice {
-        None => ChatModelChoice::Default,
-        Some(json) => ChatModelChoice::Explicit {
-            model: serde_json::from_str(&json).map_err(|e| {
-                AppError::InvalidData(format!("This chat's model choice cannot be read: {e}"))
-            })?,
-        },
-    };
-    Ok((choice, title))
+    Ok((
+        ChatModelChoice::from_column(conversation_id, choice.as_deref())?,
+        title,
+    ))
 }
 
 enum Outcome {
