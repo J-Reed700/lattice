@@ -201,3 +201,16 @@ Branch `arch/feature-graph-6b` on `arch/feature-graph-4b-5`, four commits in the
 - Explorer's own tests that called `tools::activity_label`/`is_explorer_tool` now call the core functions.
 
 **Behaviour.** No intended change. The labels and `is_explorer_tool` were moved byte for byte, and the tool definitions and prompt text were not touched. The explorer turn now sits behind an `Arc`; the chat only borrows it, so nothing else differs. The query interpreter is built per turn with that turn's token and is never cached.
+
+## 6c as built
+
+Four commits on `arch/feature-graph-6acd`, steps 1–7 in order. `feature-edge` 61 → 49 (llm→embedding 2 → 0, model_management→embedding 4 → 0, settings→llm 2 → 0, file→indexing 4 → 0), `feature-reexport` 15 → 14, `infrastructure-imports-feature` 0. The generated TypeScript is unchanged (`export_bindings -- --check`), and `capabilities/main.json`, `build.rs` and `routes.generated.ts` are untouched.
+
+**Deviations.**
+- **Step 1.** `from_tags` and its tag tables and tests live in a private child module, `domain/models/selection/embedding_compatibility.rs`, as an inherent `impl EmbeddingCompatibility`. The type path is still `selection::EmbeddingCompatibility::from_tags`, with no re-export; it keeps `selection.rs` at its size. The file was `git mv`'d, so its history follows it.
+- **Step 3.** `open_embedding_for_activation` is a `pub(crate)` method on the embedding registrar (`embedding/di.rs`) taking `(dir: PathBuf, identity: ArtifactIdentity)`. `active_models.rs` passes `model.as_ref()` to `generation::prepare`.
+- **Step 5.** `TestOllamaConnectionResponse` stays in `settings/plugin.rs`, where the moved command imports it from; moving a `specta::Type` risks the bindings' type order. The settings plugin names the command by its full `crate::interfaces::commands::model_setup::` path in `generate_handler!`.
+- **Step 6.** `IndexingStatus` (a `specta::Type`) stays in `file/plugin/commands.rs` for the same reason; `interfaces/commands/indexing.rs` imports it. The private `unwrap_api_result` helper moved with the 13 commands, its only users. `file/plugin/mod.rs` imports `interfaces::commands::indexing` beside `document_list`, so the plugin, not feature logic, is what names the interfaces layer.
+- **Step 7.** `ports/mock_llm_port.rs` held only `DegradedLLMPort` and its test, so the whole module is gone. The use case's tests pass the flag instead of a mock `LLMPort`.
+
+**Behaviour.** The health check's `llm` flag now reads "a model is loaded and not degraded" instead of always `false`; `status` is unchanged. Nothing else changes: error texts, the `spawn_blocking` in the activation load, command names, invoke strings and JSDoc are the same.
