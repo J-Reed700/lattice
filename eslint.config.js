@@ -39,15 +39,19 @@ const VIEW_NATIVE_SELECTORS = [
 ];
 
 // A chat's model picker changes that chat, never the app. The global chat
-// model (the active row and the provider) is set in Settings → Models and
-// nowhere else, so only the settings and model features may reach it.
+// model (the active row, the provider and the model tag Ollama, llama.cpp or
+// a cloud provider is asked for) is set in Settings → Models and nowhere
+// else, so only the settings and model features may reach it. Settings are
+// written only there too: an `updates` object built elsewhere and passed in
+// could carry any of those keys.
 const GLOBAL_CHAT_MODEL_MESSAGE =
   'Only Settings changes the app-wide chat model. A chat sets its own model with ' +
   'setConversationModelChoice; one answer with another model is regenerateResponse with { model }.';
 const GLOBAL_CHAT_MODEL_SELECTORS = [
-  { selector: 'MemberExpression[property.name=/^(setActiveChatModel|clearActiveChatModel)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
-  { selector: 'ObjectPattern > Property[key.name=/^(setActiveChatModel|clearActiveChatModel)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
-  { selector: 'Property[key.name="updates"] > ObjectExpression > Property[key.name="provider"]', message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: 'MemberExpression[property.name=/^(setActiveChatModel|clearActiveChatModel|updateSettings)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: 'ObjectPattern > Property[key.name=/^(setActiveChatModel|clearActiveChatModel|updateSettings)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: "ImportSpecifier[imported.name='useUpdateSettingsMutation']", message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: 'Property[key.name="updates"] > ObjectExpression > Property[key.name=/^(provider|model|llamaCpp)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
 ];
 const GLOBAL_CHAT_MODEL_OWNERS = ['src/features/settings/**', 'src/features/model/**'];
 
