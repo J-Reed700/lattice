@@ -388,6 +388,19 @@ async fn a_fixed_answer_the_window_cannot_hold_is_refused_never_shrunk() {
 }
 
 #[tokio::test]
+async fn a_server_that_cannot_count_is_not_refused_on_the_reservations_margin() {
+    // About 6,000 tokens at four characters a token: the margin reads 9,000,
+    // past the 8,192 window; the plain estimate leaves room.
+    let prose = "word ".repeat(4_800);
+    let (reserved, size) = measured(None, &prose, Some(2_000)).await.unwrap();
+    assert_eq!(reserved, 2_000);
+    assert!(!size.counted_exactly);
+    let (reserved, size) = measured(None, &prose, None).await.unwrap();
+    assert_eq!(size.prompt_tokens + reserved as usize, 8_192);
+    assert!(!size.counted_exactly);
+}
+
+#[tokio::test]
 async fn an_open_answer_takes_the_room_the_prompt_leaves_and_never_more() {
     let long = "word ".repeat(8_000);
     // The estimate leaves nothing; the exact count leaves 2,168 of the 8,192.

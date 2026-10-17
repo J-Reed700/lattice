@@ -5,14 +5,9 @@ use crate::features::llm::scheduler::rejection::{window_refusal, RequestSize};
 use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
 
 impl LlamaCppLlm {
-    /// The prompt's tokens by the rough estimate the budgeter uses, inflated:
-    /// it reads low on dense text, and an output reservation sized from a low
-    /// count would overrun the window.
-    fn estimated_prompt_tokens(messages: &[Value]) -> usize {
-        /// Estimated prompt tokens are scaled by this before being subtracted.
-        const ESTIMATE_SAFETY: usize = 3;
-        const ESTIMATE_SAFETY_DIVISOR: usize = 2;
-
+    /// The prompt's tokens by the rough estimate the budgeter uses: four
+    /// characters a token over each message as sent.
+    fn plain_prompt_tokens(messages: &[Value]) -> usize {
         let prompt_chars: usize = messages
             .iter()
             .map(|message| message.to_string().chars().count())
@@ -20,8 +15,24 @@ impl LlamaCppLlm {
         lattice_core::application::ports::llm_port::tokens_for_chars(
             prompt_chars,
             lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
-        ) * ESTIMATE_SAFETY
-            / ESTIMATE_SAFETY_DIVISOR
+        )
+    }
+
+    /// [`Self::plain_prompt_tokens`] with a margin, for sizing the answer's
+    /// reservation only. Four characters a token reads low on dense text:
+    /// code, JSON and most languages other than English tokenize at three
+    /// characters a token or fewer. A reservation sized from a low count
+    /// overruns the window (see [`Self::output_room_for`]); one sized from a
+    /// high count only lowers the answer's ceiling. Scaling by 3/2 reads the
+    /// prompt at 2⅔ characters a token, which covers that dense text without
+    /// halving the answer's room on plain prose. It never refuses a request
+    /// on its own: [`Self::measured_body`] counts exactly, or falls back to
+    /// the plain estimate, before it refuses.
+    fn estimated_prompt_tokens(messages: &[Value]) -> usize {
+        /// The margin: estimated prompt tokens are scaled by this fraction.
+        const ESTIMATE_SAFETY: usize = 3;
+        const ESTIMATE_SAFETY_DIVISOR: usize = 2;
+        Self::plain_prompt_tokens(messages) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR
     }
 
     /// What the server can still be asked to generate once this prompt is in
@@ -69,7 +80,8 @@ impl LlamaCppLlm {
     /// One that does not is counted exactly with the server's tokenizer before
     /// anything is cut or refused: the rough estimate reads high on a large
     /// prompt a caller measured exactly. When the server cannot count, the
-    /// estimate stands.
+    /// plain estimate, without the reservation's margin, decides: a server
+    /// with no tokenizer is not refused a request on a margin.
     pub(super) async fn measured_body(
         &self,
         request: &CompletionRequest,
@@ -97,13 +109,15 @@ impl LlamaCppLlm {
             output_tokens: self.output_room_after(estimated, requested),
         };
         if !fits(&size) {
-            if let Some(exact) = self.exact_prompt_tokens(&messages).await {
-                size = RequestSize {
-                    prompt_tokens: exact,
-                    counted_exactly: true,
-                    output_tokens: self.output_room_after(exact, requested),
-                };
-            }
+            let (prompt_tokens, counted_exactly) = match self.exact_prompt_tokens(&messages).await {
+                Some(exact) => (exact, true),
+                None => (Self::plain_prompt_tokens(&messages), false),
+            };
+            size = RequestSize {
+                prompt_tokens,
+                counted_exactly,
+                output_tokens: self.output_room_after(prompt_tokens, requested),
+            };
         }
         if !fits(&size) {
             return Err(window_refusal(
