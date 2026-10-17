@@ -16,7 +16,7 @@ async fn service_with_pending_question() -> (
         ConversationRepository::new(pool.clone()),
     )));
     let conversation = service
-        .create_conversation("Chat".into(), "model".into(), None)
+        .create_conversation("Chat".into(), None)
         .await
         .unwrap();
     let id = conversation.id.to_string();

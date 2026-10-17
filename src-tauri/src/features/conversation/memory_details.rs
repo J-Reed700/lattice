@@ -165,7 +165,7 @@ mod tests {
 
         let repository = ConversationRepository::new(pool.clone());
         let conversation = repository
-            .create_conversation("Details", "model", None)
+            .create_conversation("Details", None)
             .await
             .unwrap();
         let id = conversation.id.to_string();

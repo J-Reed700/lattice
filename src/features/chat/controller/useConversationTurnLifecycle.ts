@@ -4,16 +4,17 @@ import { listen } from '@tauri-apps/api/event';
 
 import { folderFocusFor } from '@/features/chat/model/folderThreadHost';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
+import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
 import { VaultAPI } from '@/lib/api';
 import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
-import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
+import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
 import type { ApiResult } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
   Conversation, ConversationMessage, OptimisticMessage, SourceWithMetadata, ToolPreferences,
 } from '@/types/conversation';
-import { RetrievalTraceSchema, TurnStepSchema } from '@/types/conversation';
+import { RetrievalTraceSchema, TurnModelSchema, TurnStepSchema } from '@/types/conversation';
 import { ChatStreamStatus } from '@/types/events';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { createFrameBatcher } from '@/utils/frameBatcher';
@@ -138,7 +139,9 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       liveRetrieval.delete(requestConversationId);
       const liveSteps = new Map(current.liveSteps);
       liveSteps.delete(requestConversationId);
-      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, error: null };
+      const liveModel = new Map(current.liveModel);
+      liveModel.delete(requestConversationId);
+      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, liveModel, error: null };
     });
 
     const settleOptimisticMessages = (error?: string) => {
@@ -260,6 +263,21 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
             optimisticMessages.set(assistantTempId, { ...existing, images: mergeImages(existing.images, images) });
             return { optimisticMessages };
           });
+        }
+        // The model the turn is pinned to arrives once, before the first
+        // token, so the reader knows what is answering from the start.
+        if (payload.model) {
+          const parsed = TurnModelSchema.safeParse(payload.model);
+          if (parsed.success) {
+            conversationUiStore.setState(current => {
+              const liveModel = new Map(current.liveModel);
+              liveModel.set(requestConversationId, parsed.data);
+              return { liveModel };
+            });
+          }
+          // The model may just have loaded, perhaps on the CPU; once the turn
+          // ends, the composer reads that from the loaded list.
+          void queryClient.invalidateQueries({ queryKey: LOADED_MODELS_QUERY_KEY });
         }
         // A round can run for minutes without a single character of text. The
         // steps are the only thing distinguishing "still working" from "hung",
@@ -454,8 +472,10 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         liveRetrieval.delete(requestConversationId);
         const liveSteps = new Map(current.liveSteps);
         liveSteps.delete(requestConversationId);
+        const liveModel = new Map(current.liveModel);
+        liveModel.delete(requestConversationId);
         return {
-          inFlightGenerations, liveRetrieval, liveSteps,
+          inFlightGenerations, liveRetrieval, liveSteps, liveModel,
           ...(optimisticMessages ? { optimisticMessages } : {}),
         };
       });
@@ -541,7 +561,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
    */
   const regenerateResponse = useCallback(async (
     conversationId: string,
-    toolPreferences?: ToolPreferences
+    { toolPreferences, model }: RegenerateOptions = {}
   ): Promise<GenerationOutcome> => {
     const messages = queryClient.getQueryData<ConversationMessage[]>(
       conversationKeys.messages(conversationId)
@@ -555,7 +575,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         conversationId,
         withExplorerFocus(conversations.find(conversation => conversation.id === conversationId)
           ?? queryClient.getQueryData<Conversation>(conversationKeys.detail(conversationId)), toolPreferences),
-        requestId
+        requestId,
+        model
       ),
       onFailure: () => {
         if (lastUser?.content && conversationUiStore.getState().activeConversationId === conversationId) {

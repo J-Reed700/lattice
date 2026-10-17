@@ -64,6 +64,28 @@ export const modelApi = {
     apiCall<void>('warm_up_active_utility_model'),
 
   /**
+   * Load the Learning model set in Settings, so the first lesson does not
+   * pay the cold start. A failure reports why and changes no setting.
+   */
+  warmUpLearningModel: async (): Promise<ApiResult<void>> =>
+    apiCall<void>('warm_up_learning_model'),
+
+  /**
+   * The models loaded right now, who holds each, and which fell back to the
+   * CPU. Diagnostics, and the "on CPU" state of a model outside a turn.
+   */
+  listLoadedModels: async (): Promise<ApiResult<Wire.LoadedModelDto[]>> =>
+    apiCall<Wire.LoadedModelDto[]>('list_loaded_models'),
+
+  /**
+   * The last learning work refused because the Learning model's window was
+   * too small, while that model has not covered the window since; null when
+   * there is none.
+   */
+  lastLearningWindowShortfall: async (): Promise<ApiResult<Wire.LearningWindowShortfallDto | null>> =>
+    apiCall<Wire.LearningWindowShortfallDto | null>('last_learning_window_shortfall'),
+
+  /**
    * Gets the currently active chat model.
    * Returns null if no model is set as active.
    *

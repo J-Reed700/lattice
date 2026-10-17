@@ -387,10 +387,18 @@ fn unknown_architectures_report_the_engine_mismatch_without_cpu_retries() {
             "gguf_init_from_reader: tensor 'output_norm.weight' has offset 165015872, expected 174722688",
             "has offset 165015872, expected 174722688",
         ),
+        (
+            "llama_model_load: error loading model: missing tensor 'blk.32.nextn.eh_proj.weight'",
+            "missing tensor 'blk.32.nextn.eh_proj.weight'",
+        ),
+        (
+            "llama_model_load: error loading model: done_getting_tensors: wrong number of tensors; expected 851, got 843",
+            "wrong number of tensors; expected 851, got 843",
+        ),
     ] {
         let output = lines(line);
         let err = classify(SidecarBinary::Primary, &exited(Some(1), None), &output);
-        assert_eq!(err.kind, AttemptFailure::Fatal);
+        assert_eq!(err.kind, AttemptFailure::Unsupported);
         assert!(err.message.contains(expected), "{}", err.message);
         assert!(err.message.contains("Update Lattice's model engine"));
         assert!(!err.message.contains("corrupt"));
@@ -404,6 +412,43 @@ fn unknown_architectures_report_the_engine_mismatch_without_cpu_retries() {
                 true,
             ),
             None
+        );
+    }
+}
+
+#[test]
+fn an_unsupported_model_is_the_only_startup_failure_that_condemns_the_file() {
+    let unsupported = classify(
+        SidecarBinary::Primary,
+        &exited(Some(1), None),
+        &lines("llama_model_load: error loading model architecture: unknown model architecture: 'laguna'"),
+    );
+    assert!(matches!(
+        unsupported.into_llm_error(),
+        LLMError::ModelUnsupported(m) if m.contains("laguna")
+    ));
+
+    // The machine, not the file: a readiness timeout, a kill under memory
+    // pressure, and an allocation the loader could not make.
+    for (end, output) in [
+        (
+            StartupEnd::TimedOut(TimeoutKind::Budget(120)),
+            lines("llama_model_load: loading model tensors"),
+        ),
+        (
+            exited(None, Some(SIGKILL)),
+            lines("load_tensors: loading model"),
+        ),
+        (
+            exited(Some(1), None),
+            lines("llama_model_load: error loading model: unable to allocate Metal buffer"),
+        ),
+    ] {
+        let err = classify(SidecarBinary::Primary, &end, &output);
+        assert_ne!(err.kind, AttemptFailure::Unsupported, "{}", err.message);
+        assert!(
+            !matches!(err.into_llm_error(), LLMError::ModelUnsupported(_)),
+            "{end:?}"
         );
     }
 }
@@ -1663,4 +1708,116 @@ fn a_missing_model_file_falls_back_to_the_flat_default() {
     let config = SidecarConfig::from_capabilities(PathBuf::from("/nonexistent/m.gguf"), &caps, 0);
 
     assert_eq!(config.context_size, DEFAULT_GPU_CONTEXT_SIZE);
+}
+
+/// A model file of `bytes` weights whose header cannot be read, so its cache
+/// costs nothing and every price below is its weights.
+fn weights_file(dir: &tempfile::TempDir, name: &str, bytes: u64) -> PathBuf {
+    let path = dir.path().join(name);
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(bytes)
+        .unwrap();
+    path
+}
+
+fn running(path: &std::path::Path, context_size: u32, n_gpu_layers: u32) -> RunningServer {
+    RunningServer {
+        config: SidecarConfig {
+            context_size,
+            ..SidecarConfig::for_model(path.to_path_buf())
+        },
+        n_gpu_layers,
+        context_size,
+    }
+}
+
+/// A GPU reporting 10 GB, of which 7 GB is usable.
+fn gpu_with_ten_gigabytes() -> SystemCapabilities {
+    let mut caps = make_caps(
+        Some(crate::features::llm::engine::system::GPUVendor::Apple),
+        36.0,
+    );
+    caps.gpu.as_mut().unwrap().vram_gb = Some(10.0);
+    caps
+}
+
+#[test]
+fn a_second_window_of_the_same_model_counts_against_the_gpu_but_does_not_size_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let ornith = weights_file(&dir, "ornith.gguf", 5 * GIB);
+    let qwen = weights_file(&dir, "qwen.gguf", 3 * GIB);
+    let servers = [
+        running(&ornith, 8_704, 99),
+        running(&qwen, 8_192, 99),
+        running(&weights_file(&dir, "cpu.gguf", 4 * GIB), 4_096, 0),
+    ];
+    let larger_window = SidecarConfig {
+        context_size: 32_768,
+        ..SidecarConfig::for_model(ornith.clone())
+    };
+
+    assert_eq!(
+        gpu_bytes_where(&servers, |running| running != &larger_window),
+        8 * GIB,
+        "the 8,704-token server is a second process with its own weights"
+    );
+    assert_eq!(
+        gpu_bytes_where(&servers, |running| running.model_path != ornith),
+        3 * GIB,
+        "a window is sized beside other models only, so roles on one model agree on it"
+    );
+    assert_eq!(
+        gpu_bytes_where(&servers, |running| running != &servers[0].config),
+        3 * GIB,
+        "a server never counts against itself, and a CPU server holds no GPU memory"
+    );
+}
+
+#[test]
+fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left() {
+    let dir = tempfile::tempdir().unwrap();
+    let resident = weights_file(&dir, "resident.gguf", 4 * GIB);
+    let small = weights_file(&dir, "small.gguf", 2 * GIB);
+    let large = weights_file(&dir, "large.gguf", 4 * GIB);
+    let servers = [running(&resident, 8_192, 99)];
+    let gpu = gpu_with_ten_gigabytes();
+    let config = |path: &PathBuf| SidecarConfig::for_model(path.clone());
+
+    assert_eq!(
+        admission(&servers, &servers[0].config, 8_192, &gpu),
+        Admission::Shared
+    );
+    assert_eq!(
+        admission(&servers, &config(&small), 8_192, &gpu),
+        Admission::Fits {
+            needed: Footprint {
+                weights: 2 * GIB,
+                cache: 0,
+                window: 8_192
+            },
+            spare: usable_gpu_bytes(10.0) - 4 * GIB,
+        }
+    );
+    assert!(matches!(
+        admission(&servers, &config(&large), 8_192, &gpu),
+        Admission::Short { needed, spare } if needed.total() == 4 * GIB && spare < 4 * GIB
+    ));
+    assert_eq!(
+        admission(&servers, &config(&large).without_gpu_offload(), 4_096, &gpu),
+        Admission::NoOffload
+    );
+    assert_eq!(
+        admission(
+            &servers,
+            &config(&large),
+            8_192,
+            &make_caps(
+                Some(crate::features::llm::engine::system::GPUVendor::Apple),
+                36.0
+            )
+        ),
+        Admission::Unmetered,
+        "a GPU that does not report its memory cannot be checked"
+    );
 }

@@ -8,9 +8,16 @@ use crate::features::function_calling::domain::{FunctionCall, FunctionResult, To
 use lattice_core::application::contracts::images::{
     ChatImageDto, FindImageInput, FindImageOutput, FoundImage,
 };
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::contracts::settings::LLMSettingsDto;
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, ModelRequirements, PinnedModel, ResolvedModel,
+};
 use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::services::chat_model_resolution::{
+    resolve, resolve_learning, DefaultChatModel,
+};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::collections::VecDeque;
@@ -27,9 +34,21 @@ pub(super) struct TestVault {
     pub(super) search: Arc<dyn crate::features::search::trait_def::LibrarySearchTrait>,
 }
 
+/// The model `FakeRuntime::llm` stands for: the Settings default.
+pub(super) fn default_model() -> ModelRef {
+    ModelRef::Local {
+        model_id: "settings-default".into(),
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FakeRuntime {
+    /// The Settings default chat model, named [`default_model`].
     pub(super) llm: Option<Arc<dyn LLMPort>>,
+    /// The other models a chat, a request or the Learning role may name.
+    pub(super) models: Vec<(ModelRef, Arc<dyn LLMPort>)>,
+    /// The Learning model set in Settings, if any.
+    pub(super) learning_model: Option<ModelRef>,
     pub(super) tools: Option<Arc<dyn ChatTools>>,
     pub(super) jobs: Option<Arc<JobRuntime>>,
     /// The library retrieval searches. Without one, a turn that reaches the
@@ -66,6 +85,8 @@ impl Default for FakeRuntime {
     fn default() -> Self {
         Self {
             llm: None,
+            models: Vec::new(),
+            learning_model: None,
             tools: None,
             jobs: None,
             vault: None,
@@ -227,10 +248,59 @@ impl ChatImagesPort for FakeChatImages {
     }
 }
 
+impl FakeRuntime {
+    /// The loaded model a reference names, or the refusal a missing one gets.
+    fn loaded(&self, model: &ModelRef) -> Result<Arc<dyn LLMPort>> {
+        if *model == default_model() {
+            if let Some(llm) = &self.llm {
+                return Ok(Arc::clone(llm));
+            }
+        }
+        self.models
+            .iter()
+            .find(|(named, _)| named == model)
+            .map(|(_, llm)| Arc::clone(llm))
+            .ok_or_else(|| AppError::AiModelsNotInstalled(format!("{model} is not downloaded")))
+    }
+
+    fn pinned(&self, resolved: ResolvedModel) -> Result<PinnedModel> {
+        Ok(PinnedModel {
+            llm: self.loaded(&resolved.model)?,
+            resolved,
+            instance_id: 0,
+            degraded: None,
+        })
+    }
+}
+
+/// Resolved the way the app resolves: the request override, else the chat's
+/// choice as its conversation keeps it, else the Settings default.
 #[async_trait::async_trait]
 impl ChatModels for FakeRuntime {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        Ok(Arc::clone(self.llm.as_ref().expect(UNUSED)))
+    async fn chat_llm_for(
+        &self,
+        conversation_id: &str,
+        request_override: Option<&ModelRef>,
+        _requirements: ModelRequirements,
+    ) -> Result<PinnedModel> {
+        let choice = self.conversations.model_choice(conversation_id)?;
+        let default =
+            DefaultChatModel(self.llm.as_ref().map(|_| default_model()).ok_or_else(|| {
+                AppError::AiModelsNotInstalled(
+                    "No chat model is selected in Settings → Models".into(),
+                )
+            }));
+        self.pinned(resolve(request_override, &choice, &default)?)
+    }
+    async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {
+        let settings = LLMSettingsDto {
+            learning_model: self.learning_model.clone(),
+            ..LLMSettingsDto::default()
+        };
+        self.pinned(resolve_learning(&settings)?)
+    }
+    async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
+        self.loaded(&default_model())
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         unreachable!("{UNUSED}")
@@ -376,6 +446,7 @@ impl ChatPolicy for FakeRuntime {
     async fn compact_for_turn(
         &self,
         _id: &str,
+        _llm: Arc<dyn LLMPort>,
         _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()> {
         unreachable!("{UNUSED}")

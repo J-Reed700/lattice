@@ -1,8 +1,11 @@
 # `infrastructure::ml`
 
-Shared model infrastructure lives here. `model_cache.rs` provides single-flight
-loading and invalidation-safe publication for both LLM and embedding ports.
-Its unit tests live alongside the implementation.
+Shared model infrastructure lives here. `instance_pool.rs` holds loaded LLM
+instances keyed by what they are, any number at once: one load per key at a
+time, leases for work that pins an instance, invalidation that leaves holders
+their instance, and least-recently-used eviction of idle ones. `model_cache.rs`
+provides single-flight loading and invalidation-safe publication for the
+embedding port. Their unit tests live alongside them.
 
 The embedding engine and its loading lifecycle live in
 `src-tauri/src/features/embedding/` (`loading.rs` and `runtime.rs`).

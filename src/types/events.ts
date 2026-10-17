@@ -83,7 +83,7 @@ export namespace EventSchemas {
   export namespace Models {
     /// Phases: `started → ready | skipped | failed`.
     export const WarmupStatus = z.object({
-      role: z.enum(['chat', 'utility', 'embedding']),
+      role: z.enum(['chat', 'utility', 'embedding', 'learning']),
       phase: z.enum(['started', 'ready', 'skipped', 'failed']),
       error: z.string().nullable().optional(),
     });

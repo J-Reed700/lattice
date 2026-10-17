@@ -40,6 +40,7 @@ pub mod memory;
 pub mod memory_details;
 pub mod memory_dto;
 pub mod message_bookmark_dto;
+mod model_availability;
 pub mod plugin;
 pub mod plugin_impl;
 pub mod space_dto;

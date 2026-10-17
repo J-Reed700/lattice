@@ -20,7 +20,7 @@ async fn database() -> SqlitePool {
 async fn thread(pool: &SqlitePool, root: Option<&Path>, title: &str) -> String {
     let conversations = ConversationRepository::new(pool.clone());
     let conversation = conversations
-        .create_conversation(title, "model", None)
+        .create_conversation(title, None)
         .await
         .unwrap();
     let id = conversation.id.to_string();

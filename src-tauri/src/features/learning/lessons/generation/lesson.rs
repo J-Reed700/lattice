@@ -223,13 +223,30 @@ pub async fn prepare_lesson_with_references<'a>(
         ));
     }
     let output_tokens = LESSON_OUTPUT_RESERVE;
+    let bare_prompt = lesson_prompt(
+        llm,
+        program,
+        lesson,
+        references,
+        Vec::new(),
+        Vec::new(),
+        true,
+    )?;
+    // Refused before any research or model call is spent on this lesson: a
+    // prompt that leaves no room for evidence has nothing to check it against.
+    if evidence_room(llm, &bare_prompt, output_tokens).0 == 0 {
+        return Err(model_call::window_too_small(
+            llm,
+            "This course's goal and the lesson brief leave no room for evidence",
+        ));
+    }
     // Adding research references must not discard an otherwise identical draft.
     // Retain its original source indices and prompt while all original snapshots
     // remain unchanged. New evidence still participates in factual verification.
     let scope_hash = crate::features::learning::content_verification::digest(
         &serde_json::to_string(&json!({
             "policy":AUTHORING_POLICY,
-            "request":authoring_scope(&lesson_prompt(llm, program, lesson, references, Vec::new(), Vec::new(), true)?)?,
+            "request":authoring_scope(&bare_prompt)?,
             "revision":crate::features::learning::lesson_drafts::authoring_revision(program.summary.revision),"model":llm.model_name(),
         }))?,
     );
@@ -269,7 +286,10 @@ pub async fn prepare_lesson_with_references<'a>(
         let (prompt, sources) = loop {
             let (sources, map) = evidence::assemble(&gathered, &topics, active, &added);
             if sources.is_empty() {
-                return Err(invalid("The supplied sources exceed this model's context window or contain no usable excerpts. Choose fewer or shorter sources."));
+                return Err(model_call::window_too_small(
+                    llm,
+                    "No saved passage fits beside this lesson's prompt",
+                ));
             }
             let prompt = lesson_prompt(
                 llm,

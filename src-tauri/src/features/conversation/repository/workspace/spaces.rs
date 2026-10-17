@@ -59,7 +59,7 @@ impl ConversationRepository {
         let spaces = sqlx::query_as::<_, ConversationSpaceDto>(
             r#"
         SELECT
-            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            id, name, description, icon, accent_color, space_prompt,
             tool_preferences_json, is_archived, sort_order, created_at, updated_at
         FROM conversation_spaces
         ORDER BY is_archived ASC, sort_order ASC, updated_at DESC
@@ -93,7 +93,6 @@ impl ConversationRepository {
             icon = COALESCE(?, icon),
             accent_color = COALESCE(?, accent_color),
             space_prompt = COALESCE(?, space_prompt),
-            default_model_name = COALESCE(?, default_model_name),
             tool_preferences_json = COALESCE(?, tool_preferences_json),
             is_archived = COALESCE(?, is_archived),
             sort_order = COALESCE(?, sort_order),
@@ -106,7 +105,6 @@ impl ConversationRepository {
         .bind(request.icon)
         .bind(request.accent_color)
         .bind(request.space_prompt)
-        .bind(request.default_model_name)
         .bind(request.tool_preferences_json)
         .bind(is_archived)
         .bind(request.sort_order)
@@ -126,7 +124,7 @@ impl ConversationRepository {
         let updated = sqlx::query_as::<_, ConversationSpaceDto>(
             r#"
         SELECT
-            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            id, name, description, icon, accent_color, space_prompt,
             tool_preferences_json, is_archived, sort_order, created_at, updated_at
         FROM conversation_spaces
         WHERE id = ?

@@ -1,55 +1,34 @@
-//! Warming up the active chat and utility models.
+//! Warming up the chat, utility and Learning models.
 use super::*;
 
 /// Warm up the currently active chat model.
 ///
 /// This eagerly loads the LLM into memory so first chat response is faster.
+/// A model that fails to load stays selected: the failure is reported with
+/// its cause, and choosing another model is the user's call, made in
+/// Settings.
 pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(), AppError> {
     let repository = (*container.downloaded_model_repository()).clone();
 
-    let use_case = GetActiveChatModelUseCase::new(repository.clone());
+    let use_case = GetActiveChatModelUseCase::new(repository);
     let active_model = use_case.execute().await?.ok_or_else(|| {
         AppError::InvalidState("No active chat model is selected. Set one first.".to_string())
     })?;
 
     let start = Instant::now();
-    if let Err(error) = container.get_or_load_llm().await {
-        if let AppError::ModelLoadFailed(load_error) = &error {
-            warn!(
-                model_id = %active_model.model_id(),
-                model_name = %active_model.model_name(),
-                "Active chat model failed to load during warmup; clearing active selection"
-            );
-
-            let clear_use_case = ClearActiveChatModelUseCase::new(repository);
-            if let Err(clear_error) = clear_use_case.execute().await {
-                error!(
-                    model_id = %active_model.model_id(),
-                    model_name = %active_model.model_name(),
-                    clear_error = %clear_error,
-                    "Failed to clear invalid active chat model after warmup failure"
-                );
-                return Err(AppError::ModelLoadFailed(format!(
-                    "Failed to warm up active chat model: {}. Failed to clear invalid active model: {}",
-                    load_error, clear_error
-                )));
-            }
-
-            container.invalidate_llm_cache();
-            warn!(
-                model_id = %active_model.model_id(),
-                model_name = %active_model.model_name(),
-                "Invalid active chat model cleared after warmup failure"
-            );
-
-            return Err(AppError::ModelLoadFailed(format!(
-                "Failed to warm up active chat model: {}. The model was deactivated because it could not be loaded. \
-                 Please download or select a compatible model in Settings → Model Catalog.",
-                load_error
-            )));
-        }
-
-        return Err(error);
+    if let Err(error) = container.default_chat_llm().await {
+        warn!(
+            model_id = %active_model.model_id(),
+            model_name = %active_model.model_name(),
+            error = %error,
+            "Active chat model failed to load during warmup"
+        );
+        return Err(match error {
+            AppError::ModelLoadFailed(load_error) => AppError::ModelLoadFailed(format!(
+                "Failed to warm up active chat model: {load_error}"
+            )),
+            error => error,
+        });
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -61,6 +40,18 @@ pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(),
         "Active chat model warmed up"
     );
 
+    Ok(())
+}
+
+/// Warm up the Learning model ahead of the first learning job. A failure is
+/// reported on `model:warmup-status` and returned; no setting changes.
+pub async fn warm_up_learning_model_impl(container: &Container) -> Result<(), AppError> {
+    let start = Instant::now();
+    container.warm_up_learning_model().await?;
+    info!(
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "Learning model warmed up"
+    );
     Ok(())
 }
 
@@ -99,3 +90,6 @@ pub async fn warm_up_active_utility_model_impl(container: &Container) -> Result<
         Err(error) => Err(error),
     }
 }
+
+#[cfg(test)]
+mod tests;

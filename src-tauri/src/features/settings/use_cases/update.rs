@@ -3,6 +3,7 @@ use crate::infrastructure::security::InputValidator;
 use lattice_core::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
 };
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use url::Url;
@@ -68,6 +69,7 @@ impl UpdateSettingsUseCase {
         let hints =
             lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints {
                 vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
+                previous_llm: previous.map(|settings| settings.llm),
             };
         self.side_effects
             .on_settings_updated(request.category, hints)
@@ -115,6 +117,17 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
                 if let Some(url) = value.as_str() {
                     validate_http_url(url).map_err(AppError::InvalidInput)?;
                 }
+            }
+            // Shape only: whether the model still exists is answered when a
+            // learning job asks for it, with the real state.
+            if let Some(value) = request
+                .updates
+                .get("learningModel")
+                .filter(|value| !value.is_null())
+            {
+                serde_json::from_value::<ModelRef>(value.clone()).map_err(|_| {
+                    AppError::InvalidInput("learningModel is not a model reference".into())
+                })?;
             }
         }
         Some(SettingsCategory::Indexing) => {
@@ -339,6 +352,41 @@ mod tests {
             .expect("valid URL should be accepted");
 
         assert_eq!(result.llm.ollama_url, "http://localhost:11434");
+    }
+
+    #[tokio::test]
+    async fn learning_model_must_be_a_model_reference_or_null() {
+        let use_case = UpdateSettingsUseCase::new(Arc::new(MockSettingsRepository::new()));
+        let update = |value: serde_json::Value| {
+            let updates = HashMap::from([("learningModel".to_string(), value)]);
+            use_case.update_category(SettingsCategory::Llm, updates)
+        };
+
+        for malformed in [
+            json!("local:qwen"),
+            json!({"kind": "local"}),
+            json!({"kind": "cloud", "provider": "acme", "model": "x"}),
+        ] {
+            assert!(
+                matches!(update(malformed.clone()).await, Err(AppError::InvalidInput(message))
+                    if message == "learningModel is not a model reference"),
+                "{malformed} is refused before anything is written"
+            );
+        }
+
+        let set = update(json!({"kind": "local", "model_id": "qwen3.5-27b"}))
+            .await
+            .expect("a model reference is accepted");
+        assert_eq!(
+            set.llm.learning_model,
+            Some(ModelRef::Local {
+                model_id: "qwen3.5-27b".into()
+            })
+        );
+        let cleared = update(serde_json::Value::Null)
+            .await
+            .expect("null clears the Learning model");
+        assert_eq!(cleared.llm.learning_model, None);
     }
 
     #[tokio::test]

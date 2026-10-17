@@ -14,7 +14,8 @@ use lattice_core::shared::error::AppError;
 pub struct ExportConversationRow {
     pub id: String,
     pub title: String,
-    pub model_name: String,
+    /// The chat's model choice in `ChatModelChoice`'s stored form.
+    pub model_choice: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -26,6 +27,8 @@ pub struct ExportMessageRow {
     pub role: String,
     pub content: String,
     pub created_at: String,
+    /// Holds the turn record, whose `model` says which model answered.
+    pub metadata: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -63,7 +66,7 @@ impl ExportRepository {
     pub async fn list_conversations(&self) -> Result<Vec<ExportConversationRow>, AppError> {
         sqlx::query_as::<_, ExportConversationRow>(
             r#"
-            SELECT id, title, model_name, created_at, updated_at
+            SELECT id, title, model_choice, created_at, updated_at
               FROM conversations
              ORDER BY updated_at DESC
             "#,
@@ -79,7 +82,7 @@ impl ExportRepository {
     pub async fn list_messages(&self) -> Result<Vec<ExportMessageRow>, AppError> {
         sqlx::query_as::<_, ExportMessageRow>(
             r#"
-            SELECT id, conversation_id, role, content, created_at
+            SELECT id, conversation_id, role, content, created_at, metadata
               FROM conversation_messages
              WHERE status = 'completed'
              ORDER BY conversation_id, created_at ASC

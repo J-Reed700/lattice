@@ -10,7 +10,7 @@ use super::branching_dto::{
 use crate::features::conversation::chat::ports::ChatRuntime;
 use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
 use lattice_core::application::ports::llm_port::{
-    chars_within_tokens, InferencePriority, SamplingOverride,
+    chars_within_tokens, InferencePriority, ModelRequirements, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
@@ -358,8 +358,14 @@ pub async fn continue_in_new_conversation_impl(
 
     // Straight to the model, as compaction does: no conversation, retrieval,
     // tools or streaming. Running it as a chat turn created visible scratch
-    // chats and let the turn reach for tools.
-    let llm = runtime.get_or_load_llm().await.map_err(ApiError::from)?;
+    // chats and let the turn reach for tools. The summary is written by the
+    // source chat's own model, pinned until the handoff is done; the new chat
+    // inherits the source chat's choice.
+    let pin = runtime
+        .chat_llm_for(&source_id, None, ModelRequirements::default())
+        .await
+        .map_err(ApiError::from)?;
+    let llm = std::sync::Arc::clone(&pin.llm);
     // The whole transcript in one call when the window holds it; otherwise it
     // is noted part by part, each part as much as the window holds, and the
     // notes are merged.

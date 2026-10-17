@@ -5,8 +5,12 @@ use crate::features::conversation::chat::routing::SearchFlags;
 use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
 use crate::features::conversation::chat::ToolPreferences;
 use crate::features::conversation::ConversationServiceTrait;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
-use lattice_core::domain::conversation::MessageRole;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::conversation::{ChatModelChoice, MessageRole};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -79,7 +83,7 @@ struct FirstAttempt {
 async fn first_attempt(runtime: &FakeRuntime) -> FirstAttempt {
     let conversations = runtime.conversations.clone();
     let conversation = conversations
-        .create_conversation("Research".into(), "scripted".into(), None)
+        .create_conversation("Research".into(), None)
         .await
         .unwrap();
     let request = research(&conversation.id.to_string());
@@ -284,6 +288,7 @@ async fn the_chat_stop_cancels_a_running_research_job() {
         attempt.request.request_id.clone(),
         None,
         None,
+        None,
         silent(),
     )
     .await
@@ -390,4 +395,147 @@ async fn a_pending_research_turn_keeps_its_request_for_the_picture_sweep() {
 
     let kept = resumable_request_ids(&store).await.unwrap();
     assert_eq!(kept, [pending.request_id.unwrap()].into_iter().collect());
+}
+
+/// The chat's model, which moves the chat to the default while it answers:
+/// a picker change during a turn must not reach the turn.
+struct ChosenThenChanged {
+    inner: Arc<Scripted>,
+    conversations: Arc<crate::features::conversation::mocks::MockConversationService>,
+    conversation_id: String,
+}
+
+#[async_trait]
+impl LLMPort for ChosenThenChanged {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.conversations
+            .set_model_choice(&self.conversation_id, ChatModelChoice::Default)?;
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "model-b"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn model_b() -> ModelRef {
+    ModelRef::Local {
+        model_id: "model-b".into(),
+    }
+}
+
+/// The research runtime with `default` as the Settings default, and the
+/// first attempt's chat set to model B.
+async fn chat_on_model_b(
+    pool: &sqlx::SqlitePool,
+    default: Arc<Scripted>,
+) -> (FakeRuntime, Arc<JobRuntime>, FirstAttempt) {
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(default),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    runtime
+        .conversations
+        .set_model_choice(
+            attempt.request.conversation_id.as_deref().unwrap(),
+            ChatModelChoice::Explicit { model: model_b() },
+        )
+        .unwrap();
+    (runtime, jobs, attempt)
+}
+
+#[tokio::test]
+async fn a_resumed_research_turn_answers_with_the_chats_model_and_records_it() {
+    let pool = pool().await;
+    let default = Scripted::new([]);
+    let chosen = Scripted::new([CompletionResponse::from_text(
+        "Shredding, then leaching recovers most of the lithium.",
+    )]);
+    let (mut runtime, jobs, attempt) = chat_on_model_b(&pool, default.clone()).await;
+    let conversation_id = attempt.request.conversation_id.clone().unwrap();
+    runtime.models = vec![(
+        model_b(),
+        Arc::new(ChosenThenChanged {
+            inner: chosen.clone(),
+            conversations: runtime.conversations.clone(),
+            conversation_id: conversation_id.clone(),
+        }),
+    )];
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(DeepResearchJob::new(runtime.share(), silent())),
+        job_config(),
+    )
+    .await
+    .unwrap();
+    let job = finished(&jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
+    assert_eq!(chosen.requests().len(), 1);
+    assert!(default.requests().is_empty(), "the default never answers");
+    let conversation = runtime
+        .conversations
+        .get_conversation(&conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let answer = conversation
+        .messages()
+        .iter()
+        .find(|message| message.role == MessageRole::Assistant)
+        .expect("the answer is on the thread")
+        .clone();
+    let metadata: serde_json::Value =
+        serde_json::from_str(answer.metadata.as_deref().unwrap()).unwrap();
+    let recorded = &metadata["turn"]["model"];
+    assert_eq!(recorded["name"], "model-b");
+    assert_eq!(recorded["origin"], "chat_override");
+    assert_eq!(
+        recorded["model"],
+        serde_json::json!({"kind": "local", "model_id": "model-b"})
+    );
+    // The chat moved to the default mid-turn; the turn kept the model it pinned.
+    assert_eq!(*conversation.model_choice(), ChatModelChoice::Default);
+    jobs.close();
+    jobs.drain().await;
+}
+
+#[tokio::test]
+async fn a_research_turn_resumed_after_its_model_was_deleted_fails_and_never_falls_back() {
+    let pool = pool().await;
+    let default = Scripted::new([]);
+    // Model B is chosen but no longer downloaded.
+    let (runtime, jobs, attempt) = chat_on_model_b(&pool, default.clone()).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(DeepResearchJob::new(runtime.share(), silent())),
+        job_config(),
+    )
+    .await
+    .unwrap();
+    let job = finished(&jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("local:model-b is not downloaded")),
+        "{:?}",
+        job.error_message
+    );
+    assert!(default.requests().is_empty(), "the default never answers");
+    jobs.close();
+    jobs.drain().await;
 }

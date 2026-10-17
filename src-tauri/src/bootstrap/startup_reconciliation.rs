@@ -333,7 +333,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('c', 'c', 'm')")
+        sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
             .await
             .unwrap();
@@ -454,7 +454,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('c', 'c', 'm')")
+        sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
             .await
             .unwrap();

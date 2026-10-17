@@ -155,3 +155,34 @@ fn reading_web_pages_is_a_switch_that_defaults_on() {
     let loaded: SettingsDto = serde_json::from_value(value).unwrap();
     assert!(!loaded.search.retrieval_tuning.read_web_pages);
 }
+
+/// The Learning model is unset until the user chooses one. A settings file
+/// written before the field existed loads with it unset, and a chosen model
+/// survives the round trip under `llm.learningModel`.
+#[test]
+fn the_learning_model_loads_with_or_without_the_field() {
+    use crate::domain::models::model_ref::ModelRef;
+
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let llm = value
+        .pointer_mut("/llm")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("llm settings are serialized under llm");
+    assert_eq!(llm.remove("learningModel"), Some(serde_json::Value::Null));
+    let loaded: SettingsDto = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(loaded.llm.learning_model, None);
+
+    let chosen = serde_json::json!({"kind": "local", "model_id": "qwen3.5-27b"});
+    value["llm"]["learningModel"] = chosen.clone();
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        loaded.llm.learning_model,
+        Some(ModelRef::Local {
+            model_id: "qwen3.5-27b".into()
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap()["llm"]["learningModel"],
+        chosen
+    );
+}

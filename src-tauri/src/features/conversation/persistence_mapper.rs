@@ -9,7 +9,8 @@
 
 use chrono::{DateTime, Utc};
 use lattice_core::domain::conversation::{
-    CompactionRecord, Conversation, ConversationMessage, DocumentReference, MessageRole,
+    ChatModelChoice, CompactionRecord, Conversation, ConversationMessage, DocumentReference,
+    MessageRole,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ConversationId;
@@ -26,12 +27,23 @@ use std::str::FromStr;
 pub struct ConversationModel {
     pub id: String,
     pub title: String,
-    pub model_name: String,
+    pub model_choice: Option<String>,
     pub system_prompt: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub message_count: i64,
     pub total_tokens: i64,
+}
+
+/// `conversations.model_choice`, in [`ChatModelChoice`]'s stored form.
+pub struct ModelChoiceColumn;
+
+impl ModelChoiceColumn {
+    pub fn to_column(choice: &ChatModelChoice) -> Result<Option<String>> {
+        choice
+            .to_stored()
+            .map_err(|e| AppError::Serialization(format!("model choice {choice:?}: {e}")))
+    }
 }
 
 /// Database model for conversation messages.
@@ -85,17 +97,21 @@ impl ConversationRowMapper {
     /// # Returns
     ///
     /// Database model ready for persistence.
-    pub fn to_model(entity: &Conversation) -> ConversationModel {
-        ConversationModel {
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Serialization` if the model choice cannot be written
+    pub fn to_model(entity: &Conversation) -> Result<ConversationModel> {
+        Ok(ConversationModel {
             id: entity.id.to_string(),
             title: entity.title.clone(),
-            model_name: entity.model_name.clone(),
+            model_choice: ModelChoiceColumn::to_column(&entity.model_choice)?,
             system_prompt: entity.system_prompt.clone(),
             created_at: entity.created_at.to_rfc3339(),
             updated_at: entity.updated_at.to_rfc3339(),
             message_count: entity.message_count,
             total_tokens: entity.total_tokens,
-        }
+        })
     }
 
     /// Convert database model to domain entity.
@@ -112,6 +128,7 @@ impl ConversationRowMapper {
     ///
     /// - `AppError::InvalidData` if timestamps cannot be parsed
     /// - `AppError::InvalidData` if conversation ID is invalid
+    /// - `AppError::Database` if the model choice is unreadable
     pub fn to_entity(model: &ConversationModel) -> Result<Conversation> {
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
@@ -126,7 +143,7 @@ impl ConversationRowMapper {
         Ok(Conversation {
             id,
             title: model.title.clone(),
-            model_name: model.model_name.clone(),
+            model_choice: ChatModelChoice::from_column(&model.id, model.model_choice.as_deref())?,
             system_prompt: model.system_prompt.clone(),
             created_at,
             updated_at,
@@ -299,13 +316,18 @@ impl ConversationSummaryMapper {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use lattice_core::domain::models::model_ref::ModelRef;
 
     #[test]
     fn test_conversation_mapper_round_trip() {
         let entity = Conversation {
             id: ConversationId::new(),
             title: "Test Chat".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
+            model_choice: ChatModelChoice::Explicit {
+                model: ModelRef::Local {
+                    model_id: "ornith-1.5-9b".into(),
+                },
+            },
             system_prompt: Some("Be helpful".to_string()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -313,15 +335,27 @@ mod tests {
             total_tokens: 1000,
         };
 
-        let model = ConversationRowMapper::to_model(&entity);
+        let model = ConversationRowMapper::to_model(&entity).unwrap();
         let converted = ConversationRowMapper::to_entity(&model).unwrap();
 
         assert_eq!(converted.id, entity.id);
         assert_eq!(converted.title, entity.title);
-        assert_eq!(converted.model_name, entity.model_name);
+        assert_eq!(converted.model_choice, entity.model_choice);
         assert_eq!(converted.system_prompt, entity.system_prompt);
         assert_eq!(converted.message_count, entity.message_count);
         assert_eq!(converted.total_tokens, entity.total_tokens);
+    }
+
+    #[test]
+    fn an_unreadable_model_choice_names_its_conversation() {
+        for unreadable in ["", r#"{"kind":"local"}"#] {
+            let error = ChatModelChoice::from_column("chat-7", Some(unreadable)).unwrap_err();
+            assert!(
+                matches!(&error, AppError::Database(message)
+                    if message.starts_with("conversation chat-7 has an unreadable model_choice: ")),
+                "{unreadable:?} gave {error:?}"
+            );
+        }
     }
 
     #[test]

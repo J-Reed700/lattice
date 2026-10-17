@@ -4,9 +4,7 @@ use super::*;
 
 /// An aggregate with `count` alternating user/assistant messages, 10 tokens each.
 fn aggregate_with_messages(count: usize) -> ConversationAggregate {
-    let mut aggregate =
-        ConversationAggregate::new("Test".to_string(), "test-model".to_string(), None)
-            .expect("aggregate");
+    let mut aggregate = ConversationAggregate::new("Test".to_string(), None).expect("aggregate");
     for i in 0..count {
         let role = if i % 2 == 0 {
             MessageRole::User
@@ -110,7 +108,7 @@ fn test_conversation_serialization_camelcase() {
     let conv = Conversation {
         id: ConversationId::new(),
         title: "Test Conversation".to_string(),
-        model_name: "claude-sonnet-4-5-20250929".to_string(),
+        model_choice: ChatModelChoice::Default,
         system_prompt: Some("You are helpful".to_string()),
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -119,8 +117,8 @@ fn test_conversation_serialization_camelcase() {
     };
     let json = serde_json::to_string(&conv).unwrap();
     assert!(
-        json.contains("\"modelName\":"),
-        "Expected modelName in JSON"
+        json.contains("\"modelChoice\":"),
+        "Expected modelChoice in JSON"
     );
     assert!(
         json.contains("\"systemPrompt\":"),

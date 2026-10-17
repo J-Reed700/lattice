@@ -38,7 +38,6 @@ impl ConversationSpaceRepository {
             icon,
             accent_color,
             space_prompt,
-            default_model_name,
             tool_preferences_json,
         } = request;
 
@@ -53,8 +52,8 @@ impl ConversationSpaceRepository {
             r#"
             INSERT INTO conversation_spaces (
                 id, name, description, icon, accent_color, space_prompt,
-                default_model_name, tool_preferences_json, is_archived, sort_order, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+                tool_preferences_json, is_archived, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
             "#,
         )
         .bind(&id)
@@ -63,7 +62,6 @@ impl ConversationSpaceRepository {
         .bind(&icon)
         .bind(&accent_color)
         .bind(&space_prompt)
-        .bind(&default_model_name)
         .bind(&tool_preferences_json)
         .bind(&now)
         .bind(&now)
@@ -117,7 +115,7 @@ impl ConversationSpaceRepository {
         sqlx::query_as::<_, ConversationSpaceDto>(
             r#"
             SELECT
-                id, name, description, icon, accent_color, space_prompt, default_model_name,
+                id, name, description, icon, accent_color, space_prompt,
                 tool_preferences_json, is_archived, sort_order, created_at, updated_at
             FROM conversation_spaces
             WHERE id = ?

@@ -24,10 +24,10 @@ use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools,
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
+use crate::features::llm::instances::LlmInstances;
 use crate::features::web::services::web::WebService;
-use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
-use lattice_core::application::ports::{LLMPort, SettingsSideEffectsPort};
+use lattice_core::application::ports::SettingsSideEffectsPort;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -36,12 +36,6 @@ use std::sync::Arc;
 
 mod accessors;
 mod port_bindings;
-
-/// Named-model cache (router / utility roles), keyed by model name.
-pub(crate) type NamedLlmCache = Arc<ModelCache<String, Arc<dyn LLMPort>>>;
-
-/// Single-slot chat model cache.
-pub(crate) type ChatLlmCache = Arc<ModelCache<(), Arc<dyn LLMPort>>>;
 
 /// Composition root for the application's dependency graph.
 ///
@@ -87,14 +81,9 @@ pub struct Container {
     /// actually read — something the model's tool output has no field for.
     pub(crate) web_service: Arc<WebService>,
 
-    /// Router LLM cache (optional smaller routing model)
-    pub(crate) router_llm_cache: NamedLlmCache,
-
-    /// Utility LLM cache (HyDE expansion, intent routing, follow-up)
-    pub(crate) utility_llm_cache: NamedLlmCache,
-
-    /// Chat cache owns single-flight loading and invalidation-safe publication.
-    pub(crate) llm_cache: ChatLlmCache,
+    /// Every LLM loaded now, for every role: chats, the Learning model, the
+    /// router and the utility model.
+    pub(crate) llm_instances: Arc<LlmInstances>,
     /// Owns embedding readiness checks, loading, and retry cooldown.
     pub(crate) embedding_runtime: Arc<EmbeddingRuntime>,
 
@@ -109,13 +98,12 @@ pub struct Container {
     pub(crate) vault_rescan_lock: crate::features::vault::watcher::RescanLock,
 
     /// Settings side-effects port (audit P0-3 fix). Built post-AI-module
-    /// so it has access to the LLM cache + router LLM cache + function
+    /// so it has access to the loaded LLM instances and the function
     /// executor. Injected into freshly-constructed
     /// `UpdateSettingsUseCase` / `ResetSettingsUseCase` instances on
     /// every `Container::*_settings_use_case()` call so internal
     /// callers (tests, watch-folder helpers, future migration scripts)
-    /// trigger cache invalidation just like the Tauri command path
-    /// did manually before.
+    /// invalidate stale models just like the Tauri command path.
     pub(crate) settings_side_effects: Arc<dyn SettingsSideEffectsPort>,
 
     /// Durable background jobs. Features register a handler per kind during
@@ -208,9 +196,7 @@ impl Container {
     ) -> Result<Self> {
         // These are populated asynchronously when models load
         let embedding_runtime = Arc::new(EmbeddingRuntime::new());
-        let llm_cache: ChatLlmCache = Arc::new(ModelCache::new());
-        let router_llm_cache = Arc::new(ModelCache::new());
-        let utility_llm_cache = Arc::new(ModelCache::new());
+        let llm_instances = Arc::new(LlmInstances::new());
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
         // State more than one feature reaches. Each is built once, here, and
@@ -277,7 +263,7 @@ impl Container {
             super::modules::AIModule::new(
                 db_pool.clone(),
                 core.clone(),
-                llm_cache.clone(),
+                llm_instances.clone(),
                 llm_endpoint,
                 llm_model,
                 backend_devices,
@@ -368,9 +354,7 @@ impl Container {
 
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
             Arc::new(ContainerSettingsSideEffects {
-                llm_cache: llm_cache.clone(),
-                router_llm_cache: router_llm_cache.clone(),
-                utility_llm_cache: utility_llm_cache.clone(),
+                llm_instances: llm_instances.clone(),
                 function_executor: function_executor.clone(),
                 settings_repository: system.settings_repo().clone(),
                 db_pool: core.db_pool().clone(),
@@ -414,9 +398,7 @@ impl Container {
             function_registry,
             function_executor,
             web_service,
-            router_llm_cache,
-            utility_llm_cache,
-            llm_cache,
+            llm_instances,
             embedding_runtime,
             vault_writer,
             vault_write_suppression,

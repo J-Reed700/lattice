@@ -6,12 +6,17 @@ import { makeAppSettings } from '../../tests/fixtures/appSettings';
 import {
   buildChatModelOptions,
   cleanModelDisplayName,
+  CLOUD_PROVIDER_MODEL_ID,
+  formatContextLabel,
   formatModelSize,
   formatServerEndpoint,
+  isUnavailableChatModel,
   LLAMACPP_SERVER_MODEL_ID,
+  modelRefForOption,
+  modelRefForRow,
   OLLAMA_SERVER_MODEL_ID,
-  resolveActiveChatOption,
-  resolveChatModel,
+  resolveDefaultChatOption,
+  resolveEffectiveChatOption,
 } from '../chatModelSelection';
 
 const makeModel = (overrides: Partial<DownloadedModel>): DownloadedModel => ({
@@ -31,43 +36,181 @@ const makeModel = (overrides: Partial<DownloadedModel>): DownloadedModel => ({
   ...overrides,
 });
 
-describe('chat provider selection', () => {
-  it('prefers configured llama.cpp over the legacy Ollama shortcut in Auto', () => {
-    const settings = makeAppSettings().llm;
-    settings.provider = 'auto';
-    settings.llamaCpp.model = 'qwen.gguf';
-    expect(resolveChatModel(settings, '__ollama_server__')).toBe('qwen.gguf');
-    expect(resolveChatModel(settings, null)).toBe('qwen.gguf');
-    expect(resolveChatModel(settings, 'local.gguf')).toBe('local.gguf');
+const settingsWith = (patch: (llm: ReturnType<typeof makeAppSettings>['llm']) => void) => {
+  const llm = makeAppSettings().llm;
+  patch(llm);
+  return llm;
+};
+
+describe('the Settings default as a picker row', () => {
+  it('prefers a configured llama.cpp over the legacy Ollama shortcut in Auto, and a local model over both', () => {
+    const settings = settingsWith((llm) => {
+      llm.provider = 'auto';
+      llm.llamaCpp.url = 'http://127.0.0.1:8080';
+      llm.llamaCpp.model = 'qwen.gguf';
+    });
+    const ollamaRow = makeModel({ id: 'o', model_id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama', is_active_for_chat: true });
+    expect(resolveDefaultChatOption(settings, [ollamaRow])?.ref).toEqual({ kind: 'llama_cpp', model: 'qwen.gguf' });
+    expect(resolveDefaultChatOption(settings, [])?.ref).toEqual({ kind: 'llama_cpp', model: 'qwen.gguf' });
+    const local = makeModel({ model_id: 'local.gguf', is_active_for_chat: true });
+    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'local', model_id: 'local.gguf' });
     settings.provider = 'local';
-    expect(resolveChatModel(settings, '__ollama_server__')).toBeNull();
+    expect(resolveDefaultChatOption(settings, [ollamaRow])).toBeNull();
   });
-  it('enables llama.cpp without a download and gives it precedence over local models', () => {
-    const settings = makeAppSettings().llm;
-    settings.provider = 'llamacpp';
-    settings.llamaCpp.model = 'qwen.gguf';
-    expect(resolveChatModel(settings, null)).toBe('qwen.gguf');
-    expect(resolveChatModel(settings, 'local.gguf')).toBe('qwen.gguf');
+
+  it('gives llama.cpp precedence over a local model when it is the provider, and nothing without its model', () => {
+    const settings = settingsWith((llm) => {
+      llm.provider = 'llamacpp';
+      llm.llamaCpp.url = 'http://127.0.0.1:8080';
+      llm.llamaCpp.model = 'qwen.gguf';
+    });
+    const local = makeModel({ model_id: 'local.gguf', is_active_for_chat: true });
+    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'llama_cpp', model: 'qwen.gguf' });
     settings.llamaCpp.model = '';
-    expect(resolveChatModel(settings, 'local.gguf')).toBeNull();
+    expect(resolveDefaultChatOption(settings, [local])).toBeNull();
   });
-  it('preserves explicit Ollama and local selection and auto fallback', () => {
-    const settings = makeAppSettings().llm;
-    settings.model = 'ollama-model';
-    settings.provider = 'ollama';
-    expect(resolveChatModel(settings, 'local.gguf')).toBe('ollama-model');
+
+  it('follows an explicit Ollama provider, and falls back to it in Auto', () => {
+    const settings = settingsWith((llm) => {
+      llm.model = 'ollama-model';
+      llm.provider = 'ollama';
+      llm.ollamaConfigured = true;
+    });
+    const local = makeModel({ model_id: 'local.gguf', is_active_for_chat: true });
+    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'ollama', model: 'ollama-model' });
     settings.provider = 'local';
-    expect(resolveChatModel(settings, null)).toBeNull();
+    expect(resolveDefaultChatOption(settings, [])).toBeNull();
     settings.provider = 'auto';
-    expect(resolveChatModel(settings, 'local.gguf')).toBe('local.gguf');
-    expect(resolveChatModel(settings, null)).toBe('ollama-model');
+    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'local', model_id: 'local.gguf' });
+    expect(resolveDefaultChatOption(settings, [])?.ref).toEqual({ kind: 'ollama', model: 'ollama-model' });
   });
-  it('resolves cloud providers including Google to configured model', () => {
-    const settings = makeAppSettings().llm;
-    settings.model = 'gemini-2.5-flash';
-    settings.provider = 'google';
-    expect(resolveChatModel(settings, 'local.gguf')).toBe('gemini-2.5-flash');
-    expect(resolveChatModel(settings, null)).toBe('gemini-2.5-flash');
+
+  it('names a cloud provider and its model, Google included', () => {
+    const settings = settingsWith((llm) => {
+      llm.model = 'gemini-2.5-flash';
+      llm.provider = 'google';
+    });
+    const option = resolveDefaultChatOption(settings, [makeModel({ is_active_for_chat: true })]);
+    expect(option?.ref).toEqual({ kind: 'cloud', provider: 'google', model: 'gemini-2.5-flash' });
+    expect(option?.triggerLabel).toBe('Google · gemini-2.5-flash');
+  });
+});
+
+describe('modelRefForOption', () => {
+  const settings = settingsWith((llm) => {
+    llm.provider = 'openai';
+    llm.model = ' gpt-x ';
+    llm.llamaCpp.model = '/models/served.gguf';
+  });
+
+  it('maps all five row shapes to the model they name', () => {
+    expect(modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings))
+      .toEqual({ kind: 'llama_cpp', model: '/models/served.gguf' });
+    expect(modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings))
+      .toEqual({ kind: 'ollama', model: 'gpt-x' });
+    expect(modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, settings))
+      .toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-x' });
+    expect(modelRefForOption({ id: 'ornith-1.5-9b', backend: 'local' }, settings))
+      .toEqual({ kind: 'local', model_id: 'ornith-1.5-9b' });
+    // An explicit Ollama row names its own tag, not the Settings tag.
+    expect(modelRefForOption({ id: 'qwen3:8b', backend: 'ollama' }, settings))
+      .toEqual({ kind: 'ollama', model: 'qwen3:8b' });
+  });
+
+  it('refuses a cloud row when Settings names no cloud provider', () => {
+    const local = settingsWith((llm) => { llm.provider = 'local'; });
+    expect(() => modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, local)).toThrow();
+  });
+
+  it('puts the same reference on each built row', () => {
+    const withConnections = settingsWith((llm) => {
+      llm.provider = 'ollama';
+      llm.model = 'llama3.2:latest';
+      llm.llamaCpp.url = 'http://127.0.0.1:8080';
+      llm.llamaCpp.model = 'served.gguf';
+    });
+    const rows = [makeModel({ model_id: 'local-a' }), makeModel({ id: 'o2', model_id: 'qwen3:8b', backend: 'ollama' })];
+    for (const option of buildChatModelOptions(withConnections, rows)) {
+      expect(option.ref).toEqual(modelRefForOption(option, withConnections));
+    }
+  });
+});
+
+describe('modelRefForRow', () => {
+  it('names a local row, an explicit Ollama row, and the connection row by its Settings tag', () => {
+    const settings = settingsWith((llm) => { llm.model = 'qwen3:8b'; });
+    expect(modelRefForRow(makeModel({ model_id: 'local-a' }), settings)).toEqual({ kind: 'local', model_id: 'local-a' });
+    expect(modelRefForRow(makeModel({ model_id: 'mistral:latest', backend: 'ollama' }), settings))
+      .toEqual({ kind: 'ollama', model: 'mistral:latest' });
+    expect(modelRefForRow(makeModel({ model_id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }), settings))
+      .toEqual({ kind: 'ollama', model: 'qwen3:8b' });
+    expect(modelRefForRow(makeModel({ model_id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }), undefined)).toBeNull();
+  });
+});
+
+describe('resolveEffectiveChatOption', () => {
+  const settings = settingsWith((llm) => {
+    llm.provider = 'local';
+    llm.ollamaConfigured = true;
+    llm.model = 'llama3.2:latest';
+  });
+  const big = makeModel({ id: 'r1', model_id: 'qwen3.5-27b', model_name: 'Qwen3.5-27B', is_active_for_chat: true });
+  const small = makeModel({ id: 'r2', model_id: 'ornith-1.5-9b', model_name: 'Ornith-1.5-9B' });
+
+  it('gives the Settings default to a chat on the default, and nothing when none is set', () => {
+    expect(resolveEffectiveChatOption({ kind: 'default' }, settings, [big, small])).toMatchObject({ id: 'qwen3.5-27b', isDefault: true });
+    expect(resolveEffectiveChatOption({ kind: 'default' }, settings, [small])).toBeNull();
+  });
+
+  it("gives a chat its own model even when Settings names another", () => {
+    const chosen = resolveEffectiveChatOption(
+      { kind: 'explicit', model: { kind: 'local', model_id: 'ornith-1.5-9b' } }, settings, [big, small]);
+    expect(chosen).toMatchObject({ id: 'ornith-1.5-9b', label: 'Ornith-1.5-9B', isDefault: false });
+  });
+
+  it('reports a deleted local model as unavailable instead of substituting another', () => {
+    const chosen = resolveEffectiveChatOption(
+      { kind: 'explicit', model: { kind: 'local', model_id: 'ornith-1.5-9b' } }, settings, [big]);
+    expect(isUnavailableChatModel(chosen)).toBe(true);
+    expect(chosen).toEqual({
+      unavailable: true,
+      label: 'ornith-1.5-9b',
+      reason: 'This chat is set to ornith-1.5-9b, which is no longer downloaded.',
+    });
+  });
+
+  it('keeps a remote tag Settings has moved on from, and refuses one whose connection is gone', () => {
+    const tag = { kind: 'explicit' as const, model: { kind: 'ollama' as const, model: 'qwen3:8b' } };
+    expect(resolveEffectiveChatOption(tag, settings, [big])).toMatchObject({
+      ref: { kind: 'ollama', model: 'qwen3:8b' }, triggerLabel: 'Ollama · qwen3:8b', backend: 'ollama',
+    });
+    const noOllama = settingsWith((llm) => { llm.ollamaUrl = ' '; });
+    expect(resolveEffectiveChatOption(tag, noOllama, [big])).toEqual({
+      unavailable: true,
+      label: 'qwen3:8b',
+      reason: 'This chat uses qwen3:8b on Ollama, but no Ollama connection is configured.',
+    });
+    const llama = { kind: 'explicit' as const, model: { kind: 'llama_cpp' as const, model: 'served.gguf' } };
+    const noLlama = settingsWith((llm) => { llm.llamaCpp.url = ''; });
+    expect(isUnavailableChatModel(resolveEffectiveChatOption(llama, noLlama, []))).toBe(true);
+  });
+
+  it('keeps a cloud model after Settings moves to another provider', () => {
+    const cloud = { kind: 'explicit' as const, model: { kind: 'cloud' as const, provider: 'anthropic' as const, model: 'claude-x' } };
+    expect(resolveEffectiveChatOption(cloud, settings, [big])).toMatchObject({ triggerLabel: 'Anthropic · claude-x', backend: 'cloud' });
+  });
+
+  it('assumes nothing is missing before Settings has loaded', () => {
+    const tag = { kind: 'explicit' as const, model: { kind: 'ollama' as const, model: 'qwen3:8b' } };
+    expect(isUnavailableChatModel(resolveEffectiveChatOption(tag, undefined, []))).toBe(false);
+  });
+});
+
+describe('formatContextLabel', () => {
+  it('shows a saved window exactly and an Auto window rounded', () => {
+    expect(formatContextLabel({ configured_context_length: 8704, trained_context_length: 32768 })).toBe('8,704 ctx · set by you');
+    expect(formatContextLabel({ configured_context_length: null, trained_context_length: 32768 })).toBe('32K ctx');
+    expect(formatContextLabel({ configured_context_length: null, trained_context_length: null })).toBeNull();
   });
 });
 
@@ -132,13 +275,13 @@ describe('buildChatModelOptions', () => {
     // Synthetic __ollama_server__ is NOT present because Ollama is not configured
     expect(options.some((o) => o.id === OLLAMA_SERVER_MODEL_ID)).toBe(false);
 
-    // Configured llama.cpp is present and active
+    // Configured llama.cpp is present, and it is the Settings default
     const llamaCppOption = options.find((o) => o.id === LLAMACPP_SERVER_MODEL_ID);
     expect(llamaCppOption).toBeDefined();
     expect(llamaCppOption?.triggerLabel).toBe('llama.cpp · Qwen3.8-27B-Q5_K_S.gguf');
     expect(llamaCppOption?.label).toBe('Qwen3.8-27B-Q5_K_S.gguf');
     expect(llamaCppOption?.subtitle).toBe('127.0.0.1:8080');
-    expect(llamaCppOption?.isActive).toBe(true);
+    expect(llamaCppOption?.isDefault).toBe(true);
 
     // Local model is present
     const localOption = options.find((o) => o.id === 'qwen-local');
@@ -146,12 +289,12 @@ describe('buildChatModelOptions', () => {
     expect(localOption?.label).toBe('Qwen 3.8B');
     expect(localOption?.triggerLabel).toBe('Qwen 3.8B');
     expect(localOption?.subtitle).toBe('4.0 GB · qwen-local');
-    expect(localOption?.isActive).toBe(false);
+    expect(localOption?.isDefault).toBe(false);
   });
 });
 
-describe('resolveActiveChatOption', () => {
-  it('marks the local model active when provider === local and llama.cpp active when provider === llamacpp', () => {
+describe('resolveDefaultChatOption', () => {
+  it('names the local model the default when provider === local, and llama.cpp when provider === llamacpp', () => {
     const settings = makeAppSettings().llm;
     settings.provider = 'local';
     settings.llamaCpp.url = 'http://127.0.0.1:8080';
@@ -165,19 +308,19 @@ describe('resolveActiveChatOption', () => {
     });
 
     // When provider is 'local'
-    const activeLocalOption = resolveActiveChatOption(settings, [localModel]);
-    expect(activeLocalOption).toBeDefined();
-    expect(activeLocalOption?.id).toBe('qwen-local');
-    expect(activeLocalOption?.isActive).toBe(true);
-    expect(activeLocalOption?.backend).toBe('local');
+    const defaultLocalOption = resolveDefaultChatOption(settings, [localModel]);
+    expect(defaultLocalOption).toBeDefined();
+    expect(defaultLocalOption?.id).toBe('qwen-local');
+    expect(defaultLocalOption?.isDefault).toBe(true);
+    expect(defaultLocalOption?.backend).toBe('local');
 
     // When provider is 'llamacpp'
     settings.provider = 'llamacpp';
-    const activeLlamaOption = resolveActiveChatOption(settings, [localModel]);
-    expect(activeLlamaOption).toBeDefined();
-    expect(activeLlamaOption?.id).toBe(LLAMACPP_SERVER_MODEL_ID);
-    expect(activeLlamaOption?.triggerLabel).toBe('llama.cpp · Qwen3.8-27B-Q5_K_S.gguf');
-    expect(activeLlamaOption?.isActive).toBe(true);
-    expect(activeLlamaOption?.backend).toBe('llamacpp');
+    const defaultLlamaOption = resolveDefaultChatOption(settings, [localModel]);
+    expect(defaultLlamaOption).toBeDefined();
+    expect(defaultLlamaOption?.id).toBe(LLAMACPP_SERVER_MODEL_ID);
+    expect(defaultLlamaOption?.triggerLabel).toBe('llama.cpp · Qwen3.8-27B-Q5_K_S.gguf');
+    expect(defaultLlamaOption?.isDefault).toBe(true);
+    expect(defaultLlamaOption?.backend).toBe('llamacpp');
   });
 });

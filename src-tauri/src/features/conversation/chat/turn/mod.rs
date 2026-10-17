@@ -1,6 +1,6 @@
 //! One chat turn, as a sequence of stages with typed hand-offs:
 //!
-//! 1. [`prepare`]: validate, load the model, open the conversation, read its
+//! 1. [`prepare`]: validate, open the conversation, pin its model, read its
 //!    history and settings, and plan the turn's budget.
 //! 2. [`classify`]: what the turn needs (intent), then where to look (router).
 //! 3. [`carry`]: the material the turn reads whole — attachments, the folder.
@@ -21,6 +21,7 @@
 //! assembler's plan when the request is assembled.
 use super::dto::SourceDto;
 use super::*;
+use lattice_core::domain::models::model_ref::ModelRef;
 
 mod assemble;
 mod budget;
@@ -36,6 +37,8 @@ mod retrieve;
 pub(super) use research::{AssembledTurn, Research, ResearchJournal, ResearchRound, Rounds, Saved};
 
 #[cfg(test)]
+mod pin_tests;
+#[cfg(test)]
 mod tests;
 
 /// What the caller asked of a turn.
@@ -48,6 +51,10 @@ pub(super) struct TurnRequest {
     pub(super) request_id: Option<String>,
     pub(super) attachment_names: Vec<String>,
     pub(super) attachment_document_ids: Vec<String>,
+    /// A model for this request only, over the chat's own choice. Never
+    /// persisted on the chat; a research turn carries it in its job so a
+    /// resumed turn answers with the same model.
+    pub(super) model: Option<ModelRef>,
 }
 
 /// Run one chat turn.
@@ -75,6 +82,7 @@ pub(super) async fn run_turn(
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
     attachment_document_ids: Option<Vec<String>>,
+    model: Option<ModelRef>,
     emit: ChatEventSink,
 ) -> Result<ChatResponse> {
     if cancel_only.unwrap_or(false) {
@@ -114,6 +122,7 @@ pub(super) async fn run_turn(
         request_id,
         attachment_names: attachment_names.unwrap_or_default(),
         attachment_document_ids: attachment_document_ids.unwrap_or_default(),
+        model,
     };
     if SearchFlags::from_preferences(request.tool_preferences.as_ref()).deep_research_mode {
         return super::research_job::run(container, request, emit).await;
@@ -158,6 +167,7 @@ pub(super) async fn run_stages(
         request.conversation_id.clone(),
         &request.message,
         request.request_id.clone(),
+        request.model.as_ref(),
         preferences,
         parent.as_ref(),
         emit,

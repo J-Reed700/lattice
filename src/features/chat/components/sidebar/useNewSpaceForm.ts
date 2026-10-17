@@ -45,7 +45,6 @@ export function useNewSpaceForm(editor: ReturnType<typeof useSpaceEditor>) {
         icon: JOURNAL_SPACE_DEFAULT_ICON,
         accentColor: JOURNAL_SPACE_DEFAULT_ACCENT,
         spacePrompt: null,
-        defaultModelName: null,
         toolPreferencesJson: null,
       });
       setSelectedSpace(null);

@@ -44,6 +44,14 @@ pub enum LLMError {
     #[error("{0}")]
     SidecarBinaryUnusable(String),
 
+    /// The bundled engine cannot read this model file: its architecture,
+    /// quantization or tensor layout is not one this build supports. Unlike a
+    /// startup timeout or a launch killed for memory, every later attempt
+    /// fails the same way until the file changes. The message is complete
+    /// and user-facing.
+    #[error("{0}")]
+    ModelUnsupported(String),
+
     #[error(transparent)]
     #[serde(serialize_with = "serialize_io_error")]
     Io(#[from] std::io::Error),
@@ -239,6 +247,7 @@ impl From<crate::features::llm::engine::types::LLMError> for AppError {
             LLMError::PlatformNotSupported(msg) => AppError::ServiceNotAvailable(msg),
             // Not `ModelLoadFailed`: nothing is wrong with the model.
             LLMError::SidecarBinaryUnusable(msg) => AppError::ServiceNotAvailable(msg),
+            LLMError::ModelUnsupported(msg) => AppError::ModelLoadFailed(msg),
             LLMError::Io(e) => AppError::Io {
                 message: e.to_string(),
                 kind: format!("{:?}", e.kind()),

@@ -383,8 +383,8 @@ async fn fixture() -> Fixture {
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES (?, 'Pictures', 'model', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES (?, 'Pictures', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",
     )
     .bind(CONVERSATION)
     .execute(&pool)
@@ -752,8 +752,8 @@ async fn a_copied_message_keeps_its_pictures_when_the_original_is_deleted() {
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES (?, 'Fork', 'model', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES (?, 'Fork', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",
     )
     .bind(FORK)
     .execute(&fx.pool)

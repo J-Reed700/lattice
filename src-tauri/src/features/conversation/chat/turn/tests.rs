@@ -507,3 +507,23 @@ fn picture_guidance_comes_only_with_find_image() {
         super::assemble::with_picture_guidance("Policy.", &[tool("find_image")])
     );
 }
+
+#[test]
+fn a_research_turn_resumes_needing_tools_only_when_it_was_planned_with_them() {
+    use lattice_core::application::ports::llm_port::ToolSupport;
+    let search = lattice_core::application::ports::ToolDefinition {
+        name: "web_search".into(),
+        description: "Search the web".into(),
+        parameters: serde_json::json!({ "type": "object" }),
+    };
+
+    assert_eq!(
+        prepare::resume_requirements(&[search]).tools,
+        ToolSupport::Required
+    );
+    // Planned on a model without tools: it resumes on one without tools too.
+    assert_eq!(
+        prepare::resume_requirements(&[]).tools,
+        ToolSupport::NotNeeded
+    );
+}

@@ -1,7 +1,7 @@
 use super::retrieval::WEB_SOURCE_PREFIX;
 use super::{
-    CapturedSourcesDto, RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnStepDto,
-    VerificationReadyDto,
+    CapturedSourcesDto, RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnModelDto,
+    TurnStepDto, VerificationReadyDto,
 };
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 pub(super) use lattice_core::application::contracts::sources::SourceDto;
@@ -173,6 +173,11 @@ pub struct ChatStreamEventDto {
     /// per verified answer, possibly well after `done`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationReadyDto>,
+
+    /// The model this turn is pinned to. Sent once, as soon as the turn has
+    /// it, so the reader knows what is answering before the first token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<TurnModelDto>,
 
     /// Cited pages captured after the turn returned. Arrives once per answer
     /// that cited a page it never read, before that answer's grounding check.

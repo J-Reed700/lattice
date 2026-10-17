@@ -115,7 +115,7 @@ fn to_conversation_dto(
     crate::features::conversation::dto::ConversationDto {
         id: c.id.to_string(),
         title: c.title.clone(),
-        model_name: c.model_name.clone(),
+        model_choice: c.model_choice.clone(),
         system_prompt: c.system_prompt.clone(),
         created_at: c.created_at.to_rfc3339(),
         updated_at: c.updated_at.to_rfc3339(),

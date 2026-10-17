@@ -22,15 +22,12 @@ import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
-import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
-import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
-import { resolveActiveChatOption } from '@/utils/chatModelSelection';
 
 interface MessageProps {
   message: DisplayMessage;
@@ -66,6 +63,7 @@ export const Message = memo(({
   const messageRetrieval = useConversationsStore((s) => s.messageRetrieval);
   const liveRetrieval = useConversationsStore((s) => s.liveRetrieval);
   const liveSteps = useConversationsStore((s) => s.liveSteps);
+  const liveModel = useConversationsStore((s) => s.liveModel);
   const messageTurn = useConversationsStore((s) => s.messageTurn);
   const inFlightGenerations = useConversationsStore((s) => s.inFlightGenerations);
   const selectConversation = useConversationsStore((s) => s.selectConversation);
@@ -74,8 +72,6 @@ export const Message = memo(({
   // and reads back where the viewer found it.
   const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
   const showCitations = useCitationDisplayStore((s) => s.visible);
-  const { data: settings } = useSettingsQuery();
-  const { downloadedModels = [] } = useDownloadedModels();
 
   const messageId = 'id' in message ? message.id : undefined;
   const messageBookmark = messageId ? messageBookmarkMap.get(messageId) : undefined;
@@ -154,7 +150,7 @@ export const Message = memo(({
   const {
     isEditing,
     setIsEditing,
-    activeModel,
+    modelChoice,
     handleCopy,
     handleBookmarkToggle,
     handleRegenerate,
@@ -173,12 +169,6 @@ export const Message = memo(({
     isMessageBookmarked,
     normalizedMarkdownContent,
   });
-
-  const activeChatOption = resolveActiveChatOption(
-    settings?.llm,
-    downloadedModels,
-    activeModel?.model_id ?? null
-  );
 
   const {
     citationMap, citationNumbers, openCitation, openSource, provenanceBySource,
@@ -264,6 +254,7 @@ export const Message = memo(({
           trace={retrievalTrace}
           record={messageId ? messageTurn.get(messageId) ?? null : null}
           liveSteps={isPending && conversationId ? liveSteps.get(conversationId) ?? null : null}
+          liveModel={isPending && conversationId ? liveModel.get(conversationId) ?? null : null}
           turnStartedAt={turnStartedAt}
           isPending={!isUser && isPending}
           isWriting={message.content.trim().length > 0}
@@ -354,7 +345,7 @@ export const Message = memo(({
           canBranch={Boolean(conversationId && messageId)}
           isBookmarked={isMessageBookmarked}
           isBusy={isBusy}
-          activeModelId={activeChatOption?.id ?? activeModel?.model_id ?? null}
+          modelChoice={modelChoice}
           onCopy={handleCopy}
           onBookmarkToggle={handleBookmarkToggle}
           onDelete={handleDeleteMessage}

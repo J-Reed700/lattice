@@ -17,7 +17,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => ({ default: api, VaultAPI: api }));
 
 const space = (id: string, name: string, isArchived = false) => ({
-  id, name, description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null,
+  id, name, description: null, icon: null, accentColor: null, spacePrompt: null,
   toolPreferencesJson: null, isArchived, sortOrder: 0, createdAt: '2026-10-09T10:00:00Z', updatedAt: '2026-10-09T10:00:00Z',
 });
 
@@ -58,7 +58,7 @@ describe('space mutations', () => {
     const { result } = renderHook(() => useSpaceMutations(), { wrapper });
     await act(async () => {
       await result.current.create.mutateAsync({
-        name: 'Movies', description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null,
+        name: 'Movies', description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null,
       });
     });
     // Resolving waits for the refreshed list, so the caller can select the new space at once.
@@ -74,7 +74,7 @@ describe('space mutations', () => {
     await act(async () => {
       await result.current.update.mutateAsync({
         spaceId: 'space_movies', name: 'Films', description: null, icon: null, accentColor: null,
-        defaultModelName: null, spacePrompt: null, toolPreferencesJson: null,
+        spacePrompt: null, toolPreferencesJson: null,
       });
     });
     expect(client.getQueryState(spaceKeys.list)?.isInvalidated).toBe(true);

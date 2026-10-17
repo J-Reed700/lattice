@@ -1,19 +1,18 @@
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
-import { ArrowUp, ChevronDown, Cloud, HardDrive, Library, Network, Paperclip, Settings2, Square } from 'lucide-react';
+import { ArrowUp, ChevronDown, Library, Paperclip, Settings2, Square } from 'lucide-react';
 
 import { ChatDropStaging } from '@/features/chat/components/ChatDropStaging';
 import { ChatModelNotice, type ChatModelNoticeProps } from '@/features/chat/components/ChatModelNotice';
+import { ChatModelButton, type ChatModelButtonProps } from '@/features/chat/components/composer/ChatModelButton';
 import { ComposerSuggest } from '@/features/chat/components/composer/ComposerSuggest';
 import { FocusChips } from '@/features/chat/components/composer/FocusChips';
 import { ModeChips } from '@/features/chat/components/composer/ModeChips';
 import { ComposerControls } from '@/features/chat/components/ComposerControls';
-import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
 import type { AttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
 import type { ComposerState } from '@/features/chat/hooks/useComposer';
 import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
-import type { ChatModelBackend } from '@/utils/chatModelSelection';
 
 /** The textarea points at the suggestion list through this, for screen readers. */
 const SUGGEST_LIST_ID = 'composer-suggest-list';
@@ -28,14 +27,8 @@ interface ComposerProps {
   chips?: ReactNode;
   /** The space this chat searches, shown when there is a choice to make. */
   space: { id: string | null; name: string | null; onChange: (_spaceId: string, _spaceName: string) => void } | null;
-  model: {
-    id: string | null;
-    label: string | null;
-    backend?: ChatModelBackend | null;
-    onSelect: (_modelId: string, _modelLabel: string) => void | Promise<void>;
-    /** The palette opens the picker by clicking this. */
-    triggerRef: RefObject<HTMLButtonElement | null>;
-  };
+  /** This chat's model: what answers it, and the picker that changes it for this chat only. */
+  model: ChatModelButtonProps;
   isSending: boolean;
   isCompacting: boolean;
   isChatUnavailable: boolean;
@@ -217,31 +210,7 @@ export function Composer({
               </SpacePickerPopover>
             )}
 
-            {model.label && (
-              <ModelPickerPopover
-                activeModelId={model.id}
-                onSelect={model.onSelect}
-                side="top"
-                align="start"
-              >
-                <button
-                  ref={model.triggerRef}
-                  type="button"
-                  title="Active chat model"
-                  className="inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))]"
-                >
-                  {model.backend === 'llamacpp' || model.backend === 'ollama' ? (
-                    <Network className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
-                  ) : model.backend === 'cloud' ? (
-                    <Cloud className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
-                  ) : (
-                    <HardDrive className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
-                  )}
-                  <span className="truncate">{model.label}</span>
-                  <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} />
-                </button>
-              </ModelPickerPopover>
-            )}
+            <ChatModelButton {...model} />
 
             <ModeChips
               turnMode={composer.turnMode}

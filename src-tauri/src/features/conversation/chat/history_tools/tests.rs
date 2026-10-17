@@ -31,8 +31,8 @@ async fn migrated_pool() -> SqlitePool {
 
 async fn seed_conversation(pool: &SqlitePool, id: &str, title: &str) {
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES (?, ?, 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES (?, ?, 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
     )
     .bind(id)
     .bind(title)

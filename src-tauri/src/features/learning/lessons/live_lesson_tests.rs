@@ -10,6 +10,7 @@
 use super::*;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
 
 #[path = "live_claim_pairs_eval.rs"]
 mod claim_pairs;
@@ -833,7 +834,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
-            Box::pin(async move { Ok(llm) })
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
         load_library: Arc::new(|| Box::pin(async { None })),
         refresh_sources: Arc::new(move |program_id| {

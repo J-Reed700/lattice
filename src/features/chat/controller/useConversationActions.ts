@@ -1,15 +1,13 @@
 import { useCallback } from 'react';
 
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
-import { settingsQueryOptions } from '@/features/settings/hooks/useSettingsQuery';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { VaultAPI } from '@/lib/api';
-import type { ConversationTangentDto } from '@/lib/bindings';
+import type { ChatModelChoice, ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { CompactionResult } from '@/shared/conversations/conversationsStore.types';
 import type { Conversation } from '@/types/conversation';
-import { resolveChatModel } from '@/utils/chatModelSelection';
 
 import {
   forgetRequestedConversation,
@@ -53,21 +51,9 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       setUiError(error);
       throw error;
     }
-    const [activeModelsResult, settings] = await Promise.all([
-      VaultAPI.getActiveModels(),
-      queryClient.ensureQueryData(settingsQueryOptions()).catch(() => null),
-    ]);
-    const activeModel = activeModelsResult.ok ? activeModelsResult.data.chat_model : null;
-    const llmSettings = settings?.llm ?? null;
-    const spaceModel = selectedSpace?.defaultModelName?.trim();
-    const modelName = spaceModel || resolveChatModel(llmSettings, activeModel?.model_id ?? null);
-    if (!modelName) {
-      const error = new Error('No chat model available. Select a chat provider and model in Settings.');
-      setUiError(error);
-      throw error;
-    }
-
-    const result = await VaultAPI.createConversation(title, modelName);
+    // A new chat answers with the Settings default until it chooses its own
+    // model, so making one needs no model: the first turn says what is missing.
+    const result = await VaultAPI.createConversation(title);
     if (!result.ok) {
       const error = new Error(result.error);
       setUiError(error);
@@ -102,6 +88,27 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     await invalidateLists();
     return id;
   }, [invalidateLists, queryClient]);
+
+  /**
+   * Set the model this chat answers with. Only this chat changes: Settings,
+   * the model rows and every other chat stay as they are. The saved
+   * conversation replaces the cached one, and the backend's reason is thrown
+   * when the model cannot be used, for the caller to show.
+   */
+  const setConversationModelChoice = useCallback(async (
+    id: string,
+    choice: ChatModelChoice
+  ): Promise<Conversation> => {
+    const result = await VaultAPI.setConversationModelChoice(id, choice);
+    if (!result.ok) throw new Error(result.error);
+    const saved = result.data as Conversation;
+    queryClient.setQueryData<Conversation | null>(conversationKeys.detail(id), current =>
+      current ? { ...current, ...saved } : saved);
+    queryClient.setQueriesData<Conversation[]>({ queryKey: conversationKeys.lists }, current =>
+      current?.map(item => item.id === id ? { ...item, modelChoice: saved.modelChoice } : item));
+    await queryClient.invalidateQueries({ queryKey: conversationKeys.detail(id) });
+    return saved;
+  }, [queryClient]);
 
   const setConversationFlag = useCallback(async (
     id: string,
@@ -261,7 +268,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
 
   return {
     invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,
-    loadConversations, loadMessageBookmarks, createConversation,
+    loadConversations, loadMessageBookmarks, createConversation, setConversationModelChoice,
     setConversationSaved, setConversationBookmarked, setConversationPinned,
     setConversationArchived, renameConversation, bookmarkMessage, unbookmarkMessage,
     moveConversationToSpace, loadConversationLinkedDocuments, loadConversationWebSources,

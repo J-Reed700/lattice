@@ -249,8 +249,7 @@ mod tests {
     fn a_replayed_answer_shows_its_pictures_as_captions() {
         use crate::domain::conversation::{ConversationAggregate, MessageRole};
 
-        let mut aggregate =
-            ConversationAggregate::new("Chat".into(), "model".into(), None).unwrap();
+        let mut aggregate = ConversationAggregate::new("Chat".into(), None).unwrap();
         aggregate
             .add_message(MessageRole::User, "Show me ![it](img-1)".into(), 3)
             .unwrap();

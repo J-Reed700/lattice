@@ -361,7 +361,7 @@ pub(super) async fn run_and_confirm(
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = live.clone();
-            Box::pin(async move { Ok(llm) })
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
         load_library: Arc::new(|| Box::pin(async { None })),
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
