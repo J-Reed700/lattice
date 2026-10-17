@@ -1581,7 +1581,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
   await page.goto('/chat?conversationId=patent-chat');
-  await expect(page.getByText('llama.cpp · qwen-test.gguf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Model for this chat: qwen-test.gguf (app default).' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: '1 file failed to import: mpep-2100.pdf' })).toBeVisible();
   const composer = page.getByRole('textbox', { name: 'Message composer' });
   await composer.fill('Help me learn the MPEP using only cited PDF passages.');
@@ -1614,7 +1614,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   await expect(page.getByText('Processing — not ready to search yet', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/lattice-import-recovered.png', animations: 'disabled' });
   await page.goto('/chat?conversationId=patent-chat');
-  await expect(page.getByText('llama.cpp · qwen-test.gguf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Model for this chat: qwen-test.gguf (app default).' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Review import history' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
