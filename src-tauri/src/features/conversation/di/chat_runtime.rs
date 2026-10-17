@@ -4,6 +4,8 @@ use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::interfaces::di::Container;
 use async_trait::async_trait;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::llm_port::OptionalLlmLoader;
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::shared::error::Result;

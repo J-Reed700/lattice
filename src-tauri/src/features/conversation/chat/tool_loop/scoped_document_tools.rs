@@ -1,11 +1,11 @@
 //! Follow-up document tools obey the same scope as initial chat retrieval.
 use crate::features::conversation::chat::focus::FocusScope;
-use crate::features::conversation::chat::ports::{ChatRuntime, FunctionCall, FunctionResult};
-use crate::features::function_calling::dto::{
-    AttachmentItem, DocumentResult, ListAttachmentsOutput, SearchMode, SemanticSearchInput,
-    SemanticSearchOutput,
-};
+use crate::features::conversation::chat::ports::ChatRuntime;
 use lattice_core::application::contracts::search::{SearchModeDto, SearchRequestDto};
+use lattice_core::application::contracts::tools::{
+    AttachmentItem, DocumentResult, FunctionCall, FunctionResult, ListAttachmentsOutput,
+    SearchMode, SemanticSearchInput, SemanticSearchOutput,
+};
 use lattice_core::shared::error::{AppError, Result};
 
 /// Tools that can reach the user's own documents, and therefore may only run

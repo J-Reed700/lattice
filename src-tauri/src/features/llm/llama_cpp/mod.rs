@@ -13,8 +13,8 @@ use futures::StreamExt;
 use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
-        CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingPolicy,
-        ToolDefinition,
+        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
+        ThinkingPolicy,
     },
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -300,16 +300,6 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
     coalesce_system_messages(messages)
 }
 
-/// Tool definitions in the OpenAI `tools` shape llama-server renders through
-/// the model's chat template.
-pub(crate) fn tool_specs(tools: &[ToolDefinition]) -> Value {
-    json!(tools
-        .iter()
-        .map(|t| json!({"type":"function",
-            "function":{"name":t.name,"description":t.description,"parameters":t.parameters}}))
-        .collect::<Vec<_>>())
-}
-
 /// The server's chat template may allow only one system message at index zero.
 /// Normalize typed/native requests too, without changing history or tool payloads.
 fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
@@ -537,29 +527,6 @@ const MAX_TOOL_CALLS_PER_ROUND: usize = 128;
 /// Stands in for the name of a call that gave none, so the replayed history
 /// still has a name the chat template can render.
 const UNNAMED_TOOL: &str = "unnamed_tool";
-
-/// The arguments of a tool call the model wrote but that cannot be run.
-///
-/// Kept as a JSON object so the replayed history stays parseable, carrying the
-/// model's raw text so the error it is shown quotes what it actually wrote.
-pub(crate) fn invalid_tool_arguments(raw: &str, problem: &str) -> Value {
-    json!({"invalid": true, "raw": raw, "error": problem})
-}
-
-/// Why a call cannot be run, when its arguments are the marker
-/// [`invalid_tool_arguments`] wrote.
-pub(crate) fn invalid_tool_call_problem(arguments: &Value) -> Option<String> {
-    let object = arguments.as_object()?;
-    if object.len() != 3 || object.get("invalid") != Some(&Value::Bool(true)) {
-        return None;
-    }
-    let raw = object.get("raw")?.as_str()?;
-    let problem = object.get("error")?.as_str()?;
-    Some(format!(
-        "Tool call not run: {problem}. You wrote: {}. Call the tool again with a complete JSON object of arguments, or answer from what you have.",
-        lattice_core::shared::text::safe_truncate(raw, 400)
-    ))
-}
 
 pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     let choice = value

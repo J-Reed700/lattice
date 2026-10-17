@@ -5,12 +5,12 @@ use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
 use super::search::{fuse, match_expression, FolderHit};
 use super::store::{self, FolderStore};
 use super::tool;
-use crate::features::explorer::dto::ExplorerFocusDto;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
 use async_trait::async_trait;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
@@ -1101,7 +1101,7 @@ mod model {
             "{out}"
         );
         assert!(out.contains("`src/b.rs:10-10`\n  10│ fn b() {}\n"), "{out}");
-        assert!(crate::features::explorer::line_refs::contains_line_reference(&out));
+        assert!(lattice_core::shared::text::contains_line_reference(&out));
 
         let long: Vec<String> = (0..200).map(|n| format!("let line_{n} = {n};")).collect();
         let long_refs: Vec<&str> = long.iter().map(String::as_str).collect();

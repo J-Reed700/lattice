@@ -116,7 +116,7 @@ pub(super) fn build_llm_tool_definitions(
     let registry = container.tools();
     let domain_tools = registry.list_tools();
     let mut definitions: Vec<lattice_core::application::ports::ToolDefinition> = domain_tools
-        .iter()
+        .into_iter()
         .filter(|tool| {
             let tool_name = tool.name.as_str();
             if CORE_TOOL_NAMES.contains(&tool_name) {
@@ -140,11 +140,7 @@ pub(super) fn build_llm_tool_definitions(
                 .as_ref()
                 .is_none_or(|allowlist| allowlist.contains(tool_name))
         })
-        .map(|t| lattice_core::application::ports::ToolDefinition {
-            name: t.name.clone(),
-            description: t.description.clone(),
-            parameters: t.input_schema.clone(),
-        })
+        .map(Into::into)
         .collect();
 
     let existing_names: HashSet<String> =

@@ -39,7 +39,6 @@ mod web_tools;
 mod tests;
 
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::search::use_cases::HybridSearchUseCase;
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
@@ -48,6 +47,7 @@ use crate::features::web::WebServiceTrait;
 use async_trait::async_trait;
 use jsonschema::JSONSchema;
 use lattice_core::application::contracts::settings::CustomToolSettingsDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
     RecentDocumentsRepositoryPort,

@@ -26,7 +26,7 @@ use crate::features::conversation::chat::fetch_memory::{self, Delivery, FetchMem
 use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::history_tools::{self, HistoryToolMemo};
 use crate::features::conversation::chat::ports::{
-    ChatRecords, ChatRuntime, ExplorerTurn, FetchUrlContentOutput, FunctionCall, FunctionResult,
+    ChatRecords, ChatRuntime, ExplorerTurn, FetchUrlContentOutput,
 };
 use crate::features::conversation::chat::retrieval::{
     assign_citation_ids, deduplicate_sources, document_page_room, fetched_page_text_room,
@@ -39,6 +39,7 @@ use crate::features::conversation::chat::{
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::explorer::tools::is_explorer_tool;
 use futures::{FutureExt, StreamExt};
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::Result;
@@ -320,7 +321,7 @@ impl<'a> ToolCalls<'a> {
         // A call the model wrote but that cannot be run is answered with why,
         // and the model tries again.
         if let Some(problem) =
-            crate::features::llm::llama_cpp::invalid_tool_call_problem(&call.arguments)
+            lattice_core::application::ports::llm_port::invalid_tool_call_problem(&call.arguments)
         {
             warn!(
                 requested_function = call.name.as_str(),

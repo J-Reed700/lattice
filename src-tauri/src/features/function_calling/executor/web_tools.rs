@@ -2,8 +2,8 @@
 //! and `wiki_summary`.
 
 use super::{FunctionExecutor, WIKIPEDIA_USER_AGENT};
-use crate::features::function_calling::domain::FunctionResult;
-use crate::features::function_calling::dto::*;
+use lattice_core::application::contracts::tools::FunctionResult;
+use lattice_core::application::contracts::tools::*;
 use lattice_core::application::contracts::web::WebSearchInput;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, USER_AGENT};

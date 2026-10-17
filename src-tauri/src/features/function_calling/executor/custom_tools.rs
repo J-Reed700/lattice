@@ -1,9 +1,9 @@
 //! User-configured custom query tools: execution and argument validation.
 
 use super::FunctionExecutor;
-use crate::features::function_calling::domain::FunctionResult;
-use crate::features::function_calling::dto::*;
 use lattice_core::application::contracts::settings::CustomToolSettingsDto;
+use lattice_core::application::contracts::tools::FunctionResult;
+use lattice_core::application::contracts::tools::*;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 use url::Url;

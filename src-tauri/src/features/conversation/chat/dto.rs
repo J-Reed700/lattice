@@ -3,7 +3,7 @@ use super::{
     CapturedSourcesDto, RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnStepDto,
     VerificationReadyDto,
 };
-pub(crate) use crate::features::explorer::dto::ExplorerFocusDto;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 pub(super) use lattice_core::application::contracts::sources::SourceDto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

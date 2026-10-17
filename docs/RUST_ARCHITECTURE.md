@@ -401,7 +401,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   model gets the folder block from `prompt.rs` and read-only tools confined to
   the root (`list_directory`, `read_file`, `search_files`, `find_files`, and
   `search_folder` from the index). Answers point at lines with the
-  `path:10-24` grammar parsed in `line_refs.rs`.
+  `path:10-24` grammar parsed in core's `shared/text/line_refs.rs`.
 - `explorer/index` keeps a semantic index per folder under
   `<data_dir>/folder-index/`: a `chunks.db` and a vectors file keyed by the
   embedding identity. The index lives outside `lattice.db`, so backups do not

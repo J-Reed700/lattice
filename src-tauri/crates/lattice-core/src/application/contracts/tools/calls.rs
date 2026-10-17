@@ -9,8 +9,14 @@
 //! - **FunctionResult**: Execution outcome with success/error handling
 //!
 //! These models enforce business rules (e.g., valid tool names, parameter schemas).
+//!
+//! This `ToolDefinition` is the registry's: the frontend lists it with an
+//! `input_schema` field. The model-facing one is
+//! [`llm_port::ToolDefinition`](crate::application::ports::llm_port::ToolDefinition),
+//! whose `parameters` field is persisted with each research job. The two JSON
+//! shapes differ, so they stay two types; `From` turns this one into that one.
 
-use lattice_core::shared::error::{AppError, Result};
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
