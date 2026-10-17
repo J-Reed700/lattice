@@ -504,7 +504,7 @@ v1 refuses up front with the numbers and the fix. Rationale kept for the later c
 
 **e2e**: fixtures updated; journeys: pick a model in a folder chat → recorded command is `set_conversation_model_choice` with that id and `get_settings`/`set_active_chat_model` unchanged; Settings → Models: assign Learning → `update_settings` with `learningModel`.
 
-**Live manual script (Josh)**: 1) default chat 27B, Learning 27B; chat A (main), chat B (Explorer). 2) In B pick Ornith-9B → toast; Settings unchanged; A still "Default · 27B"; send in B → "Answering with Ornith-1.5-9B"; `list_loaded_models` shows both, B pinned. 3) While B streams, pick 27B in B → streaming keeps 9B; next message uses 27B. 4) Start a lesson prep with B on 9B → progress names 27B. Set Learning to Ornith-9B (window 8,704), start another → fails immediately with the §6.3 text; no relaunch in the log. Set 9B's window to Auto → runs, shares the process with B if B is on 9B (one instance id). 5) In A "Try with Ornith-9B" → answered with 9B, A still Default; "Use for this chat" → A shows 9B. 6) Delete Ornith-9B → A, B show unavailable; Learning banner "not downloaded any more"; sending in A fails with the text + "Use default"; lesson refuses with the Learning text; nothing in Settings changed by itself. 7) Change the Ollama URL → an Ollama-override chat follows it. 8) Force a GPU fallback (e.g. `n_gpu_layers=0` via a debug env the sidecar already honours, or a model that exceeds Metal's buffer limit) → "· on CPU" on the composer, the stream line, the turn record. 9) Quit with a research turn running in B; relaunch → resumes on B's model.
+**Live manual script (Josh)** — superseded by the runnable checklist in §18, which follows what was built: 1) default chat 27B, Learning 27B; chat A (main), chat B (Explorer). 2) In B pick Ornith-9B → toast; Settings unchanged; A still "Default · 27B"; send in B → "Answering with Ornith-1.5-9B"; `list_loaded_models` shows both, B pinned. 3) While B streams, pick 27B in B → streaming keeps 9B; next message uses 27B. 4) Start a lesson prep with B on 9B → progress names 27B. Set Learning to Ornith-9B (window 8,704), start another → fails immediately with the §6.3 text; no relaunch in the log. Set 9B's window to Auto → runs, shares the process with B if B is on 9B (one instance id). 5) In A "Try with Ornith-9B" → answered with 9B, A still Default; "Use for this chat" → A shows 9B. 6) Delete Ornith-9B → A, B show unavailable; Learning banner "not downloaded any more"; sending in A fails with the text + "Use default"; lesson refuses with the Learning text; nothing in Settings changed by itself. 7) Change the Ollama URL → an Ollama-override chat follows it. 8) Force a GPU fallback (e.g. `n_gpu_layers=0` via a debug env the sidecar already honours, or a model that exceeds Metal's buffer limit) → "· on CPU" on the composer, the stream line, the turn record. 9) Quit with a research turn running in B; relaunch → resumes on B's model.
 
 ## 13. Implementation plan (executable by Opus agents with no other context)
 
@@ -599,3 +599,99 @@ No per-space model tier. No per-message persisted model. No idle unload timer. N
 ## 16. Citation index
 
 Chat cache `di.rs:182-190`; aliases `container.rs:41-44`; cache internals `model_cache.rs:29-33, 60-82, 104-133`; loader `loading.rs:143-192, 495-569, 575-620 (590)`; cloud `loading.rs:157-183`, `cloud.rs:44-71`; sidecar factory `factory.rs:83-128, 229-346 (317-325 degraded, 337-343 config)`; sidecar key `config.rs:36-76`; context override `config.rs:412-459`; auto size `config.rs:151-200, 247-285`; share `startup.rs:33-62`; resident bytes `registry.rs:261-272`; kill `registry.rs:225`; handle drop `process.rs:157-165`; LLMPort `llm_port.rs:112-230`; prepare `prepare.rs:11-39, 125-134, 272-293`; finalize `finalize.rs:67-71, 151`; turn DTOs `turn_record.rs:131-134`; stream DTO `chat/dto.rs` (`ChatStreamEventDto`); request `turn/mod.rs:44-51`; ports `chat/ports.rs:25-36, 386-396`; runtime impl `chat_runtime.rs:14-30, 187-196`; compaction `compaction.rs:36-60`; learning loaders `learning/plugin/generation.rs:81-84`, `program.rs:81, 128`, `generation_jobs.rs:196-198, 343`; learning window contract `model_call.rs:1-8, 105-120`; warm-up clears row `warm_up.rs:16-38`; set active `active_models.rs:9-35`; settings invalidation `settings_side_effects.rs:97-102`, `settings/plugin.rs:614-616`; settings update `use_cases/update.rs:33-98, 102-121`; schema `init_schema.sql:308-315, 345-367, 380-396, 862-869`; fork copy `fork.rs:67, 162-172, 280-283`; roles UI `roleConfig.ts:16-91`, `RoleButton.tsx:26-60`, `ModelRolesContext.tsx:91-112`, `OllamaMetaRow.tsx:54`, `LocalModelRow.tsx:174-175`; warm-up store `modelWarmupStore.ts:7, 84-87`, `useModelWarmupListener.ts:27`; frontend switch `useChatSwitchActions.ts:40-50, 79-153 (126)`; try-with `useMessageActions.ts:61-67, 99-188`; selection utils `chatModelSelection.ts:6-10, 26-39, 72-109, 111-230`; picker `ModelPickerPopover.tsx:18-24, 95-100`; composer `Composer.tsx:221-243`; panel `ChatPanel.tsx:48, 133-151, 183-188, 191-194, 393-399`; create `useConversationActions.ts:56-70`; models hook `useDownloadedModels.ts:23, 43-54, 68, 89, 120-133`; settings callers `ModelRolesContext.tsx:105`, `ModelDetailPanel.tsx:214`; record UI `TurnRecord.tsx:239`; explorer `ExplorerChat.tsx:108`; bindings `bindings.ts:1090-1092, 1146, 1818`; eslint `eslint.config.js:67, 365, 449-461`; e2e settings fixture `e2e/helpers/learningStudioBackend.ts:1085`.
+
+## 17. As built
+
+Built by tracks A0 (`bf661de2`), B (`b9c892ad`…`faec7fad`), C (`71c52a83`…`0275b85a`), A1 (`91342d8a`, `904bce71`, `eab0a15f`, `9faaad9a`, `f39f83bc`, `97137902`) and integration I: merge `d138dc64` (main at `bba563ec`), `27589047` (memory refusal fails once), `ab5da4d0` (the window shortfall beside the Learning role), `6292f697` (clippy), `dc7ffcf4` (e2e label), `73f287fb` (structured-call window refusal), merge `a1e7d767` (main at `32c379c4`). What differs from §1–§16, and why:
+
+**Contracts and resolution**
+- `PinnedModel` lives in lattice-core (`application/ports/llm_port.rs`), not in `src-tauri`: the `ChatModels` port in core names it in its signatures.
+- `ChatModelChoice::to_stored` / `from_stored` exist: the repository stores Default as `NULL` and a choice as `ModelRef` JSON, and the backup export writes the same shape.
+- `createConversation` keeps its request object (`CreateConversationRequestDto` without `model_name`), not positional `(title, systemPrompt)`.
+- `chat_llm_for` reads `model_choice` with its own `SELECT model_choice FROM conversations WHERE id = ?` in the llm feature instead of `conversation_records().model_choice(id)`, so llm does not import conversation (no new feature edge).
+- QA health resolves through `pinned_default_chat_llm`; its DTO's `model` is the `ModelRef` the default resolved to, plus a new `model_name` (what the server reports). `default_chat_llm` stays for callers that only need the client.
+
+**Instance pool and admission (§5)**
+- The pool key is `ModelKey { model, launch, tuning }`. `Tuning` (Standard / Utility / Router) is new: the utility and router clients carry their own output ceiling and temperature, so they are separate clients — but they share the one server process, because the sidecar is keyed by the launch profile alone. Chat, learning and maintenance share `Standard`, hence one client.
+- Admission prices a new bundled server against every running server except its own (another window of the same GGUF counts).
+- `load_ref` returns the client with its server facts (`CreatedLlm`), and `load(settings)` was removed: the Settings default also loads through `load_ref` after resolution.
+- **The memory refusal is `ModelLoadFailed`, not `ServiceNotAvailable`** (§5.4, §9; integration commit "Fail learning work once when its model does not fit in GPU memory"). `ServiceNotAvailable` is transient to the job runtime and to `patiently`, so a lesson job was deferred and redelivered without end and an outline waited and retried, with the refusal never shown. `ModelLoadFailed` is what an engine's `InsufficientMemory` already maps to and is not transient: a lesson job fails once with the refusal as written, an outline returns it at once. Side effect: compaction treats a utility model refused for memory as "utility failed to load" and summarises with the turn's pinned chat model. The §6 table's note that `patiently` fails `ServiceNotAvailable` refusals once was wrong for that variant; it holds now. `ModelRejected` (server rejections) is a separate change on another branch.
+
+**Learning role (§6.2, §6.3)**
+- Floors are twice each job's answer reservation (the planner never reserves more than half a window): lessons 20,000 tokens (`LESSON_OUTPUT_RESERVE` 10,000), outlines 8,000, study decks and recall drafts by card count; practice, assessment, diagnostics and conversation decks size their answers to fit and state none. The 20,480 in §6.3's example is illustrative.
+- The refusal raised when the Learning model is loaded (or its saved window is checked before launch) is generic — "Learning work needs a context window of at least 20,000 tokens. Your Learning model, X, is set to 8,704 in Settings → Models. Set it to Auto (≈N on this Mac right now) or 20,000 or more, or choose a larger Learning model." — because the instance pool does not know the course. The learning feature's own `ensure_window` check names the work ("Preparing 'X' needs…"), but every learning call passes its requirements to `learning_llm`, so the pool refuses first.
+- **The refusal text beside the Learning role (built by I).** `last_learning_window_shortfall` (model plugin) returns `LearningWindowShortfallDto { model, needed_tokens, window_tokens, window_is_saved }`: the last learning work refused because the Learning model's window was too small. `LlmInstances` records it where the pool refuses a Learning window and forgets it once that model serves learning work with a window that covers it. Settings → Models shows "Learning work needs a context window of N tokens; this model has M." on the row that holds the role — local rows, the Ollama row and the llama.cpp row — comparing against the row's saved window, so raising the window far enough clears the line at once and moving it to Auto clears it until work runs again. Two deviations: the line is in the row's status area, beside "Didn't load" and "on CPU", not literally under the button, because the role buttons sit in a wrapping toolbar; and it is held in memory, so it is gone after a restart (the failed job keeps its message in Learning Studio).
+- Lesson and outline material that overflows the window (the structured call in `lessons/structured_call.rs`) is refused as that window refusal too — "The requested learning material does not fit in X's N-token context window. Raise your Learning model's context length in Settings → Models, or choose a Learning model with a larger window" — instead of telling the learner to trim their sources, which that step gives them no way to do. `model_call::send` takes `TooLarge::Input` (learner-shortenable, `InvalidInput`) or `TooLarge::Window` (`window_too_small`, `InvalidConfig`); a plain message is `Input`, so the other callers are unchanged.
+- The delete warning for the Learning model is on `LocalModelRow`'s delete dialog, where downloaded models are deleted, not `ModelDetailPanel.tsx`.
+
+**Frontend (§10)**
+- API wrappers went into the feature clients (`src/features/*/api/client.ts`), which `VaultAPI` composes, not `src/lib/api.ts`.
+- The global-chat-model ESLint rule is two blocks: a flat-config block replaces an earlier block's `no-restricted-syntax`, so view files get a second block carrying the native-access selectors and the chat-model selectors together.
+
+**Merges with `origin/main`**
+- First merge (`bba563ec`, #69–#75):
+  - `eslint.config.js`: `VIEW_BACKEND_ALLOWLIST` is empty — main had emptied it except for `LocalModelRow.tsx`, which this branch had already moved onto hooks.
+  - `infrastructure/services/startup_reconciliation.rs` moved to `bootstrap/startup_reconciliation.rs` (#71); its test INSERTs without `conversations.model_name` (`0567ed8a`) moved with it.
+  - No other textual conflicts; #74's import paths in `conversation/di/chat_runtime.rs` and `interfaces/di/container/port_bindings.rs` merged cleanly. Main's PDF-import journey looked for the old picker label "llama.cpp · qwen-test.gguf"; it now checks the composer button's accessible name, "Model for this chat: qwen-test.gguf (app default)."
+- Second merge (`32c379c4`, #76–#80): `ChatStreamEventDto` carries both the pinned `model` and main's `captured` sources; `model_call::send` takes main's signature without a deadline plus `TooLarge`; practice tutoring and worked solutions run on the Learning model with main's calls, which dropped the tutor pace; `chat_runtime.rs` imports explorer and tool vocabulary from lattice-core; main's new `capture_tests.rs` creates its conversation without a model name. Bindings regenerated.
+
+**§12 corrections**
+- There is no debug switch that forces the CPU fallback; the ladder only runs when the GPU start fails (§18 step 9).
+- `list_loaded_models` has no screen of its own; sharing shows in the log as `model.resolved` lines with the same `instance_id` and `reused=true` (§18).
+
+## 18. Live checklist (Josh)
+
+Run on the built app with a real model set. Logs: `~/Library/Application Support/lattice/logs/lattice.log.<date>`; `grep -E "model\.(resolved|refused|admission|evicted|invalidated|degraded)|chat\.model_choice_set|settings\.learning_model_set"` shows every decision. Names below use Qwen3.5-27B as the Settings default and Ornith-1.5-9B as the second model; substitute yours. Tick each box only when every "Expect" holds.
+
+**0. Setup**
+- [ ] Settings → Models: Qwen3.5-27B holds Chat. Learning not set yet. Ornith-1.5-9B downloaded, its window (Configure model) on Auto.
+- [ ] Open chat A in the main chat view and chat B from Explorer (choose a folder, open its chat). Expect both composer buttons to read "Default · Qwen3.5-27B".
+
+**1. Per-chat override in the main chat**
+- [ ] In A open the model picker. Expect a "Use default (Qwen3.5-27B)" row first, rows as radio items, window badges ("32K ctx" / "8,704 ctx · set by you") and "no tools" where it applies.
+- [ ] Pick Ornith-1.5-9B. Expect the toast "This chat now uses Ornith-1.5-9B", the button "Ornith-1.5-9B for this chat", a `chat.model_choice_set` log line, and Settings → Models unchanged (Qwen3.5-27B still holds Chat).
+- [ ] Send a message. Expect "Answering with Ornith-1.5-9B" above the streaming answer and, once saved, the turn record "Ornith-1.5-9B · chosen for this chat".
+- [ ] While an answer streams in A, pick Qwen3.5-27B. Expect the streaming answer to finish on Ornith-1.5-9B; the next message answers with Qwen3.5-27B.
+
+**2. Per-chat override in an Explorer chat**
+- [ ] In B pick Ornith-1.5-9B and send. Expect "Ornith-1.5-9B for this chat" in B only; A shows its own choice.
+- [ ] With A on Qwen3.5-27B and B on Ornith-1.5-9B, send in both. Expect two `model.resolved` lines with different `instance_id`s, both models loaded at once, and neither unloaded by the other.
+- [ ] Pick "Use default" in B. Expect "This chat now uses the app default (Qwen3.5-27B)".
+
+**3. A global change does not move an overridden chat**
+- [ ] Set A to Ornith-1.5-9B; leave a third chat C on Default.
+- [ ] In Settings → Models make another model hold Chat (or change the chat provider). Expect C's button to follow ("Default · <new model>") and A to stay "Ornith-1.5-9B for this chat"; send in both and check the turn records ("· app default" vs "· chosen for this chat").
+- [ ] Put Qwen3.5-27B back on Chat.
+
+**4. "Try with another model" changes nothing global**
+- [ ] In C (Default), on an answer choose Try with another model → Ornith-1.5-9B. Expect the toast "Answered with Ornith-1.5-9B" with "Use Ornith-1.5-9B for this chat", the new answer's record "· one-off", C's button still "Default · Qwen3.5-27B", and Settings → Models unchanged.
+- [ ] Click "Use Ornith-1.5-9B for this chat". Expect "This chat now uses Ornith-1.5-9B" and C's button to switch; Settings still unchanged.
+
+**5. Learning role unset**
+- [ ] With Learning unset, Settings → Models shows "Learning: not set — lessons, outlines and study decks will not run until you choose one" with "Use Qwen3.5-27B (your chat model)".
+- [ ] In Learning Studio prepare a lesson. Expect it to fail at once with "No Learning model is set. Choose one in Settings → Models under Learning." and not to retry (the job stays Failed).
+- [ ] Click "Use Qwen3.5-27B (your chat model)". Expect a `settings.learning_model_set` line, the banner gone, and Qwen3.5-27B's Learning button pressed.
+
+**6. A lesson job ignores every chat's picker**
+- [ ] With A and B on Ornith-1.5-9B, prepare a lesson. Expect lesson progress "Model: Qwen3.5-27B" and a `model.resolved role=Learning model=…qwen…` line; no chat's choice or the chat default appears.
+- [ ] While it runs, change A's model. Expect the lesson to keep its model to the end.
+
+**7. Too small a window is refused, once, with the numbers**
+- [ ] Set Learning to Ornith-1.5-9B and its window (Configure model) to 8,704. Prepare a lesson. Expect an immediate failure reading "Learning work needs a context window of at least 20,000 tokens. Your Learning model, Ornith-1.5-9B, is set to 8,704 in Settings → Models. Set it to Auto (≈N on this Mac right now) or 20,000 or more, or choose a larger Learning model." (the Auto clause appears only when Auto would be large enough), a `model.refused … reason_code="window_too_small"` line, no new llama-server launch in the log, and no retry.
+- [ ] Open Settings → Models. Expect under Ornith-1.5-9B: "Learning work needs a context window of 20,000 tokens; this model has 8,704."
+- [ ] Set its window to Auto. Expect that line to disappear; prepare the lesson again and expect it to run. If B is on Ornith-1.5-9B with the same window, expect the same `instance_id` for B's turn and the lesson.
+
+**8. Deleting the Learning model**
+- [ ] Delete Ornith-1.5-9B from Settings → Models. Expect the dialog to warn "This is your Learning model. Lessons will stop until you choose another."
+- [ ] After deleting: the banner reads "Learning model Ornith-1.5-9B is not downloaded any more" with "Choose another"; chats set to it show "Ornith-1.5-9B unavailable" and the notice "This chat is set to Ornith-1.5-9B, which is no longer downloaded." with "Use default"; a message sent there anyway fails with the same sentence (the backend names the model by its id); a lesson fails once with "Your Learning model, <id>, is not downloaded any more. Choose one in Settings → Models under Learning."
+- [ ] Expect nothing in Settings to have changed by itself: the Learning setting still names Ornith-1.5-9B until you choose another.
+
+**9. Degraded CPU start wording**
+- [ ] There is no switch that forces it; it happens only when the GPU start of a llama-server fails and the sidecar retries on the CPU (a `model.degraded` warn line and "running in a degraded fallback configuration"). If you see one: expect "· on CPU" on the composer button with the reason in its tooltip, "Answering with X · on CPU" while streaming, the turn record "X · <origin> · ran on CPU: <reason>", and "Ready (on CPU: <reason>)" / "Loaded (on CPU: <reason>)" on the Settings row. If none occurs in this run, mark N/A: the wording is covered by `LocalModelRow.test.tsx`, `ChatModelButton`/`TurnRecord` tests and `instances/tests.rs`.
+
+**10. Not enough memory**
+- [ ] With Qwen3.5-27B answering in one chat, start a second chat on a model too large to fit beside it. Expect the refusal "Can't load X for this chat: it needs … and … is free. Qwen3.5-27B (… GB) is answering in '<chat>'. Wait for them to finish, stop them, or use Qwen3.5-27B for this chat.", a `model.admission … outcome` line, and the busy model still loaded.
+- [ ] Do the same for a lesson (Learning set to the large model while a chat answers). Expect the lesson to fail once with that message, not to sit "retrying automatically".
+
+**11. Restart**
+- [ ] Quit with a research turn running in a chat set to a non-default model; relaunch. Expect it to resume on that chat's model (`model.resolved … origin=ChatOverride`).
