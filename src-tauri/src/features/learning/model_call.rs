@@ -260,6 +260,59 @@ mod tests {
         assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
     }
 
+    /// A backend whose own window check refuses every request with the
+    /// numbers, as the scheduler and the llama.cpp client do.
+    struct Refusing;
+
+    const NUMBERED_REFUSAL: &str = "This request needs 9000 tokens: a prompt of 8500 (counted \
+         exactly) and 500 for the answer; the configured context window is 8192. It was not sent.";
+
+    #[async_trait::async_trait]
+    impl LLMPort for Refusing {
+        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+            Err(AppError::InvalidInput(NUMBERED_REFUSAL.into()))
+        }
+        fn model_name(&self) -> &str {
+            "refusing"
+        }
+        fn max_context_tokens(&self) -> usize {
+            32_000
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn the_backends_numbered_refusal_reaches_the_learner_once_and_unchanged() {
+        for too_large in [
+            TooLarge::Input("Choose fewer sources."),
+            TooLarge::Window("The requested learning material does not fit"),
+        ] {
+            let error = send(
+                &Refusing,
+                structured(
+                    "Return JSON.",
+                    "{}".into(),
+                    serde_json::json!({}),
+                    500,
+                    "low",
+                ),
+                None,
+                too_large,
+            )
+            .await
+            .err();
+            let Some(AppError::InvalidInput(message)) = error else {
+                panic!("expected the backend's refusal, got {error:?}");
+            };
+            assert_eq!(message, NUMBERED_REFUSAL);
+        }
+    }
+
     #[test]
     fn source_room_is_what_the_planner_leaves_under_the_ceiling() {
         let llm = recorder(32_000);

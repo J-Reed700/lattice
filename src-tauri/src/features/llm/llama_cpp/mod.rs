@@ -479,46 +479,46 @@ fn network_error(error: reqwest::Error) -> AppError {
     }
 }
 
-pub(crate) async fn check_status(mut response: reqwest::Response) -> Result<reqwest::Response> {
+/// `response` when it succeeded; otherwise a typed error, with the server's
+/// own words sanitized (see [`streaming::ServerFailure`]).
+pub(crate) async fn check_status(response: reqwest::Response) -> Result<reqwest::Response> {
+    server_status(response)
+        .await
+        .map_err(|failure| failure.error(&[]))
+}
+
+/// `response` when it succeeded; otherwise the server's account of why not,
+/// read from a bounded error envelope.
+async fn server_status(
+    mut response: reqwest::Response,
+) -> std::result::Result<reqwest::Response, streaming::ServerFailure> {
+    /// Error envelopes are small; a body past this is not one worth reading.
+    const ERROR_BODY_BYTES: usize = 16 * 1024;
     if response.status().is_success() {
         return Ok(response);
     }
     let status = response.status();
-    let mut description = format!(
-        "llama.cpp returned HTTP {} from {}",
-        status,
-        response.url().path()
-    );
-    // Read a bounded error envelope. Template errors can contain prompt fragments,
-    // so expose recognized causes rather than copying arbitrary server bodies.
+    let path = response.url().path().to_owned();
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs);
     let mut bytes = Vec::new();
     while let Ok(Some(chunk)) = response.chunk().await {
-        if bytes.len() + chunk.len() > 16 * 1024 {
+        if bytes.len() + chunk.len() > ERROR_BODY_BYTES {
             break;
         }
         bytes.extend_from_slice(&chunk);
     }
-    let error = serde_json::from_slice::<Value>(&bytes).ok();
-    if let Some(message) = error
-        .as_ref()
-        .and_then(|e| e.pointer("/error/message"))
-        .and_then(Value::as_str)
-    {
-        if message.contains("System message must be at the beginning") {
-            description.push_str(": the model requires a single system message at the beginning");
-        } else if message.contains("Unable to generate parser for this template") {
-            description.push_str(": the model's chat template rejected the message format");
-        }
-    }
-    if status.as_u16() == 429 {
-        Err(AppError::RateLimitExceeded(description))
-    } else if status.as_u16() == 408 {
-        Err(AppError::Network(description))
-    } else if status.is_client_error() {
-        Err(AppError::InvalidState(description))
-    } else {
-        Err(AppError::ServiceNotAvailable(description))
-    }
+    let body = serde_json::from_slice::<Value>(&bytes).ok();
+    Err(streaming::ServerFailure::http(
+        status,
+        &path,
+        body.as_ref(),
+        retry_after,
+    ))
 }
 
 /// More calls than any round needs; past this a model is looping, not working.

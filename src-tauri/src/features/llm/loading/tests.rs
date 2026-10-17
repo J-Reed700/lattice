@@ -416,3 +416,43 @@ async fn missing_ollama_configuration_fails_before_network_access() {
         Err(AppError::InvalidConfig(_))
     ));
 }
+
+#[tokio::test]
+async fn an_ollama_that_refuses_connections_is_an_outage_a_job_waits_out() {
+    // A port that was just free: nothing listens there, so connecting is refused.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .unwrap();
+    let settings = LLMSettingsDto {
+        provider: lattice_core::application::contracts::settings::LLMProvider::Ollama,
+        ollama_url: format!("http://127.0.0.1:{port}"),
+        ..Default::default()
+    };
+    let loader = loader_without_database();
+    let model = ModelRef::Ollama {
+        model: "qwen3:8b".into(),
+    };
+
+    for _ in 0..2 {
+        let error = loader
+            .load_ref(
+                &model,
+                &settings,
+                GenerationConfig::from_settings(&settings),
+            )
+            .await
+            .err();
+        let Some(error @ AppError::Network(_)) = error else {
+            panic!("expected a network outage, got {error:?}");
+        };
+        assert!(
+            lattice_core::shared::runtime::jobs::JobFailure::is_outage(&error),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("Make sure Ollama is running"),
+            "{error}"
+        );
+    }
+}
