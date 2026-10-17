@@ -221,6 +221,9 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::model_management::plugin::commands::clear_active_utility_model,
             lattice::features::model_management::plugin::commands::warm_up_active_chat_model,
             lattice::features::model_management::plugin::commands::warm_up_active_utility_model,
+            lattice::features::model_management::plugin::commands::warm_up_learning_model,
+            lattice::features::model_management::plugin::commands::list_loaded_models,
+            lattice::features::model_management::plugin::commands::last_learning_window_shortfall,
             // Catalog/discovery commands
             lattice::features::model_management::commands::detect_system_capabilities,
             lattice::features::model_management::commands::get_compatible_models,
@@ -331,6 +334,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::extraction::plugin::extract_and_resolve_links,
             // Conversation plugin
             lattice::features::conversation::plugin::create_conversation,
+            lattice::features::conversation::plugin::set_conversation_model_choice,
             lattice::features::conversation::plugin::get_conversation,
             lattice::features::conversation::plugin::list_conversations,
             lattice::features::conversation::plugin::delete_conversation,

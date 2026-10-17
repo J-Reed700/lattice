@@ -1017,6 +1017,12 @@
           "markdownDescription": "Enables the set_conversation_bookmarked command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_conversation_model_choice command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-set-conversation-model-choice",
+          "markdownDescription": "Enables the set_conversation_model_choice command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_conversation_pinned command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-set-conversation-pinned",
@@ -1381,6 +1387,12 @@
           "type": "string",
           "const": "conversation:deny-set-conversation-bookmarked",
           "markdownDescription": "Denies the set_conversation_bookmarked command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_conversation_model_choice command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-set-conversation-model-choice",
+          "markdownDescription": "Denies the set_conversation_model_choice command without any pre-configured scope."
         },
         {
           "description": "Denies the set_conversation_pinned command without any pre-configured scope.",
@@ -6111,10 +6123,22 @@
           "markdownDescription": "Enables the is_model_already_downloaded command without any pre-configured scope."
         },
         {
+          "description": "Enables the last_learning_window_shortfall command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-last-learning-window-shortfall",
+          "markdownDescription": "Enables the last_learning_window_shortfall command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_downloaded_models command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-list-downloaded-models",
           "markdownDescription": "Enables the list_downloaded_models command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_loaded_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-list-loaded-models",
+          "markdownDescription": "Enables the list_loaded_models command without any pre-configured scope."
         },
         {
           "description": "Enables the refresh_model_catalog command without any pre-configured scope.",
@@ -6157,6 +6181,12 @@
           "type": "string",
           "const": "model:allow-warm-up-active-utility-model",
           "markdownDescription": "Enables the warm_up_active_utility_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the warm_up_learning_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-warm-up-learning-model",
+          "markdownDescription": "Enables the warm_up_learning_model command without any pre-configured scope."
         },
         {
           "description": "Denies the check_first_run_status command without any pre-configured scope.",
@@ -6267,10 +6297,22 @@
           "markdownDescription": "Denies the is_model_already_downloaded command without any pre-configured scope."
         },
         {
+          "description": "Denies the last_learning_window_shortfall command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-last-learning-window-shortfall",
+          "markdownDescription": "Denies the last_learning_window_shortfall command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_downloaded_models command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-list-downloaded-models",
           "markdownDescription": "Denies the list_downloaded_models command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_loaded_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-list-loaded-models",
+          "markdownDescription": "Denies the list_loaded_models command without any pre-configured scope."
         },
         {
           "description": "Denies the refresh_model_catalog command without any pre-configured scope.",
@@ -6313,6 +6355,12 @@
           "type": "string",
           "const": "model:deny-warm-up-active-utility-model",
           "markdownDescription": "Denies the warm_up_active_utility_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the warm_up_learning_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-warm-up-learning-model",
+          "markdownDescription": "Denies the warm_up_learning_model command without any pre-configured scope."
         },
         {
           "description": "Enables the check_llm_health command without any pre-configured scope.",

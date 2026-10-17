@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { useModelRoles } from './ModelRolesContext';
-import { canModelFulfillRole, isChatModelSelected, isModelActiveForRole, type RoleDescriptor } from './roleConfig';
+import { canModelFulfillRole, type RoleDescriptor } from './roleConfig';
 
 
 interface RoleButtonProps {
@@ -29,7 +29,7 @@ interface RoleButtonProps {
 }
 
 export function RoleButton({ model, role }: RoleButtonProps) {
-  const { assignRole, chatProvider } = useModelRoles();
+  const { assignRole, chatProvider, llmSettings } = useModelRoles();
   const [pending, setPending] = useState(false);
 
   if (!canModelFulfillRole(model, role)) {
@@ -37,9 +37,10 @@ export function RoleButton({ model, role }: RoleButtonProps) {
     return null;
   }
 
-  const isActive = role.id === 'chat'
-    ? isChatModelSelected(model, chatProvider)
-    : isModelActiveForRole(model, role);
+  const isActive = role.isActive(model, llmSettings);
+  // Chat writes the provider and Learning writes a model reference, so both
+  // wait for the settings they write into.
+  const waitsForSettings = (role.id === 'chat' && !chatProvider) || (role.id === 'learning' && !llmSettings);
 
   const handleClick = async () => {
     if (pending) return;
@@ -55,8 +56,9 @@ export function RoleButton({ model, role }: RoleButtonProps) {
     <button
       type="button"
       onClick={handleClick}
-      disabled={pending || (role.id === 'chat' && !chatProvider)}
+      disabled={pending || waitsForSettings}
       aria-pressed={isActive}
+      data-role={role.id}
       title={isActive ? `Active ${role.label.toLowerCase()} model. Click to stop using it.` : role.hint}
       className={cn(
         'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',

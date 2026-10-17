@@ -59,10 +59,9 @@ export function chatPaletteCommands({
       run: () => {
         if (!activeConversationId) return;
         // Re-run the turn the composer is describing, not a default one.
-        void regenerateResponse(
-          activeConversationId,
-          resolveEffectiveToolPreferences()
-        ).then((outcome) => {
+        void regenerateResponse(activeConversationId, {
+          toolPreferences: resolveEffectiveToolPreferences(),
+        }).then((outcome) => {
           if (outcome === 'answered' || outcome === 'cancelled') return;
           toast.error("Couldn't regenerate", {
             message:
@@ -111,7 +110,8 @@ export function chatPaletteCommands({
     },
     {
       id: 'chat.switch-model',
-      label: 'Switch chat model',
+      // This chat only: the app-wide default is set in Settings.
+      label: "Choose this chat's model",
       group: 'Chat',
       icon: Cpu,
       // The picker hangs off the active-model label, so the verb only works

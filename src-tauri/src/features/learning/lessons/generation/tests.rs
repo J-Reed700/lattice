@@ -299,3 +299,43 @@ fn course_context_carries_whole_objectives_and_every_earlier_recap() {
         .iter()
         .all(|entry| entry["recap"][0] == recap.as_str()));
 }
+
+/// A model that is only a window: the refusal comes before any model call.
+struct Window(usize);
+
+#[async_trait::async_trait]
+impl LLMPort for Window {
+    async fn complete(
+        &self,
+        _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        unreachable!("a lesson with no room for evidence is refused before any model call")
+    }
+    fn model_name(&self) -> &str {
+        "Ornith-1.5-9B"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_lesson_whose_prompt_leaves_no_room_for_evidence_is_refused_up_front() {
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.goal = "Understand every part of the subject in depth. ".repeat(2_000);
+    let lesson = program.modules[0].lessons[0].clone();
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
+
+    let error = super::lesson::prepare_lesson(&Window(24_000), &runtimes, &program, &lesson)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidConfig(message)
+            if message.starts_with("This course's goal and the lesson brief leave no room for evidence in Ornith-1.5-9B's 24000-token context window.")),
+        "{error:?}"
+    );
+}

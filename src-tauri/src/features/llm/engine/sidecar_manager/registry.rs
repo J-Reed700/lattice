@@ -258,17 +258,47 @@ impl SidecarRegistry {
         killed
     }
 
-    /// GPU memory held by running, GPU-offloaded servers other than those on
-    /// `model_path`. A role on the same GGUF reuses that server rather than
-    /// adding one, so counting it would shrink the window this model is sized
-    /// to and give it a different configuration key — a second process.
-    pub fn resident_gpu_bytes(&self, model_path: &std::path::Path) -> u64 {
+    /// GPU memory held by running, GPU-offloaded servers of other models.
+    ///
+    /// A new server's window is sized against this rather than
+    /// [`Self::resident_gpu_bytes`]: every role on one GGUF must size it the
+    /// same way to arrive at the same configuration and share the server.
+    /// Counting that server would shrink the window and give a different
+    /// configuration key — a second process of the same weights.
+    pub fn other_models_gpu_bytes(&self, model_path: &std::path::Path) -> u64 {
+        gpu_bytes_where(&self.running_servers(), |running| {
+            running.model_path != model_path
+        })
+    }
+
+    /// GPU memory held by running, GPU-offloaded servers other than the one
+    /// started for `config`. Another window of the same GGUF counts: it is a
+    /// second process with its own copy of the weights and its own cache.
+    pub fn resident_gpu_bytes(&self, config: &SidecarConfig) -> u64 {
+        gpu_bytes_where(&self.running_servers(), |running| running != config)
+    }
+
+    /// Whether a server for `config`, its cache priced at `window` tokens, fits
+    /// beside the servers running now. See [`admission`].
+    pub fn admission(
+        &self,
+        config: &SidecarConfig,
+        window: u32,
+        capabilities: &SystemCapabilities,
+    ) -> Admission {
+        admission(&self.running_servers(), config, window, capabilities)
+    }
+
+    fn running_servers(&self) -> Vec<RunningServer> {
         self.shared
             .running()
             .into_iter()
-            .filter(|(config, handle)| config.model_path != model_path && handle.n_gpu_layers() > 0)
-            .map(|(config, handle)| resident_bytes_of(&config.model_path, handle.context_size()))
-            .fold(0, u64::saturating_add)
+            .map(|(config, handle)| RunningServer {
+                n_gpu_layers: handle.n_gpu_layers(),
+                context_size: handle.context_size(),
+                config,
+            })
+            .collect()
     }
 
     /// Number of currently-tracked live entries. For diagnostics.
@@ -280,6 +310,71 @@ impl SidecarRegistry {
             .filter(|e| e.child.lock().is_some())
             .count()
     }
+}
+
+/// A running server as GPU arithmetic sees it: started for `config`, it may
+/// have come up with fewer layers or a smaller window than that asked for.
+pub(super) struct RunningServer {
+    pub(super) config: SidecarConfig,
+    pub(super) n_gpu_layers: u32,
+    pub(super) context_size: u32,
+}
+
+/// GPU memory held by the GPU-offloaded servers among `servers` whose
+/// configuration is `counted`.
+pub(super) fn gpu_bytes_where(
+    servers: &[RunningServer],
+    counted: impl Fn(&SidecarConfig) -> bool,
+) -> u64 {
+    servers
+        .iter()
+        .filter(|server| counted(&server.config) && server.n_gpu_layers > 0)
+        .map(|server| resident_bytes_of(&server.config.model_path, server.context_size))
+        .fold(0, u64::saturating_add)
+}
+
+/// Whether a server for `config`, its cache priced at `window` tokens, fits
+/// beside `servers` by the auto-sizer's arithmetic: the usable share of the
+/// GPU's reported memory, less what every server but `config`'s own holds.
+pub(super) fn admission(
+    servers: &[RunningServer],
+    config: &SidecarConfig,
+    window: u32,
+    capabilities: &SystemCapabilities,
+) -> Admission {
+    if servers.iter().any(|server| server.config == *config) {
+        return Admission::Shared;
+    }
+    if config.n_gpu_layers == 0 {
+        return Admission::NoOffload;
+    }
+    let Some(vram_gb) = capabilities.gpu_vram_gb() else {
+        return Admission::Unmetered;
+    };
+    let needed = footprint_of(&config.model_path, window);
+    let spare = usable_gpu_bytes(vram_gb)
+        .saturating_sub(gpu_bytes_where(servers, |running| running != config));
+    if needed.total() <= spare {
+        Admission::Fits { needed, spare }
+    } else {
+        Admission::Short { needed, spare }
+    }
+}
+
+/// What starting a server would ask of the GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    /// A server for exactly this configuration is running and is shared;
+    /// nothing new is loaded.
+    Shared,
+    /// It would run on the CPU, which asks nothing of the GPU.
+    NoOffload,
+    /// The GPU does not report its memory, so nothing can be checked.
+    Unmetered,
+    /// It fits: `needed` of the `spare` bytes the running servers leave.
+    Fits { needed: Footprint, spare: u64 },
+    /// It does not fit in the `spare` bytes the running servers leave.
+    Short { needed: Footprint, spare: u64 },
 }
 
 /// Shutdown's sidecar sweep: kills every child in the app's registry and

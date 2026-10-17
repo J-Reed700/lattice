@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::features::backup::export_repository::{
     ExportConversationRow, ExportMessageRow, ExportNoteRow, ExportRepository,
 };
+use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::shared::error::AppError;
 
 /// What an export actually wrote.
@@ -49,6 +50,10 @@ struct JsonMessage {
     role: String,
     content: String,
     created_at: String,
+    /// The model that answered, as the turn recorded it. Absent from user
+    /// messages and from answers written before turns recorded it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -56,7 +61,7 @@ struct JsonMessage {
 struct JsonConversation {
     id: String,
     title: String,
-    model_name: String,
+    model_choice: ChatModelChoice,
     created_at: String,
     updated_at: String,
     messages: Vec<JsonMessage>,
@@ -138,6 +143,18 @@ fn role_label(role: &str) -> &'static str {
 
 fn date_only(timestamp: &str) -> &str {
     timestamp.split('T').next().unwrap_or(timestamp)
+}
+
+/// The chat's own model choice. An unreadable one fails the export rather
+/// than being written as the default.
+fn model_choice(conversation: &ExportConversationRow) -> Result<ChatModelChoice, AppError> {
+    ChatModelChoice::from_column(&conversation.id, conversation.model_choice.as_deref())
+}
+
+/// The model that answered a message, from its turn record.
+fn answered_by(message: &ExportMessageRow) -> Option<serde_json::Value> {
+    let metadata: serde_json::Value = serde_json::from_str(message.metadata.as_deref()?).ok()?;
+    metadata.get("turn")?.get("model").cloned()
 }
 
 fn timestamp_slug() -> String {
@@ -230,19 +247,19 @@ async fn write_markdown(
             .unwrap_or(&[]);
 
         let mut body = format!(
-            "# {}\n\n{} · {} · {} messages\n\n---\n",
+            "# {}\n\n{} · {} messages\n\n---\n",
             conversation.title,
             date_only(&conversation.created_at),
-            conversation.model_name,
             messages.len()
         );
 
         for message in messages {
-            body.push_str(&format!(
-                "\n## {}\n\n{}\n",
-                role_label(&message.role),
-                message.content
-            ));
+            let model = answered_by(message);
+            let heading = match model.as_ref().and_then(|model| model.get("name")?.as_str()) {
+                Some(name) => format!("{} · {name}", role_label(&message.role)),
+                None => role_label(&message.role).to_string(),
+            };
+            body.push_str(&format!("\n## {heading}\n\n{}\n", message.content));
         }
 
         let path = conversations_dir.join(export_file_name(&conversation.title, &conversation.id));
@@ -283,28 +300,31 @@ async fn write_json(
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         conversations: conversations
             .iter()
-            .map(|conversation| JsonConversation {
-                id: conversation.id.clone(),
-                title: conversation.title.clone(),
-                model_name: conversation.model_name.clone(),
-                created_at: conversation.created_at.clone(),
-                updated_at: conversation.updated_at.clone(),
-                messages: by_conversation
-                    .get(&conversation.id)
-                    .map(|messages| {
-                        messages
-                            .iter()
-                            .map(|message| JsonMessage {
-                                id: message.id.clone(),
-                                role: message.role.clone(),
-                                content: message.content.clone(),
-                                created_at: message.created_at.clone(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+            .map(|conversation| {
+                Ok(JsonConversation {
+                    id: conversation.id.clone(),
+                    title: conversation.title.clone(),
+                    model_choice: model_choice(conversation)?,
+                    created_at: conversation.created_at.clone(),
+                    updated_at: conversation.updated_at.clone(),
+                    messages: by_conversation
+                        .get(&conversation.id)
+                        .map(|messages| {
+                            messages
+                                .iter()
+                                .map(|message| JsonMessage {
+                                    id: message.id.clone(),
+                                    role: message.role.clone(),
+                                    content: message.content.clone(),
+                                    created_at: message.created_at.clone(),
+                                    model: answered_by(message),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
             })
-            .collect(),
+            .collect::<Result<_, AppError>>()?,
         journal_pages: notes
             .iter()
             .map(|note| JsonNote {
@@ -345,8 +365,8 @@ mod tests {
             .expect("in-memory sqlite");
 
         for statement in [
-            "CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, model_name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-            "CREATE TABLE conversation_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed')",
+            "CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, model_choice TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE TABLE conversation_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', metadata TEXT)",
             "CREATE TABLE daily_notes_workspace (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
         ] {
             sqlx::query(statement)
@@ -357,29 +377,43 @@ mod tests {
 
         if seed {
             sqlx::query(
-                "INSERT INTO conversations (id, title, model_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO conversations (id, title, model_choice, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
             )
             .bind("conv-11111111")
             .bind("Quarterly review")
-            .bind("llama3.2")
+            .bind(r#"{"kind":"ollama","model":"llama3.2"}"#)
             .bind("2026-09-01T10:00:00Z")
             .bind("2026-09-02T10:00:00Z")
             .execute(&pool)
             .await
             .expect("insert conversation");
 
-            for (id, role, content, created) in [
-                ("m1", "user", "What did we ship?", "2026-09-01T10:00:00Z"),
-                ("m2", "assistant", "Three things.", "2026-09-01T10:01:00Z"),
+            let answered = r#"{"turn":{"model":{"id":"llama3.2","name":"llama3.2","model":{"kind":"ollama","model":"llama3.2"},"origin":"chat_override"}}}"#;
+            for (id, role, content, created, metadata) in [
+                (
+                    "m1",
+                    "user",
+                    "What did we ship?",
+                    "2026-09-01T10:00:00Z",
+                    None,
+                ),
+                (
+                    "m2",
+                    "assistant",
+                    "Three things.",
+                    "2026-09-01T10:01:00Z",
+                    Some(answered),
+                ),
             ] {
                 sqlx::query(
-                    "INSERT INTO conversation_messages (id, conversation_id, role, content, created_at, status) VALUES (?, ?, ?, ?, ?, 'completed')",
+                    "INSERT INTO conversation_messages (id, conversation_id, role, content, created_at, status, metadata) VALUES (?, ?, ?, ?, ?, 'completed', ?)",
                 )
                 .bind(id)
                 .bind("conv-11111111")
                 .bind(role)
                 .bind(content)
                 .bind(created)
+                .bind(metadata)
                 .execute(&pool)
                 .await
                 .expect("insert message");
@@ -427,9 +461,9 @@ mod tests {
 
         let body = std::fs::read_to_string(conversations[0].path()).expect("read");
         assert!(body.starts_with("# Quarterly review\n"));
-        assert!(body.contains("2026-09-01 · llama3.2 · 2 messages"));
+        assert!(body.contains("2026-09-01 · 2 messages"));
         assert!(body.contains("## You\n\nWhat did we ship?"));
-        assert!(body.contains("## Lattice\n\nThree things."));
+        assert!(body.contains("## Lattice · llama3.2\n\nThree things."));
 
         let notes: Vec<_> = std::fs::read_dir(root.join("journal"))
             .expect("journal dir")
@@ -510,8 +544,38 @@ mod tests {
         let messages = conversations[0]["messages"].as_array().expect("messages");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "user");
-        assert_eq!(conversations[0]["modelName"], "llama3.2");
+        assert!(messages[0].get("model").is_none());
+        assert_eq!(messages[1]["model"]["origin"], "chat_override");
+        assert_eq!(
+            conversations[0]["modelChoice"],
+            serde_json::json!({"kind": "explicit", "model": {"kind": "ollama", "model": "llama3.2"}})
+        );
         assert_eq!(value["journalPages"].as_array().expect("notes").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn json_export_refuses_a_conversation_whose_model_choice_is_unreadable() {
+        let dir = tempdir().expect("tempdir");
+        let pool = seeded_pool(false).await;
+        sqlx::query(
+            "INSERT INTO conversations (id, title, model_choice, created_at, updated_at) VALUES ('conv-bad', 'Bad', 'local:x', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert conversation");
+
+        let error = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(pool)))
+            .execute(
+                dir.path().to_path_buf(),
+                ExportFormat::Json { pretty: false },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, AppError::Database(message) if message.contains("conversation conv-bad has an unreadable model_choice")),
+            "{error:?}"
+        );
     }
 
     #[tokio::test]

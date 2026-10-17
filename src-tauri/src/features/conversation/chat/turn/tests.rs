@@ -231,27 +231,29 @@ struct FakeWeb;
 
 #[async_trait::async_trait]
 impl crate::features::conversation::chat::ports::ChatTools for FakeWeb {
-    fn list_tools(&self) -> Vec<crate::features::function_calling::domain::ToolDefinition> {
+    fn list_tools(&self) -> Vec<lattice_core::application::contracts::tools::ToolDefinition> {
         Vec::new()
     }
     async fn execute(
         &self,
-        call: crate::features::function_calling::domain::FunctionCall,
-    ) -> Result<crate::features::function_calling::domain::FunctionResult> {
+        call: lattice_core::application::contracts::tools::FunctionCall,
+    ) -> Result<lattice_core::application::contracts::tools::FunctionResult> {
         let query = call.arguments["query"]
             .as_str()
             .unwrap_or_default()
             .to_string();
         Ok(
-            crate::features::function_calling::domain::FunctionResult::success(serde_json::json!({
-                "results": [{
-                    "title": format!("About {query}"),
-                    "url": format!("https://example.com/{}", query.replace(' ', "-")),
-                    "snippet": format!("What the web says about {query}."),
-                }],
-                "query": query,
-                "result_count": 1,
-            })),
+            lattice_core::application::contracts::tools::FunctionResult::success(
+                serde_json::json!({
+                    "results": [{
+                        "title": format!("About {query}"),
+                        "url": format!("https://example.com/{}", query.replace(' ', "-")),
+                        "snippet": format!("What the web says about {query}."),
+                    }],
+                    "query": query,
+                    "result_count": 1,
+                }),
+            ),
         )
     }
 }
@@ -437,4 +439,24 @@ async fn a_resumed_research_turn_carries_on_after_its_last_saved_round() {
     assert_eq!(timings.iterations, 3);
     assert_eq!(timings.tool_call_count, 2);
     assert!(journal.rounds.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_research_turn_resumes_needing_tools_only_when_it_was_planned_with_them() {
+    use lattice_core::application::ports::llm_port::ToolSupport;
+    let search = lattice_core::application::ports::ToolDefinition {
+        name: "web_search".into(),
+        description: "Search the web".into(),
+        parameters: serde_json::json!({ "type": "object" }),
+    };
+
+    assert_eq!(
+        prepare::resume_requirements(&[search]).tools,
+        ToolSupport::Required
+    );
+    // Planned on a model without tools: it resumes on one without tools too.
+    assert_eq!(
+        prepare::resume_requirements(&[]).tools,
+        ToolSupport::NotNeeded
+    );
 }

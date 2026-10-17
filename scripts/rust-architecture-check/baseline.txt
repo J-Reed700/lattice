@@ -45,14 +45,12 @@
 #                                                         *_tests.rs and files under tests/
 
 feature-edge features::backup features::vault 2
-feature-edge features::conversation features::explorer 9
-feature-edge features::conversation features::function_calling 34
-feature-edge features::conversation features::llm 2
+feature-edge features::conversation features::explorer 7
+feature-edge features::conversation features::function_calling 2
 feature-edge features::conversation features::search 1
 feature-edge features::conversation features::web 2
 feature-edge features::corpus_shape features::embedding 1
 feature-edge features::embedding features::download 2
-feature-edge features::explorer features::function_calling 4
 feature-edge features::explorer features::search 3
 feature-edge features::file features::indexing 7
 feature-edge features::file features::recent 2
@@ -89,8 +87,6 @@ feature-edge features::web features::embedding 4
 feature-edge features::web features::indexing 7
 
 feature-reexport features/conversation/chat.rs features::explorer 1
-feature-reexport features/conversation/chat/dto.rs features::explorer 1
-feature-reexport features/conversation/chat/ports.rs features::function_calling 3
 feature-reexport features/conversation/chat/ports.rs lattice_core 2
 feature-reexport features/daily_notes/dto.rs lattice_core 1
 feature-reexport features/embedding/compatibility.rs lattice_core 1

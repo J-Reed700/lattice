@@ -41,7 +41,13 @@ pub async fn start_learning_diagnostic(
         .workspace(&request.program_id)
         .await
         .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::diagnostics(),
+        "Writing the starting-point check",
+    )
+    .await?;
+    let llm = &pin.llm;
     // Whole captured texts, not the program's stored previews.
     let sources = LearningRepository::new(container.db_pool().clone())
         .verification_sources(&request.program_id)
@@ -106,7 +112,13 @@ pub async fn submit_learning_diagnostic(
     {
         return Err(ApiError::from(lattice_core::shared::error::AppError::InvalidState("Your course or answers changed. Reload before submitting the starting-point check.".into())));
     }
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::diagnostics(),
+        "Scoring the starting-point check",
+    )
+    .await?;
+    let llm = &pin.llm;
     let findings = crate::features::learning::diagnostic_generation::evaluate(
         llm.as_ref(),
         &attempt,

@@ -1,7 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
-import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useSpaceMutations } from '@/features/spaces/api/queries';
 import {
   buildSpaceToolPreferencesJson,
@@ -16,56 +14,30 @@ import { toast } from '@/stores/toastStore';
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * Creates spaces and edits the one selected in Chat: its name, look, default
- * model, prompt and tools, and whether it is archived. The drafts follow the
- * selected space; saving writes them all at once.
+ * Creates spaces and edits the one selected in Chat: its name, look, prompt
+ * and tools, and whether it is archived. A space has no model of its own: a
+ * chat answers with its own choice or the Settings default. The drafts follow
+ * the selected space; saving writes them all at once.
  */
 export function useSpaceEditor() {
   const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;
   const mutations = useSpaceMutations();
-  const settings = useSettingsQuery();
-  const ollamaDefaultModel = settings.data?.llm?.model?.trim() ?? '';
-  const { downloadedModelMap } = useDownloadedModels();
   const [isSpaceEditorOpen, setIsSpaceEditorOpen] = useState(false);
   const [spaceNameDraft, setSpaceNameDraft] = useState('');
   const [spaceDescriptionDraft, setSpaceDescriptionDraft] = useState('');
   const [spaceIconDraft, setSpaceIconDraft] = useState('');
   const [spaceAccentDraft, setSpaceAccentDraft] = useState('');
-  const [spaceModelDraft, setSpaceModelDraft] = useState('');
   const [spacePromptDraft, setSpacePromptDraft] = useState('');
   const [spaceKbDefault, setSpaceKbDefault] = useState(false);
   const [spaceWebDefault, setSpaceWebDefault] = useState(false);
   const [spaceDeepResearchDefault, setSpaceDeepResearchDefault] = useState(false);
-  const availableSpaceModels = useMemo(() => {
-    const options = new Set<string>();
-
-    Array.from(downloadedModelMap.values())
-      .filter((model) => model.model_type === 'language_model')
-      .forEach((model) => {
-        if (model.model_id?.trim()) {
-          options.add(model.model_id.trim());
-        }
-      });
-
-    if (ollamaDefaultModel.trim()) {
-      options.add(ollamaDefaultModel.trim());
-    }
-
-    if (spaceModelDraft.trim()) {
-      options.add(spaceModelDraft.trim());
-    }
-
-    return Array.from(options).sort((a, b) => a.localeCompare(b));
-  }, [downloadedModelMap, ollamaDefaultModel, spaceModelDraft]);
-
   useEffect(() => {
     if (!selectedSpace) {
       setSpaceNameDraft('');
       setSpaceDescriptionDraft('');
       setSpaceIconDraft('');
       setSpaceAccentDraft('');
-      setSpaceModelDraft('');
       setSpacePromptDraft('');
       setSpaceKbDefault(false);
       setSpaceWebDefault(false);
@@ -78,7 +50,6 @@ export function useSpaceEditor() {
     setSpaceDescriptionDraft(selectedSpace.description ?? '');
     setSpaceIconDraft(selectedSpace.icon ?? '');
     setSpaceAccentDraft(selectedSpace.accentColor ?? '');
-    setSpaceModelDraft(selectedSpace.defaultModelName ?? '');
     setSpacePromptDraft(selectedSpace.spacePrompt ?? '');
     setSpaceKbDefault(defaults.knowledgeBase);
     setSpaceWebDefault(defaults.webSearch);
@@ -98,7 +69,6 @@ export function useSpaceEditor() {
         icon: null,
         accentColor: null,
         spacePrompt: null,
-        defaultModelName: null,
         toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: false,
           webSearch: false,
@@ -125,7 +95,6 @@ export function useSpaceEditor() {
         description: spaceDescriptionDraft.trim() ? spaceDescriptionDraft.trim() : null,
         icon: spaceIconDraft.trim() ? spaceIconDraft.trim() : null,
         accentColor: normalizeHexColor(spaceAccentDraft),
-        defaultModelName: spaceModelDraft.trim() ? spaceModelDraft.trim() : null,
         spacePrompt: spacePromptDraft.trim() ? spacePromptDraft.trim() : null,
         toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: spaceKbDefault,
@@ -179,7 +148,6 @@ export function useSpaceEditor() {
     isSavingSpace: mutations.update.isPending,
     isArchivingSpace: mutations.archive.isPending && mutations.archive.variables?.spaceId === selectedSpaceId,
     isRestoringSpace: mutations.archive.isPending && mutations.archive.variables?.spaceId !== selectedSpaceId,
-    availableSpaceModels,
     createSpace,
     saveSpaceEnvironment,
     setSelectedSpaceArchived,
@@ -193,8 +161,6 @@ export function useSpaceEditor() {
     setSpaceIconDraft,
     spaceAccentDraft,
     setSpaceAccentDraft,
-    spaceModelDraft,
-    setSpaceModelDraft,
     spacePromptDraft,
     setSpacePromptDraft,
     spaceKbDefault,

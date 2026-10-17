@@ -51,3 +51,22 @@ it('tells the user when an action fails after the palette closed', async () => {
     ])
   );
 });
+
+it('searches the library once typing settles and lists the matches', async () => {
+  api.searchDocuments = vi.fn().mockResolvedValue({
+    ok: true,
+    data: [{ id: 'doc-1', title: 'Canopy survey', path: '/vault/canopy.md', score: 0.91, content: '', metadata: { filename: 'canopy.md' } }],
+  });
+  await openPalette();
+  fireEvent.change(screen.getByPlaceholderText('Search, or type a command'), { target: { value: 'canopy' } });
+  expect(await screen.findByText('canopy.md')).toBeInTheDocument();
+  expect(api.searchDocuments).toHaveBeenCalledTimes(1);
+  expect(api.searchDocuments).toHaveBeenCalledWith({ query: 'canopy', limit: 10, searchMode: 'hybrid' });
+});
+
+it('says why a search failed', async () => {
+  api.searchDocuments = vi.fn().mockResolvedValue({ ok: false, error: 'index is rebuilding' });
+  await openPalette();
+  fireEvent.change(screen.getByPlaceholderText('Search, or type a command'), { target: { value: 'canopy' } });
+  expect(await screen.findByText(/Couldn't search\./)).toHaveTextContent('index is rebuilding');
+});

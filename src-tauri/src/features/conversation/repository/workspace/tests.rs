@@ -21,7 +21,6 @@ fn journal(name: &str) -> CreateConversationJournalRequestDto {
         icon: None,
         accent_color: None,
         space_prompt: None,
-        default_model_name: None,
         tool_preferences_json: None,
     }
 }
@@ -29,7 +28,7 @@ fn journal(name: &str) -> CreateConversationJournalRequestDto {
 #[tokio::test]
 async fn journal_membership_is_idempotent_and_preserves_conversation_space() {
     let (_directory, repo) = repository().await;
-    let conversation = repo.create("Research", "test-model", None).await.unwrap();
+    let conversation = repo.create("Research", None).await.unwrap();
     let journal = repo.create_journal(journal("Reading")).await.unwrap();
     for _ in 0..2 {
         repo.add_conversation_to_journal(AddConversationToJournalRequestDto {
@@ -74,7 +73,7 @@ async fn journal_membership_is_idempotent_and_preserves_conversation_space() {
 #[tokio::test]
 async fn a_journal_pin_is_kept_per_journal_entry() {
     let (_directory, repo) = repository().await;
-    let conversation = repo.create("Research", "test-model", None).await.unwrap();
+    let conversation = repo.create("Research", None).await.unwrap();
     let id = conversation.id.to_string();
     let reading = repo.create_journal(journal("Reading")).await.unwrap();
     let writing = repo.create_journal(journal("Writing")).await.unwrap();
@@ -175,7 +174,7 @@ async fn invalid_membership_does_not_write_and_default_space_cannot_be_archived(
 #[tokio::test]
 async fn moving_a_conversation_does_not_file_its_documents_into_the_destination() {
     let (_directory, repo) = repository().await;
-    let conversation = repo.create("Research", "test-model", None).await.unwrap();
+    let conversation = repo.create("Research", None).await.unwrap();
     sqlx::query(
         "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
          VALUES ('doc-cited', '/vault/cited.pdf', 'cited.pdf', 1, '2026-09-01T10:00:00Z', 'sum')",
@@ -193,7 +192,6 @@ async fn moving_a_conversation_does_not_file_its_documents_into_the_destination(
             icon: None,
             accent_color: None,
             space_prompt: None,
-            default_model_name: None,
             tool_preferences_json: None,
         })
         .await
@@ -226,8 +224,8 @@ async fn moving_a_conversation_does_not_file_its_documents_into_the_destination(
 #[tokio::test]
 async fn deleting_another_conversations_message_is_rejected_without_changing_totals() {
     let (_directory, repo) = repository().await;
-    let first = repo.create("First", "test-model", None).await.unwrap();
-    let second = repo.create("Second", "test-model", None).await.unwrap();
+    let first = repo.create("First", None).await.unwrap();
+    let second = repo.create("Second", None).await.unwrap();
     let message = repo
         .add_message(
             &first.id.to_string(),

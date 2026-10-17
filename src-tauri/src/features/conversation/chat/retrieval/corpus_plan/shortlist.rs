@@ -129,8 +129,8 @@ fn front_matter<'a>(members: &[&'a CorpusDocument]) -> Vec<&'a CorpusDocument> {
 
 /// Catalog documents in the order the planner should be offered them, best
 /// first. The prompt takes rows from the front until its token budget runs
-/// out; the budget is what the planner can read in time (see `health`), so a
-/// fast planner is shown more of the catalog than a slow one.
+/// out; the budget is what the planner's window holds (see `health`), so a
+/// planner with a larger window is shown more of the catalog.
 ///
 /// Each search hit brings its reading-order neighbours, the documents either
 /// side of it in its book or series, since a passage often continues into the

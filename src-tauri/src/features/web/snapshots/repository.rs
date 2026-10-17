@@ -214,7 +214,7 @@ impl SnapshotRepository {
 
         let now = Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT OR IGNORE INTO conversations (id, title, model_name, space_id, created_at, updated_at) VALUES ('__library_snapshots__', 'Saved Web Snapshots', 'system', ?, ?, ?)"
+            "INSERT OR IGNORE INTO conversations (id, title, space_id, created_at, updated_at) VALUES ('__library_snapshots__', 'Saved Web Snapshots', ?, ?, ?)"
         )
         .bind(space_id)
         .bind(&now)

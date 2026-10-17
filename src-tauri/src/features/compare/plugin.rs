@@ -39,7 +39,7 @@ fn build_llm_loader(container: Container) -> LlmLoader {
     let container = Arc::new(container);
     LlmLoader::new(move || {
         let container = Arc::clone(&container);
-        Box::pin(async move { container.get_or_load_llm().await })
+        Box::pin(async move { container.default_chat_llm().await })
     })
 }
 

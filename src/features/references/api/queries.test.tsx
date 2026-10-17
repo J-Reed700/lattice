@@ -40,7 +40,7 @@ describe('Shared reference ownership', () => {
   await waitFor(() => expect(result.current.bookmarks).toHaveLength(1));
   api.listMessageBookmarks.mockResolvedValue({ ok: true, data: { bookmarks: [] } });
   await act(async () => { expect(await result.current.removeReference(bookmark())).toBe(true); });
-  expect(result.current.bookmarks).toHaveLength(0);
+  await waitFor(() => expect(result.current.bookmarks).toHaveLength(0));
   expect(c.getQueryData(key)).toEqual([bookmark()]);
   expect(c.getQueryState(key)?.isInvalidated).toBe(true);
  });

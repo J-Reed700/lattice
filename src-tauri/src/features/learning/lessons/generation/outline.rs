@@ -13,6 +13,7 @@ use crate::features::learning::dto::{
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
+use crate::features::learning::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use serde::Deserialize;
@@ -171,7 +172,10 @@ pub(in crate::features::learning) async fn draft_outline(
     let prompt = context.to_string();
     let system = format!("You are an expert course designer. Create a substantive, progressive curriculum for the stated goal and prior knowledge. {}", reference_instructions(sources));
     if !fits(llm, &system, &prompt, output_tokens) {
-        return Err(invalid("The goal and source excerpts exceed this model's context window. Choose fewer or shorter sources."));
+        return Err(model_call::window_too_small(
+            llm,
+            "The course goal and its source catalog do not fit",
+        ));
     }
     progress.stage(crate::features::learning::outline_progress::OutlineStage::Drafting);
     let raw = complete_reasoned_json(

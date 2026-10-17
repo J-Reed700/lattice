@@ -524,7 +524,7 @@ mod tests {
             assert!(!progress.snapshot().2.model_running);
             use lattice_core::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict};
             let checker = ClaimChecker::new(&SlowModel, lattice_core::application::ports::llm_port::SamplingOverride::deterministic(), 512, CheckPolicy::Strict);
-            let judgment = checker.check_without_deadline("Rust is a language.", &ClaimEvidence { text: "Rust is a language.".into(), quote: None }).await;
+            let judgment = checker.check("Rust is a language.", &ClaimEvidence { text: "Rust is a language.".into(), quote: None }).await;
             assert!(matches!(judgment, ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported));
             Ok(())
         }).await

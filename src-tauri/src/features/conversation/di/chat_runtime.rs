@@ -4,16 +4,32 @@ use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::interfaces::di::Container;
 use async_trait::async_trait;
-use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
+use lattice_core::application::ports::llm_port::{
+    ModelRequirements, OptionalLlmLoader, PinnedModel,
+};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 use tracing::warn;
 
 #[async_trait]
 impl ChatModels for Container {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        Container::get_or_load_llm(self).await
+    async fn chat_llm_for(
+        &self,
+        conversation_id: &str,
+        request_override: Option<&ModelRef>,
+        requirements: ModelRequirements,
+    ) -> Result<PinnedModel> {
+        Container::chat_llm_for(self, conversation_id, request_override, requirements).await
+    }
+    async fn learning_llm(&self, requirements: ModelRequirements) -> Result<PinnedModel> {
+        Container::learning_llm(self, requirements).await
+    }
+    async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
+        Container::default_chat_llm(self).await
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         Container::get_or_load_router_llm(self).await
@@ -162,12 +178,6 @@ impl ChatRetrieval for Container {
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())
     }
-    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        Arc::clone(self.ai.intent_pace())
-    }
-    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        Arc::clone(self.ai.judge_pace())
-    }
 }
 
 #[async_trait]
@@ -189,9 +199,10 @@ impl ChatPolicy for Container {
     async fn compact_for_turn(
         &self,
         id: &str,
+        llm: Arc<dyn LLMPort>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()> {
-        crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
+        crate::features::conversation::compaction::compact_for_turn(self, id, llm, cancel).await
     }
     fn consolidate_after_turn(
         &self,

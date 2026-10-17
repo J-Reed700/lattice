@@ -35,9 +35,10 @@ executor are built in `src-tauri/src/interfaces/di/container.rs`.
    (`src-tauri/src/features/function_calling/registry.rs`). Put every bound in
    the JSON schema (`minimum`, `maximum`, `enum`, `required`): the executor
    validates arguments against it before your handler runs.
-2. **DTOs**: add `<Tool>Input` / `<Tool>Output` to
-   `features/function_calling/dto.rs`, with `#[serde(default = ...)]` matching
-   the schema defaults.
+2. **DTOs**: add `<Tool>Input` / `<Tool>Output` to `lattice-core`'s
+   `application/contracts/tools/dto.rs` (and to the `pub use` list in
+   `contracts/tools.rs`), with `#[serde(default = ...)]` matching the schema
+   defaults.
 3. **Handler**: add a `TOOL_<NAME>` constant and a match arm in
    `FunctionExecutor::execute` (`features/function_calling/executor.rs`), and
    the handler in the matching `executor/*_tools.rs`. Handlers return

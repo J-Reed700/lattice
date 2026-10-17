@@ -1,6 +1,7 @@
 //! LLM / model-management feature dependency injection.
 
 use crate::features::llm::engine::system::BackendDevices;
+use crate::features::llm::instances::{LearningShortfall, LoadedInstance, SidecarBudget};
 use crate::features::llm::loading::ModelLoader;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::sync::Arc;
@@ -25,22 +26,23 @@ use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::llm_port::OptionalLlmLoader;
+use lattice_core::application::ports::llm_port::{
+    InvalidationCause, ModelRequirements, ModelRole, OptionalLlmLoader, PinnedModel,
+};
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
 };
+use lattice_core::domain::conversation::ChatModelChoice;
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 
-/// Output ceiling for the shared utility model.
-///
-/// Sized to the largest cap its callers send (conversation memory extraction
-/// asks for 8192), because a ceiling below a caller's own cap does not shorten
-/// that caller's work — it truncates its reply.
-const DEFAULT_UTILITY_MAX_OUTPUT_TOKENS: usize = 8_192;
+mod roles;
+
+use roles::{ModelRequest, ModelSelection, RoleModels};
 
 #[derive(Clone)]
 pub struct LlmDi {
@@ -146,9 +148,9 @@ pub async fn build(
 
 /// LLM's registrar surface on `Container`.
 ///
-/// Model loading, the per-role caches and their invalidation live here; the
-/// `Container` only owns the cache handles and the `AppHandle` the sidecar
-/// factory needs.
+/// Which model each role runs on, the loaded instances and their
+/// invalidation live here; the `Container` only owns the instances and the
+/// `AppHandle` the sidecar factory needs.
 impl Container {
     /// Returns the stored AppHandle, if any. Used by the LLM factory
     /// to populate `LLMConfig::Local.app_handle` when the sidecar
@@ -165,68 +167,72 @@ impl Container {
         )
     }
 
-    async fn load_llm_with_fallback(&self) -> Result<Arc<dyn LLMPort>> {
-        let settings = self
-            .system
-            .get_settings_use_case()
-            .execute()
-            .await
-            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
-        self.model_loader().load(&settings.llm).await
+    fn role_models(&self) -> RoleModels {
+        RoleModels {
+            instances: Arc::clone(&self.llm_instances),
+            loader: Arc::new(self.model_loader()),
+            budget: Arc::new(SidecarBudget::new(
+                self.app_handle(),
+                Arc::clone(&self.llm_runtime.devices),
+            )),
+            settings: Arc::clone(self.system.settings_repo()),
+        }
     }
 
-    /// Gets the LLM service, loading it lazily if needed.
-    ///
-    /// Coalesces concurrent misses and prevents invalidated loads from
-    /// publishing into the current cache generation.
-    pub async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        let generation = self.llm_cache.generation();
-        self.llm_cache
-            .get_or_load((), generation, || async {
-                self.load_llm_with_fallback().await.map(Some)
-            })
-            .await?
-            .ok_or_else(|| AppError::AiModelsNotInstalled("Chat model unavailable".into()))
+    /// The model `request` asks for, pinned for its work.
+    pub(crate) async fn llm_for(&self, request: &ModelRequest) -> Result<PinnedModel> {
+        self.role_models().llm_for(request).await
     }
 
-    /// Gets the router LLM service, loading it lazily if needed.
-    ///
-    /// Uses a separate cache so the router can use a smaller model.
+    /// The model a turn in `conversation_id` runs on, pinned for the turn:
+    /// `request_override`, else the chat's choice, else the Settings default.
+    pub async fn chat_llm_for(
+        &self,
+        conversation_id: &str,
+        request_override: Option<&ModelRef>,
+        requirements: ModelRequirements,
+    ) -> Result<PinnedModel> {
+        let (choice, title) = chat_model_choice(self.db_pool(), conversation_id).await?;
+        self.llm_for(&ModelRequest {
+            role: ModelRole::Chat,
+            selection: ModelSelection::Chat {
+                choice,
+                request_override: request_override.cloned(),
+            },
+            requirements,
+            work: title,
+            conversation_id: Some(conversation_id.to_owned()),
+        })
+        .await
+    }
+
+    /// The Learning model, pinned for one job. Never a chat's choice or the
+    /// chat default: unset, learning work refuses.
+    pub async fn learning_llm(&self, requirements: ModelRequirements) -> Result<PinnedModel> {
+        self.llm_for(&ModelRequest {
+            role: ModelRole::Learning,
+            selection: ModelSelection::Learning,
+            requirements,
+            work: String::new(),
+            conversation_id: None,
+        })
+        .await
+    }
+
+    /// The Settings default chat model, for work that belongs to no chat.
+    pub async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
+        Ok(self.pinned_default_chat_llm().await?.llm)
+    }
+
+    /// The Settings default chat model with what it resolved to, for work
+    /// that belongs to no chat and reports which model served it.
+    pub async fn pinned_default_chat_llm(&self) -> Result<PinnedModel> {
+        self.llm_for(&ModelRequest::default_chat()).await
+    }
+
+    /// The router model, loaded through the same instances as every role.
     pub async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        let generation = self.router_llm_cache.generation();
-        let settings = self
-            .system
-            .get_settings_use_case()
-            .execute()
-            .await
-            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
-
-        let router_settings = settings.llm.router.clone();
-
-        if !router_settings.enabled {
-            return Err(AppError::InvalidConfig(
-                "Router is required for follow-up handling and cannot be disabled.".to_string(),
-            ));
-        }
-
-        if router_settings.model.trim().is_empty() {
-            return Err(AppError::InvalidConfig(
-                "Router model is required. Configure llm.router.model in Settings → Model Catalog."
-                    .to_string(),
-            ));
-        }
-
-        let model_name = router_settings.model.trim().to_string();
-
-        self.router_llm_cache
-            .get_or_load(model_name.clone(), generation, || async {
-                self.model_loader()
-                    .load_router_llm(&settings.llm, &model_name)
-                    .await
-                    .map(Some)
-            })
-            .await?
-            .ok_or_else(|| AppError::AiModelsNotInstalled("Router model unavailable".into()))
+        self.role_models().router_llm().await
     }
 
     /// Get the utility LLM if one is configured.
@@ -236,111 +242,58 @@ impl Container {
 
     /// Bind only the dependencies needed by lazy utility-model consumers.
     pub(crate) fn utility_llm_loader(&self) -> OptionalLlmLoader {
-        let models = Arc::clone(self.ai.downloaded_model_repo());
-        let settings_use_case = Arc::clone(self.system.get_settings_use_case());
-        let cache = Arc::clone(&self.utility_llm_cache);
-        let model_loader = Arc::new(self.model_loader());
+        let models = self.role_models();
         Arc::new(move || {
-            let models = Arc::clone(&models);
-            let settings_use_case = Arc::clone(&settings_use_case);
-            let cache = Arc::clone(&cache);
-            let model_loader = Arc::clone(&model_loader);
-            Box::pin(async move {
-                let generation = cache.generation();
-                let active = match models.get_active_utility_model().await {
-                    Ok(Some(m)) => m,
-                    Ok(None) => return Ok(None),
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "Failed to query active utility model — falling back to chat LLM"
-                        );
-                        return Ok(None);
-                    }
-                };
-
-                let settings = settings_use_case.execute().await.map_err(|e| {
-                    AppError::InvalidConfig(format!("Failed to load settings: {}", e))
-                })?;
-
-                let generation_config = crate::features::llm::engine::GenerationConfig {
-                    // A ceiling, not an allowance: each caller sends the cap its own
-                    // work needs and `max_output_tokens` only ever tightens this one.
-                    // It was 512, which was below what several callers were already
-                    // asking for — memory extraction requests 8192 — so their JSON was
-                    // cut off mid-array and read back as malformed.
-                    max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS,
-                    ..crate::features::llm::engine::GenerationConfig::from_settings(&settings.llm)
-                };
-
-                let ollama_utility_tag = {
-                    let utility = settings.llm.ollama_utility_model.trim();
-                    if utility.is_empty() {
-                        settings.llm.model.clone()
-                    } else {
-                        utility.to_string()
-                    }
-                };
-
-                let cache_key = if active.location().is_local() {
-                    active.model_id().to_string()
-                } else {
-                    format!("{}::{}", active.model_id(), ollama_utility_tag)
-                };
-
-                cache
-                    .get_or_load(cache_key, generation, || async {
-                        if active.location().is_local() {
-                            model_loader
-                                .load_utility_local(
-                                    &active,
-                                    generation_config,
-                                    crate::features::llm::engine::factory::LocalServerOptions::from_settings(
-                                        &settings.llm,
-                                    )
-                                    .with_model_config(
-                                        settings.llm.local_model_configs.get(active.model_id()),
-                                    ),
-                                )
-                                .await
-                        } else {
-                            model_loader
-                                .load_utility_remote(
-                                    &settings.llm,
-                                    &ollama_utility_tag,
-                                    generation_config,
-                                )
-                                .await
-                                .or_else(|e| {
-                                    tracing::warn!(
-                                        model_id = %active.model_id(),
-                                        utility_model = %ollama_utility_tag,
-                                        error = %e,
-                                        "Failed to reach the remote utility model — falling back to chat LLM"
-                                    );
-                                    Ok(None)
-                                })
-                        }
-                    })
-                    .await
-            })
+            let models = models.clone();
+            Box::pin(async move { models.utility_llm().await })
         })
     }
 
-    /// Invalidate the LLM cache
-    ///
-    /// Call this when the active model changes to force reload on next access
-    pub fn invalidate_llm_cache(&self) {
-        self.llm_cache.invalidate();
+    /// Stop handing out the loaded models `cause` makes stale. Work that holds
+    /// one keeps it until it ends; nothing in Settings changes.
+    pub fn invalidate_llm_instances(&self, cause: InvalidationCause) {
+        self.llm_instances.invalidate(&cause);
     }
 
-    /// Invalidate the router LLM cache.
-    pub fn invalidate_router_llm_cache(&self) {
-        self.router_llm_cache.invalidate();
+    /// Every model loaded now, with who holds it.
+    pub(crate) fn loaded_models(&self) -> Vec<LoadedInstance> {
+        self.llm_instances.snapshot()
     }
 
-    pub fn invalidate_utility_llm_cache(&self) {
-        self.utility_llm_cache.invalidate();
+    /// The last learning work refused because the Learning model's window
+    /// was too small, while that model has not covered the window since.
+    pub(crate) fn learning_shortfall(&self) -> Option<LearningShortfall> {
+        self.llm_instances.learning_shortfall()
+    }
+
+    /// Load the Learning model ahead of the first learning job, reporting
+    /// `model:warmup-status { role: "learning" }`. A failure is reported and
+    /// changes no setting.
+    pub async fn warm_up_learning_model(&self) -> Result<()> {
+        let role = "learning";
+        let emit = |phase, error, degraded| {
+            if let Some(app) = self.app_handle() {
+                emit_warmup(&app, role, phase, error, degraded);
+            }
+        };
+        emit("started", None, None);
+        match self.learning_llm(ModelRequirements::default()).await {
+            Ok(pinned) => {
+                emit("ready", None, pinned.degraded);
+                Ok(())
+            }
+            Err(error) => {
+                let message = match &error {
+                    AppError::AiModelsNotInstalled(message)
+                    | AppError::InvalidConfig(message)
+                    | AppError::ModelLoadFailed(message)
+                    | AppError::ServiceNotAvailable(message) => message.clone(),
+                    _ => error.to_string(),
+                };
+                emit("failed", Some(message), None);
+                Err(error)
+            }
+        }
     }
 
     /// Fire-and-forget per-role warmup at boot. Emits
@@ -372,7 +325,7 @@ impl Container {
                         return;
                     }
                 };
-                emit_warmup(&handle, role, "started", None);
+                emit_warmup(&handle, role, "started", None, None);
                 let started = std::time::Instant::now();
                 // Cancellation stops the prewarm waiter. Any sidecar whose
                 // startup already crossed the process boundary is still
@@ -380,17 +333,17 @@ impl Container {
                 // kills late registrations during shutdown.
                 let Some(outcome) = finish_or_cancel(&cancel, async {
                     match role {
-                        "chat" => match container.get_or_load_llm().await {
-                            Ok(_) => Outcome::Ready,
+                        "chat" => match container.llm_for(&ModelRequest::default_chat()).await {
+                            Ok(pinned) => Outcome::Ready(pinned.degraded),
                             Err(e) => classify_load_error(e),
                         },
                         "utility" => match container.get_or_load_utility_llm().await {
-                            Ok(Some(_)) => Outcome::Ready,
+                            Ok(Some(_)) => Outcome::Ready(None),
                             Ok(None) => Outcome::Skipped,
                             Err(e) => classify_load_error(e),
                         },
                         "embedding" => match container.get_or_load_embedding().await {
-                            Ok(_) => Outcome::Ready,
+                            Ok(_) => Outcome::Ready(None),
                             Err(e) => classify_load_error(e),
                         },
                         _ => unreachable!(),
@@ -405,16 +358,16 @@ impl Container {
                 }
                 let elapsed_ms = started.elapsed().as_millis() as u64;
                 match &outcome {
-                    Outcome::Ready => tracing::info!(role, elapsed_ms, "prewarm: ready"),
+                    Outcome::Ready(_) => tracing::info!(role, elapsed_ms, "prewarm: ready"),
                     Outcome::Skipped => tracing::info!(role, "prewarm: no active model — skipped"),
                     Outcome::Failed(msg) => tracing::warn!(role, error = %msg, "prewarm: failed"),
                 }
-                let (phase, error) = match outcome {
-                    Outcome::Ready => ("ready", None),
-                    Outcome::Skipped => ("skipped", None),
-                    Outcome::Failed(msg) => ("failed", Some(msg)),
+                let (phase, error, degraded) = match outcome {
+                    Outcome::Ready(degraded) => ("ready", None, degraded),
+                    Outcome::Skipped => ("skipped", None, None),
+                    Outcome::Failed(msg) => ("failed", Some(msg), None),
                 };
-                emit_warmup(&handle, role, phase, error);
+                emit_warmup(&handle, role, phase, error, degraded);
             });
         }
     }
@@ -456,8 +409,29 @@ impl Container {
     }
 }
 
+/// The chat's own model choice and its title, read from the row that holds
+/// them. No choice is the Settings default, live.
+async fn chat_model_choice(
+    pool: &SqlitePool,
+    conversation_id: &str,
+) -> Result<(ChatModelChoice, String)> {
+    let (choice, title): (Option<String>, String) =
+        sqlx::query_as("SELECT model_choice, title FROM conversations WHERE id = ?")
+            .bind(conversation_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Conversation {conversation_id} not found"))
+            })?;
+    Ok((
+        ChatModelChoice::from_column(conversation_id, choice.as_deref())?,
+        title,
+    ))
+}
+
 enum Outcome {
-    Ready,
+    /// Loaded; with the reason when it runs degraded (on the CPU).
+    Ready(Option<String>),
     Skipped,
     Failed(String),
 }
@@ -490,12 +464,20 @@ fn classify_load_error(e: AppError) -> Outcome {
     }
 }
 
-fn emit_warmup(app: &tauri::AppHandle, role: &str, phase: &str, error: Option<String>) {
+/// `degraded` is why a model that is ready runs on the CPU, when it does.
+fn emit_warmup(
+    app: &tauri::AppHandle,
+    role: &str,
+    phase: &str,
+    error: Option<String>,
+    degraded: Option<String>,
+) {
     use tauri::Emitter;
     let payload = serde_json::json!({
         "role": role,
         "phase": phase,
         "error": error,
+        "degraded": degraded,
     });
     if let Err(e) = app.emit("model:warmup-status", payload) {
         tracing::warn!(role, phase, error = %e, "Failed to emit warmup status event");

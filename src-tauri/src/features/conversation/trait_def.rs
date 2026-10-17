@@ -21,28 +21,25 @@ pub trait ConversationServiceTrait: Send + Sync {
     ///
     /// # Arguments
     /// * `title` - Human-readable conversation title
-    /// * `model_name` - LLM model identifier (e.g., "claude-sonnet-4-5-20250929")
     /// * `system_prompt` - Optional system instructions for the LLM
     ///
     /// # Returns
-    /// The created conversation entity
+    /// The created conversation entity; it follows the Settings default model
     ///
     /// # Errors
-    /// - `AppError::InvalidInput` if title or model_name is empty
+    /// - `AppError::InvalidInput` if the title is empty
     /// - `AppError::Database` if database insert fails
     ///
     /// # Example
     /// ```rust
     /// let conversation = service.create_conversation(
     ///     "My Chat".to_string(),
-    ///     "claude-sonnet-4-5-20250929".to_string(),
     ///     Some("You are a helpful assistant.".to_string())
     /// ).await?;
     /// ```
     async fn create_conversation(
         &self,
         title: String,
-        model_name: String,
         system_prompt: Option<String>,
     ) -> Result<lattice_core::domain::conversation::Conversation>;
 

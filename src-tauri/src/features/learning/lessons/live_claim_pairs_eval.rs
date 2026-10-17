@@ -111,7 +111,7 @@ async fn live_claim_pairs_eval() -> Result<()> {
                     outcome.reason,
                 ),
                 ClaimJudgment::Failed(error) => return Err(error),
-                ClaimJudgment::OutOfTime | ClaimJudgment::Unusable => ("unverified", None),
+                ClaimJudgment::Unusable => ("unverified", None),
             };
             writeln!(
                 results,

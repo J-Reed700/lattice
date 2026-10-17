@@ -3,7 +3,6 @@
 //! A generated plan is navigation, never answer evidence.
 
 use std::collections::HashSet;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,17 +27,6 @@ use library_search::section_identifiers;
 pub(super) use library_search::{expand_evidence, fuse_passes, retrieve};
 pub(super) use planner::{plan, plan_correction, CorrectionRequest};
 pub(super) use shortlist::candidate_documents;
-
-/// How long the planner may take before the turn gives up and falls back to the
-/// local plan.
-///
-/// This used to be 5 seconds, which the planner could not meet: unlike the
-/// other utility calls it prefills a document catalog before writing anything,
-/// so it is prefill-bound, not generation-bound. The catalog is now a
-/// shortlist sized from the planner's measured speed to answer inside this
-/// (see `health`), and a timeout shrinks the next attempt rather than
-/// switching planning off.
-const PLANNER_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Appended to the planner's **user** turn, never to `PLANNER_SYSTEM`. The task
 /// is unchanged — plan retrieval from this catalog — so the system prompt must

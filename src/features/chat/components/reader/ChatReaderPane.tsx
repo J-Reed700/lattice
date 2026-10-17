@@ -10,6 +10,7 @@ import {
   useChatReaderStore,
 } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { focusReturnTarget } from '@/lib/focusReturn';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { locatorFromSource, rememberLocation } from '@/shared/sources/passageLocator';
 
@@ -83,7 +84,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
   // reader is reachable from the keyboard and Esc has somewhere to send it back.
   useEffect(() => {
     if (isOpen) {
-      returnFocusRef.current = document.activeElement as HTMLElement | null;
+      returnFocusRef.current = focusReturnTarget();
       paneRef.current?.focus({ preventScroll: true });
       return;
     }

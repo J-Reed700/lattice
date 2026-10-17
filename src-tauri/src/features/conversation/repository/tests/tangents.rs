@@ -139,10 +139,7 @@ async fn invalid_tangent_requests_cannot_create_orphan_conversations() {
     setup_schema(&pool).await;
     let parent = seed_thread(&pool).await;
     let repo = ConversationRepository::new(pool.clone());
-    let other = repo
-        .create_conversation("Other", "model", None)
-        .await
-        .unwrap();
+    let other = repo.create_conversation("Other", None).await.unwrap();
     let cases = [
         request(&parent, "unknown"),
         request(&parent, "m1"),

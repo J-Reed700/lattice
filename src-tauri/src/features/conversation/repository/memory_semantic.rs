@@ -1,6 +1,10 @@
 //! Bounded semantic transcript recall, fused with lexical and exact matches.
 use super::ConversationRepository;
+use lattice_core::application::contracts::search::{ReciprocalRankFusion, WeightedRanking};
 use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
+use lattice_core::shared::constants::{
+    DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_RRF_K, DEFAULT_VECTOR_FUSION_WEIGHT,
+};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::embedding_encoding::decode_embedding;
 use std::collections::HashMap;
@@ -111,24 +115,38 @@ pub(super) fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
     let norm = (a.iter().map(|x| x * x).sum::<f32>() * b.iter().map(|x| x * x).sum::<f32>()).sqrt();
     (norm > 0.0 && norm.is_finite()).then_some(dot / norm)
 }
+
+/// Lexical and semantic recall fused by the app's one reciprocal rank fusion,
+/// at the library search's constant, with semantic carrying the vector weight
+/// and lexical the keyword weight. Exact-identifier hits still come first;
+/// equal scores fall back to transcript order. A message both modes found
+/// keeps its lexical record, which is the one that can carry
+/// `exact_identifier`.
 fn fuse(
     lexical: Vec<RecallCandidate>,
     semantic: Vec<RecallCandidate>,
     limit: usize,
 ) -> Vec<RecallCandidate> {
-    let mut all: HashMap<String, RecallCandidate> = HashMap::new();
-    for branch in [lexical, semantic] {
-        for (rank, mut hit) in branch.into_iter().enumerate() {
-            let score = 1.0 / (60.0 + rank as f32 + 1.0);
-            if let Some(existing) = all.get_mut(&hit.message_id) {
-                existing.score += score;
-            } else {
-                hit.score = score;
-                all.insert(hit.message_id.clone(), hit);
-            }
-        }
+    let ids = |branch: &[RecallCandidate]| -> Vec<String> {
+        branch.iter().map(|hit| hit.message_id.clone()).collect()
+    };
+    let rankings = vec![
+        WeightedRanking::new(DEFAULT_KEYWORD_FUSION_WEIGHT, ids(&lexical)),
+        WeightedRanking::new(DEFAULT_VECTOR_FUSION_WEIGHT, ids(&semantic)),
+    ];
+    let mut records: HashMap<String, RecallCandidate> = HashMap::new();
+    for hit in lexical.into_iter().chain(semantic) {
+        records.entry(hit.message_id.clone()).or_insert(hit);
     }
-    let mut hits: Vec<_> = all.into_values().collect();
+    let mut hits: Vec<RecallCandidate> = ReciprocalRankFusion::new(DEFAULT_RRF_K)
+        .fuse_ranked(rankings)
+        .into_iter()
+        .filter_map(|fused| {
+            let mut hit = records.remove(&fused.id)?;
+            hit.score = fused.score;
+            Some(hit)
+        })
+        .collect();
     hits.sort_by(|a, b| {
         b.exact_identifier
             .cmp(&a.exact_identifier)
@@ -148,5 +166,42 @@ mod tests {
         assert_eq!(cosine(&[0.0], &[0.0]), None);
         assert_eq!(cosine(&[f32::NAN], &[1.0]), None);
         assert_eq!(cosine(&[1.0, 0.0], &[1.0, 0.0]), Some(1.0));
+    }
+
+    fn hit(id: &str, sequence: i64, exact_identifier: bool) -> RecallCandidate {
+        RecallCandidate {
+            message_id: id.into(),
+            sequence,
+            role: lattice_core::domain::conversation::memory::SourceRole::User,
+            excerpt: id.into(),
+            score: 0.0,
+            exact_identifier,
+        }
+    }
+
+    /// Recall fuses at the library search's constant and weights, not the old
+    /// flat `k = 60`: a message only semantic recall found, first, beats one
+    /// both modes ranked seventh (`0.7/11 > 1/17`; flat, `1/61 < 2/67`). An
+    /// exact-identifier hit still leads whatever its fused score.
+    #[test]
+    fn recall_fuses_at_the_shared_constant_and_weights() {
+        let mut lexical = vec![hit("exact", 50, true)];
+        lexical.extend((1..=5).map(|i| hit(&format!("lex{i}"), i, false)));
+        lexical.push(hit("both", 7, false));
+        let mut semantic = vec![hit("meaning", 40, false)];
+        semantic.extend((1..=5).map(|i| hit(&format!("sem{i}"), 10 + i, false)));
+        semantic.push(hit("both", 7, false));
+        // Found by both modes, it keeps the lexical record and its flag.
+        semantic.push(hit("exact", 50, false));
+
+        let fused = fuse(lexical, semantic, 20);
+        let order: Vec<&str> = fused.iter().map(|h| h.message_id.as_str()).collect();
+        assert_eq!(order[..2], ["exact", "meaning"], "{order:?}");
+        assert!(fused[0].exact_identifier);
+        let position = |id: &str| order.iter().position(|m| *m == id);
+        assert!(position("meaning") < position("both"), "{order:?}");
+        let both = fused.iter().find(|h| h.message_id == "both").unwrap();
+        assert!((both.score - 1.0 / 17.0).abs() < 1e-6);
+        assert_eq!(fused.iter().filter(|h| h.message_id == "both").count(), 1);
     }
 }

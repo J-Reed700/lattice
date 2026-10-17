@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
-
+import { useQuery } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
-import { readSourceBytes } from '@/features/reading/hooks/readSourceFile';
+import { readingKeys, readSourceBytes } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 
 interface DocxViewerProps {
@@ -11,32 +10,20 @@ interface DocxViewerProps {
   title?: string;
 }
 
-export function DocxViewer({ filePath, title }: DocxViewerProps) {
-  const theme = useEffectiveTheme();
-  const [htmlContent, setHtmlContent] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+/** The document as sanitized HTML, ready for a sandboxed frame. */
+async function loadDocxHtml(filePath: string): Promise<string> {
+  const fileResult = await readSourceBytes(filePath);
+  if (!fileResult.ok) {
+    throw new Error(fileResult.error || 'Failed to read DOCX bytes');
+  }
 
-  useEffect(() => {
-    let isMounted = true;
+  const bytes = fileResult.data;
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const mammoth = await import('mammoth');
+  const result = await mammoth.convertToHtml({ arrayBuffer });
+  const sanitized = DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } });
 
-    async function loadDocx() {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const fileResult = await readSourceBytes(filePath);
-        if (!fileResult.ok) {
-          throw new Error(fileResult.error || 'Failed to read DOCX bytes');
-        }
-
-        const bytes = fileResult.data;
-        const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        const mammoth = await import('mammoth');
-        const result = await mammoth.convertToHtml({ arrayBuffer });
-        const sanitized = DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } });
-
-        const wrapped = `<!DOCTYPE html>
+  const wrapped = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -56,27 +43,22 @@ pre { padding: 12px; overflow-x: auto; }
 ${sanitized}
 </body>
 </html>`;
+  return wrapped;
+}
 
-        if (isMounted) {
-          setHtmlContent(wrapped);
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load DOCX');
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    loadDocx();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [filePath]);
+export function DocxViewer({ filePath, title }: DocxViewerProps) {
+  const theme = useEffectiveTheme();
+  const docxQuery = useQuery({
+    queryKey: readingKeys.docxHtml(filePath),
+    queryFn: () => loadDocxHtml(filePath),
+    retry: false,
+    staleTime: 0,
+  });
+  const htmlContent = docxQuery.data ?? '';
+  const isLoading = docxQuery.isPending;
+  const error = docxQuery.isError
+    ? docxQuery.error instanceof Error ? docxQuery.error.message : 'Failed to load DOCX'
+    : null;
 
   if (isLoading) {
     return (

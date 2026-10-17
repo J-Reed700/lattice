@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useJournalsQuery, useCapturedReferencesQuery, WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { rememberedJournalPageId } from '@/features/journal/hooks/useJournalNote';
@@ -9,7 +9,12 @@ import {
   usePassageReferencesQuery,
   useUpdatePassageReferenceMutation,
 } from '@/features/reading/hooks/usePassageReferencesQuery';
-import { useBookmarkMutations, useInboxBookmarksQuery } from '@/features/references/api/queries';
+import {
+  bookmarkPayloadKey,
+  bookmarkPayloadQueryOptions,
+  useBookmarkMutations,
+  useInboxBookmarksQuery,
+} from '@/features/references/api/queries';
 import { mergeInboxItems, type InboxItem } from '@/features/references/model/inboxItems';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -20,7 +25,7 @@ import type {
   ConversationSpaceDto,
 } from '@/types/api/conversation';
 import type { PassageReferenceDto } from '@/types/api/references';
-import { resolveBookmarkPayload, type BookmarkPayload } from '@/utils/chatBookmarks';
+import type { BookmarkPayload } from '@/utils/chatBookmarks';
 import { captureChatReferenceToWorkspaceNote } from '@/utils/chatReferenceCapture';
 import {
   chatReferenceKey,
@@ -90,10 +95,7 @@ export function useReferenceInbox(options: {
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
   const [statusChip, setStatusChip] = useState<StatusChip>('all');
 
-  const [payloadCache, setPayloadCache] = useState<Map<string, BookmarkPayload>>(new Map());
-  const [resolutionFailures, setResolutionFailures] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [isResolvingSelected, setIsResolvingSelected] = useState(false);
 
   const debouncedQuery = useDebounce(query, 220);
 
@@ -219,72 +221,16 @@ export function useReferenceInbox(options: {
     ? spacesById.get(selectedBookmark.spaceId) ?? null
     : null;
 
-  const selectedPayloadKey = selectedBookmark
-    ? chatReferenceKey(selectedBookmark.conversationId, selectedBookmark.messageId)
-    : null;
-
-  const selectedPayload = selectedPayloadKey
-    ? payloadCache.get(selectedPayloadKey) ?? null
-    : null;
-
-  const resolutionFailed = selectedPayloadKey
-    ? resolutionFailures.has(selectedPayloadKey)
-    : false;
-
-  // Resolve payload for the current selection lazily.
-  useEffect(() => {
-    if (!selectedBookmark) return;
-    const key = chatReferenceKey(selectedBookmark.conversationId, selectedBookmark.messageId);
-    if (payloadCache.has(key)) return;
-
-    let cancelled = false;
-    setIsResolvingSelected(true);
-    setResolutionFailures((current) => {
-      if (!current.has(key)) return current;
-      const next = new Set(current);
-      next.delete(key);
-      return next;
-    });
-    void resolveBookmarkPayload(selectedBookmark)
-      .then((payload) => {
-        if (cancelled) return;
-        setPayloadCache((current) => {
-          const next = new Map(current);
-          next.set(key, payload);
-          return next;
-        });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setResolutionFailures((current) => {
-          const next = new Set(current);
-          next.add(key);
-          return next;
-        });
-      })
-      .finally(() => {
-        if (!cancelled) setIsResolvingSelected(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [payloadCache, selectedBookmark]);
+  // The selected reference's content is read when it is opened.
+  const payloadQuery = useQuery(bookmarkPayloadQueryOptions(selectedBookmark ?? null));
+  const selectedPayload = selectedBookmark ? payloadQuery.data ?? null : null;
+  const isResolvingSelected = Boolean(selectedBookmark) && payloadQuery.isLoading;
+  const resolutionFailed = Boolean(selectedBookmark) && payloadQuery.isError;
 
   const getPayload = useCallback(
-    async (bookmark: ConversationMessageBookmarkDto): Promise<BookmarkPayload> => {
-      const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
-      const cached = payloadCache.get(key);
-      if (cached) return cached;
-      const payload = await resolveBookmarkPayload(bookmark);
-      setPayloadCache((current) => {
-        const next = new Map(current);
-        next.set(key, payload);
-        return next;
-      });
-      return payload;
-    },
-    [payloadCache],
+    (bookmark: ConversationMessageBookmarkDto): Promise<BookmarkPayload> =>
+      client.fetchQuery(bookmarkPayloadQueryOptions(bookmark)),
+    [client],
   );
 
   const resolveCaptureDestination = useCallback(
@@ -394,16 +340,10 @@ export function useReferenceInbox(options: {
         toast.error('Failed to remove reference', { message: error instanceof Error ? error.message : String(error) });
         return false;
       }
-      const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
-      setPayloadCache((current) => {
-        if (!current.has(key)) return current;
-        const next = new Map(current);
-        next.delete(key);
-        return next;
-      });
+      client.removeQueries({ queryKey: bookmarkPayloadKey(bookmark.conversationId, bookmark.messageId) });
       return true;
     },
-    [removeBookmark],
+    [client, removeBookmark],
   );
 
   return {

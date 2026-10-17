@@ -279,7 +279,7 @@ impl ExternalLookup<'_> {
         );
 
         let executor = self.container.tools();
-        let call = crate::features::function_calling::domain::FunctionCall::new(
+        let call = lattice_core::application::contracts::tools::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "wiki_search",
             serde_json::json!({

@@ -115,3 +115,30 @@ test('Explorer recovers from a search failure without losing the open file', asy
   await search.fill('answer');
   await expect(page.getByRole('button', { name: /src\/hello.ts:2/ })).toBeVisible();
 });
+
+test("a model picked in a folder chat changes that chat only", async ({ page, backend }) => {
+  const row = (model_id: string, model_name: string, active: boolean) => ({
+    id: model_id, model_id, model_name, file_path: `/models/${model_id}.gguf`, file_size_bytes: 1_000_000_000,
+    model_type: 'chat', backend: 'local', downloaded_at: '2026-10-01T00:00:00Z', last_used_at: null, use_count: 0,
+    is_active_for_chat: active, is_active_for_embedding: false, is_active_for_utility: false,
+  });
+  backend.state.models = [row('qwen3.5-27b', 'Qwen3.5-27B', true), row('ornith-1.5-9b', 'Ornith-1.5-9B', false)];
+  await openFolder(page);
+
+  const model = page.getByRole('button', { name: /^Model for this chat:/ });
+  await expect(model).toHaveAccessibleName('Model for this chat: Qwen3.5-27B (app default).');
+  await model.click();
+  await expect(page.getByRole('menuitemradio', { name: /^Use default \(Qwen3\.5-27B\)/ })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('menuitemradio', { name: /^Ornith-1\.5-9B/ }).click();
+
+  await expect(page.getByText('This chat now uses Ornith-1.5-9B')).toBeVisible();
+  await expect(model).toHaveAccessibleName('Model for this chat: Ornith-1.5-9B (chosen for this chat).');
+  expect(backend.calls.filter(call => call.command === 'set_conversation_model_choice').map(call => call.args)).toEqual([{
+    conversationId: 'thread-0',
+    choice: { kind: 'explicit', model: { kind: 'local', model_id: 'ornith-1.5-9b' } },
+  }]);
+  // The app-wide default is untouched: no provider, no active row, no setting.
+  const globalWrites = ['update_settings', 'set_active_chat_model', 'clear_active_chat_model'];
+  expect(backend.calls.filter(call => globalWrites.includes(call.command))).toEqual([]);
+});
+

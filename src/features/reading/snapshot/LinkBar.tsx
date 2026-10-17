@@ -6,8 +6,9 @@
  * have meant. Nothing opens without a second, deliberate click here.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
+import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, X } from 'lucide-react';
 
 import { EventSchemas, listenValidated, TauriEventNames } from '@/types/events';
@@ -15,6 +16,7 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
 
 import { listWebPageSnapshots, type WebPageSnapshotDto } from './api';
 import { normalizeSnapshotUrl, splitUrl } from './snapshotFrameUrl';
+import { webPageSnapshotListQueryKey } from './useWebPageSnapshot';
 
 /** How long the bar waits for a decision before it goes away by itself. */
 export const LINK_BAR_TIMEOUT_MS = 12_000;
@@ -45,7 +47,6 @@ const barButton =
 
 export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBarProps) {
   const [link, setLink] = useState<ClickedLink | null>(null);
-  const [frozenCopy, setFrozenCopy] = useState<{ seq: number; snapshot: WebPageSnapshotDto } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -63,27 +64,25 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
     };
   }, [snapshotId]);
 
-  // Is there a frozen copy of the clicked page in this conversation?
-  useEffect(() => {
-    if (!link) return;
-    const target = normalizeSnapshotUrl(link.url);
-    if (!target) return;
-    let stale = false;
-    listWebPageSnapshots(conversationId)
-      .then((snapshots) => {
-        if (stale) return;
-        const match = snapshots.find(
-          (snapshot) => snapshot.status === 'ready' && snapshot.id !== snapshotId && sameUrl(snapshot, target),
-        );
-        setFrozenCopy(match ? { seq: link.seq, snapshot: match } : null);
-      })
-      .catch(() => {
-        // Without the list the bar still offers the browser.
-      });
-    return () => {
-      stale = true;
-    };
-  }, [link, conversationId, snapshotId]);
+  // Is there a frozen copy of the clicked page in this conversation? Without
+  // the list the bar still offers the browser.
+  const target = link ? normalizeSnapshotUrl(link.url) : null;
+  const snapshotsQuery = useQuery({
+    queryKey: webPageSnapshotListQueryKey(conversationId),
+    queryFn: () => listWebPageSnapshots(conversationId),
+    enabled: target !== null,
+    retry: false,
+    staleTime: 0,
+  });
+  const match = useMemo(
+    () =>
+      target
+        ? snapshotsQuery.data?.find(
+            (snapshot) => snapshot.status === 'ready' && snapshot.id !== snapshotId && sameUrl(snapshot, target),
+          ) ?? null
+        : null,
+    [snapshotId, snapshotsQuery.data, target],
+  );
 
   useEffect(() => {
     if (!link) return;
@@ -93,7 +92,6 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
 
   if (!link) return null;
   const { host, path } = splitUrl(link.url);
-  const match = frozenCopy?.seq === link.seq ? frozenCopy.snapshot : null;
 
   return (
     <div

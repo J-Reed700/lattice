@@ -5,8 +5,8 @@
  * count of nothing, stated as if it were news. When every claim is grounded the
  * line says so and the unverified side of the panel is not drawn at all.
  *
- * A claim nothing checked (the judge ran out of time, or the page had no
- * archived text) is neither grounded nor ungrounded, so it is counted apart
+ * A claim nothing checked (the judge gave no usable answer, or the page had
+ * no archived text) is neither grounded nor ungrounded, so it is counted apart
  * and never folded into "could not be grounded".
  */
 export function verificationSummaryLine(

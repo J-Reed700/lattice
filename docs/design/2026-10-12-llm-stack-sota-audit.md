@@ -185,7 +185,7 @@ Several places in the notes disagree, and the ranking below depends on three of 
     - **Prerequisite:** Keep citation numbering stable (`chat/retrieval/source_citations.rs:25-38`).
 
 11. **Tune fusion on v3.**
-    - **Change:** Sweep k=10 and the 0.7/0.3 weights (`shared/constants.rs:60-64`). Try a normalized convex combination in `features/search/engine/fusion.rs:66-80`.
+    - **Change:** Sweep k=10 and the 0.7/0.3 weights (`shared/constants.rs:60-64`). Try a normalized convex combination in `features/search/engine/fusion.rs:66-80` (now `lattice-core` `application/contracts/search/fusion.rs`).
     - **Why:** A convex combination beat RRF, and RRF is sensitive to k ([arXiv 2210.11934](https://arxiv.org/abs/2210.11934), 2023).
     - **Payoff:** Small and uncertain.
     - **Effort:** Hours.

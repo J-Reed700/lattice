@@ -495,14 +495,16 @@ async fn test_mock_conversation_service_create() {
     let conversation = service
         .create_conversation(
             "Test Chat".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
             Some("You are helpful.".to_string()),
         )
         .await
         .unwrap();
 
     assert_eq!(conversation.title, "Test Chat");
-    assert_eq!(conversation.model_name, "claude-sonnet-4-5-20250929");
+    assert_eq!(
+        conversation.model_choice,
+        lattice_core::domain::conversation::ChatModelChoice::Default
+    );
     assert_eq!(
         conversation.system_prompt,
         Some("You are helpful.".to_string())
@@ -516,7 +518,7 @@ async fn test_mock_conversation_service_messages() {
     let service = MockConversationService::new();
 
     let conversation = service
-        .create_conversation("Test".to_string(), "model".to_string(), None)
+        .create_conversation("Test".to_string(), None)
         .await
         .unwrap();
 
@@ -548,15 +550,15 @@ async fn test_mock_conversation_service_list() {
     let service = MockConversationService::new();
 
     service
-        .create_conversation("Conv 1".to_string(), "model".to_string(), None)
+        .create_conversation("Conv 1".to_string(), None)
         .await
         .unwrap();
     service
-        .create_conversation("Conv 2".to_string(), "model".to_string(), None)
+        .create_conversation("Conv 2".to_string(), None)
         .await
         .unwrap();
     service
-        .create_conversation("Conv 3".to_string(), "model".to_string(), None)
+        .create_conversation("Conv 3".to_string(), None)
         .await
         .unwrap();
 
@@ -578,7 +580,7 @@ async fn test_mock_conversation_service_prune() {
     let service = MockConversationService::new();
 
     let conversation = service
-        .create_conversation("Test".to_string(), "model".to_string(), None)
+        .create_conversation("Test".to_string(), None)
         .await
         .unwrap();
 

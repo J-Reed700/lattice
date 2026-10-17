@@ -168,7 +168,6 @@ export function useJournalSelection() {
         icon: JOURNAL_SPACE_DEFAULT_ICON,
         accentColor: JOURNAL_SPACE_DEFAULT_ACCENT,
         spacePrompt: null,
-        defaultModelName: null,
         toolPreferencesJson: null,
       });
       setBulkSpaceIdDraft(result.id);

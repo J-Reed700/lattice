@@ -88,12 +88,19 @@ impl ImportSettingsUseCase {
 
         // Import validates and persists once, with merge and secret restoration
         // serialized against other settings writes. Never save its result again.
+        let previous_llm = self
+            .repository
+            .get_all()
+            .await
+            .ok()
+            .map(|settings| settings.llm);
         let imported = self.repository.import(&request.path, request.merge).await?;
         self.side_effects
             .on_settings_updated(
                 None,
                 SettingsTransitionHints {
                     vault_just_enabled: imported.vault_just_enabled,
+                    previous_llm,
                 },
             )
             .await;

@@ -18,11 +18,11 @@ describe('ClaimHoverCard', () => {
       citationIds: [1],
       verdict: 'unverified',
       method: 'lexical',
-      unverifiedReason: 'budget',
+      unverifiedReason: 'judge_failed',
     });
     expect(screen.getByText('Not checked')).toBeInTheDocument();
     expect(screen.queryByText('Not found in the cited passage')).not.toBeInTheDocument();
-    expect(screen.getByText(/ran out of time/)).toBeInTheDocument();
+    expect(screen.getByText(/gave no usable answer/)).toBeInTheDocument();
   });
 
   it('names a page with no saved text as the reason', () => {

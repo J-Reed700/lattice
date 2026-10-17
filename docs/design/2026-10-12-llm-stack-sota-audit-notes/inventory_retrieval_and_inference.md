@@ -59,7 +59,7 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
   - Ranking uses FTS5 `bm25()` with default column weights (`search/engine/text_search/sqlite_text_search.rs:260-274`).
   - Query terms are OR-joined after normalization (`search/engine/fts_query.rs:95-111`).
   - A separate in-Rust `BM25Search` is also constructed (`search/di.rs:280`). Its use in the chat path was not traced.
-- **Fusion**: weighted RRF, `score += w/(k + rank + 1)` (`search/engine/fusion.rs:66-80`), with `k = DEFAULT_RRF_K = 10`, vector weight 0.7 and keyword weight 0.3 (`shared/constants.rs:60-64`).
+- **Fusion**: weighted RRF, `score += w/(k + rank + 1)` (`search/engine/fusion.rs:66-80`; moved to `lattice-core` `application/contracts/search/fusion.rs` on 2026-10-16), with `k = DEFAULT_RRF_K = 10`, vector weight 0.7 and keyword weight 0.3 (`shared/constants.rs:60-64`).
   - When sparse is on, the lexical weight is split between BM25 and sparse (`hybrid_search.rs:427`).
 - **Per-branch depth**: `limit × BRANCH_DEPTH(3)` (`search/use_cases/hybrid_search.rs:78`, `:396`).
 - **Floors and caps**:

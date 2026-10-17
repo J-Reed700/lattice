@@ -9,7 +9,6 @@ use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionRe
 use lattice_core::shared::runtime::jobs::JobStore;
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::time::Instant;
 
 #[path = "batch_scheduler_tests.rs"]
 pub(super) mod batch_scheduler_tests;
@@ -1792,7 +1791,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
             512,
             CheckPolicy::Strict,
         )
-        .check_without_deadline("Visual Studio includes a package manager.", &evidence)
+        .check("Visual Studio includes a package manager.", &evidence)
         .await;
         if corrected.starts_with("unsupported") {
             assert!(
@@ -1839,7 +1838,7 @@ async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() 
             CheckPolicy::Strict,
         );
         let result = checker
-            .check_without_deadline("The field contains two spaces.", &evidence)
+            .check("The field contains two spaces.", &evidence)
             .await;
         if valid {
             assert!(
@@ -1859,7 +1858,7 @@ async fn strict_checker_rejects_missing_invented_quotes_and_truncated_replies() 
     };
     for (text, finish) in [("supported","stop"),("supported\nReason: a match\nSource quote: fabricated", "stop"),("supported\nReason: a match\nSource quote: DictReader preserves field-name whitespace by default.","length")] {
         let model=TypedModel { response:CompletionResponse { text:text.into(),finish_reason:finish.into(), ..Default::default() } };
-        let strict=ClaimChecker::new(&model,SamplingOverride::deterministic(),512,CheckPolicy::Strict).check(GOOD,&evidence,Instant::now()+Duration::from_secs(5)).await;
+        let strict=ClaimChecker::new(&model,SamplingOverride::deterministic(),512,CheckPolicy::Strict).check(GOOD,&evidence).await;
         assert!(matches!(strict,ClaimJudgment::Unusable));
     }
     for alternatives in [
@@ -1889,14 +1888,8 @@ async fn strict_checker_rejects_missing_invented_quotes_and_truncated_replies() 
             CheckPolicy::Strict,
         );
         assert!(matches!(
-            checker
-                .check(GOOD, &evidence, Instant::now() + Duration::from_secs(5))
-                .await,
+            checker.check(GOOD, &evidence).await,
             ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Unsupported && outcome.quote.is_none()
-        ));
-        assert!(matches!(
-            checker.check(GOOD, &evidence, Instant::now()).await,
-            ClaimJudgment::OutOfTime
         ));
     }
 }

@@ -7,11 +7,12 @@ use crate::features::conversation::branching_dto::{
 };
 use crate::features::conversation::chat::{ChatResponse, ToolPreferences};
 use crate::features::conversation::dto::{
-    CompactConversationRequestDto, CompactConversationResponseDto, CreateConversationRequestDto,
-    CreateConversationResponseDto, DeleteConversationRequestDto, DeleteConversationResponseDto,
-    GetConversationMessagesRequestDto, GetConversationMessagesResponseDto,
-    GetConversationRequestDto, GetConversationResponseDto, ListConversationsQuery,
-    ListConversationsResponseDto, RenameConversationRequestDto, RenameConversationResponseDto,
+    CompactConversationRequestDto, CompactConversationResponseDto, ConversationDto,
+    CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
+    DeleteConversationResponseDto, GetConversationMessagesRequestDto,
+    GetConversationMessagesResponseDto, GetConversationRequestDto, GetConversationResponseDto,
+    ListConversationsQuery, ListConversationsResponseDto, RenameConversationRequestDto,
+    RenameConversationResponseDto,
 };
 use crate::features::conversation::message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, DeleteConversationMessageRequestDto,
@@ -33,6 +34,8 @@ use crate::features::conversation::space_dto::{
 use crate::features::conversation::starters_dto::ChatStartersDto;
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
+use lattice_core::domain::conversation::ChatModelChoice;
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::ipc::ApiError;
 use tauri::State;
 
@@ -54,6 +57,24 @@ pub async fn create_conversation(
     container: State<'_, Container>,
 ) -> Result<CreateConversationResponseDto, ApiError> {
     conversation_impl::create_conversation_impl(request, container.inner()).await
+}
+
+/// Choose the model this chat is answered by, or `Default` to follow the
+/// Settings default. Refused with the cause and fix when the model cannot be
+/// used now. Changes this chat only, and never a turn already running.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_conversation_model_choice(
+    conversation_id: String,
+    choice: ChatModelChoice,
+    container: State<'_, Container>,
+) -> Result<ConversationDto, ApiError> {
+    conversation_impl::set_conversation_model_choice_impl(
+        conversation_id,
+        choice,
+        container.inner(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -643,6 +664,9 @@ pub async fn continue_in_new_conversation(
 /// Re-run the last user message, streaming over `llm-stream` exactly like a
 /// normal send. The user message is not duplicated.
 ///
+/// `model` answers this regeneration only ("Try with another model"):
+/// nothing is persisted, and the chat's own choice is unchanged.
+///
 /// Flat args, mirroring `chat_with_conversation`, because this re-enters the
 /// same streaming flow and needs the same `window`.
 #[tauri::command]
@@ -652,6 +676,7 @@ pub async fn regenerate_response(
     conversation_id: String,
     tool_preferences: Option<ToolPreferences>,
     request_id: Option<String>,
+    model: Option<ModelRef>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::regenerate_response_impl(
@@ -659,6 +684,7 @@ pub async fn regenerate_response(
         conversation_id,
         tool_preferences,
         request_id,
+        model,
         window,
     )
     .await

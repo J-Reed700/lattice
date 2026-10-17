@@ -99,7 +99,6 @@ export function useJournalSpaces(options: {
           icon: DEFAULT_JOURNAL_ICON,
           accentColor: DEFAULT_JOURNAL_ACCENT,
           spacePrompt: null,
-          defaultModelName: null,
           toolPreferencesJson: null,
         });
       } catch (error) {

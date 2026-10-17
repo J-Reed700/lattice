@@ -3,9 +3,6 @@
 use super::*;
 use crate::features::embedding::mocks::MockEmbeddingService;
 use crate::features::favorites::dto::FavoriteDto;
-use crate::features::function_calling::dto::{
-    DocumentResult, GetDocumentOutput, ListDocumentsOutput,
-};
 use crate::features::function_calling::mocks::MockFunctionRegistry;
 use crate::features::recent::dto::RecentDocumentDto;
 use crate::features::search::mocks::{empty_hybrid_search, MockBM25Search, MockSearchService};
@@ -14,6 +11,9 @@ use crate::features::web::mocks::MockWebService;
 use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::tools::{
+    DocumentResult, GetDocumentOutput, ListDocumentsOutput,
+};
 use lattice_core::application::ports::DocumentRepositoryPort;
 use lattice_core::application::ports::RepositoryPort;
 use lattice_core::application::ports::{
@@ -313,7 +313,7 @@ async fn test_execute_unknown_function() {
 
 #[tokio::test]
 async fn test_validate_arguments() {
-    use crate::features::function_calling::domain::ToolDefinition;
+    use lattice_core::application::contracts::tools::ToolDefinition;
     use serde_json::json;
 
     let registry = Arc::new(MockFunctionRegistry::new());
@@ -617,12 +617,12 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
 /// orchestrator, each hit named after its document.
 #[tokio::test]
 async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_document() {
-    use crate::features::function_calling::dto::SemanticSearchOutput;
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::features::search::engine::vector_search::USearchVectorIndex;
     use crate::features::search::use_cases::HybridSearchUseCase;
     use crate::infrastructure::persistence::repositories::ChunkRepository;
     use crate::infrastructure::persistence::repositories::DocumentRepository as SqliteDocuments;
+    use lattice_core::application::contracts::tools::SemanticSearchOutput;
 
     let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();

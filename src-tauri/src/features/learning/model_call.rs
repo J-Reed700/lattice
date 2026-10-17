@@ -6,8 +6,11 @@
 //! window and refuses a request that does not fit. A generator states what it
 //! needs (the answer's reservation, its priority and schema); it never does
 //! window arithmetic of its own.
-
-use std::time::Duration;
+//!
+//! No learning call has a wall-clock limit. A slow model is not a failed
+//! one: the adapter's stall detection ends a call whose server has gone
+//! quiet, the answer's output reservation ends a runaway one, and dropping
+//! the future (a cancelled job, a closed window) ends one nobody wants.
 
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
@@ -65,40 +68,54 @@ pub(in crate::features::learning) fn prose(
     request
 }
 
-/// A wall-clock limit on one call, queueing included, and what the learner is
-/// told when it passes.
-pub(in crate::features::learning) struct Deadline {
-    pub after: Duration,
-    pub message: &'static str,
+/// What a request the model's window cannot hold fails with.
+pub(in crate::features::learning) enum TooLarge<'a> {
+    /// Input the learner can shorten: this message, as invalid input.
+    Input(&'a str),
+    /// Material the learner cannot trim: [`window_too_small`], saying what
+    /// does not fit, with the Learning model, its window and the fix.
+    Window(&'a str),
 }
 
-/// Send `request`. A request the model's window cannot hold fails with
-/// `too_large` and is never sent.
-pub(in crate::features::learning) async fn send(
+impl<'a> From<&'a str> for TooLarge<'a> {
+    fn from(message: &'a str) -> Self {
+        Self::Input(message)
+    }
+}
+
+/// Send `request` with no elapsed-time limit. A request the model's window
+/// cannot hold fails as `too_large` says and is never sent.
+pub(in crate::features::learning) async fn send<'a>(
     llm: &dyn LLMPort,
-    request: GroundedRequest,
+    mut request: GroundedRequest,
     streaming: Option<&Streaming<'_>>,
-    deadline: Option<Deadline>,
-    too_large: &str,
+    too_large: impl Into<TooLarge<'a>>,
 ) -> Result<GroundedOutput> {
-    let call = async {
-        match streaming {
-            Some(streaming) => {
-                grounded_generation::generate_streaming(llm, request, streaming).await
-            }
-            None => grounded_generation::generate(llm, request).await,
-        }
-    };
-    let result = match deadline {
-        Some(deadline) => tokio::time::timeout(deadline.after, call)
-            .await
-            .map_err(|_| AppError::ServiceNotAvailable(deadline.message.into()))?,
-        None => call.await,
+    request.call.time_budget = None;
+    request.call.no_time_limit = true;
+    let result = match streaming {
+        Some(streaming) => grounded_generation::generate_streaming(llm, request, streaming).await,
+        None => grounded_generation::generate(llm, request).await,
     };
     result.map_err(|error| match error {
-        GroundedGenerationError::Budget(_) => AppError::InvalidInput(too_large.into()),
+        GroundedGenerationError::Budget(_) => match too_large.into() {
+            TooLarge::Input(message) => AppError::InvalidInput(message.into()),
+            TooLarge::Window(what) => window_too_small(llm, what),
+        },
         GroundedGenerationError::Model(error) => error,
     })
+}
+
+/// The refusal for material that does not fit the Learning model's window:
+/// `what` says what does not fit, and the message names the model, its
+/// window and the fix. A configuration error, because the window is a
+/// setting, not something the learner typed.
+pub(in crate::features::learning) fn window_too_small(llm: &dyn LLMPort, what: &str) -> AppError {
+    AppError::InvalidConfig(format!(
+        "{what} in {}'s {}-token context window. Raise your Learning model's context length in Settings → Models, or choose a Learning model with a larger window",
+        llm.model_name(),
+        llm.max_context_tokens()
+    ))
 }
 
 /// Whether the model's window holds `request` as it stands.
@@ -171,7 +188,6 @@ mod tests {
                 "low",
             ),
             None,
-            None,
             "too large",
         )
         .await?;
@@ -186,6 +202,9 @@ mod tests {
         assert_eq!(request.json_schema, Some(schema));
         assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
         assert_eq!(request.max_output_tokens, Some(2000));
+        // No learning call is killed by a clock.
+        assert!(request.no_time_limit);
+        assert_eq!(request.wall_clock_budget(), None);
         Ok(())
     }
 
@@ -202,7 +221,6 @@ mod tests {
                 "low",
             ),
             None,
-            None,
             "Choose fewer sources.",
         )
         .await
@@ -210,6 +228,35 @@ mod tests {
         .map(|error| error.to_string())
         .unwrap_or_default();
         assert!(error.contains("Choose fewer sources."), "{error}");
+        assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() {
+        let llm = recorder(4096);
+        let error = send(
+            &llm,
+            structured(
+                "Return JSON.",
+                "x".repeat(40_000),
+                serde_json::json!({}),
+                500,
+                "low",
+            ),
+            None,
+            TooLarge::Window("The requested learning material does not fit"),
+        )
+        .await
+        .err();
+        let Some(AppError::InvalidConfig(message)) = error else {
+            panic!("expected a configuration refusal, got {error:?}");
+        };
+        assert_eq!(
+            message,
+            "The requested learning material does not fit in recorder's 4096-token context \
+             window. Raise your Learning model's context length in Settings → Models, or choose \
+             a Learning model with a larger window"
+        );
         assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
     }
 

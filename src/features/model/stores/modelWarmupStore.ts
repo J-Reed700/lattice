@@ -1,10 +1,12 @@
 /**
- * Per-role boot-time warmup status. Powers the chat input skeleton.
+ * Per-role warmup status: boot prewarm and the warm-up buttons. The chat
+ * role's state powers the chat input skeleton, for chats on the default
+ * model; Learning is never prewarmed at boot and never masks the composer.
  */
 
 import { create } from 'zustand';
 
-export type WarmupRole = 'chat' | 'utility' | 'embedding';
+export type WarmupRole = 'chat' | 'utility' | 'embedding' | 'learning';
 export type WarmupPhase = 'idle' | 'started' | 'ready' | 'skipped' | 'failed';
 
 export interface RoleWarmupState {
@@ -20,6 +22,7 @@ interface ModelWarmupStore {
   chat: RoleWarmupState;
   utility: RoleWarmupState;
   embedding: RoleWarmupState;
+  learning: RoleWarmupState;
   setRolePhase: (
     role: WarmupRole,
     phase: WarmupPhase,
@@ -48,6 +51,7 @@ export const useModelWarmupStore = create<ModelWarmupStore>((set) => ({
   chat: { ...idleState },
   utility: { ...idleState },
   embedding: { ...idleState },
+  learning: { ...idleState },
   setRolePhase: (role, phase, error = null, modelId) =>
     set((state) => {
       const now = Date.now();
@@ -77,6 +81,7 @@ export const useModelWarmupStore = create<ModelWarmupStore>((set) => ({
       chat: { ...idleState },
       utility: { ...idleState },
       embedding: { ...idleState },
+      learning: { ...idleState },
     }),
 }));
 

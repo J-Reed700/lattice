@@ -27,8 +27,8 @@
 //! // - fetch_url_content
 //! ```
 
-use crate::features::function_calling::domain::ToolDefinition;
 use crate::features::function_calling::FunctionRegistryTrait;
+use lattice_core::application::contracts::tools::ToolDefinition;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

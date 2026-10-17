@@ -10,7 +10,7 @@ use crate::features::conversation::chat::ports::ChatTools;
 use crate::features::conversation::chat::test_runtime::FakeRuntime;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepDto, TurnStepState};
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
 };
@@ -190,7 +190,7 @@ fn subject(call: &FunctionCall) -> String {
 
 #[async_trait::async_trait]
 impl ChatTools for Web {
-    fn list_tools(&self) -> Vec<crate::features::function_calling::domain::ToolDefinition> {
+    fn list_tools(&self) -> Vec<lattice_core::application::contracts::tools::ToolDefinition> {
         Vec::new()
     }
     async fn execute(&self, call: FunctionCall) -> Result<FunctionResult> {

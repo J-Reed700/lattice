@@ -210,6 +210,7 @@ export const COMMAND_PLUGINS = {
   interrupt_learning_assessment_form: 'learning',
   is_favorite: 'favorites',
   is_model_already_downloaded: 'model',
+  last_learning_window_shortfall: 'model',
   list_all_documents: 'file',
   list_available_functions: 'functions',
   list_clusters: 'corpus-shape',
@@ -233,6 +234,7 @@ export const COMMAND_PLUGINS = {
   list_journals: 'conversation',
   list_learning_programs: 'learning',
   list_learning_tangents: 'learning',
+  list_loaded_models: 'model',
   list_message_bookmarks: 'conversation',
   list_passage_references: 'references',
   list_space_documents: 'conversation',
@@ -333,6 +335,7 @@ export const COMMAND_PLUGINS = {
   set_conversation_archived: 'conversation',
   set_conversation_bookmarked: 'conversation',
   set_conversation_explorer_root: 'explorer',
+  set_conversation_model_choice: 'conversation',
   set_conversation_pinned: 'conversation',
   set_conversation_saved: 'conversation',
   set_document_space_membership: 'conversation',
@@ -371,6 +374,7 @@ export const COMMAND_PLUGINS = {
   validate_folder_path: 'settings',
   warm_up_active_chat_model: 'model',
   warm_up_active_utility_model: 'model',
+  warm_up_learning_model: 'model',
 } as const;
 
 export type CommandName = keyof typeof COMMAND_PLUGINS;

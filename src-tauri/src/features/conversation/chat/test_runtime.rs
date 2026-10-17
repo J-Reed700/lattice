@@ -5,8 +5,15 @@ use super::ports::*;
 use crate::features::conversation::mocks::MockConversationService;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::contracts::settings::LLMSettingsDto;
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, ModelRequirements, PinnedModel, ResolvedModel,
+};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::services::chat_model_resolution::{
+    resolve, resolve_learning, DefaultChatModel,
+};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::collections::VecDeque;
@@ -23,9 +30,21 @@ pub(super) struct TestVault {
     pub(super) search: Arc<dyn crate::features::search::trait_def::LibrarySearchTrait>,
 }
 
+/// The model `FakeRuntime::llm` stands for: the Settings default.
+pub(super) fn default_model() -> ModelRef {
+    ModelRef::Local {
+        model_id: "settings-default".into(),
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FakeRuntime {
+    /// The Settings default chat model, named [`default_model`].
     pub(super) llm: Option<Arc<dyn LLMPort>>,
+    /// The other models a chat, a request or the Learning role may name.
+    pub(super) models: Vec<(ModelRef, Arc<dyn LLMPort>)>,
+    /// The Learning model set in Settings, if any.
+    pub(super) learning_model: Option<ModelRef>,
     pub(super) tools: Option<Arc<dyn ChatTools>>,
     pub(super) jobs: Option<Arc<JobRuntime>>,
     /// The library retrieval searches. Without one, a turn that reaches the
@@ -46,16 +65,21 @@ pub(super) struct FakeRuntime {
     /// One planner health per test, so a planner timeout in one test never
     /// shrinks another's prompt.
     pub(super) planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
-    pub(super) intent_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
-    pub(super) judge_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
     /// The `answer_thinking` setting the turn reads.
     pub(super) answer_thinking: bool,
+    /// What a cited page the turn never read is captured with.
+    pub(super) page_reader: Option<Arc<dyn PageReader>>,
+    /// The conversation records, for a test that reads back what was archived
+    /// without a library to search.
+    pub(super) records: Option<Arc<dyn ChatRecords>>,
 }
 
 impl Default for FakeRuntime {
     fn default() -> Self {
         Self {
             llm: None,
+            models: Vec::new(),
+            learning_model: None,
             tools: None,
             jobs: None,
             vault: None,
@@ -66,17 +90,66 @@ impl Default for FakeRuntime {
             research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
             background: Arc::default(),
             planner_health: Arc::default(),
-            intent_pace: Arc::new(crate::features::conversation::chat::intent::intent_pace()),
-            judge_pace: Arc::new(crate::features::conversation::chat::verification::judge_pace()),
             answer_thinking: false,
+            page_reader: None,
+            records: None,
         }
     }
 }
 
+impl FakeRuntime {
+    /// The loaded model a reference names, or the refusal a missing one gets.
+    fn loaded(&self, model: &ModelRef) -> Result<Arc<dyn LLMPort>> {
+        if *model == default_model() {
+            if let Some(llm) = &self.llm {
+                return Ok(Arc::clone(llm));
+            }
+        }
+        self.models
+            .iter()
+            .find(|(named, _)| named == model)
+            .map(|(_, llm)| Arc::clone(llm))
+            .ok_or_else(|| AppError::AiModelsNotInstalled(format!("{model} is not downloaded")))
+    }
+
+    fn pinned(&self, resolved: ResolvedModel) -> Result<PinnedModel> {
+        Ok(PinnedModel {
+            llm: self.loaded(&resolved.model)?,
+            resolved,
+            instance_id: 0,
+            degraded: None,
+        })
+    }
+}
+
+/// Resolved the way the app resolves: the request override, else the chat's
+/// choice as its conversation keeps it, else the Settings default.
 #[async_trait::async_trait]
 impl ChatModels for FakeRuntime {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        Ok(Arc::clone(self.llm.as_ref().expect(UNUSED)))
+    async fn chat_llm_for(
+        &self,
+        conversation_id: &str,
+        request_override: Option<&ModelRef>,
+        _requirements: ModelRequirements,
+    ) -> Result<PinnedModel> {
+        let choice = self.conversations.model_choice(conversation_id)?;
+        let default =
+            DefaultChatModel(self.llm.as_ref().map(|_| default_model()).ok_or_else(|| {
+                AppError::AiModelsNotInstalled(
+                    "No chat model is selected in Settings → Models".into(),
+                )
+            }));
+        self.pinned(resolve(request_override, &choice, &default)?)
+    }
+    async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {
+        let settings = LLMSettingsDto {
+            learning_model: self.learning_model.clone(),
+            ..LLMSettingsDto::default()
+        };
+        self.pinned(resolve_learning(&settings)?)
+    }
+    async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
+        self.loaded(&default_model())
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         unreachable!("{UNUSED}")
@@ -126,6 +199,9 @@ impl ChatStorage for FakeRuntime {
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
         if let Some(vault) = &self.vault {
             return Arc::clone(&vault.records);
+        }
+        if let Some(records) = &self.records {
+            return Arc::clone(records);
         }
         // Never queried unless the model calls a history tool.
         Arc::new(ConversationRepository::new(
@@ -182,7 +258,7 @@ impl ChatRetrieval for FakeRuntime {
         Arc::clone(&self.vault.as_ref().expect(UNUSED).search)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {
-        unreachable!("{UNUSED}")
+        Arc::clone(self.page_reader.as_ref().expect(UNUSED))
     }
     async fn summary_search(
         &self,
@@ -191,12 +267,6 @@ impl ChatRetrieval for FakeRuntime {
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(&self.planner_health)
-    }
-    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        Arc::clone(&self.intent_pace)
-    }
-    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        Arc::clone(&self.judge_pace)
     }
 }
 
@@ -222,6 +292,7 @@ impl ChatPolicy for FakeRuntime {
     async fn compact_for_turn(
         &self,
         _id: &str,
+        _llm: Arc<dyn LLMPort>,
         _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()> {
         unreachable!("{UNUSED}")

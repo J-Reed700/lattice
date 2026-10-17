@@ -187,15 +187,43 @@ pub(super) fn auto_context_size_with_quantization(
     )
 }
 
+/// GPU memory a server of one model holds at one window: its weights and its
+/// KV cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Footprint {
+    pub weights: u64,
+    pub cache: u64,
+    /// The window, in tokens, the cache is priced at.
+    pub window: u32,
+}
+
+impl Footprint {
+    pub fn total(self) -> u64 {
+        self.weights.saturating_add(self.cache)
+    }
+}
+
+/// What a server of `model_path` holds at a window of `context_size` tokens.
+/// A GGUF whose header cannot be read still counts its weights.
+pub(crate) fn footprint_of(model_path: &std::path::Path, context_size: u32) -> Footprint {
+    Footprint {
+        weights: std::fs::metadata(model_path).map_or(0, |m| m.len()),
+        cache: crate::features::llm::engine::gguf_metadata::read_model_info(model_path)
+            .and_then(|info| info.kv_cache_bytes(context_size))
+            .unwrap_or(0),
+        window: context_size,
+    }
+}
+
 /// GPU memory a running server already holds: its weights plus the KV cache
-/// for the window it was launched with. A GGUF whose header cannot be read
-/// still counts its weights.
-pub(super) fn resident_bytes_of(model_path: &std::path::Path, context_size: u32) -> u64 {
-    let weights = std::fs::metadata(model_path).map_or(0, |m| m.len());
-    let kv = crate::features::llm::engine::gguf_metadata::read_model_info(model_path)
-        .and_then(|info| info.kv_cache_bytes(context_size))
-        .unwrap_or(0);
-    weights.saturating_add(kv)
+/// for the window it was launched with.
+pub(crate) fn resident_bytes_of(model_path: &std::path::Path, context_size: u32) -> u64 {
+    footprint_of(model_path, context_size).total()
+}
+
+/// The share of a GPU's reported memory models and their caches may claim.
+pub(super) fn usable_gpu_bytes(vram_gb: f64) -> u64 {
+    (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64
 }
 
 /// The largest whole thousand of tokens, up to `ceiling`, whose KV cache fits
@@ -260,7 +288,7 @@ pub(super) fn context_size_for_quantized(
     info.kv_cache_bytes_with_quantization(floor_ceiling, quantized)?;
     let minimum = AUTO_MIN_CONTEXT_SIZE.min(floor_ceiling);
 
-    let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+    let usable_bytes = usable_gpu_bytes(vram_gb);
     // Weights past the usable share (a 9B on an 8 GB Mac) leave no room at
     // all. That is the minimum's case, not "unknown": `None` would hand the
     // caller the larger flat default, which is guaranteed not to fit.

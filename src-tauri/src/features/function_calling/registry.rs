@@ -11,7 +11,7 @@
 //! # Example
 //! ```rust,no_run
 //! use lattice::infrastructure::services::function_registry::FunctionRegistry;
-//! use lattice_core::domain::function_call::ToolDefinition;
+//! use lattice_core::application::contracts::tools::ToolDefinition;
 //! use serde_json::json;
 //!
 //! let registry = FunctionRegistry::new();
@@ -34,8 +34,8 @@
 //! # Ok::<(), String>(())
 //! ```
 
-use crate::features::function_calling::domain::{RegistryStats, ToolDefinition};
 use crate::features::function_calling::FunctionRegistryTrait;
+use lattice_core::application::contracts::tools::{RegistryStats, ToolDefinition};
 use lattice_core::shared::error::{AppError, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;

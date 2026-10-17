@@ -73,6 +73,12 @@ impl ResetSettingsUseCase {
     /// let settings = use_case.execute(request).await?;
     /// ```
     pub async fn execute(&self, request: ResetSettingsRequestDto) -> Result<SettingsDto> {
+        let previous_llm = self
+            .repository
+            .get_all()
+            .await
+            .ok()
+            .map(|settings| settings.llm);
         let result = self.repository.reset(request.category).await?;
 
         // Audit P0-3 fix: a reset is a settings mutation; downstream
@@ -80,11 +86,14 @@ impl ResetSettingsUseCase {
         // `reset_settings` Tauri command never invalidated anything,
         // so a "reset to defaults" silently left stale LLM caches.
         // Reset never flips vault.enabled to true (only false via the
-        // default), so all transition hints stay at their default off.
+        // default), so that hint stays off.
         self.side_effects
             .on_settings_updated(
                 request.category,
-                lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints::default(),
+                lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints {
+                    vault_just_enabled: false,
+                    previous_llm,
+                },
             )
             .await;
 

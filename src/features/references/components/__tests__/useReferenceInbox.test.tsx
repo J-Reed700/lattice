@@ -15,6 +15,7 @@ const listWorkspaceNotes = vi.fn();
 const listConversationSpaces = vi.fn();
 const listJournals = vi.fn();
 const listPassageReferences = vi.fn();
+const getConversationMessages = vi.fn();
 
 vi.mock('@/lib/api', () => {
   const api = {
@@ -23,7 +24,7 @@ vi.mock('@/lib/api', () => {
     listConversationSpaces: () => listConversationSpaces(),
     listJournals: () => listJournals(),
     listPassageReferences: (...args: unknown[]) => listPassageReferences(...args),
-    getConversationMessages: async () => ({ ok: false, error: 'not used' }),
+    getConversationMessages: (...args: unknown[]) => getConversationMessages(...args),
   };
   return { VaultAPI: api, default: api };
 });
@@ -126,6 +127,7 @@ describe('useReferenceInbox filters', () => {
       ok: true,
       data: [{ id: 'space_journal', name: 'Journal 1', isArchived: false }],
     });
+    getConversationMessages.mockResolvedValue({ ok: false, error: 'not used' });
     listPassageReferences.mockResolvedValue({
       ok: true,
       data: [
@@ -176,5 +178,46 @@ describe('useReferenceInbox filters', () => {
     await waitFor(() =>
       expect(result.current.filteredItems.map((item) => item.id)).toEqual(['bm_chat']),
     );
+  });
+});
+
+describe('useReferenceInbox selected reference content', () => {
+  const message = { id: 'msg_1', role: 'assistant', content: 'The full answer.', createdAt: '2026-09-05T10:00:00.000Z' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listMessageBookmarks.mockResolvedValue({ ok: true, data: { bookmarks: [bookmark()] } });
+    listWorkspaceNotes.mockResolvedValue({ ok: true, data: { notes: [] } });
+    listConversationSpaces.mockResolvedValue({ ok: true, data: [] });
+    listJournals.mockResolvedValue({ ok: true, data: [] });
+    listPassageReferences.mockResolvedValue({ ok: true, data: [] });
+    getConversationMessages.mockResolvedValue({ ok: true, data: [message] });
+  });
+
+  it('reads the selected message once and reuses it for capture', async () => {
+    const { result } = await mountInbox();
+    act(() => result.current.setSelectedId('bm_chat'));
+    await waitFor(() => expect(result.current.selectedPayload?.content).toBe('The full answer.'));
+    expect(result.current.isResolvingSelected).toBe(false);
+    expect(result.current.resolutionFailed).toBe(false);
+
+    const payload = await result.current.getPayload(bookmark());
+    expect(payload.content).toBe('The full answer.');
+    expect(getConversationMessages).toHaveBeenCalledTimes(1);
+    expect(getConversationMessages).toHaveBeenCalledWith('conv_1');
+  });
+
+  it('says when the message cannot be read, and reads it again when reopened', async () => {
+    getConversationMessages.mockResolvedValueOnce({ ok: false, error: 'gone' });
+    const { result } = await mountInbox();
+    act(() => result.current.setSelectedId('bm_chat'));
+    await waitFor(() => expect(result.current.resolutionFailed).toBe(true));
+    expect(result.current.selectedPayload).toBeNull();
+    expect(result.current.isResolvingSelected).toBe(false);
+
+    act(() => result.current.setSelectedId(null));
+    act(() => result.current.setSelectedId('bm_chat'));
+    await waitFor(() => expect(result.current.selectedPayload?.content).toBe('The full answer.'));
+    expect(result.current.resolutionFailed).toBe(false);
   });
 });

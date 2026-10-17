@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ChatModelNotice } from '@/features/chat/components/ChatModelNotice';
 import type { ChatModelNoticeProps } from '@/features/chat/components/ChatModelNotice';
@@ -69,4 +70,17 @@ describe('ChatModelNotice', () => {
     expect(screen.getByText("The chat model didn't load.")).toBeInTheDocument();
     expect(screen.queryByText('No chat model yet.')).not.toBeInTheDocument();
   });
+
+  it("names a chat's model it cannot use, and offers the default and Settings, never another model", async () => {
+    const onUseDefault = vi.fn();
+    const reason = 'This chat is set to Ornith-1.5-9B, which is no longer downloaded.';
+    renderNotice({ unavailableModel: { reason, onUseDefault }, warmupPhase: 'failed' });
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    // The default model's warm-up says nothing about a chat on a model of its own.
+    expect(screen.queryByText("The chat model didn't load.")).not.toBeInTheDocument();
+    expect(screen.getByText('Open model settings')).toHaveAttribute('href', '/settings');
+    await userEvent.click(screen.getByRole('button', { name: 'Use default' }));
+    expect(onUseDefault).toHaveBeenCalledTimes(1);
+  });
 });
+

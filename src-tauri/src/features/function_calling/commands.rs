@@ -36,8 +36,8 @@
 //! - **Tool Use**: Agentic workflows with function calling
 //! - **Research Assistant**: LLM-driven research with tool access
 
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::shared::error::Result;
 use tauri::State;
 use tracing::{debug, error, info};
@@ -136,7 +136,7 @@ use tracing::{debug, error, info};
 /// Thin controller delegating to `FunctionRegistry::list_tools()`
 async fn list_available_functions_impl(
     container: &Container,
-) -> Result<Vec<crate::features::function_calling::domain::ToolDefinition>> {
+) -> Result<Vec<lattice_core::application::contracts::tools::ToolDefinition>> {
     debug!("Listing available functions");
 
     let registry = container.function_registry();
@@ -150,7 +150,7 @@ async fn list_available_functions_impl(
 
 pub async fn list_available_functions(
     container: State<'_, Container>,
-) -> Result<Vec<crate::features::function_calling::domain::ToolDefinition>> {
+) -> Result<Vec<lattice_core::application::contracts::tools::ToolDefinition>> {
     list_available_functions_impl(&container).await
 }
 
@@ -419,7 +419,7 @@ pub async fn execute_function(
 /// Thin controller delegating to `FunctionRegistry::stats()`
 pub async fn get_function_stats(
     container: State<'_, Container>,
-) -> Result<crate::features::function_calling::domain::RegistryStats> {
+) -> Result<lattice_core::application::contracts::tools::RegistryStats> {
     debug!("Getting function registry statistics");
 
     let registry = container.function_registry();

@@ -168,10 +168,15 @@ pub async fn request_learning_tutor_response(
         .frozen_sources(&request.program_id, &session.summary.source_version_ids)
         .await
         .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Practice tutoring",
+    )
+    .await?;
+    let llm = &pin.llm;
     let generated = crate::features::learning::practice_generation::tutor(
         llm.as_ref(),
-        container.ai.tutor_pace(),
         &session,
         &request,
         &sources,
@@ -257,15 +262,17 @@ pub async fn reveal_learning_practice_solution(
         .frozen_sources(&request.program_id, &session.summary.source_version_ids)
         .await
         .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
-    let generated = crate::features::learning::practice_generation::solution(
-        llm.as_ref(),
-        container.ai.tutor_pace(),
-        &session,
-        &sources,
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Writing a worked solution",
     )
-    .await
-    .map_err(ApiError::from)?;
+    .await?;
+    let llm = &pin.llm;
+    let generated =
+        crate::features::learning::practice_generation::solution(llm.as_ref(), &session, &sources)
+            .await
+            .map_err(ApiError::from)?;
     repo.commit_solution(
         &request,
         &payload_hash,
@@ -309,7 +316,13 @@ pub async fn submit_learning_practice_attempt(
         )
         .await
         .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Grading this practice",
+    )
+    .await?;
+    let llm = &pin.llm;
     let (grade_status, criteria) =
         match crate::features::learning::practice_generation::grade(llm.as_ref(), &session).await {
             Ok(value) => value,

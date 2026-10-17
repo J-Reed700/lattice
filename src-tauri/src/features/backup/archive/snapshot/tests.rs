@@ -867,7 +867,7 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
     let pool = migrated_pool(&live).await;
 
     // A conversation with memory state written by *this* build.
-    sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('c1', 'T', 'm')")
+    sqlx::query("INSERT INTO conversations (id, title) VALUES ('c1', 'T')")
         .execute(&pool)
         .await
         .unwrap();

@@ -2,7 +2,7 @@
 //! reservation, sampling for the thinking mode, the thinking switch and tools.
 use super::*;
 use crate::features::llm::scheduler::rejection::{window_refusal, RequestSize};
-use lattice_core::application::ports::llm_port::ThinkingMode;
+use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
 
 impl LlamaCppLlm {
     /// The prompt's tokens by the rough estimate the budgeter uses, inflated:

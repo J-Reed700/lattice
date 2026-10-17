@@ -3,7 +3,7 @@ use super::*;
 use crate::features::llm::scheduler::rejection::RequestSize;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
-    SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice,
+    SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
 };
 
 fn client() -> LlamaCppLlm {

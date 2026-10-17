@@ -27,7 +27,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector({
     messageVerification: new Map([['answer', verificationSummary]]),
     messageBookmarkMap: new Map(), lastMessageSources: new Map(), messageRetrieval: new Map(),
-    liveRetrieval: new Map(), liveSteps: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [{ id: 'conversation', explorerRoot }],
+    liveRetrieval: new Map(), liveSteps: new Map(), liveModel: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [{ id: 'conversation', explorerRoot }],
     regenerateResponse,
     sendMessage,
     retryFailedMessage,
@@ -43,7 +43,8 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useUpdateSettingsMutation: () => ({ mutateAsync: vi.fn() }),
 }));
 vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => [] }));
-vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ activeModel: null }) }));
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
+vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
 // The chips the answer body draws are what the reader is opened from, so the
 // viewer stands in for tiptap by drawing them.
 vi.mock('@/components/TiptapEditor', () => ({
@@ -211,7 +212,7 @@ describe('message verification disclosure', () => {
           citationIds: [1],
           verdict: 'unverified',
           method: 'lexical',
-          unverifiedReason: 'budget',
+          unverifiedReason: 'judge_failed',
         },
       ],
       judgeUsed: true,

@@ -103,7 +103,7 @@ impl ExternalLookup<'_> {
     ) -> std::result::Result<lattice_core::application::contracts::web::FetchUrlContentOutput, String>
     {
         let timeout = Duration::from_secs(self.tuning.web_page_fetch_timeout_secs.max(1) as u64);
-        let call = crate::features::function_calling::domain::FunctionCall::new(
+        let call = lattice_core::application::contracts::tools::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "fetch_url_content",
             serde_json::json!({ "url": url }),
@@ -335,7 +335,7 @@ impl ExternalLookup<'_> {
         };
 
         let executor = self.container.tools();
-        let call = crate::features::function_calling::domain::FunctionCall::new(
+        let call = lattice_core::application::contracts::tools::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "web_search",
             serde_json::json!({

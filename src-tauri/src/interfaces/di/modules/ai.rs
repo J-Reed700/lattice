@@ -40,10 +40,6 @@ pub struct AIModule {
 
     // Credentials handle echoed from CoreModule for legacy Container API.
     credentials: Arc<dyn CredentialsPort>,
-
-    /// What the practice tutor's model reads inside the tutor's deadline,
-    /// learned across requests.
-    tutor_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
 }
 
 impl AIModule {
@@ -73,7 +69,6 @@ impl AIModule {
             llm,
             ai_tags,
             credentials: core.credentials().clone(),
-            tutor_pace: Arc::new(crate::features::learning::practice_generation::tutor_pace()),
         })
     }
 
@@ -166,24 +161,6 @@ impl AIModule {
         &self,
     ) -> &Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         &self.conversation.planner_health
-    }
-
-    pub(crate) fn tutor_pace(
-        &self,
-    ) -> &lattice_core::application::services::prompt_pace::PromptPace {
-        &self.tutor_pace
-    }
-
-    pub(crate) fn intent_pace(
-        &self,
-    ) -> &Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        &self.conversation.intent_pace
-    }
-
-    pub(crate) fn judge_pace(
-        &self,
-    ) -> &Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        &self.conversation.judge_pace
     }
 
     pub fn conversation_memory(

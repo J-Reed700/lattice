@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   journalEntryPinsKey,
@@ -9,6 +9,7 @@ import {
 } from '@/features/journal/api/queries';
 import { useVaultImportStore } from '@/features/vault/stores/vaultImportStore';
 import VaultAPI from '@/lib/api';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { toast } from '@/stores/toastStore';
 import type { ConversationDto, MessageDto } from '@/types/api/conversation';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
@@ -94,6 +95,33 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+const NO_ENTRIES: JournalEntrySummary[] = [];
+
+export const journalEntriesKey = (journalSpaceId: string) =>
+  [...conversationKeys.all, 'journal-entries', journalSpaceId] as const;
+
+/**
+ * A journal's entries, newest activity first as the backend lists them. Under
+ * the conversation keys, so any conversation change marks them stale. A failed
+ * read is reported at once and keeps what was read before.
+ */
+export const journalEntriesQueryOptions = (journalSpaceId: string) =>
+  queryOptions({
+    queryKey: journalEntriesKey(journalSpaceId),
+    queryFn: async () => {
+      const result = await VaultAPI.listJournalConversations({
+        journalSpaceId,
+        includeArchived: true,
+        limit: CONVERSATION_LIMIT,
+        offset: 0,
+      });
+      if (!result.ok) throw new Error(result.error);
+      return parseRawConversations(result.data).map((c) => normalizeConversation(c));
+    },
+    retry: false,
+    staleTime: 0,
+  });
+
 export interface UseJournalEntriesResult {
   entries: JournalEntrySummary[];
   isLoading: boolean;
@@ -123,9 +151,15 @@ export function useJournalEntries(options: {
 }): UseJournalEntriesResult {
   const { journalSpaceId, requestedEntryId } = options;
 
-  const [entries, setEntries] = useState<JournalEntrySummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const entriesQuery = useQuery({
+    ...journalEntriesQueryOptions(journalSpaceId ?? ''),
+    enabled: Boolean(journalSpaceId),
+  });
+  const entries = journalSpaceId ? entriesQuery.data ?? NO_ENTRIES : NO_ENTRIES;
+  const isLoading = Boolean(journalSpaceId) && entriesQuery.isPending;
+  const loadError = journalSpaceId && entriesQuery.isError
+    ? entriesQuery.error instanceof Error ? entriesQuery.error.message : String(entriesQuery.error)
+    : null;
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<EntryFilter>('all');
   const queryClient = useQueryClient();
@@ -145,39 +179,13 @@ export function useJournalEntries(options: {
   const [loadingByConversation, setLoadingByConversation] = useState<Record<string, boolean>>({});
 
   const appliedRequestedEntryKeyRef = useRef<string | null>(null);
-  const requestRef = useRef(0);
-
+  const { refetch: refetchEntries } = entriesQuery;
+  // The newest read wins: one still in flight is dropped, not joined.
   const reload = useCallback(async () => {
-    const request = ++requestRef.current;
-    if (!journalSpaceId) {
-      setEntries([]);
-      setIsLoading(false);
-      return;
-    }
-    setIsLoading(true);
-    setLoadError(null);
-    const result = await VaultAPI.listJournalConversations({
-      journalSpaceId,
-      includeArchived: true,
-      limit: CONVERSATION_LIMIT,
-      offset: 0,
-    });
-    if (requestRef.current !== request) return;
-    if (!result.ok) {
-      setLoadError(result.error);
-      setIsLoading(false);
-      return;
-    }
-    const normalized = parseRawConversations(result.data).map((c) => normalizeConversation(c));
-    setEntries(normalized);
-    setIsLoading(false);
-  }, [journalSpaceId]);
-
-  useEffect(() => {
-    setEntries([]);
-    void reload();
-    return () => { requestRef.current += 1; };
-  }, [reload]);
+    if (!journalSpaceId) return;
+    await queryClient.cancelQueries({ queryKey: journalEntriesKey(journalSpaceId) });
+    await refetchEntries();
+  }, [journalSpaceId, queryClient, refetchEntries]);
 
   // Refetch on any external vault import.
   const importTick = useVaultImportStore((s) => s.importTick);
@@ -294,8 +302,9 @@ export function useJournalEntries(options: {
 
   /** The entry left the journal, and its pin went with it. */
   const removeEntry = useCallback((conversationId: string) => {
-    setEntries((current) => current.filter((e) => e.id !== conversationId));
     if (journalSpaceId) {
+      queryClient.setQueryData<JournalEntrySummary[]>(journalEntriesKey(journalSpaceId), (current) =>
+        current?.filter((e) => e.id !== conversationId));
       queryClient.setQueryData<string[]>(journalEntryPinsKey(journalSpaceId), (current) =>
         current?.filter((id) => id !== conversationId));
     }

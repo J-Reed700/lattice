@@ -4,23 +4,25 @@ import { listen } from '@tauri-apps/api/event';
 
 import { folderFocusFor } from '@/features/chat/model/folderThreadHost';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
+import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
 import { VaultAPI } from '@/lib/api';
 import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
-import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
+import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
 import type { ApiResult } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
   Conversation, ConversationMessage, OptimisticMessage, SourceWithMetadata, ToolPreferences,
 } from '@/types/conversation';
-import { RetrievalTraceSchema, TurnStepSchema } from '@/types/conversation';
+import { RetrievalTraceSchema, TurnModelSchema, TurnStepSchema } from '@/types/conversation';
 import { ChatStreamStatus } from '@/types/events';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { createFrameBatcher } from '@/utils/frameBatcher';
 
 import {
-  applyVerificationPatch, isVerificationPending, markVerificationInterrupted, mergeStep,
-  parseSources, type VerificationPatch, VERIFICATION_WAIT_MS,
+  applyCapturedSources, applyVerificationPatch, type CapturedSourcesPatch, isCapturePending,
+  isVerificationPending, markVerificationInterrupted, mergeStep, parseSources,
+  type VerificationPatch, VERIFICATION_WAIT_MS,
 } from './messageMetadata';
 import { prepareOptimisticMessages, reconcilePersistedFailedMessages } from './optimisticMessages';
 import { fetchMessages, toConversationMessage } from '../api/conversationQueryData';
@@ -137,7 +139,9 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       liveRetrieval.delete(requestConversationId);
       const liveSteps = new Map(current.liveSteps);
       liveSteps.delete(requestConversationId);
-      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, error: null };
+      const liveModel = new Map(current.liveModel);
+      liveModel.delete(requestConversationId);
+      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, liveModel, error: null };
     });
 
     const settleOptimisticMessages = (error?: string) => {
@@ -179,12 +183,15 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       });
     };
     const streamBatcher = createFrameBatcher(flushStreamContent);
-    // The answer returns before its grounding check finishes; the check
-    // arrives on this same channel afterwards. The listener stays up for it
-    // after the turn settles, and only for it.
+    // The answer returns before its cited pages are captured and before its
+    // grounding check finishes; both arrive on this same channel afterwards.
+    // The listener stays up for them after the turn settles, and only for them.
+    let settled = false;
+    let awaitingCapture = false;
     let awaitingVerification = false;
     let verificationConversationId = requestConversationId;
     let verificationTimer: ReturnType<typeof setTimeout> | undefined;
+    let readyCapture: CapturedSourcesPatch | null = null;
     let readyVerification: VerificationPatch | null = null;
     let disposed = false;
     let unregisterLifecycle: (() => void) | undefined;
@@ -213,7 +220,21 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         // Matched on the request alone: a turn that created its conversation
         // reports the conversation's real id, not the one it was asked for.
         if (payload.requestId !== requestId) return;
-        if (!awaitingVerification && !ownsTurn()) return;
+        if (!awaitingVerification && !awaitingCapture && !ownsTurn()) return;
+        if (payload.status === ChatStreamStatus.Captured && payload.captured) {
+          const patch: CapturedSourcesPatch = {
+            messageId: payload.captured.messageId,
+            sources: payload.captured.sources,
+          };
+          readyCapture = patch;
+          queryClient.setQueryData<ConversationMessage[]>(
+            conversationKeys.messages(payload.conversationId),
+            current => (current ? applyCapturedSources(current, patch) : current)
+          );
+          awaitingCapture = false;
+          if (settled && !awaitingVerification) stopListening();
+          return;
+        }
         if (payload.status === ChatStreamStatus.Verification && payload.verification) {
           const patch: VerificationPatch = {
             messageId: payload.verification.messageId,
@@ -225,11 +246,27 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
             conversationKeys.messages(payload.conversationId),
             current => (current ? applyVerificationPatch(current, patch) : current)
           );
-          if (awaitingVerification) stopListening();
+          awaitingVerification = false;
+          if (settled && !awaitingCapture) stopListening();
           return;
         }
         if (payload.conversationId !== requestConversationId) return;
         if (payload.done) return;
+        // The model the turn is pinned to arrives once, before the first
+        // token, so the reader knows what is answering from the start.
+        if (payload.model) {
+          const parsed = TurnModelSchema.safeParse(payload.model);
+          if (parsed.success) {
+            conversationUiStore.setState(current => {
+              const liveModel = new Map(current.liveModel);
+              liveModel.set(requestConversationId, parsed.data);
+              return { liveModel };
+            });
+          }
+          // The model may just have loaded, perhaps on the CPU; once the turn
+          // ends, the composer reads that from the loaded list.
+          void queryClient.invalidateQueries({ queryKey: LOADED_MODELS_QUERY_KEY });
+        }
         // A round can run for minutes without a single character of text. The
         // steps are the only thing distinguishing "still working" from "hung",
         // and unlike the note they replace they are kept: the same list is
@@ -328,17 +365,21 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         unregisterLifecycle?.();
         unregisterLifecycle = lifecycle.register(responseId, cancelLifecycle);
       }
-      // The check may have landed while the response was on its way; the
-      // response itself was read before it did.
+      // The capture and the check may have landed while the response was on
+      // its way; the response itself was read before they did.
       const persistedMessages = raw.messages.map(toConversationMessage);
-      const responseMessages = readyVerification
-        ? applyVerificationPatch(persistedMessages, readyVerification)
-        : persistedMessages;
-      const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
-      awaitingVerification = isVerificationPending(lastAssistant) && !readyVerification;
-      if (lastAssistant && raw.sources?.length && !lastAssistant.sources?.length) {
-        lastAssistant.sources = parseSources(raw.sources);
+      const answered = [...persistedMessages].reverse().find(message => message.role === 'assistant');
+      if (answered && raw.sources?.length && !answered.sources?.length) {
+        answered.sources = parseSources(raw.sources);
       }
+      let responseMessages = readyCapture
+        ? applyCapturedSources(persistedMessages, readyCapture)
+        : persistedMessages;
+      if (readyVerification) responseMessages = applyVerificationPatch(responseMessages, readyVerification);
+      const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
+      settled = true;
+      awaitingCapture = isCapturePending(lastAssistant) && !readyCapture;
+      awaitingVerification = isVerificationPending(lastAssistant) && !readyVerification;
       queryClient.setQueryData(conversationKeys.messages(responseId), responseMessages);
       queryClient.setQueriesData<Conversation[]>({ queryKey: conversationKeys.lists }, current => {
         if (!current) return current;
@@ -382,7 +423,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     } finally {
       streamBatcher.cancel();
       streamBatcher.flush();
-      if (awaitingVerification && unlisten) {
+      if ((awaitingVerification || awaitingCapture) && unlisten) {
         // A check that never reports must not leave the badge on "Checking…"
         // until the conversation is reopened: mark it interrupted and stop.
         const pendingMessages = conversationKeys.messages(verificationConversationId);
@@ -419,8 +460,10 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         liveRetrieval.delete(requestConversationId);
         const liveSteps = new Map(current.liveSteps);
         liveSteps.delete(requestConversationId);
+        const liveModel = new Map(current.liveModel);
+        liveModel.delete(requestConversationId);
         return {
-          inFlightGenerations, liveRetrieval, liveSteps,
+          inFlightGenerations, liveRetrieval, liveSteps, liveModel,
           ...(optimisticMessages ? { optimisticMessages } : {}),
         };
       });
@@ -506,7 +549,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
    */
   const regenerateResponse = useCallback(async (
     conversationId: string,
-    toolPreferences?: ToolPreferences
+    { toolPreferences, model }: RegenerateOptions = {}
   ): Promise<GenerationOutcome> => {
     const messages = queryClient.getQueryData<ConversationMessage[]>(
       conversationKeys.messages(conversationId)
@@ -520,7 +563,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         conversationId,
         withExplorerFocus(conversations.find(conversation => conversation.id === conversationId)
           ?? queryClient.getQueryData<Conversation>(conversationKeys.detail(conversationId)), toolPreferences),
-        requestId
+        requestId,
+        model
       ),
       onFailure: () => {
         if (lastUser?.content && conversationUiStore.getState().activeConversationId === conversationId) {

@@ -1,10 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::features::function_calling::{
-    domain::FunctionResult,
-    dto::{GetDocumentOutput, SemanticSearchOutput},
-};
 use lattice_core::application::contracts::sources::SourceDto;
+use lattice_core::application::contracts::tools::{
+    FunctionResult, GetDocumentOutput, SemanticSearchOutput,
+};
 
 #[derive(Default)]
 pub(super) struct DocumentProgress(HashMap<String, HashSet<String>>);

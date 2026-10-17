@@ -5,12 +5,25 @@ use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotD
 use async_trait::async_trait;
 use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 #[async_trait]
 impl ChatRecords for ConversationRepository {
+    async fn model_choice(&self, conversation_id: &str) -> Result<ChatModelChoice> {
+        ConversationRepository::model_choice(self, conversation_id).await
+    }
+
+    async fn set_model_choice(
+        &self,
+        conversation_id: &str,
+        choice: &ChatModelChoice,
+    ) -> Result<()> {
+        ConversationRepository::set_model_choice(self, conversation_id, choice).await
+    }
+
     async fn retrieval_document_scope(
         &self,
         conversation_id: &str,

@@ -8,17 +8,20 @@
 //! llama-server's prompt cache reuses a page's prefix across the claims that
 //! cite it. The answer starts with a single label whose probability is read
 //! from the first token's log-probabilities, followed by a bounded explanation
-//! and an exact source quote. Failed, timed-out, or unreadable judgments return
-//! no verdict; the verifier decides what an unreached claim reads as.
+//! and an exact source quote. Failed or unreadable judgments return no
+//! verdict; the verifier decides what an unsettled claim reads as.
+//!
+//! No clock bounds the judging. Every cited claim is judged, however slow the
+//! model: the adapter's stall detection ends a call whose server went quiet,
+//! the answer's output reservation ends a runaway one, and app shutdown
+//! cancels the background check.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
-use tokio::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
@@ -42,25 +45,7 @@ use lattice_core::application::services::evidence_retrieval::{
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
-use lattice_core::application::services::prompt_pace::PromptPace;
-
 use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
-
-mod paced;
-
-/// Wall-clock ceiling for all judging in one turn.
-///
-/// Verification runs after the answer is on screen, so this bounds background
-/// work rather than the reader's wait. Ninety seconds of one-token calls, run
-/// side by side as far as the backend's slots allow, covers a long research
-/// answer on the local utility model.
-pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(90);
-
-/// A pace for the judge's deadline, one per chat runtime: how much source
-/// text its model reads in time, learned from every answered call.
-pub(crate) fn judge_pace() -> PromptPace {
-    PromptPace::new(DEFAULT_TIME_BUDGET)
-}
 
 /// Output room for the model's reasoning followed by the public verdict,
 /// factual explanation, and exact source quote. Reasoning tokens count toward
@@ -89,20 +74,15 @@ pub(super) enum Evidence {
 
 pub(super) struct ClaimJudge {
     llm: Arc<dyn LLMPort>,
-    time_budget: Duration,
     /// How the verdict is decoded. Greedy unless the user says otherwise.
     sampling: SamplingOverride,
     max_output_tokens: u32,
-    /// What the judge's model reads within the time budget. Without one,
-    /// parts are sized by the window alone.
-    pace: Option<Arc<PromptPace>>,
 }
 
 impl ClaimJudge {
     pub(super) fn new(llm: Arc<dyn LLMPort>) -> Self {
         Self {
             llm,
-            time_budget: DEFAULT_TIME_BUDGET,
             // Deterministic by default, so a judge built anywhere in the code
             // cannot quietly inherit a creative model's sampling: measured on
             // the bundled 9B at the chat default of 0.7, one claim against one
@@ -110,16 +90,7 @@ impl ClaimJudge {
             // twenty-one runs of the same request.
             sampling: SamplingOverride::deterministic(),
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-            pace: None,
         }
-    }
-
-    /// Size each claim's parts to what the model reads in the time budget,
-    /// and teach `pace` from every call the judge makes.
-    pub(super) fn with_pace(mut self, pace: Arc<PromptPace>) -> Self {
-        self.llm = Arc::new(paced::PacedLlm::new(self.llm, Arc::clone(&pace)));
-        self.pace = Some(pace);
-        self
     }
 
     /// Apply the user's sampling settings while retaining enough output room
@@ -136,35 +107,18 @@ impl ClaimJudge {
         self
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn with_time_budget(mut self, budget: Duration) -> Self {
-        self.time_budget = budget;
-        self
-    }
-
     pub(super) fn model_name(&self) -> &str {
         self.llm.model_name()
     }
 
-    /// Characters of source text one judge call about `claim` can carry when
-    /// `open_claims` share the time budget.
-    ///
-    /// The window less the prompt and answer is the ceiling, never the
-    /// target: a part of a 32K window's worth cannot be read inside the
-    /// budget on a local model, and the claim ran out of time with the slot
-    /// held. Each part is what the model's measured reading speed gets
-    /// through in its share of the budget, divided among the claims waiting
-    /// for it; what does not fit is judged in a further part.
-    pub(super) fn evidence_room_chars(&self, claim: &str, open_claims: usize) -> usize {
-        let window = self.checker().evidence_room_tokens(claim);
-        let tokens = self.pace.as_deref().map_or(window, |pace| {
-            let model = self.llm.model_name();
-            let readable = pace
-                .readable_within(model, self.time_budget / 2)
-                .unwrap_or_else(|| pace.tokens(model));
-            window.min(readable / open_claims.max(1))
-        });
-        chars_within_tokens(tokens, self.llm.chars_per_token())
+    /// Characters of source text one judge call about `claim` can carry: the
+    /// judge's window less both prompts and the answer's room. What does not
+    /// fit is judged in a further part.
+    pub(super) fn evidence_room_chars(&self, claim: &str) -> usize {
+        chars_within_tokens(
+            self.checker().evidence_room_tokens(claim),
+            self.llm.chars_per_token(),
+        )
     }
 
     fn checker(&self) -> ClaimChecker<'_> {
@@ -178,14 +132,13 @@ impl ClaimJudge {
 
     /// Judge each `(claim index, claim text, evidence)`, keyed back by index.
     ///
-    /// Every request gets an entry. Parts are judged round by round: every
-    /// claim's best part first, then the second part of each claim still
-    /// open, and so on, so a claim citing a long page cannot spend the budget
-    /// before the claims after it get their first call. Within a round every
-    /// call is submitted at once and the backend's scheduler decides how many
-    /// run side by side, at verification priority, behind the user's next
-    /// turn. A claim still open when the deadline passes is out of time; one
-    /// running is cut off, so judging never outlives its budget.
+    /// Every request gets an entry, and every part of a claim still open is
+    /// judged. Parts go round by round: every claim's best part first, then
+    /// the second part of each claim still open, and so on, so a claim citing
+    /// a long page does not hold back the first call of the claims after it.
+    /// Within a round every call is submitted at once and the backend's
+    /// scheduler decides how many run side by side, at verification priority,
+    /// behind the user's next turn.
     pub(super) async fn judge_claims(
         &self,
         requests: &[(usize, &str, Vec<ClaimEvidence>)],
@@ -195,7 +148,6 @@ impl ClaimJudge {
             return judgments;
         }
 
-        let deadline = Instant::now() + self.time_budget;
         let mut tallies: Vec<Tally> = requests.iter().map(|_| Tally::default()).collect();
         let rounds = requests
             .iter()
@@ -212,10 +164,7 @@ impl ClaimJudge {
                 .filter(|(slot, _)| tallies.get(*slot).is_some_and(Tally::is_open))
                 .filter_map(|(slot, (_, claim, parts))| {
                     let part = parts.get(round)?;
-                    Some(
-                        async move { (slot, self.checker().check(claim, part, deadline).await) }
-                            .boxed(),
-                    )
+                    Some(async move { (slot, self.checker().check(claim, part).await) }.boxed())
                 })
                 .collect();
             let mut calls: futures::stream::FuturesUnordered<_> = calls.into_iter().collect();
@@ -225,26 +174,14 @@ impl ClaimJudge {
                 }
             }
         }
-        for ((index, _, parts), tally) in requests.iter().zip(tallies) {
-            judgments.insert(*index, tally.finish(parts.len()));
+        for ((index, _, _), tally) in requests.iter().zip(tallies) {
+            judgments.insert(*index, tally.finish());
         }
 
         let judged = judgments
             .values()
             .filter(|judgment| matches!(judgment, ClaimJudgment::Judged(_)))
             .count();
-        let out_of_time = judgments
-            .values()
-            .filter(|judgment| matches!(judgment, ClaimJudgment::OutOfTime))
-            .count();
-        if out_of_time > 0 {
-            warn!(
-                judged,
-                out_of_time,
-                budget_ms = self.time_budget.as_millis(),
-                "Claim judge time budget exhausted — remaining claims were not checked"
-            );
-        }
         debug!(
             judged,
             requested = requests.len(),
@@ -260,15 +197,14 @@ impl ClaimJudge {
 /// The first part that supports the claim confidently settles it: one cited
 /// source supporting a claim is enough. A claim no part supports takes the
 /// strongest finding among them. A part that could not be judged (a
-/// transport failure, a refused prompt, a reply with no verdict, or the
-/// deadline) settles the claim as unchecked and its later parts are not
+/// transport failure, a refused prompt, or a reply with no verdict) settles
+/// the claim as unchecked and its later parts are not
 /// asked: the part left over might have held the support, so it is never
 /// called unsupported, and a failing backend is not asked again and again.
 #[derive(Default)]
 struct Tally {
     strongest: Option<JudgeOutcome>,
     settled: Option<ClaimJudgment>,
-    reached: usize,
 }
 
 impl Tally {
@@ -277,7 +213,6 @@ impl Tally {
     }
 
     fn record(&mut self, judgment: ClaimJudgment) {
-        self.reached += 1;
         match judgment {
             ClaimJudgment::Judged(outcome) => {
                 if outcome.verdict == ClaimVerdict::Supported && confident(&outcome) {
@@ -293,12 +228,9 @@ impl Tally {
         }
     }
 
-    fn finish(self, parts: usize) -> ClaimJudgment {
+    fn finish(self) -> ClaimJudgment {
         if let Some(settled) = self.settled {
             return settled;
-        }
-        if self.reached < parts {
-            return ClaimJudgment::OutOfTime;
         }
         self.strongest
             .map_or(ClaimJudgment::Unusable, ClaimJudgment::Judged)

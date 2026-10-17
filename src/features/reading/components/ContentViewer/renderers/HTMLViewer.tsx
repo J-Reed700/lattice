@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
+import { useQuery } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-shell';
 import { Loader2, AlertCircle, ExternalLink, Link2 } from 'lucide-react';
 
-import { readSourceText } from '@/features/reading/hooks/readSourceFile';
+import { readingKeys, readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 
 import { htmlReadingDocument } from './htmlReadingDocument';
@@ -14,11 +15,73 @@ interface HTMLViewerProps {
   showTitle?: boolean;
 }
 
+const EMPTY_LINKS: string[] = [];
+
 interface WebArchiveMetadata {
   title?: string;
   url?: string;
   site_name?: string;
   links?: string[];
+}
+
+interface ArchivedPage {
+  html: string;
+  fallbackNotice: string | null;
+  originalUrl: string | null;
+  siteName: string | null;
+  links: string[];
+}
+
+const escapeHtml = (text: string) =>
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+/** The saved page, or its markdown snapshot when the HTML is gone, with its archive metadata. */
+async function loadArchivedPage(htmlPath: string): Promise<ArchivedPage> {
+  const page: ArchivedPage = { html: '', fallbackNotice: null, originalUrl: null, siteName: null, links: [] };
+
+  const htmlResult = await readSourceText(htmlPath);
+  if (htmlResult.ok) {
+    page.html = htmlResult.data;
+  } else {
+    const lastSlashIndex = htmlPath.lastIndexOf('/');
+    const baseDir = lastSlashIndex >= 0 ? htmlPath.slice(0, lastSlashIndex) : htmlPath;
+    const fallbackCandidates = [`${baseDir}/article.md`, `${baseDir}/weblink.md`];
+
+    let fallbackMarkdown: string | null = null;
+    for (const candidate of fallbackCandidates) {
+      const fallbackResult = await readSourceText(candidate);
+      if (fallbackResult.ok) {
+        fallbackMarkdown = fallbackResult.data;
+        break;
+      }
+    }
+
+    if (!fallbackMarkdown) throw new Error(htmlResult.error || 'Failed to load HTML');
+    page.html = `<pre>${escapeHtml(fallbackMarkdown)}</pre>`;
+    page.fallbackNotice = 'Archived HTML missing. Showing markdown snapshot.';
+  }
+
+  if (htmlPath.endsWith('page.html')) {
+    const metadataPath = `${htmlPath.slice(0, -'page.html'.length)}metadata.json`;
+    const metadataResult = await readSourceText(metadataPath);
+    if (metadataResult.ok) {
+      try {
+        const metadata = JSON.parse(metadataResult.data) as WebArchiveMetadata;
+        if (typeof metadata.url === 'string' && metadata.url.length > 0) page.originalUrl = metadata.url;
+        if (typeof metadata.site_name === 'string' && metadata.site_name.length > 0) page.siteName = metadata.site_name;
+        if (Array.isArray(metadata.links)) page.links = metadata.links;
+      } catch (parseError) {
+        console.warn('Failed to parse metadata.json:', parseError);
+      }
+    }
+  }
+
+  return page;
 }
 
 /**
@@ -29,89 +92,26 @@ interface WebArchiveMetadata {
  */
 export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerProps) {
   const theme = useEffectiveTheme();
-  const [htmlContent, setHtmlContent] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
-  const [originalUrl, setOriginalUrl] = useState<string | null>(null);
-  const [siteName, setSiteName] = useState<string | null>(null);
-  const [links, setLinks] = useState<string[]>([]);
-  const [showLinks, setShowLinks] = useState(false);
+  const pageQuery = useQuery({
+    queryKey: readingKeys.archivedPage(htmlPath),
+    queryFn: () => loadArchivedPage(htmlPath),
+    retry: false,
+    staleTime: 0,
+  });
+  const page = pageQuery.data;
+  const htmlContent = page?.html ?? '';
+  const fallbackNotice = page?.fallbackNotice ?? null;
+  const originalUrl = page?.originalUrl ?? null;
+  const siteName = page?.siteName ?? null;
+  const links = page?.links ?? EMPTY_LINKS;
+  const isLoading = pageQuery.isPending;
+  const error = pageQuery.isError
+    ? pageQuery.error instanceof Error ? pageQuery.error.message : 'Unknown error'
+    : null;
+  // The link list starts folded for every page.
+  const [linksShownFor, setLinksShownFor] = useState<string | null>(null);
+  const showLinks = linksShownFor === htmlPath;
   const readingDocument = useMemo(() => htmlReadingDocument(htmlContent, theme), [htmlContent, theme]);
-
-  useEffect(() => {
-    async function loadHTML() {
-      setIsLoading(true);
-      setError(null);
-      setFallbackNotice(null);
-      setOriginalUrl(null);
-      setSiteName(null);
-      setLinks([]);
-      setShowLinks(false);
-
-      try {
-        const htmlResult = await readSourceText(htmlPath);
-        if (htmlResult.ok) {
-          setHtmlContent(htmlResult.data);
-        } else {
-          const lastSlashIndex = htmlPath.lastIndexOf('/');
-          const baseDir = lastSlashIndex >= 0 ? htmlPath.slice(0, lastSlashIndex) : htmlPath;
-          const fallbackCandidates = [`${baseDir}/article.md`, `${baseDir}/weblink.md`];
-
-          let fallbackMarkdown: string | null = null;
-          for (const candidate of fallbackCandidates) {
-            const fallbackResult = await readSourceText(candidate);
-            if (fallbackResult.ok) {
-              fallbackMarkdown = fallbackResult.data;
-              break;
-            }
-          }
-
-          if (fallbackMarkdown) {
-            const escaped = fallbackMarkdown
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;')
-              .replace(/'/g, '&#39;');
-            setHtmlContent(
-              `<pre>${escaped}</pre>`
-            );
-            setFallbackNotice('Archived HTML missing. Showing markdown snapshot.');
-          } else {
-            setError(htmlResult.error || 'Failed to load HTML');
-          }
-        }
-
-        if (htmlPath.endsWith('page.html')) {
-          const metadataPath = `${htmlPath.slice(0, -'page.html'.length)}metadata.json`;
-          const metadataResult = await readSourceText(metadataPath);
-          if (metadataResult.ok) {
-            try {
-              const metadata = JSON.parse(metadataResult.data) as WebArchiveMetadata;
-              if (typeof metadata.url === 'string' && metadata.url.length > 0) {
-                setOriginalUrl(metadata.url);
-              }
-              if (typeof metadata.site_name === 'string' && metadata.site_name.length > 0) {
-                setSiteName(metadata.site_name);
-              }
-              if (Array.isArray(metadata.links)) {
-                setLinks(metadata.links);
-              }
-            } catch (parseError) {
-              console.warn('Failed to parse metadata.json:', parseError);
-            }
-          }
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    loadHTML();
-  }, [htmlPath]);
 
   if (isLoading) {
     return (
@@ -162,7 +162,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
               <button
                 type="button"
                 className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/80 px-3 py-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
-                onClick={() => setShowLinks((prev) => !prev)}
+                onClick={() => setLinksShownFor(showLinks ? null : htmlPath)}
               >
                 <Link2 size={12} />
                 {showLinks ? 'Hide' : 'Show'} links ({links.length})

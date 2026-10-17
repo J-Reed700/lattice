@@ -10,8 +10,6 @@
 //! task, the model's own draft, then a request for the final answer), so it
 //! opens with exactly the prompt the server has just read and can reuse.
 
-use std::time::Duration;
-
 use serde_json::{json, Value};
 
 use crate::features::learning::outline_progress::OutlineProgress;
@@ -22,11 +20,6 @@ use lattice_core::application::services::grounded_generation::{
     GroundedOutput, GroundedRequest, HistoryItem, Streaming,
 };
 use lattice_core::shared::error::{AppError, Result};
-
-/// The wall-clock limit on one material call that has no interactive progress
-/// attached. Each step of a two-step call has its own: the draft and the
-/// answer are separate generations, and either alone may need all of it.
-const MATERIAL_CALL_BUDGET: Duration = Duration::from_secs(300);
 
 /// Room kept beside the draft for the answer step's own request and the
 /// framing of the two extra messages.
@@ -320,8 +313,6 @@ async fn send(
     let lesson_progress = lesson_progress::active();
     let unbounded = progress.is_some() || lesson_progress;
     request.output_fills_window = unbounded && !matches!(step, Step::Draft);
-    request.call.time_budget = (!unbounded).then_some(MATERIAL_CALL_BUDGET);
-    request.call.no_time_limit = unbounded;
     request.call.cache_key = lesson_progress::cache_key();
     let _model_call = lesson_progress.then(lesson_progress::model_call);
     let receive = |text: String| {
@@ -344,17 +335,13 @@ async fn send(
         on_text: &receive,
         on_retry: if lesson_progress { Some(&retry) } else { None },
     };
-    // Outline and lesson requests are interactive and cancellable. A slow
-    // model is not a failed model; no elapsed-time deadline applies to them.
+    // A slow model is not a failed model: no learning call has an
+    // elapsed-time deadline (see `model_call`).
     let response = model_call::send(
         llm,
         request,
         unbounded.then_some(&streaming),
-        (!unbounded).then_some(model_call::Deadline {
-            after: MATERIAL_CALL_BUDGET,
-            message: "Learning material generation timed out. Try again.",
-        }),
-        "The requested learning material does not fit in this model's context window. Choose fewer or shorter sources.",
+        model_call::TooLarge::Window("The requested learning material does not fit"),
     )
     .await?;
     tracing::info!(

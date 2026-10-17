@@ -6,12 +6,10 @@ use lattice::features::conversation::dto::*;
 fn test_create_conversation_request_dto() {
     let request = CreateConversationRequestDto {
         title: "Research Discussion".to_string(),
-        model_name: "gpt-4".to_string(),
         system_prompt: Some("You are a helpful assistant.".to_string()),
     };
 
     assert_eq!(request.title, "Research Discussion");
-    assert_eq!(request.model_name, "gpt-4");
     assert!(request.system_prompt.is_some());
 }
 
@@ -19,7 +17,6 @@ fn test_create_conversation_request_dto() {
 fn test_create_conversation_request_minimal() {
     let request = CreateConversationRequestDto {
         title: "Quick Chat".to_string(),
-        model_name: "gpt-3.5-turbo".to_string(),
         system_prompt: None,
     };
 
@@ -83,7 +80,7 @@ fn test_conversation_dto_complete() {
     let dto = ConversationDto {
         id: "conv-111".to_string(),
         title: "Test Conversation".to_string(),
-        model_name: "gpt-4".to_string(),
+        model_choice: lattice_core::domain::conversation::ChatModelChoice::Default,
         system_prompt: Some("You are helpful".to_string()),
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),

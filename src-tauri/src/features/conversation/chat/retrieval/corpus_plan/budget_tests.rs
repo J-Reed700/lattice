@@ -1,19 +1,17 @@
 //! The planner on a vault too large to show whole: which documents it is
-//! shown, how its prompt is sized, and what a timeout costs later turns.
+//! shown, how its prompt is sized from its window, and that no clock cuts it
+//! off.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
-use super::health::{
-    PlannerHealth, PLANNER_PROMPT_FLOOR, PLANNER_PROMPT_TOKENS, PLANNER_STAND_DOWN,
-};
-use super::prompt::PLANNER_OUTPUT_TOKENS;
+use super::health::PlannerHealth;
+use super::prompt::{window_room, PLANNER_OUTPUT_TOKENS};
 use super::shortlist::shortlist;
 use super::*;
-use lattice_core::application::ports::llm_port::{
-    CompletionRequest, CompletionResponse, PrefillTiming,
-};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::value_objects::source_context::{
     SourceContext, SourceGroup, StructureMode,
@@ -39,6 +37,8 @@ struct UtilityStub {
     replies: Mutex<VecDeque<(Duration, Result<String>)>>,
     prompts: Mutex<Vec<String>>,
     output_caps: Mutex<Vec<Option<u32>>>,
+    /// Whether each request opted out of the adapter's elapsed-time limit.
+    timeless: Mutex<Vec<bool>>,
     exact_counts: AtomicUsize,
 }
 
@@ -50,6 +50,7 @@ impl UtilityStub {
             replies: Mutex::new(VecDeque::new()),
             prompts: Mutex::new(Vec::new()),
             output_caps: Mutex::new(Vec::new()),
+            timeless: Mutex::new(Vec::new()),
             exact_counts: AtomicUsize::new(0),
         }
     }
@@ -84,6 +85,7 @@ impl LLMPort for UtilityStub {
             .lock()
             .unwrap()
             .push(request.max_output_tokens);
+        self.timeless.lock().unwrap().push(request.no_time_limit);
         let (delay, reply) = self
             .replies
             .lock()
@@ -144,38 +146,38 @@ fn vault() -> Vec<CorpusDocument> {
         .collect()
 }
 
-/// The model the utility stub reports; the planner's pace is kept per model.
-const MODEL: &str = "utility-stub";
-
 fn turn_with(health: &PlannerHealth, candidates: Vec<String>) -> PlannerTurn<'_> {
     let mut turn = PlannerTurn::with_health(health);
     turn.candidates = Some(candidates);
     turn
 }
 
-#[tokio::test]
-async fn a_large_vault_is_shown_as_a_shortlist_inside_the_prompt_target() {
-    let health = PlannerHealth::new();
-    let stub = UtilityStub::new(16_384, true);
-    let catalog = vault();
-    let candidates = vec![uuid(200), uuid(305), uuid(17)];
-
+/// Plan from the vault on `stub` and return the request's size as the server
+/// counts it.
+async fn planned_size(stub: &UtilityStub) -> usize {
+    let health = PlannerHealth::default();
     plan(
-        &stub,
+        stub,
         "Whoever handles logistics for the migration: when does their schedule start?",
         Some(&"user: an earlier question\nassistant: an earlier answer\n".repeat(60)),
-        &catalog,
+        &vault(),
         &HashMap::new(),
-        &turn_with(&health, candidates),
+        &turn_with(&health, vec![uuid(200), uuid(305), uuid(17)]),
         &CancellationToken::new(),
     )
     .await
     .unwrap();
+    stub.last_request_tokens()
+}
 
-    let used = stub.last_request_tokens();
+#[tokio::test]
+async fn a_large_vault_is_shown_as_a_shortlist_that_fills_the_window() {
+    let stub = UtilityStub::new(16_384, true);
+    let used = planned_size(&stub).await;
+    let room = window_room(&stub);
     assert!(
-        used <= PLANNER_PROMPT_TOKENS,
-        "a {used}-token planner prompt against a {PLANNER_PROMPT_TOKENS}-token target"
+        used <= room,
+        "a {used}-token planner prompt against a {room}-token window"
     );
     assert!(
         stub.exact_counts.load(Ordering::Relaxed) > 0,
@@ -185,18 +187,34 @@ async fn a_large_vault_is_shown_as_a_shortlist_inside_the_prompt_target() {
         stub.output_caps.lock().unwrap().as_slice(),
         [Some(PLANNER_OUTPUT_TOKENS)]
     );
+    assert_eq!(stub.timeless.lock().unwrap().as_slice(), [true]);
     let prompt = stub.last_prompt();
     // The hits and their neighbours, not the alphabetical head of the vault.
     for shown in ["Record 200", "Record 199", "Record 201", "Record 305"] {
         assert!(prompt.contains(shown), "{shown} missing from the shortlist");
     }
-    // There is no fixed row cap: the rest of the vault follows the hits and
-    // fills what the prompt target leaves, so the prompt is at the target
-    // rather than at a twenty-row ceiling below it.
-    assert!(used * 10 >= PLANNER_PROMPT_TOKENS * 8, "{used} tokens");
+    // There is no fixed row cap and no reading-speed target: the rest of the
+    // vault follows the hits and fills what the window leaves.
+    assert!(used * 10 >= room * 8, "{used} of {room} tokens");
     // Documents are named by handles, never by their UUIDs.
     assert!(!prompt.contains("9c262a35"), "{prompt}");
     assert!(prompt.contains(r#""catalog_total":379"#), "{prompt}");
+}
+
+/// The prompt grows with the planner's window. It used to be held near
+/// 2,560 tokens, what a 9B model on one machine read inside the planner's
+/// 20-second timeout, whatever the window.
+#[tokio::test]
+async fn the_planners_prompt_is_sized_from_its_window() {
+    let small = UtilityStub::new(8_192, true);
+    let large = UtilityStub::new(32_768, true);
+    let (small_used, large_used) = (planned_size(&small).await, planned_size(&large).await);
+    for (stub, used) in [(&small, small_used), (&large, large_used)] {
+        let room = window_room(stub);
+        assert!(used <= room && used * 10 >= room * 8, "{used} of {room}");
+    }
+    assert!(large_used > small_used * 3, "{small_used} -> {large_used}");
+    assert!(small_used > 2_560 * 2, "{small_used}");
 }
 
 /// A model whose every text costs one token, so the budget never binds.
@@ -251,11 +269,11 @@ async fn the_shortlist_takes_hits_then_neighbours_and_the_budget_alone_bounds_it
         &parts,
         &ranked,
         &catalog,
-        PLANNER_PROMPT_TOKENS,
+        window_room(&OneTokenStub),
     )
     .await
     .unwrap();
-    // The old cap showed twenty rows whatever the budget. A budget with room
+    // The old cap showed twenty rows whatever the budget. A window with room
     // shows every document, so the planner can open any of them.
     assert_eq!(built.shown, catalog.len());
 }
@@ -270,7 +288,7 @@ fn without_a_ranking_the_catalog_keeps_its_own_order() {
 
 #[tokio::test]
 async fn the_plan_names_documents_by_handle_and_gets_their_real_ids_back() {
-    let health = PlannerHealth::new();
+    let health = PlannerHealth::default();
     let catalog = vault();
     let stub = UtilityStub::new(16_384, true).then(
         Duration::ZERO,
@@ -347,7 +365,10 @@ fn library_with_a_book() -> Vec<CorpusDocument> {
 
 #[tokio::test]
 async fn a_learning_request_sees_its_books_front_matter_and_opens_it_in_order() {
-    let health = PlannerHealth::new();
+    let health = PlannerHealth::default();
+    // A window small enough that the shortlist binds, so part of the book is
+    // left out of the prompt.
+    let window = 3_000;
     let catalog = library_with_a_book();
     let question = "Help me learn the examining manual properly";
     let ranked = shortlist(&catalog, &["book-10".to_string()], question);
@@ -368,22 +389,17 @@ async fn a_learning_request_sees_its_books_front_matter_and_opens_it_in_order() 
         correction: None,
         summaries: &HashMap::new(),
     };
-    let built = prompt::build(
-        &UtilityStub::new(16_384, true),
-        &parts,
-        &ranked,
-        &catalog,
-        PLANNER_PROMPT_TOKENS,
-    )
-    .await
-    .unwrap();
+    let sizing = UtilityStub::new(window, true);
+    let built = prompt::build(&sizing, &parts, &ranked, &catalog, window_room(&sizing))
+        .await
+        .unwrap();
     let chapter = built
         .handles
         .iter()
         .find(|(_, id)| id.as_str() == "book-10")
         .map(|(handle, _)| handle.clone())
         .expect("the hit is shown");
-    let stub = UtilityStub::new(16_384, true).then(
+    let stub = UtilityStub::new(window, true).then(
         Duration::ZERO,
         Ok(format!(
             r#"{{"queries":["examining manual introduction"],"opening_document_ids":["{chapter}"],"start_at_beginning":true}}"#
@@ -410,9 +426,9 @@ async fn a_learning_request_sees_its_books_front_matter_and_opens_it_in_order() 
 }
 
 #[tokio::test]
-async fn a_window_smaller_than_the_target_bounds_the_prompt_on_an_estimate() {
+async fn a_small_window_bounds_the_prompt_on_an_estimate() {
     let window = 2_048;
-    let health = PlannerHealth::new();
+    let health = PlannerHealth::default();
     let stub = UtilityStub::new(window, false);
     plan(
         &stub,
@@ -434,7 +450,7 @@ async fn a_window_smaller_than_the_target_bounds_the_prompt_on_an_estimate() {
 
 #[tokio::test]
 async fn a_prompt_that_cannot_fit_the_window_is_never_sent() {
-    let health = PlannerHealth::new();
+    let health = PlannerHealth::default();
     let stub = UtilityStub::new(600, true);
     let result = plan(
         &stub,
@@ -448,56 +464,39 @@ async fn a_prompt_that_cannot_fit_the_window_is_never_sent() {
     .await;
     assert!(result.is_err());
     assert_eq!(stub.calls(), 0);
-    // Not sending is not a timeout: nothing about the planner's speed is learned.
-    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS);
+    // Not sending is not a refusal: nothing about the window is learned.
+    assert_eq!(health.prompt_tokens(&stub), window_room(&stub));
 }
 
+/// The planner used to be cut off after 20 seconds and the turn fell back to
+/// the local plan. A planner that answers after 30 seconds is slow, not dead:
+/// its plan is used, and the next attempt is not made smaller for it.
 #[tokio::test(start_paused = true)]
-async fn a_timeout_halves_the_next_prompt_instead_of_standing_the_planner_down() {
-    let health = PlannerHealth::new();
-    let catalog = vault();
-    let stub = UtilityStub::new(16_384, true)
-        .then(Duration::from_secs(60), Ok(PLAN.into()))
-        .then(Duration::ZERO, Ok(PLAN.into()));
-
-    let first = turn_with(&health, (0..40).map(uuid).collect());
-    let timed_out = plan(
+async fn a_slow_planner_is_waited_for() {
+    let health = PlannerHealth::default();
+    let stub = UtilityStub::new(16_384, true).then(Duration::from_secs(30), Ok(PLAN.into()));
+    let started = tokio::time::Instant::now();
+    let planned = plan(
         &stub,
         "Where is the spare key kept?",
         None,
-        &catalog,
+        &vault(),
         &HashMap::new(),
-        &first,
-        &CancellationToken::new(),
-    )
-    .await;
-    assert!(timed_out.is_err());
-    let sent = stub.last_request_tokens();
-    let next = health.prompt_tokens(MODEL);
-    assert!((PLANNER_PROMPT_FLOOR..PLANNER_PROMPT_TOKENS).contains(&next));
-    assert!(health.standing_down().is_none());
-
-    // The next turn plans again, smaller.
-    let second = turn_with(&health, (0..40).map(uuid).collect());
-    assert!(second.unavailable().is_none());
-    plan(
-        &stub,
-        "Where is the spare key kept?",
-        None,
-        &catalog,
-        &HashMap::new(),
-        &second,
+        &turn_with(&health, (0..40).map(uuid).collect()),
         &CancellationToken::new(),
     )
     .await
     .unwrap();
-    let resent = stub.last_request_tokens();
-    assert!(resent < sent, "{resent} tokens after a timeout at {sent}");
+    assert!(started.elapsed() >= Duration::from_secs(30));
+    assert_eq!(planned.queries, ["garden leave notice"]);
+    assert_eq!(health.prompt_tokens(&stub), window_room(&stub));
 }
 
+/// A turn whose first plan was slow still gets its corrective retry: there is
+/// no per-turn "already timed out" guard to skip it.
 #[tokio::test(start_paused = true)]
-async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_own() {
-    let health = PlannerHealth::new();
+async fn the_corrective_retry_replans_after_a_slow_first_pass() {
+    let health = PlannerHealth::default();
     let catalog = vault();
     let stub = UtilityStub::new(16_384, true)
         .then(Duration::from_secs(60), Ok(PLAN.into()))
@@ -513,7 +512,7 @@ async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_o
     };
 
     let turn = turn_with(&health, vec![uuid(5)]);
-    assert!(plan(
+    plan(
         &stub,
         "Where is the spare key kept?",
         None,
@@ -523,137 +522,96 @@ async fn the_corrective_retry_replans_on_the_turns_after_a_timeout_but_not_its_o
         &CancellationToken::new(),
     )
     .await
-    .is_err());
-    // The turn that already waited out a timeout keeps its first-pass evidence.
-    assert!(turn.unavailable().is_some());
-    assert!(plan_correction(
-        &stub,
-        "Where is the spare key kept?",
-        None,
-        &catalog,
-        &correction,
-        &turn,
-        &CancellationToken::new(),
-    )
-    .await
-    .is_err());
-    assert_eq!(stub.calls(), 1);
-
-    // The next turn's correction replans.
-    let next = turn_with(&health, vec![uuid(5)]);
+    .unwrap();
     let retry = plan_correction(
         &stub,
         "Where is the spare key kept?",
         None,
         &catalog,
         &correction,
-        &next,
+        &turn,
         &CancellationToken::new(),
     )
     .await
     .unwrap();
+    assert_eq!(stub.calls(), 2);
     assert_eq!(retry.queries, ["spare key cabinet"]);
 }
 
-#[tokio::test(start_paused = true)]
-async fn only_a_timeout_at_the_smallest_prompt_stands_the_planner_down_and_only_briefly() {
-    let health = PlannerHealth::new();
-    let mut timeouts = 0;
-    while health.prompt_tokens(MODEL) > PLANNER_PROMPT_FLOOR {
-        health.timed_out(MODEL, health.prompt_tokens(MODEL));
-        assert!(health.standing_down().is_none());
-        timeouts += 1;
-    }
-    assert_eq!(timeouts, 2, "2560 -> 1280 -> 1024");
-    health.timed_out(MODEL, PLANNER_PROMPT_FLOOR);
-    let remaining = health.standing_down().expect("standing down");
-    assert!(remaining <= PLANNER_STAND_DOWN);
-    assert!(PlannerTurn::with_health(&health).unavailable().is_some());
-
-    tokio::time::advance(PLANNER_STAND_DOWN + Duration::from_secs(1)).await;
-    assert!(health.standing_down().is_none());
-    assert!(PlannerTurn::with_health(&health).unavailable().is_none());
-}
-
-fn read_in(tokens: usize, time: Duration) -> Option<PrefillTiming> {
-    Some(PrefillTiming {
-        tokens: tokens as u64,
-        seconds: time.as_secs_f64(),
-    })
-}
-
-/// The prompt follows the planner's measured prefill speed: what it reads in
-/// the critical path's share of the timeout. There is no ceiling: a fast
-/// planner keeps earning room, at most a doubling an answer.
-#[test]
-fn the_prompt_size_follows_the_measured_planner_speed() {
-    let health = PlannerHealth::new();
-    // 2,560 tokens read in a sixteenth of the timeout: more than twice what
-    // the target needs, so the prompt doubles (the most one answer earns).
-    health.answered(
-        MODEL,
-        read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT / 16),
-        PLANNER_PROMPT_TOKENS,
-    );
-    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS * 2);
-    health.answered(
-        MODEL,
-        read_in(PLANNER_PROMPT_TOKENS * 2, PLANNER_TIMEOUT / 16),
-        PLANNER_PROMPT_TOKENS * 2,
-    );
-    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS * 4);
-}
-
-/// An answer in time never shrinks the prompt. The reported case: a 9B
-/// planner answered in time, but most of that time went to writing the plan
-/// and waiting in the queue; measured end to end it read as slow prefill and
-/// shrank the prompt from 2,560 tokens to the floor over a few turns.
-#[test]
-fn an_answer_in_time_keeps_its_room() {
-    let health = PlannerHealth::new();
-    for _ in 0..4 {
-        health.answered(
-            MODEL,
-            read_in(PLANNER_PROMPT_TOKENS, PLANNER_TIMEOUT * 9 / 10),
-            PLANNER_PROMPT_TOKENS,
-        );
-    }
-    assert_eq!(health.prompt_tokens(MODEL), PLANNER_PROMPT_TOKENS);
-    health.timed_out(MODEL, PLANNER_PROMPT_TOKENS);
-    let shrunk = health.prompt_tokens(MODEL);
-    assert!(shrunk < PLANNER_PROMPT_TOKENS);
-    health.answered(MODEL, None, shrunk / 4);
-    assert_eq!(health.prompt_tokens(MODEL), shrunk);
-}
-
+/// A stop press still ends a planner call nobody wants any more: the request
+/// carries the turn's cancellation, which the backend's scheduler honours.
 #[tokio::test]
-async fn a_window_refusal_shrinks_the_prompt_without_standing_down() {
-    let health = PlannerHealth::new();
+async fn the_planners_request_carries_the_turns_stop() {
+    struct Cancellable;
+    #[async_trait::async_trait]
+    impl LLMPort for Cancellable {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            match &request.cancel {
+                Some(cancel) => {
+                    cancel.cancelled().await;
+                    Err(AppError::InvalidState("cancelled".into()))
+                }
+                None => Ok(CompletionResponse::from_text(PLAN)),
+            }
+        }
+        fn model_name(&self) -> &str {
+            "cancellable"
+        }
+        fn max_context_tokens(&self) -> usize {
+            16_384
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    let health = PlannerHealth::default();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let result = plan(
+        &Cancellable,
+        "Where is the spare key kept?",
+        None,
+        &vault(),
+        &HashMap::new(),
+        &turn_with(&health, vec![uuid(3)]),
+        &cancel,
+    )
+    .await;
+    assert!(result.is_err());
+}
+
+/// A server whose real window is smaller than the one its port reports
+/// refuses the prompt. The next attempt is half of what was refused, and
+/// stays under that for the runtime's life.
+#[tokio::test]
+async fn a_window_refusal_halves_the_next_prompt() {
+    let health = PlannerHealth::default();
     let stub = UtilityStub::new(16_384, true).then(
         Duration::ZERO,
         Err(AppError::Network(
             "llama-server stream error (400 exceed_context_size_error)".into(),
         )),
     );
-    let result = plan(
-        &stub,
-        "Where is the spare key kept?",
-        None,
-        &vault(),
-        &HashMap::new(),
-        &turn_with(&health, vec![uuid(3)]),
-        &CancellationToken::new(),
-    )
-    .await;
-    assert!(result.is_err());
-    assert!(health.prompt_tokens(MODEL) < PLANNER_PROMPT_TOKENS);
-    assert!(health.standing_down().is_none());
-    assert!(PlannerTurn::with_health(&health).unavailable().is_none());
+    let (catalog, summaries, cancel) = (vault(), HashMap::new(), CancellationToken::new());
+    let turn = turn_with(&health, vec![uuid(3)]);
+    let question = "Where is the spare key kept?";
+    let ask = || plan(&stub, question, None, &catalog, &summaries, &turn, &cancel);
+    assert!(ask().await.is_err());
+    let refused = stub.last_request_tokens();
+    assert_eq!(health.prompt_tokens(&stub), refused / 2);
+    ask().await.unwrap();
+    let resent = stub.last_request_tokens();
+    assert!(
+        resent <= refused / 2,
+        "{resent} tokens after a refusal at {refused}"
+    );
+    // The planner is asked again on the very next attempt: nothing stands down.
+    assert_eq!(stub.calls(), 2);
 }
 
 #[tokio::test]
 async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
-    let health = PlannerHealth::new();
+    let health = PlannerHealth::default();
     let catalog = vault();
     let stub = UtilityStub::new(16_384, true).then(Duration::ZERO, Ok("not json".into()));
     let question = "Where is the spare key kept?";
@@ -669,8 +627,8 @@ async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     .await
     .unwrap_or_else(|_| fallback_with_catalog(question, &catalog));
     assert_eq!(planned.queries, [question]);
-    // A bad answer is still an answer in time: it never shrinks the prompt.
-    assert!(health.prompt_tokens(MODEL) >= PLANNER_PROMPT_TOKENS);
+    // A bad answer is not a refusal: it never shrinks the prompt.
+    assert_eq!(health.prompt_tokens(&stub), window_room(&stub));
 }
 
 /// The planner's excerpt of the conversation was cut by characters from its
@@ -683,7 +641,7 @@ fn the_planners_history_is_whole_lines_with_the_rest_counted() {
         .map(|n| format!("user: question number {n} about the spare key"))
         .collect::<Vec<_>>()
         .join("\n");
-    let kept = super::prompt::recent_history(&stub, Some(&history), PLANNER_PROMPT_TOKENS);
+    let kept = super::prompt::recent_history(&stub, Some(&history), window_room(&stub));
     let mut lines = kept.lines();
     assert!(lines
         .next()
@@ -693,13 +651,17 @@ fn the_planners_history_is_whole_lines_with_the_rest_counted() {
     assert!(kept.ends_with("question number 399 about the spare key"));
 }
 
-/// The planner's share of the conversation follows the prompt it reads in
-/// time, not a quarter of its window: a timeout shrinks both.
+/// The planner's share of the conversation is a share of its window, and a
+/// refusal that halves the prompt halves it too.
 #[test]
-fn the_planners_history_follows_what_it_reads_in_time() {
-    let health = PlannerHealth::new();
-    let before = PlannerTurn::with_health(&health).history_tokens(MODEL);
-    assert_eq!(before, PLANNER_PROMPT_TOKENS / 5);
-    health.timed_out(MODEL, PLANNER_PROMPT_TOKENS);
-    assert!(PlannerTurn::with_health(&health).history_tokens(MODEL) < before);
+fn the_planners_history_is_a_share_of_its_window() {
+    let stub = UtilityStub::new(16_384, true);
+    let health = PlannerHealth::default();
+    let before = PlannerTurn::with_health(&health).history_tokens(&stub);
+    assert_eq!(before, window_room(&stub) / 5);
+    health.overflowed("utility-stub", window_room(&stub));
+    assert_eq!(
+        PlannerTurn::with_health(&health).history_tokens(&stub),
+        window_room(&stub) / 2 / 5
+    );
 }

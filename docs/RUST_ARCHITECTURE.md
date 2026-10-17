@@ -334,6 +334,14 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   executor, the search page, compare, Learning's `LibraryPassages` and the
   retrieval eval (`examples/retrieval_eval`) all run through it;
   `HybridSearchService` is gone.
+- Weighted reciprocal rank fusion has one implementation,
+  `lattice_core::application::contracts::search::ReciprocalRankFusion`
+  (generic over the id type), and one set of constants (`DEFAULT_RRF_K`,
+  `DEFAULT_VECTOR_FUSION_WEIGHT`, `DEFAULT_KEYWORD_FUSION_WEIGHT` in
+  `shared::constants`). The library search, the folder index and transcript
+  recall all use it. The lesson reference collection's merge is not fusion:
+  its library and keyword lists come from disjoint sources, so it interleaves
+  them with equal shares.
 - Ollama uses its native `/api/tags` and typed `/api/chat` routes. Its connection test
   no longer accepts a llama.cpp model list as evidence of an Ollama connection.
 - The explicit `llamacpp` provider keeps its own URL, model, and authentication
@@ -393,7 +401,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   model gets the folder block from `prompt.rs` and read-only tools confined to
   the root (`list_directory`, `read_file`, `search_files`, `find_files`, and
   `search_folder` from the index). Answers point at lines with the
-  `path:10-24` grammar parsed in `line_refs.rs`.
+  `path:10-24` grammar parsed in core's `shared/text/line_refs.rs`.
 - `explorer/index` keeps a semantic index per folder under
   `<data_dir>/folder-index/`: a `chunks.db` and a vectors file keyed by the
   embedding identity. The index lives outside `lattice.db`, so backups do not
