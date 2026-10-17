@@ -3,7 +3,7 @@ use crate::features::function_calling::dto::{
     CustomQueryToolOutput, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput,
     WikiSummaryOutput,
 };
-use crate::features::settings::dto::ToolOutputSettingsDto;
+use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
 use lattice_core::shared::text::safe_truncate;
 

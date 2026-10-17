@@ -76,7 +76,7 @@ fn canonical_value(value: serde_json::Value) -> serde_json::Value {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedSearchResult {
-    pub results: Vec<crate::features::search::dto::SearchResultDto>,
+    pub results: Vec<lattice_core::application::contracts::search::SearchResultDto>,
     pub cached_at: i64,
     pub execution_time_ms: u64,
 }
@@ -85,7 +85,8 @@ impl CachedSearchResult {
     fn byte_size(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.results.capacity()
-                * std::mem::size_of::<crate::features::search::dto::SearchResultDto>()
+                * std::mem::size_of::<lattice_core::application::contracts::search::SearchResultDto>(
+                )
             + self
                 .results
                 .iter()
@@ -335,20 +336,22 @@ mod tests {
 
     fn result(content: &str) -> CachedSearchResult {
         CachedSearchResult {
-            results: vec![crate::features::search::dto::SearchResultDto {
-                id: "chunk".into(),
-                title: "title".into(),
-                content: content.into(),
-                score: 0.9,
-                path: None,
-                document_id: Some("doc".into()),
-                position: None,
-                vector_score: None,
-                bm25_score: None,
-                vector_rank: None,
-                bm25_rank: None,
-                metadata: HashMap::new(),
-            }],
+            results: vec![
+                lattice_core::application::contracts::search::SearchResultDto {
+                    id: "chunk".into(),
+                    title: "title".into(),
+                    content: content.into(),
+                    score: 0.9,
+                    path: None,
+                    document_id: Some("doc".into()),
+                    position: None,
+                    vector_score: None,
+                    bm25_score: None,
+                    vector_rank: None,
+                    bm25_rank: None,
+                    metadata: HashMap::new(),
+                },
+            ],
             cached_at: chrono::Utc::now().timestamp(),
             execution_time_ms: 5,
         }

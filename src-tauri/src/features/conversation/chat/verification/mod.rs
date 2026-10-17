@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use tracing::{debug, info};
 
-use crate::features::qa::dto::SourceDto;
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::LLMPort;
 
 mod background;
@@ -491,7 +491,7 @@ pub(super) fn verify_response_grounding_summary(
 
 #[cfg(test)]
 pub(super) mod test_support {
-    use crate::features::qa::dto::SourceDto;
+    use lattice_core::application::contracts::sources::SourceDto;
 
     pub(in crate::features::conversation::chat::verification) fn source(
         content: &str,

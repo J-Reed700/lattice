@@ -9,7 +9,7 @@
 //! number, date or negation and cut none, and no name, from the sentence it
 //! copies.
 
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 pub(super) use lattice_core::application::services::evidence_retrieval::{
     best_windows, ScoredWindow,
 };

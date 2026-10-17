@@ -89,7 +89,7 @@ pub fn install_panic_hook() {
 
 /// Set the crashes directory to app data directory.
 ///
-/// This should be called in setup::initialize_app() once the app handle is available.
+/// This should be called in bootstrap::initialize_app() once the app handle is available.
 ///
 /// # Example
 ///

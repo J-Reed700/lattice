@@ -1,3 +1,7 @@
+mod salience;
+
+pub use salience::{is_stopword, select_informative_terms};
+
 pub fn safe_truncate(input: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();

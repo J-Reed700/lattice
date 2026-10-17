@@ -151,5 +151,5 @@ pub struct SynthesizeJournalEntriesResponseDto {
     pub citations: Vec<SynthesisCitationDto>,
     /// Source passages from the conversations and journal notes, numbered to
     /// match the `[n]` citations in `synthesis`.
-    pub sources: Vec<crate::features::qa::dto::SourceDto>,
+    pub sources: Vec<lattice_core::application::contracts::sources::SourceDto>,
 }

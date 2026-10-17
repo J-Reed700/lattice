@@ -83,7 +83,7 @@ impl DownloadModelUseCase {
     async fn verify_model_files(
         &self,
         _model_id: &str,
-        curated: &crate::features::model_management::domain::ModelMetadata,
+        curated: &lattice_core::domain::models::selection::ModelMetadata,
         model_path: &Path,
     ) -> Result<bool, AppError> {
         use lattice_core::domain::models::validation::FileExpectation;
@@ -130,7 +130,7 @@ impl DownloadModelUseCase {
     async fn reconcile_download_records(
         &self,
         model_id: &str,
-        _curated: &crate::features::model_management::domain::ModelMetadata,
+        _curated: &lattice_core::domain::models::selection::ModelMetadata,
         _model_path: &std::path::Path,
     ) -> Result<(), AppError> {
         if let Err(e) = self
@@ -166,7 +166,7 @@ impl DownloadModelUseCase {
         // in-depth — never trust a UI-only gate for a long-running, large-
         // file operation that will fail at model-load time anyway.
         if model_metadata.category
-            == crate::features::model_management::domain::ModelCategory::Embedding
+            == lattice_core::domain::models::selection::ModelCategory::Embedding
         {
             use crate::features::embedding::compatibility::EmbeddingCompatibility;
             match &model_metadata.embedding_compatibility {

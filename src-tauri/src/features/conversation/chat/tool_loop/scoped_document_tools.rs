@@ -5,7 +5,7 @@ use crate::features::function_calling::dto::{
     AttachmentItem, DocumentResult, ListAttachmentsOutput, SearchMode, SemanticSearchInput,
     SemanticSearchOutput,
 };
-use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
+use lattice_core::application::contracts::search::{SearchModeDto, SearchRequestDto};
 use lattice_core::shared::error::{AppError, Result};
 
 /// Tools that can reach the user's own documents, and therefore may only run

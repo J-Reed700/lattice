@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
 use lattice_core::domain::entities::document::Document;

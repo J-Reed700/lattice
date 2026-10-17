@@ -1,23 +1,39 @@
-# Setup Module
+# Bootstrap (composition root)
 
 Startup and shutdown for the Tauri app. `src-tauri/src/main.rs` calls into this
 module; everything else about the app is built by the DI container it creates.
 
+Startup wiring names every feature it starts, so it is the composition root,
+not infrastructure. It is also a leaf: only the crate entry points (`main.rs`,
+`lib.rs`, `bin/*`) may reference `crate::bootstrap`. The architecture ratchet
+enforces this as `composition-root-import`
+(`scripts/rust-architecture-check`).
+
 ## Module structure
 
 ```
-setup/
+bootstrap/
 ├── mod.rs                       # Re-exports + show_error_dialog
 ├── app.rs                       # initialize_app: the startup sequence
+├── startup_reconciliation.rs    # Startup sweeps: stale downloads, orphaned
+│                                # sessions and model files, stuck turns,
+│                                # interrupted verifications
+├── background_workers.rs        # Owns worker handles so shutdown can wait on them
+└── shutdown.rs                  # graceful_shutdown, SidecarSweep
+```
+
+Setup steps with no feature imports stay in `infrastructure/setup/`, and this
+module calls them:
+
+```
+infrastructure/setup/
 ├── directories.rs               # setup_app_directories, setup_model_directory
 ├── database.rs                  # setup_database: open lattice.db + run migrations
 ├── embedding.rs                 # setup_tokenizer (optional legacy tokenizer.json)
 ├── observability.rs             # setup_tracing (see infrastructure/observability)
-├── background_workers.rs        # Owns worker handles so shutdown can wait on them
-├── degraded_mocks.rs            # Stand-in services when a dependency fails to start
+├── indexing_config.rs           # indexing config file shape
 ├── renderer_shutdown.rs         # Lets the renderer finish writes before quit
 ├── renderer_shutdown_macos.rs   # Routes AppKit Quit through the same save gate
-├── shutdown.rs                  # graceful_shutdown
 └── tests.rs
 ```
 
@@ -25,8 +41,9 @@ setup/
 
 1. `tauri_plugin_single_instance`: a second launch focuses the running window
    instead of starting another backend.
-2. `setup_tracing()`: stdout + daily log file, optional OpenTelemetry export.
-3. `renderer_shutdown::install(app)`.
+2. `infrastructure::setup::setup_tracing()`: stdout + daily log file,
+   optional OpenTelemetry export.
+3. `infrastructure::setup::renderer_shutdown::install(app)`.
 4. `initialize_app(app)` (`app.rs`), which blocks on `initialize_app_async`:
    - `setup_app_directories`: creates the Tauri app data dir
      (`~/Library/Application Support/tech.lattice.app/` on macOS);
@@ -65,5 +82,6 @@ error.
 
 ```bash
 cd src-tauri
+cargo test --lib bootstrap
 cargo test --lib infrastructure::setup
 ```

@@ -11,6 +11,7 @@ use syn::{
     Attribute, Item, UseTree,
 };
 
+mod feature_graph;
 mod ratchet;
 
 /// The core crate's feature that lends its test doubles to the app's tests.
@@ -444,10 +445,18 @@ fn check_feature_entrypoints(
     Ok(())
 }
 
+/// `--list <rule> [subject]`: print a rule's findings instead of checking.
+#[derive(Debug, PartialEq)]
+struct List {
+    rule: String,
+    subject: Option<String>,
+}
+
 /// What the command line asks for.
 #[derive(Debug, PartialEq)]
 struct Options {
     write_baseline: bool,
+    list: Option<List>,
     /// The app crate's source root.
     app: PathBuf,
     /// The core crate's source root: the app root while core still lives in it.
@@ -456,17 +465,29 @@ struct Options {
     api: Option<PathBuf>,
 }
 
-/// Reads `<app root> [<api root>] [--core <dir>] [--write-baseline]`.
+/// Reads `<app root> [<api root>] [--core <dir>] [--write-baseline | --list
+/// <rule> [subject]]`. A subject is the argument right after the rule, so the
+/// roots come first.
 fn parse_args(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> Result<Options, Box<dyn std::error::Error>> {
     let mut write_baseline = false;
+    let mut list = None;
     let mut core = None;
     let mut roots = Vec::new();
-    let mut arguments = arguments.into_iter();
+    let mut arguments = arguments.into_iter().peekable();
     while let Some(argument) = arguments.next() {
         if argument == "--write-baseline" {
             write_baseline = true;
+        } else if argument == "--list" {
+            let rule = arguments.next().ok_or("--list expects a rule")?;
+            let subject = arguments
+                .next_if(|next| !next.to_string_lossy().starts_with("--"))
+                .map(|subject| subject.to_string_lossy().into_owned());
+            list = Some(List {
+                rule: rule.to_string_lossy().into_owned(),
+                subject,
+            });
         } else if argument == "--core" {
             let directory = arguments.next().ok_or("--core expects a directory")?;
             core = Some(PathBuf::from(directory));
@@ -476,10 +497,14 @@ fn parse_args(
             roots.push(PathBuf::from(argument));
         }
     }
+    if write_baseline && list.is_some() {
+        return Err("--list and --write-baseline do not combine".into());
+    }
     let mut roots = roots.into_iter();
     let app = roots.next().ok_or("expected Rust source root")?;
     Ok(Options {
         write_baseline,
+        list,
         core: core.unwrap_or_else(|| app.clone()),
         api: roots.next(),
         app,
@@ -577,13 +602,25 @@ fn check_core(root: &Path, failures: &mut usize) -> Result<(), Box<dyn std::erro
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_args(std::env::args_os().skip(1))?;
+    let checker = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let (baseline, feature_graph) = (
+        checker.join("baseline.txt"),
+        checker.join("feature-graph.txt"),
+    );
+    let files = ratchet::Files {
+        baseline: &baseline,
+        feature_graph: &feature_graph,
+    };
+    let roots = [options.app.as_path(), options.core.as_path()];
+    if let Some(list) = &options.list {
+        print!(
+            "{}",
+            ratchet::list(&roots, &files, &list.rule, list.subject.as_deref())?
+        );
+        return Ok(());
+    }
     let mut failures = 0;
-    ratchet::check(
-        &[options.app.as_path(), options.core.as_path()],
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline.txt"),
-        options.write_baseline,
-        &mut failures,
-    )?;
+    ratchet::check(&roots, &files, options.write_baseline, &mut failures)?;
     check_app(&options.app, &mut failures)?;
     check_core(&options.core, &mut failures)?;
     if let Some(api) = &options.api {
@@ -685,6 +722,7 @@ mod tests {
             parse(&["app", "api", "--write-baseline"]).unwrap(),
             Options {
                 write_baseline: true,
+                list: None,
                 app: "app".into(),
                 core: "app".into(),
                 api: Some("api".into()),
@@ -694,6 +732,7 @@ mod tests {
             parse(&["--core", "core", "app"]).unwrap(),
             Options {
                 write_baseline: false,
+                list: None,
                 app: "app".into(),
                 core: "core".into(),
                 api: None,
@@ -702,6 +741,32 @@ mod tests {
         assert!(parse(&["app", "--core"]).is_err());
         assert!(parse(&["app", "--cores", "core"]).is_err());
         assert!(parse(&["--core", "core"]).is_err());
+    }
+
+    #[test]
+    fn list_takes_a_rule_and_an_optional_subject_after_the_roots() {
+        let parse = |arguments: &[&str]| parse_args(arguments.iter().map(OsString::from));
+        let listed = |arguments: &[&str]| parse(arguments).unwrap().list;
+        assert_eq!(
+            listed(&["app", "api", "--list", "feature-edge", "conversation"]),
+            Some(List {
+                rule: "feature-edge".into(),
+                subject: Some("conversation".into()),
+            })
+        );
+        assert_eq!(
+            listed(&["app", "--list", "feature-reexport", "--core", "core"]),
+            Some(List {
+                rule: "feature-reexport".into(),
+                subject: None,
+            })
+        );
+        assert_eq!(
+            parse(&["app", "--list", "raw-spawn"]).unwrap().core,
+            PathBuf::from("app")
+        );
+        assert!(parse(&["app", "--list"]).is_err());
+        assert!(parse(&["app", "--list", "raw-spawn", "--write-baseline"]).is_err());
     }
 
     #[test]
@@ -724,7 +789,11 @@ mod tests {
             "use crate::application::Port; use std::fs::read;",
         )
         .unwrap();
-        fs::write(core.join("application/mod.rs"), "use crate::domain::Entity;").unwrap();
+        fs::write(
+            core.join("application/mod.rs"),
+            "use crate::domain::Entity;",
+        )
+        .unwrap();
         fs::write(core.join("shared/error/mod.rs"), "use keyring::Error;").unwrap();
         let mut failures = 0;
         let result = check_core(&core, &mut failures);

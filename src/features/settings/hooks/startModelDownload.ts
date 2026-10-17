@@ -8,11 +8,10 @@
 
 import { type QueryClient } from '@tanstack/react-query';
 
+import { embeddingBlockReason } from '@/features/settings/components/ModelCatalog/catalogUtils';
 import { VaultAPI } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import type { ModelMetadata } from '@/types/modelCatalog';
-
-import { embeddingBlockReason } from './catalogUtils';
 
 type AddToast = ReturnType<typeof useToastStore.getState>['addToast'];
 

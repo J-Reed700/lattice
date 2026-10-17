@@ -44,6 +44,14 @@ belong to their respective adapters, not the sync contracts.
   and results, conversation aggregates, download sessions and snapshots, QA
   interpretation types, model download events) live in `domain/`, not in a
   feature, so the layer rules above remain checkable.
+- `bootstrap/` is the composition root: the startup sequence
+  (`initialize_app`), startup reconciliation (stale downloads, orphaned
+  sessions and model files, stuck turns, interrupted verifications), worker
+  ownership and `graceful_shutdown`. Startup wiring names every feature, so
+  it is not infrastructure, and it is a leaf: only `main.rs`, `lib.rs` and
+  `bin/*` may reference it. Setup steps with no feature imports
+  (directories, database, tracing, tokenizer, the renderer shutdown hook)
+  stay in `infrastructure/setup/`.
 - `interfaces/di/container.rs` holds construction and runtime state. 25
   features expose accessors through an `impl Container` block in their own
   `di.rs` (conversation's is `di/`). batch, cache, compare, corpus_shape,
@@ -132,7 +140,7 @@ belong to their respective adapters, not the sync contracts.
 
 Detached tasks go through `shared/runtime/background` (`background::spawn`).
 Shutdown closes admission, cancels expensive work, and joins final writes before
-closing SQLite. The ratchet allows one raw spawn (`infrastructure/setup/app.rs`);
+closing SQLite. The ratchet allows one raw spawn (`bootstrap/app.rs`);
 any other deliberate detached task carries a `// raw-spawn: <reason>` marker
 (today: file plugin setup and the Learning lab and container child processes).
 
@@ -172,8 +180,8 @@ repository read. Tests inject capability snapshots for unavailable runtimes,
 disabled profiles, and activities pinned to an older runtime. Chat streams use a
 typed event sink, with the Tauri window adapter confined to `chat/desktop.rs`. Chat workflows depend on the feature's model, storage, retrieval, and policy
 contracts, which the desktop composition adapter implements. The ratchet counts
-`Container` imports outside plugin, command, DI, desktop, setup and interfaces
-files; the baseline still lists 16 (in compare, conversation branching,
+`Container` imports outside plugin, command, DI, desktop, bootstrap and
+interfaces files; the baseline still lists 16 (in compare, conversation branching,
 compaction, handoff and synthesis, Explorer folders, Learning packs and sources,
 QA starters, reranker setup and vault writeback).
 
@@ -189,13 +197,29 @@ lifecycle, tag repository, and plugin integration tests; the syntax-aware checke
 test files outside the Cargo module graph, and checks the shared error contract
 for reverse dependencies.
 
-It also ratchets four outer-ring rules against
+It also ratchets outer-ring rules against
 `scripts/rust-architecture-check/baseline.txt`: infrastructure importing
-features, feature-to-feature edges, `Container` imports outside adapter files,
-and raw spawns outside `shared/runtime`. A new or rising count fails; so does a
+features, feature-to-feature edges and cycles, feature re-exports of
+`lattice_core` or another feature (`pub use`/`pub(crate) use`; callers should
+import from the source), `Container` imports outside adapter files, the
+composition root (`bootstrap`) referenced outside the entry points, raw spawns
+outside `shared/runtime`, global state, and file length; the header of
+`baseline.txt` lists each rule. A new or rising count fails; so does a
 falling one, until `bash scripts/check-rust-layer-boundaries.sh --write-baseline`
 records it. That command also rewrites `scripts/tauri-command-orphans.baseline`.
 Commit the smaller file; never add lines to get a change through.
+
+Feature edges are meant to reach zero, except a few where one feature is built
+on a lower-level one. Those are allowed in
+`scripts/rust-architecture-check/feature-graph.txt`, one
+`allow features::<a> features::<b>  # <reason>` line each, reason required.
+Their references leave `feature-edge` but still count toward `feature-cycle`;
+the allowed edges must not form a cycle, and an allowed edge with no
+references left fails as stale. The plan for the rest is
+`docs/design/2026-10-16-feature-coupling-plan.md`. To see every site of a
+rule, baselined, allowed or new, run
+`bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`; the
+subject is a feature (`conversation`), a file or a directory.
 
 ## Conversation memory
 

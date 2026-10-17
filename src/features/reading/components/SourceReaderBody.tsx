@@ -11,6 +11,12 @@ import { SourceReaderFooter } from '@/features/reading/components/SourceReaderFo
 import { SourceReaderHeader } from '@/features/reading/components/SourceReaderHeader';
 import { SourceViewer } from '@/features/reading/components/SourceViewer';
 import { WebSourceView } from '@/features/reading/components/WebSourceView';
+import {
+  openSourceDocument,
+  openSourcePath,
+  resolveSourcePath,
+  revealSourcePath,
+} from '@/features/reading/hooks/sourceFileActions';
 import { useCitationTravel } from '@/features/reading/hooks/useCitationTravel';
 import { useFileContent } from '@/features/reading/hooks/useFileContent';
 import { usePassageCapture } from '@/features/reading/hooks/usePassageCapture';
@@ -18,7 +24,6 @@ import { useSourceUrlImport } from '@/features/reading/hooks/useSourceUrlImport'
 import { passageMatchNotice, sourceHeaderMeta } from '@/features/reading/model/filePreviewMeta';
 import { textFragmentUrl } from '@/features/reading/model/textFragment';
 import { useWebPageMode } from '@/features/reading/snapshot';
-import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type {
@@ -140,12 +145,20 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const isWebArchiveArticle = sourcePreviewKind === 'archived-web';
   const externalSourceUrl = getSourceExternalUrl(source);
   const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
+  const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
+  // An HTML file on disk is a page to render, not a web citation to read as
+  // text: the sandboxed, theme-aware HTML viewer reads and shows it.
+  const isLocalHtmlFile =
+    mimeType === 'text/html' &&
+    sourcePreviewKind === 'local-file' &&
+    !isWebCategory &&
+    !isWebDocumentId;
   const isWebSourceLike =
     isWebArchiveArticle ||
     isExternalWebSource ||
     isWebCategory ||
-    mimeType === 'text/html' ||
-    Boolean(source.documentId?.startsWith('web:'));
+    (mimeType === 'text/html' && !isLocalHtmlFile) ||
+    isWebDocumentId;
   const shouldUseUrlActions = isExternalWebSource || (isWebCategory && !!externalSourceUrl);
   const importableUrl = externalSourceUrl ?? (isHttpUrl(source.filePath) ? source.filePath : null);
   const openableUrl = importableUrl;
@@ -172,13 +185,14 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
   // highlighter would both be fighting it.
-  const usesEmbeddedViewer = isWebArchiveArticle || isBinaryPreview || showsWebArticle;
+  const usesEmbeddedViewer = isWebArchiveArticle || isBinaryPreview || showsWebArticle || isLocalHtmlFile;
   const canShowInFolder = hasDocumentId || (!shouldUseUrlActions && !isHttpUrl(source.filePath ?? ''));
 
   const shouldFetchContent =
     !isFileTooLarge &&
     !isBinaryPreview &&
     !isWebArchiveArticle &&
+    !isLocalHtmlFile &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const [resolvedPreviewPath, setResolvedPreviewPath] = useState<string | undefined>(undefined);
   const [isResolvingPreviewPath, setIsResolvingPreviewPath] = useState(false);
@@ -204,7 +218,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       setResolvedPreviewPath(undefined);
       setIsResolvingPreviewPath(true);
       try {
-        const result = await VaultAPI.getFilePathById(source.documentId);
+        const result = await resolveSourcePath(source.documentId);
         if (!mounted) return;
         setResolvedPreviewPath(result.ok ? result.data : source.filePath);
       } catch {
@@ -306,7 +320,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (hasDocumentId) {
-      const byId = await VaultAPI.openFileById(source.documentId);
+      const byId = await openSourceDocument(source.documentId);
       if (!byId.ok) {
         toast.error("Couldn't open file", { message: byId.error });
         return;
@@ -314,7 +328,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
       // If backend chooses internal rendering, open the resolved content path externally.
       if (byId.data.action === 'render_internal') {
-        const htmlOpen = await VaultAPI.openFile(byId.data.contentPath);
+        const htmlOpen = await openSourcePath(byId.data.contentPath);
         if (!htmlOpen.ok) {
           if (openableUrl) {
             try {
@@ -330,7 +344,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       return;
     }
 
-    const byPath = await VaultAPI.openFile(source.filePath);
+    const byPath = await openSourcePath(source.filePath);
     if (!byPath.ok) {
       toast.error("Couldn't open file", { message: byPath.error });
     }
@@ -342,19 +356,19 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (hasDocumentId) {
-      const pathResult = await VaultAPI.getFilePathById(source.documentId);
+      const pathResult = await resolveSourcePath(source.documentId);
       if (!pathResult.ok) {
         toast.error("Couldn't locate file", { message: pathResult.error });
         return;
       }
-      const folderResult = await VaultAPI.showInFolder(pathResult.data);
+      const folderResult = await revealSourcePath(pathResult.data);
       if (!folderResult.ok) {
         toast.error(`Couldn't ${platformRevealLabel.toLowerCase()}`, { message: folderResult.error });
       }
       return;
     }
 
-    const folderResult = await VaultAPI.showInFolder(source.filePath);
+    const folderResult = await revealSourcePath(source.filePath);
     if (!folderResult.ok) {
       toast.error(`Couldn't ${platformRevealLabel.toLowerCase()}`, { message: folderResult.error });
     }

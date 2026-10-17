@@ -33,8 +33,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::features::search::dto::{SearchRequestDto, SearchResponseDto};
 use crate::features::search::mapper::SearchMapper;
+use lattice_core::application::contracts::search::{SearchRequestDto, SearchResponseDto};
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::shared::error::{AppError, Result};
 
@@ -189,8 +189,8 @@ impl SemanticSearchUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::search::dto::SearchModeDto;
     use async_trait::async_trait;
+    use lattice_core::application::contracts::search::SearchModeDto;
 
     struct MockEmbedder;
 
@@ -221,14 +221,16 @@ mod tests {
             _embedding: &[f32],
             limit: usize,
             _threshold: f32,
-        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+        ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
             Ok((0..limit.min(3))
-                .map(|i| crate::features::search::dto::SearchResultPortDto {
-                    doc_id: format!("doc-{}", i),
-                    chunk_id: format!("chunk-{}", i),
-                    score: 0.9 - (i as f32 * 0.1),
-                    content: format!("Content {}", i),
-                })
+                .map(
+                    |i| lattice_core::application::contracts::search::SearchResultRecord {
+                        doc_id: format!("doc-{}", i),
+                        chunk_id: format!("chunk-{}", i),
+                        score: 0.9 - (i as f32 * 0.1),
+                        content: format!("Content {}", i),
+                    },
+                )
                 .collect())
         }
 
@@ -238,7 +240,7 @@ mod tests {
             top_k: usize,
             threshold: f32,
             allowed_document_ids: Option<&std::collections::HashSet<String>>,
-        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+        ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
             let mut results = self.search(query_embedding, top_k, threshold)?;
             if let Some(scope) = allowed_document_ids {
                 results.retain(|result| scope.contains(&result.doc_id));
@@ -280,7 +282,7 @@ mod tests {
             embedding: &[f32],
             limit: usize,
             threshold: f32,
-        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+        ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
             *self.thread.lock().unwrap() = Some(std::thread::current().id());
             MockVectorSearch.search(embedding, limit, threshold)
         }
@@ -291,7 +293,7 @@ mod tests {
             top_k: usize,
             threshold: f32,
             _allowed_document_ids: Option<&std::collections::HashSet<String>>,
-        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+        ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
             self.search(query_embedding, top_k, threshold)
         }
 

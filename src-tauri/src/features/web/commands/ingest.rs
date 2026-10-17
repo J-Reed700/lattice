@@ -108,7 +108,6 @@ async fn assign_document_to_space(
 /// # Returns
 ///
 /// * `Ok(WebIngestResponse)` - Ingested document details with metadata
-/// * `Err(AppError::RateLimitExceeded)` - Too many ingest requests
 /// * `Err(AppError)` - Ingestion failed (network, extraction, indexing errors)
 ///
 /// # Example
@@ -162,17 +161,15 @@ async fn assign_document_to_space(
 ///
 /// # Pipeline Steps
 ///
-/// 1. **Rate Limiting**: Check web ingest rate limit
-/// 2. **URL Validation**: Verify URL safety (SSRF prevention)
-/// 3. **Fetch**: Download HTML content
-/// 4. **Extract**: Use Mozilla Readability to extract main content
-/// 5. **Chunk**: Split content into semantic chunks
-/// 6. **Embed**: Generate embeddings for each chunk
-/// 7. **Index**: Store in vector database
+/// 1. **URL Validation**: Verify URL safety (SSRF prevention)
+/// 2. **Fetch**: Download HTML content
+/// 3. **Extract**: Use Mozilla Readability to extract main content
+/// 4. **Chunk**: Split content into semantic chunks
+/// 5. **Embed**: Generate embeddings for each chunk
+/// 6. **Index**: Store in vector database
 ///
 /// # Security
 ///
-/// **Rate Limiting (CWE-770)**: Max web ingest requests per minute
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -189,7 +186,7 @@ async fn assign_document_to_space(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `IngestWebUrlUseCase` with rate limiting
+/// Thin controller delegating to `IngestWebUrlUseCase`
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn ingest_web_url(
     url: String,

@@ -135,6 +135,10 @@ export const SourceViewer = ({
     );
   }
 
+  if (mimeType === 'text/html') {
+    return <HTMLViewer htmlPath={previewFilePath} title={source.fileName} />;
+  }
+
   if (
     mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     previewFilePath.toLowerCase().endsWith('.docx')

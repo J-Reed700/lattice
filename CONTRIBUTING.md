@@ -95,12 +95,19 @@ layers: `domain` imports no other layer and touches no filesystem or
 environment, `application` imports no feature, infrastructure or interfaces
 module, and `shared/error` imports no layer or driver. It also ratchets the
 outer ring against `scripts/rust-architecture-check/baseline.txt`:
-infrastructure importing a feature, one feature referencing another, the DI
-`Container` imported outside plugin, command, DI, desktop, setup and
-interfaces files, and raw `tokio`/`tauri`/`std::thread` spawns outside
-`shared/runtime`. A new or rising count fails. After removing violations, run
+infrastructure importing a feature, one feature referencing another (except
+the edges allowed, each with a reason, in
+`scripts/rust-architecture-check/feature-graph.txt`), feature cycles, a
+feature re-exporting `lattice_core` or another feature, the DI
+`Container` imported outside plugin, command, DI, desktop, bootstrap and
+interfaces files, the composition root (`bootstrap`, startup and shutdown)
+referenced from anywhere but `main.rs`, `lib.rs` and `bin/*`, raw
+`tokio`/`tauri`/`std::thread` spawns outside `shared/runtime`, global state
+and file length. A new or rising count fails. After removing violations, run
 `bash scripts/check-rust-layer-boundaries.sh --write-baseline` and commit the
-smaller baselines; never add a line to get a change through.
+smaller baselines; never add a line to get a change through. To find every
+site of a rule, run
+`bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`.
 
 Use the shared mechanisms instead of a feature-local copy:
 `shared::runtime::background::spawn` for detached tasks (a deliberate raw

@@ -1,6 +1,7 @@
 use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::features::download::saga::DownloadSaga;
 use crate::infrastructure::events::event_bus::EventBus;
+use crate::infrastructure::setup::{setup_app_directories, setup_database, setup_model_directory};
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::runtime::supervised_task::supervise_cancellable;
@@ -47,7 +48,7 @@ async fn initialize_database_layer(
     db_path: PathBuf,
 ) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, AppError> {
     tracing::info!("Initializing database...");
-    match super::setup_database(db_path).await {
+    match setup_database(db_path).await {
         Ok(conn) => {
             tracing::info!("Database initialized successfully");
             Ok(conn)
@@ -187,12 +188,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let shutdown_token = background.token();
     app_handle.manage(Arc::clone(&background));
     app_handle.manage(shutdown_token.clone());
-    let app_dir = super::setup_app_directories(&app_handle).map_err(StartupFailure::setup)?;
+    let app_dir = setup_app_directories(&app_handle).map_err(StartupFailure::setup)?;
 
     crate::infrastructure::crash::set_crashes_directory(app_dir.clone());
     let settings_dir_for_summaries = app_dir.clone();
 
-    let model_dir = super::setup_model_directory(&app_handle).map_err(StartupFailure::setup)?;
+    let model_dir = setup_model_directory(&app_handle).map_err(StartupFailure::setup)?;
 
     let db_path = app_dir.join("lattice.db");
 
@@ -292,7 +293,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 
     let model_dir_for_cleanup = model_dir.clone();
     background.spawn(async move {
-        use crate::infrastructure::services::startup_reconciliation::{
+        use super::startup_reconciliation::{
             reconcile_orphaned_files, reconcile_orphaned_sessions, reconcile_stale_downloads,
         };
 
@@ -337,7 +338,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // fail it so it can be retried.
     let turns_pool = container.db_pool().clone();
     background.spawn(async move {
-        use crate::infrastructure::services::startup_reconciliation::reconcile_stuck_turns;
+        use super::startup_reconciliation::reconcile_stuck_turns;
         match reconcile_stuck_turns(&turns_pool).await {
             Ok(count) if count > 0 => {
                 tracing::info!(count, "Marked interrupted conversation turns as failed");
@@ -353,7 +354,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // good; mark it not checked before the first conversation loads.
     let verification_pool = container.db_pool().clone();
     background.spawn(async move {
-        use crate::infrastructure::services::startup_reconciliation::reconcile_interrupted_verifications;
+        use super::startup_reconciliation::reconcile_interrupted_verifications;
         match reconcile_interrupted_verifications(&verification_pool).await {
             Ok(count) if count > 0 => {
                 tracing::info!(count, "Marked interrupted grounding checks as not checked");

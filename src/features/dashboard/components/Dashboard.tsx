@@ -5,13 +5,13 @@ import { useNavigate } from 'react-router';
 
 import { useCorpusShapeQuery } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { useDashboardQuery } from '@/features/dashboard/hooks/useDashboardQuery';
+import { openDocumentFile } from '@/features/files/hooks/useLibraryDocumentActions';
 import { describeWeekCandidates } from '@/features/journal/components/SynthesizePopover';
 import { useWeeklySynthesisCandidatesQuery } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
 import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromRecentDocument } from '@/features/reading/model/sourceAdapter';
-import VaultAPI from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { RecentDocument } from '@/types';
 import type { ConversationMessageBookmarkDto } from '@/types/api/conversation';
@@ -148,7 +148,7 @@ export const Dashboard = () => {
     }
     const id = doc.documentId || doc.id;
     if (!id) return;
-    const opened = await VaultAPI.openFileById(id);
+    const opened = await openDocumentFile(id);
     if (opened.ok && opened.data.action === 'render_internal') {
       setPreviewSource({ ...source, filePath: opened.data.contentPath });
     }

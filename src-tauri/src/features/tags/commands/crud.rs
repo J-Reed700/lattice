@@ -20,11 +20,10 @@ use lattice_core::shared::error::{AppError, Result};
 /// # Returns
 ///
 /// * `Ok(CreateTagResponseDto)` - Created tag with ID and status message
-/// * `Err(AppError)` - If rate limited, validation fails, or tag creation fails
+/// * `Err(AppError)` - If validation or tag creation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many tag creation requests
 /// * `AppError::InvalidInput` - Tag name invalid (empty, too long, or > 100 characters)
 /// * `AppError::Conflict` - Tag name already exists (duplicate tag names not allowed)
 /// * `AppError::Other` - Use case execution failed (database error)
@@ -74,7 +73,6 @@ use lattice_core::shared::error::{AppError, Result};
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents tag spam and resource exhaustion
 /// - **Input Validation**: Tag name length checked (1-100 characters)
 /// - **Uniqueness Enforcement**: Duplicate tag names rejected
 ///
@@ -95,16 +93,14 @@ use lattice_core::shared::error::{AppError, Result};
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Validates tag name length
-/// 3. Delegates to `CreateTagUseCase` (business logic + uniqueness check)
+/// 1. Validates tag name length
+/// 2. Delegates to `CreateTagUseCase` (business logic + uniqueness check)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation (tag name 1-100 characters)
-/// 3. Execute CreateTagUseCase (uniqueness check, database insert)
-/// 4. Return created tag with ID
+/// 1. Input validation (tag name 1-100 characters)
+/// 2. Execute CreateTagUseCase (uniqueness check, database insert)
+/// 3. Return created tag with ID
 ///
 /// # Use Cases
 ///
@@ -142,11 +138,10 @@ pub async fn create_tag_ddd(
 /// # Returns
 ///
 /// * `Ok(TagDto)` - Updated tag with new values
-/// * `Err(AppError)` - If rate limited, tag not found, or update fails
+/// * `Err(AppError)` - If the tag is not found or the update fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many update requests
 /// * `AppError::NotFound` - Tag ID does not exist
 /// * `AppError::Conflict` - New name conflicts with existing tag
 /// * `AppError::Other` - Use case execution failed
@@ -190,20 +185,17 @@ pub async fn create_tag_ddd(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents excessive update operations
 /// - **Uniqueness Enforcement**: New names checked for conflicts
 ///
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `UpdateTagUseCase` (validation, uniqueness check, update)
+/// 1. Delegates to `UpdateTagUseCase` (validation, uniqueness check, update)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Execute UpdateTagUseCase (find tag, check uniqueness if name changed, update)
-/// 3. Return updated tag
+/// 1. Execute UpdateTagUseCase (find tag, check uniqueness if name changed, update)
+/// 2. Return updated tag
 pub async fn update_tag_ddd(
     container: State<'_, Container>,
     request: UpdateTagRequestDto,
@@ -227,11 +219,10 @@ pub async fn update_tag_ddd(
 /// # Returns
 ///
 /// * `Ok(())` - Tag successfully deleted
-/// * `Err(AppError)` - If rate limited, tag not found, or deletion fails
+/// * `Err(AppError)` - If the tag is not found or deletion fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many deletion requests
 /// * `AppError::NotFound` - Tag ID does not exist
 /// * `AppError::Other` - Use case execution failed (database error)
 ///
@@ -254,10 +245,6 @@ pub async fn update_tag_ddd(
 /// console.log('Tag deleted successfully');
 /// ```
 ///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents mass deletion abuse
-///
 /// # Side Effects
 ///
 /// - **Cascade Deletion**: Tag is removed from all documents
@@ -267,14 +254,12 @@ pub async fn update_tag_ddd(
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `DeleteTagUseCase` (cascade deletion logic)
+/// 1. Delegates to `DeleteTagUseCase` (cascade deletion logic)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Execute DeleteTagUseCase (find tag, remove from documents, delete tag)
-/// 3. Return success
+/// 1. Execute DeleteTagUseCase (find tag, remove from documents, delete tag)
+/// 2. Return success
 pub async fn delete_tag_ddd(
     container: State<'_, Container>,
     request: DeleteTagRequestDto,

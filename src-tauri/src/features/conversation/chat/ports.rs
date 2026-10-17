@@ -8,9 +8,9 @@ use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotD
 pub(crate) use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, ToolDefinition,
 };
-pub(crate) use crate::features::settings::dto::SettingsDto;
 use async_trait::async_trait;
 use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
+pub(crate) use lattice_core::application::contracts::settings::SettingsDto;
 pub(crate) use lattice_core::application::contracts::web::FetchUrlContentOutput;
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort,
@@ -314,7 +314,7 @@ pub trait SynthesisEntries: Send + Sync {
     async fn references_created_since(
         &self,
         cutoff: &str,
-    ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>>;
+    ) -> Result<Vec<lattice_core::application::contracts::references::PassageReferenceRecord>>;
     /// Journal pages updated between `start_date` and `end_date`, as stored.
     async fn notes_in_range(
         &self,
@@ -326,7 +326,7 @@ pub trait SynthesisEntries: Send + Sync {
     async fn hydrate_note(
         &self,
         page: StoredJournalPage,
-    ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto>;
+    ) -> Result<lattice_core::application::contracts::notes::WorkspaceNoteDto>;
 }
 
 /// The tools a model may call: what is registered, and running one.
@@ -346,11 +346,13 @@ pub trait PageReader: Send + Sync {
 #[async_trait]
 pub trait ChatRetrieval: Send + Sync {
     fn tools(&self) -> Arc<dyn ChatTools>;
-    fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait>;
+    fn library_search(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait>;
     fn page_reader(&self) -> Arc<dyn PageReader>;
     async fn summary_search(
         &self,
-    ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>>;
+    ) -> Option<Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>>;
     /// How much prompt the corpus planner can take in time, learned across
     /// every turn this runtime runs — and never shared with a test's runtime.
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;

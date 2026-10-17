@@ -11,8 +11,8 @@ use super::chat::{run_unwatched_turn, ChatResponse, ToolPreferences};
 use super::commands as conversation;
 use super::dto::CreateConversationRequestDto;
 use super::workspace_dto::*;
-use crate::features::qa::dto::SourceDto;
 use async_trait::async_trait;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
     JobContext, JobDto, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobRuntime, JobStatus,

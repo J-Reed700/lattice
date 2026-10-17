@@ -21,11 +21,10 @@ use lattice_core::shared::error::{AppError, Result};
 /// # Returns
 ///
 /// * `Ok(ApplyTagsResponseDto)` - List of applied tags (newly created + existing)
-/// * `Err(AppError)` - If rate limited, validation fails, or operation fails
+/// * `Err(AppError)` - If validation or the operation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many tag assignment operations
 /// * `AppError::InvalidInput` - Tag names invalid (empty or > 100 characters)
 /// * `AppError::NotFound` - Document ID does not exist
 /// * `AppError::Other` - Use case execution failed (database error)
@@ -71,7 +70,6 @@ use lattice_core::shared::error::{AppError, Result};
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents tag spam and resource exhaustion
 /// - **Input Validation**: Each tag name checked (1-100 characters)
 ///
 /// # Tag Creation Behavior
@@ -91,19 +89,17 @@ use lattice_core::shared::error::{AppError, Result};
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Validates all tag names
-/// 3. Delegates to `ApplyTagsUseCase` (create-if-not-exists + assignment logic)
+/// 1. Validates all tag names
+/// 2. Delegates to `ApplyTagsUseCase` (create-if-not-exists + assignment logic)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation (each tag name 1-100 characters)
-/// 3. Execute ApplyTagsUseCase:
+/// 1. Input validation (each tag name 1-100 characters)
+/// 2. Execute ApplyTagsUseCase:
 ///    - Find or create each tag
 ///    - Assign all tags to document (idempotent)
 ///    - Return complete tag list
-/// 4. Return applied tags
+/// 3. Return applied tags
 ///
 /// # Use Cases
 ///
@@ -153,11 +149,10 @@ pub async fn apply_tags_ddd(
 /// # Returns
 ///
 /// * `Ok(())` - Tag successfully removed from document
-/// * `Err(AppError)` - If rate limited or operation fails
+/// * `Err(AppError)` - If the operation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many tag removal operations
 /// * `AppError::NotFound` - Document or tag ID does not exist
 /// * `AppError::Other` - Use case execution failed (database error)
 ///
@@ -190,10 +185,6 @@ pub async fn apply_tags_ddd(
 /// });
 /// ```
 ///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents excessive removal operations
-///
 /// # Behavior
 ///
 /// - **Idempotent**: Removing unassigned tag has no effect (no error)
@@ -203,14 +194,12 @@ pub async fn apply_tags_ddd(
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `RemoveTagFromDocumentUseCase` (removes assignment)
+/// 1. Delegates to `RemoveTagFromDocumentUseCase` (removes assignment)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Execute RemoveTagFromDocumentUseCase (find and remove assignment)
-/// 3. Return success
+/// 1. Execute RemoveTagFromDocumentUseCase (find and remove assignment)
+/// 2. Return success
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn remove_tag_from_document_impl(

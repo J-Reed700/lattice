@@ -20,8 +20,8 @@ use futures::{FutureExt, StreamExt};
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
-use crate::features::qa::dto::SourceDto;
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{chars_within_tokens, SamplingOverride};
 #[cfg(test)]
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};

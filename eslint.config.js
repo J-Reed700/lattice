@@ -77,15 +77,7 @@ const isBackendSource = (source) =>
 // View files that imported VaultAPI, a feature client or the transport when
 // the rule arrived. Do not add to this list: move the file's backend calls
 // into a query or mutation hook, then delete its entry.
-const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
-  'src/features/chat/components/ConversationLinkedDocumentsPanel.tsx',
-  'src/features/dashboard/components/Dashboard.tsx',
-  'src/features/journal/components/EntryFromConversation.tsx',
-  'src/features/reading/components/SourceReaderBody.tsx',
-  'src/features/search/components/SearchInterface/SearchInterface.tsx',
-  'src/features/settings/components/AITab/ChatTab.tsx',
-  'src/features/settings/components/ModelCatalog/startModelDownload.ts',
-], (text) => valueImportSources(text).some(isBackendSource));
+const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [], (text) => valueImportSources(text).some(isBackendSource));
 
 // View files that imported a Tauri plugin or convertFileSrc when the rule
 // arrived. Do not add to this list: wrap the native call in a hook or shared

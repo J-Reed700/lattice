@@ -58,7 +58,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         &self,
         cutoff: &str,
     ) -> lattice_core::shared::error::Result<
-        Vec<crate::features::references::repository::PassageReferenceRecord>,
+        Vec<lattice_core::application::contracts::references::PassageReferenceRecord>,
     > {
         crate::features::references::repository::PassageReferenceRepository::new(
             self.db_pool().clone(),
@@ -120,8 +120,9 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
     async fn hydrate_note(
         &self,
         page: crate::features::conversation::chat::ports::StoredJournalPage,
-    ) -> lattice_core::shared::error::Result<crate::features::daily_notes::dto::WorkspaceNoteDto>
-    {
+    ) -> lattice_core::shared::error::Result<
+        lattice_core::application::contracts::notes::WorkspaceNoteDto,
+    > {
         let crate::features::conversation::chat::ports::StoredJournalPage {
             revision,
             id,

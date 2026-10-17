@@ -39,12 +39,11 @@ pub struct ModelInfo {
     pub is_loaded: bool,
 }
 
-/// Generates a single text embedding without rate limiting
+/// Generates a single text embedding
 ///
 /// Legacy command for generating embeddings. Converts text into a DEFAULT_EMBEDDING_DIM-dimensional vector
 /// using the DEFAULT_EMBEDDING_MODEL_NAME model. Runs in a blocking thread pool
-/// since ML inference is CPU-bound. **No rate limiting** - use `embedding_operation` for
-/// production code requiring rate limiting and validation.
+/// since ML inference is CPU-bound.
 ///
 /// # Arguments
 ///
@@ -81,12 +80,9 @@ pub struct ModelInfo {
 ///
 /// # Warning
 ///
-/// **No Rate Limiting**: This command has no rate limiting or validation. For production
-/// use, prefer `embedding_operation` which includes rate limiting (CWE-770), input
-/// validation, and better error handling. This command exists for:
+/// **No Input Validation**: This command does not validate its input. It exists for:
 /// - Legacy compatibility
 /// - Internal/trusted use cases
-/// - Simple scripts where rate limiting is unnecessary
 ///
 /// # Architecture
 ///
@@ -114,8 +110,7 @@ pub async fn generate_embedding(
 ///
 /// Legacy command for batch embedding generation. More efficient than multiple single
 /// calls due to model batching optimizations. Converts array of texts into array of
-/// DEFAULT_EMBEDDING_DIM-dimensional vectors. **No rate limiting** - use `embedding_operation` for
-/// production code requiring rate limiting and validation.
+/// DEFAULT_EMBEDDING_DIM-dimensional vectors.
 ///
 /// # Arguments
 ///
@@ -171,13 +166,7 @@ pub async fn generate_embedding(
 ///
 /// # Warning
 ///
-/// **No Rate Limiting or Validation**: This command has no rate limiting, batch size
-/// limits, or input validation. For production use, prefer `embedding_operation` which
-/// includes:
-/// - Rate limiting (CWE-770 mitigation)
-/// - Batch size validation (max 100 texts)
-/// - Text length validation (max 10,000 chars per text)
-/// - Better error handling
+/// **No Validation**: This command has no batch size limits or input validation.
 ///
 /// Use this command only for:
 /// - Legacy compatibility
@@ -210,7 +199,7 @@ pub async fn generate_embeddings_batch(
 ///
 /// Returns information about the loaded embedding model including model name,
 /// embedding dimensions, and load status. Useful for frontend to display model
-/// info and verify compatibility. **Read-only** - no rate limiting required.
+/// info and verify compatibility. **Read-only**.
 ///
 /// # Arguments
 ///

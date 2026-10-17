@@ -1,5 +1,5 @@
 use crate::features::conversation::chat::ports::{ChatRuntime, MemoryVector};
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::{debug, warn};

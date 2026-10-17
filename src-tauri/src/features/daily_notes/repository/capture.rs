@@ -7,7 +7,7 @@ use crate::features::daily_notes::dto::{
     dto_to_row, row_to_dto, CaptureReferenceRequestDto, CaptureReferenceResultDto,
     QuickCaptureResultDto, WorkspaceNoteDto,
 };
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use sqlx::{Sqlite, Transaction};

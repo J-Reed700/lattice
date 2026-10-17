@@ -241,7 +241,12 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await expect(evidence.getByText("The saved reference supports this teaching claim.")).toBeVisible();
   await evidence.locator("summary").filter({ hasText: "Public field notes" }).click();
   await expect(evidence.getByText(/Saved version/)).toBeVisible();
-  await expect(evidence.getByRole("link", { name: "Open original page" })).toHaveAttribute("href", /^https:/);
+  // The original page opens in the in-app source reader at the saved passage, not in an external browser.
+  await evidence.getByRole("button", { name: "Open original page" }).click();
+  const reader = page.getByRole("dialog", { name: "Public field notes" });
+  await expect(reader.locator("mark.source-reader-passage")).toHaveText(excerptSentinel);
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveCount(0);
   await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();

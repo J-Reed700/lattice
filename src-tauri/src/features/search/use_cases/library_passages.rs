@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::HybridSearchUseCase;
-use crate::features::search::dto::SearchRequestDto;
+use lattice_core::application::contracts::search::SearchRequestDto;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, LibraryChunk, LibraryDocumentText, LibraryPassageHit,
     LibraryPassagesPort,

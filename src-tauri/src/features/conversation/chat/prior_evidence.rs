@@ -6,11 +6,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::features::conversation::chat::ports::ChatStorage;
-use crate::features::qa::dto::SourceDto;
-use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::text::select_informative_terms;
 use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 use super::retrieval::WEB_SOURCE_PREFIX;

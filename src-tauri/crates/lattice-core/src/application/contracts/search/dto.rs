@@ -1,14 +1,9 @@
-//! # Search DTOs
-//!
-//! Data Transfer Objects for search operations across application boundaries.
-//!
-//! These DTOs provide a flat, serialization-friendly representation of search
-//! requests and responses, decoupled from domain models.
+//! Search requests and responses as the frontend, chat and the tool executor
+//! exchange them: a flat, serialization-friendly shape, decoupled from the
+//! domain's search models.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-pub use lattice_core::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 
 /// Search request from the frontend.
 ///
@@ -37,8 +32,8 @@ impl SearchRequestDto {
             limit: Some(limit),
             threshold: None,
             mode: SearchModeDto::Hybrid {
-                vector_weight: lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                bm25_weight: lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+                vector_weight: crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                bm25_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
             },
         }
     }
@@ -198,10 +193,11 @@ pub struct CacheStatsDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::contracts::search::SearchResultRecord;
 
     #[test]
     fn test_search_result_port_dto_serialization() {
-        let port_dto = SearchResultPortDto {
+        let port_dto = SearchResultRecord {
             doc_id: "doc-123".to_string(),
             chunk_id: "chunk-456".to_string(),
             score: 0.95,
@@ -209,7 +205,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&port_dto).unwrap();
-        let deserialized: SearchResultPortDto = serde_json::from_str(&json).unwrap();
+        let deserialized: SearchResultRecord = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.doc_id, "doc-123");
         assert_eq!(deserialized.chunk_id, "chunk-456");
