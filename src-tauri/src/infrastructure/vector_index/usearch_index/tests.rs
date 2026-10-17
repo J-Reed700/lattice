@@ -1,13 +1,13 @@
 //! Tests for the USearch vector index.
 use super::*;
-use crate::features::search::engine::vector_ops::cosine_similarity_simd;
+use crate::infrastructure::vector_index::vector_ops::cosine_similarity_simd;
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::VectorSearchPort;
 use std::cmp::Ordering as CmpOrdering;
 use std::sync::atomic::Ordering;
 // The scalar reference, so these assertions do not simply repeat whatever
 // the SIMD kernel the rescore now uses happens to compute.
-use crate::features::search::engine::vector_ops::cosine_similarity_naive;
+use crate::infrastructure::vector_index::vector_ops::cosine_similarity_naive;
 
 fn make_test_index(dim: usize) -> USearchVectorIndex {
     USearchVectorIndex::new(dim, None).unwrap_or_else(|e| {

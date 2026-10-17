@@ -172,11 +172,9 @@ async fn resolve_vector_compression(
     db_pool: &SqlitePool,
     settings: &crate::features::settings::dto::SearchSettingsDto,
     active_embedding_dimension: Option<usize>,
-) -> crate::features::search::engine::vector_search::VectorIndexCompression {
-    use crate::features::search::engine::vector_search::{
-        VectorIndexCompression, VectorQuantization,
-    };
+) -> crate::infrastructure::vector_index::VectorIndexCompression {
     use crate::features::settings::dto::{VectorIndexCompressionModeDto, VectorQuantizationDto};
+    use crate::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
 
     let requested = settings.vector_index_compression;
     if requested.mode == VectorIndexCompressionModeDto::None {

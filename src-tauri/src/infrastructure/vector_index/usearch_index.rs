@@ -18,7 +18,7 @@
 //! and TOCTOU races.
 
 use super::compression::{VectorIndexCompression, VectorQuantization};
-use super::manifest::IndexConfig;
+use super::index_config::IndexConfig;
 use super::rescore_store::RescoreVectorStore;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
@@ -186,7 +186,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
 
 /// Write `bytes` so that readers see either the previous file or the whole new
 /// one, never a prefix of it.
-pub(super) fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             AppError::FileStorage(format!(
@@ -342,7 +342,7 @@ impl USearchVectorIndex {
 ///
 /// Best-effort only. Tauri exits the process from inside its event loop, so in
 /// the real app nothing that `AppHandle` owns is ever dropped; the shutdown
-/// flush in [`super::persistence::IndexPersistence`] is what actually saves.
+/// flush in the search feature's `IndexPersistence` is what actually saves.
 /// This still covers tests and any index that is genuinely dropped.
 impl Drop for USearchVectorIndex {
     fn drop(&mut self) {

@@ -1,8 +1,7 @@
 //! Tests for startup restore or rebuild, manifests and the debounced flush.
 
 use super::*;
-use crate::features::search::engine::vector_search::compression::VectorIndexCompression;
-use crate::features::search::engine::vector_search::manifest::manifest_path_for;
+use crate::infrastructure::vector_index::{manifest_path_for, VectorIndexCompression};
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::VectorSearchPort;
 

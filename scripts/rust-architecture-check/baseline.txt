@@ -50,7 +50,6 @@ feature-edge features::conversation features::search 1
 feature-edge features::conversation features::web 2
 feature-edge features::corpus_shape features::embedding 1
 feature-edge features::embedding features::download 2
-feature-edge features::explorer features::search 3
 feature-edge features::file features::indexing 7
 feature-edge features::file features::recent 2
 feature-edge features::health features::llm 1
@@ -70,7 +69,6 @@ feature-edge features::search features::download 1
 feature-edge features::search features::embedding 5
 feature-edge features::settings features::llm 2
 feature-edge features::stats features::tags 1
-feature-edge features::summaries features::search 1
 feature-edge features::transcription features::download 2
 feature-edge features::vault features::daily_notes 4
 

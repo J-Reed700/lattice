@@ -59,7 +59,7 @@
 //! ### Basic Semantic Search
 //!
 //! ```rust,no_run
-//! use lattice::features::search::engine::USearchVectorIndex;
+//! use lattice::infrastructure::vector_index::USearchVectorIndex;
 //!
 //! let index = USearchVectorIndex::new(768, None)?;
 //!
@@ -112,7 +112,6 @@ pub mod qwen3_reranker;
 pub mod recency;
 pub mod reranker;
 pub mod snippet;
-pub mod vector_ops;
 
 // Directory-backed sub-modules.
 pub mod sparse_search;
@@ -128,8 +127,3 @@ pub use reranker::{
     Reranker, RerankerService,
 };
 pub use sparse_search::{SparseSearchService, SqliteSparseTermStore};
-pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_vector};
-pub use vector_search::USearchVectorIndex;
-
-#[cfg(test)]
-mod vector_ops_test;

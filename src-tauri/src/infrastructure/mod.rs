@@ -23,3 +23,4 @@ pub mod security;
 pub mod services;
 pub mod setup;
 pub mod storage;
+pub mod vector_index;
