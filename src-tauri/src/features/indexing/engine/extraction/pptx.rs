@@ -72,7 +72,9 @@ fn extract_pptx_sync(path: &Path) -> Result<String> {
     // "slide2" as text; the number in the part name is the deck order.
     let mut slides: Vec<(u32, String)> = archive
         .file_names()
-        .filter_map(|name| Some((part_number(name, "ppt/slides/slide")?, name.to_owned())))
+        // A name that doesn't decode can't be a slide part.
+        .filter_map(|name| name.ok())
+        .filter_map(|name| Some((part_number(&name, "ppt/slides/slide")?, name.into_owned())))
         .collect();
     slides.sort();
 

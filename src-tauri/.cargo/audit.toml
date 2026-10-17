@@ -18,4 +18,18 @@ ignore = [
     # 2. No rsa-*.rlib artifacts in target/
     # 3. Binary does not link against rsa
     "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0367, -0368, -0369: zip < 9 `ZipArchive::extract` and
+    # `ZipStreamReader::extract` follow symlinks, keep SUID/SGID bits, and apply
+    # permissions through symlinks outside the destination directory.
+    #
+    # Our own dependency is zip 9 (fixed). Two older copies remain, pulled in by
+    # crates with no zip 9 release yet:
+    #   zip 7.x <- candle-core 0.10.2 (npy.rs: reads .npz entries by name, writes .npz)
+    #   zip 8.x <- docx-rs 0.4.x      (reader/read_docx.rs: reads entries by name)
+    # Neither calls `extract` or uses `ZipStreamReader`, so the vulnerable code
+    # never runs. Drop these once candle and docx-rs depend on zip >= 9.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]

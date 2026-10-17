@@ -233,13 +233,15 @@ fn sheet_parts(
     }
     let mut numbered: Vec<(u32, String)> = archive
         .file_names()
+        // A name that doesn't decode can't be a worksheet part.
+        .filter_map(|name| name.ok())
         .filter_map(|name| {
             let number = name
                 .strip_prefix("xl/worksheets/sheet")?
                 .strip_suffix(".xml")?
                 .parse()
                 .ok()?;
-            Some((number, name.to_owned()))
+            Some((number, name.into_owned()))
         })
         .collect();
     numbered.sort();
