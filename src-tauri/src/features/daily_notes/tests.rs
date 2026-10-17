@@ -17,7 +17,9 @@ use super::commands::{
 use super::ports::{ArchivedWebPage, LinkedConversationArchive};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
 use crate::features::conversation::repository::ConversationRepository;
-use crate::features::qa::dto::{SourceChunkExcerptDto, SourceDto, WebSnapshotDto};
+use lattice_core::application::contracts::sources::{
+    SourceChunkExcerptDto, SourceDto, WebSnapshotDto,
+};
 use lattice_core::shared::error::AppError;
 
 fn source(citation_id: u32, document_id: &str) -> SourceDto {

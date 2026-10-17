@@ -1,4 +1,4 @@
-use crate::features::search::dto::SearchResponseDto;
+use lattice_core::application::contracts::search::SearchResponseDto;
 use lattice_core::domain::qa::hyde::QueryType;
 
 use super::SearchFlags;

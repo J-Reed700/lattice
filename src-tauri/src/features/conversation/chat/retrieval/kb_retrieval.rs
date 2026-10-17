@@ -8,9 +8,9 @@ use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::turn_record::TurnStepKind;
 use crate::features::conversation::chat::ChatTurn;
-use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
-use crate::features::search::use_cases::RerankOptions;
 use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::contracts::search::RerankOptions;
+use lattice_core::application::contracts::search::{SearchResponseDto, SearchResultDto};
 use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 use lattice_core::domain::qa::hyde::QueryType;
 
@@ -750,7 +750,7 @@ async fn summary_tier(
         .top_summaries(message, &scope.document_ids, SUMMARY_OPENING_DOCUMENTS)
         .await
     {
-        Ok(hits) => crate::features::summaries::openings::select_opening_documents(
+        Ok(hits) => lattice_core::application::ports::summary_search::select_opening_documents(
             &hits,
             &scope.document_ids,
             SUMMARY_OPENING_DOCUMENTS,

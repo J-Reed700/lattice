@@ -8,9 +8,9 @@
 //!
 //! [`BM25Search`]: crate::features::search::engine::bm25::BM25Search
 
-use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
 use async_trait::async_trait;
+use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::TextSearchPort;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
@@ -181,7 +181,7 @@ impl SqliteTextSearch {
 
 #[async_trait]
 impl TextSearchPort for SqliteTextSearch {
-    async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchResultPortDto>> {
+    async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchResultRecord>> {
         self.search_scoped(query, top_k, None, None).await
     }
 
@@ -191,7 +191,7 @@ impl TextSearchPort for SqliteTextSearch {
         top_k: usize,
         space_id: Option<&str>,
         allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         // Never the raw passthrough `normalize` allows. Every query here is a
         // chat message, a planner rewrite or a model's tool call, so a quote in
         // `Explain "attention" in the paper` is prose, not a phrase operator:
@@ -326,7 +326,7 @@ impl SqliteTextSearch {
         sql.build().fetch_all(pool).await
     }
 
-    fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultPortDto> {
+    fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultRecord> {
         use sqlx::Row;
 
         let mut raw_results = Vec::with_capacity(rows.len());
@@ -352,7 +352,7 @@ impl SqliteTextSearch {
         raw_results
             .into_iter()
             .map(
-                |(chunk_id, document_id, content, raw_score)| SearchResultPortDto {
+                |(chunk_id, document_id, content, raw_score)| SearchResultRecord {
                     doc_id: document_id,
                     chunk_id,
                     content,

@@ -116,7 +116,6 @@ pub mod snippet;
 pub mod vector_ops;
 
 // Directory-backed sub-modules.
-pub mod query_expansion;
 pub mod sparse_search;
 pub mod text_search;
 pub mod vector_search;

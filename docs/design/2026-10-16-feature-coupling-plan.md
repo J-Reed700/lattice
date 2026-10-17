@@ -1,6 +1,6 @@
 # Feature coupling plan, 2026-10-16
 
-**Status:** PR 1 (the checker's allowlist, `--list` and `feature-reexport` rule, plus the 42 (a0) import rewrites) is the change that commits this plan; PRs 2–6 follow it.
+**Status:** PR 1 (the checker's allowlist, `--list` and `feature-reexport` rule, plus the 42 (a0) import rewrites) is the change that commits this plan. PR 2: this change. Feature edges 248 → 187 (−61, plan −62): the three `daily_notes` row/argument types (`WorkspaceNoteRecord`, `NoteTimestampRecord`, `VaultNoteUpsert`) stay with `DailyNotesRepository` for PR4's notes port, because `application` may not use `sqlx`; `select_opening_documents` moved with `SummarySearchPort`. Feature re-exports 18 → 21: the `SearchResultPortDto` alias is gone, and four temporary `pub(crate) use` shims keep `test_runtime.rs` unchanged. PRs 3–6 follow.
 
 **How the counts were made:** the totals come from `baseline.txt`: 297 references across 54 pairs (re-summed with awk). The checker reads its baseline from a path fixed at build time (`main.rs:583`, `env!("CARGO_MANIFEST_DIR")`), and read-only mode rules out a temp copy. So a grep/perl script copied how `ratchet.rs` collects references (test-only code excluded, as at `ratchet.rs:218`). It matched the baseline to within ±2 per pair (303 against 297; the extra hits sit in test-only files the script couldn't detect). The per-pair counts were sorted into kinds by hand, so expect ±5 movement between kinds.
 

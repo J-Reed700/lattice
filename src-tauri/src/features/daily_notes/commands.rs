@@ -1,7 +1,7 @@
 use super::ports::{LinkedConversationArchive, NoteProjection};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
-use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use uuid::Uuid;
@@ -165,13 +165,15 @@ async fn enrich_sources_from_linked_conversations(
         }) {
             continue;
         }
-        source.web_snapshot = Some(crate::features::qa::dto::WebSnapshotDto {
-            url: url.to_string(),
-            title: first.title.clone(),
-            text: first.content.clone(),
-            fetched_at: first.fetched_at.clone(),
-            truncated: first.truncated,
-        });
+        source.web_snapshot = Some(
+            lattice_core::application::contracts::sources::WebSnapshotDto {
+                url: url.to_string(),
+                title: first.title.clone(),
+                text: first.content.clone(),
+                fetched_at: first.fetched_at.clone(),
+                truncated: first.truncated,
+            },
+        );
         changed = true;
     }
     changed

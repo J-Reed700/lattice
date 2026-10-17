@@ -1,17 +1,17 @@
 use crate::features::conversation::chat::ports::{ChatRuntime, SettingsDto};
 use crate::features::conversation::chat::router::RouterAction;
 use crate::features::function_calling::dto::WikiSearchOutput;
-use crate::features::qa::dto::SourceDto;
-use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
-use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
+use lattice_core::application::contracts::search::{SearchResponseDto, SearchResultDto};
 use lattice_core::application::contracts::settings::{
     RetrievalTuningSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
 };
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::services::context_assembler::EvidenceBudget;
 use lattice_core::domain::qa::hyde::QueryType;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::safe_truncate;
+use lattice_core::shared::text::select_informative_terms;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -158,7 +158,7 @@ pub(super) struct RouterDecisionOutcome {
 pub(super) struct RetrievalPipelineOutcome {
     pub(super) short_circuit_response: Option<String>,
     pub(super) interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation,
-    pub(super) search_response: crate::features::search::dto::SearchResponseDto,
+    pub(super) search_response: lattice_core::application::contracts::search::SearchResponseDto,
     pub(super) followup_context: Option<(FollowupDocument, Vec<SourceDto>)>,
     /// Wiki results first, then web, rendered once the sources are numbered.
     pub(super) web_context: Vec<WebContextItem>,
@@ -446,7 +446,7 @@ use lattice_core::application::services::grounded_generation::retrieval_depth;
 async fn persist_document_references(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
-    results: &[crate::features::search::dto::SearchResultDto],
+    results: &[lattice_core::application::contracts::search::SearchResultDto],
 ) -> Result<()> {
     persist_document_references_impl(conv_service, conversation_id, results).await
 }
@@ -611,7 +611,7 @@ pub(super) fn citation_ids_by_chunk(
 /// Fetches document metadata in parallel to avoid N+1 queries, then constructs
 /// `SourceDto` entries with full citation metadata for frontend display.
 async fn build_source_citations(
-    results: &[crate::features::search::dto::SearchResultDto],
+    results: &[lattice_core::application::contracts::search::SearchResultDto],
     container: &dyn ChatRuntime,
     highlight_terms: &[String],
 ) -> Vec<SourceDto> {

@@ -617,7 +617,7 @@ impl lattice_core::application::ports::VectorSearchPort for PublicationProbe {
         vector: &[f32],
         count: usize,
         threshold: f32,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         lattice_core::application::ports::VectorSearchPort::search(
             &self.index,
             vector,
@@ -631,7 +631,7 @@ impl lattice_core::application::ports::VectorSearchPort for PublicationProbe {
         count: usize,
         threshold: f32,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         lattice_core::application::ports::VectorSearchPort::search_scoped(
             &self.index,
             vector,

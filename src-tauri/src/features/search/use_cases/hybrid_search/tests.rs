@@ -1,20 +1,18 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use super::{
-    normalized_weights, split_lexical_weight, BranchKind, HybridSearchUseCase, RankedBranch,
-    RerankOptions,
-};
-use crate::features::search::dto::{
-    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
-};
+use super::{normalized_weights, split_lexical_weight, HybridSearchUseCase};
 use crate::features::search::engine::reranker::{RerankResult, Reranker};
 use crate::features::search::SparseSearchTrait;
+use lattice_core::application::contracts::search::{
+    BranchKind, RankedBranch, RerankOptions, SearchModeDto, SearchRequestDto, SearchResponseDto,
+    SearchResultDto, SearchResultRecord,
+};
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use lattice_core::shared::error::{AppError, Result};
 
-fn port_hit(chunk: &str, document: &str, score: f32) -> SearchResultPortDto {
-    SearchResultPortDto {
+fn port_hit(chunk: &str, document: &str, score: f32) -> SearchResultRecord {
+    SearchResultRecord {
         doc_id: document.into(),
         chunk_id: chunk.into(),
         score,
@@ -76,7 +74,7 @@ impl EmbeddingPort for FixedEmbedder {
 
 /// A vector index that answers every query with the same ranked hits.
 struct ScriptedVectorSearch {
-    hits: Vec<SearchResultPortDto>,
+    hits: Vec<SearchResultRecord>,
 }
 
 impl VectorSearchPort for ScriptedVectorSearch {
@@ -85,7 +83,7 @@ impl VectorSearchPort for ScriptedVectorSearch {
         _embedding: &[f32],
         limit: usize,
         threshold: f32,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         Ok(self
             .hits
             .iter()
@@ -101,7 +99,7 @@ impl VectorSearchPort for ScriptedVectorSearch {
         top_k: usize,
         threshold: f32,
         allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         let mut hits = self.search(embedding, usize::MAX, threshold)?;
         if let Some(allowed) = allowed_document_ids {
             hits.retain(|hit| allowed.contains(&hit.doc_id));
@@ -130,13 +128,13 @@ impl VectorSearchPort for ScriptedVectorSearch {
 /// A keyword index that answers every query with the same ranked hits, or
 /// fails, and remembers how many candidates it was asked for.
 struct ScriptedTextSearch {
-    hits: Vec<SearchResultPortDto>,
+    hits: Vec<SearchResultRecord>,
     down: bool,
     asked_for: Mutex<Vec<usize>>,
 }
 
 impl ScriptedTextSearch {
-    fn answering(hits: Vec<SearchResultPortDto>) -> Self {
+    fn answering(hits: Vec<SearchResultRecord>) -> Self {
         Self {
             hits,
             down: false,
@@ -155,7 +153,7 @@ impl ScriptedTextSearch {
 
 #[async_trait::async_trait]
 impl TextSearchPort for ScriptedTextSearch {
-    async fn search(&self, _query: &str, top_k: usize) -> Result<Vec<SearchResultPortDto>> {
+    async fn search(&self, _query: &str, top_k: usize) -> Result<Vec<SearchResultRecord>> {
         self.asked_for.lock().unwrap().push(top_k);
         if self.down {
             return Err(AppError::Database(
@@ -183,7 +181,7 @@ impl TextSearchPort for ScriptedTextSearch {
 
 /// A sparse branch that is always available and always returns `hits`.
 struct ScriptedSparseSearch {
-    hits: Vec<SearchResultPortDto>,
+    hits: Vec<SearchResultRecord>,
 }
 
 #[async_trait::async_trait]
@@ -197,15 +195,12 @@ impl SparseSearchTrait for ScriptedSparseSearch {
         top_k: usize,
         _space_id: Option<&str>,
         _allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         Ok(self.hits.iter().take(top_k).cloned().collect())
     }
 }
 
-fn use_case(
-    vector: Vec<SearchResultPortDto>,
-    text: Vec<SearchResultPortDto>,
-) -> HybridSearchUseCase {
+fn use_case(vector: Vec<SearchResultRecord>, text: Vec<SearchResultRecord>) -> HybridSearchUseCase {
     HybridSearchUseCase::new(
         Arc::new(FixedEmbedder),
         Arc::new(ScriptedVectorSearch { hits: vector }),
@@ -230,7 +225,7 @@ struct SlowTextSearch;
 
 #[async_trait::async_trait]
 impl TextSearchPort for SlowTextSearch {
-    async fn search(&self, _query: &str, _top_k: usize) -> Result<Vec<SearchResultPortDto>> {
+    async fn search(&self, _query: &str, _top_k: usize) -> Result<Vec<SearchResultRecord>> {
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         Ok(Vec::new())
     }

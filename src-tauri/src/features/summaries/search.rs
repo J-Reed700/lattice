@@ -10,8 +10,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::features::summaries::entity::SummaryHit;
 use crate::features::summaries::repository::SummaryRepositoryPort;
+// Temporary: chat's test runtime still names the port at this path.
+use lattice_core::application::ports::summary_search::SummaryHit;
+pub(crate) use lattice_core::application::ports::summary_search::SummarySearchPort;
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::Result;
@@ -20,28 +22,6 @@ use lattice_core::shared::error::Result;
 /// can own several section summaries, so the window has to be wider than the
 /// number of documents we mean to return.
 const CANDIDATE_FACTOR: usize = 6;
-
-/// Port for the summary tier, so callers can be tested against a stub.
-#[async_trait]
-pub trait SummarySearchPort: Send + Sync {
-    /// Best summaries for `query`, restricted to `scope`, best first.
-    async fn top_summaries(
-        &self,
-        query: &str,
-        scope: &HashSet<String>,
-        limit: usize,
-    ) -> Result<Vec<SummaryHit>>;
-
-    /// Document-level summary text for `scope`, keyed by document id.
-    ///
-    /// Only whole-document summaries: a planner catalog describes documents,
-    /// and splicing a section summary in under a document's name would be
-    /// telling the planner a chapter is the book.
-    async fn document_summaries(
-        &self,
-        scope: &HashSet<String>,
-    ) -> Result<std::collections::HashMap<String, String>>;
-}
 
 pub struct SummarySearch {
     index: Arc<dyn VectorSearchPort>,

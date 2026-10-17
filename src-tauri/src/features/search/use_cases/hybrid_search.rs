@@ -18,14 +18,16 @@
 //!    ([`HybridSearchUseCase::rerank`]).
 //!
 //! A caller searching several rewrites of one question collects each query's
-//! [`QueryBranches`] and fuses them all in one [`HybridSearchUseCase::fuse`],
+//! `QueryBranches` and fuses them all in one [`HybridSearchUseCase::fuse`],
 //! the same fusion a single query gets.
 //!
 //! ## Example
 //!
 //! ```rust,no_run
-//! use lattice::features::search::dto::{SearchModeDto, SearchRequestDto};
-//! use lattice::features::search::use_cases::{HybridSearchUseCase, RerankOptions};
+//! use lattice_core::application::contracts::search::{
+//!     RerankOptions, SearchModeDto, SearchRequestDto,
+//! };
+//! use lattice::features::search::use_cases::HybridSearchUseCase;
 //!
 //! # async fn example(use_case: HybridSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = SearchRequestDto {
@@ -54,18 +56,17 @@ mod rerank;
 #[cfg(test)]
 mod tests;
 
-pub use rerank::{RerankOptions, Reranked};
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::features::search::dto::{
-    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
-};
 use crate::features::search::engine::fusion::{ReciprocalRankFusion, WeightedRanking};
 use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::mapper::SearchMapper;
 use crate::features::search::SparseSearchTrait;
+use lattice_core::application::contracts::search::{
+    BranchKind, QueryBranches, RankedBranch, SearchModeDto, SearchRequestDto, SearchResponseDto,
+    SearchResultDto, SearchResultRecord,
+};
 use lattice_core::application::ports::{
     ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
@@ -86,38 +87,6 @@ const HYBRID_VECTOR_FLOOR: f32 = 0.15;
 /// document has had its turn. The overflow follows, in fused order, so a long
 /// document's run of near-identical chunks cannot fill the list alone.
 const PER_DOCUMENT_CAP: usize = 4;
-
-/// Where a ranked list came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BranchKind {
-    /// Dense vector similarity.
-    Vector,
-    /// BM25 over the chunk text.
-    Lexical,
-    /// Learned sparse term weights.
-    Sparse,
-    /// An earlier fused list, unioned with another: chat's corrective retry
-    /// fuses its pass with the first. Its results keep the branch
-    /// diagnostics they already carry.
-    Fused,
-}
-
-/// One ranked list and the weight its ranks carry in the fusion.
-#[derive(Debug, Clone)]
-pub struct RankedBranch {
-    pub kind: BranchKind,
-    pub weight: f32,
-    pub results: Vec<SearchResultDto>,
-}
-
-/// Every branch that answered one query, not yet fused.
-#[derive(Debug, Default)]
-pub struct QueryBranches {
-    pub branches: Vec<RankedBranch>,
-    /// How many of the vector and BM25 branches answered, so a caller can
-    /// tell "nothing matched" (an empty answer) from "search is down" (none).
-    pub answered: usize,
-}
 
 /// Hybrid search use case: the one library search orchestrator.
 ///
@@ -239,7 +208,7 @@ impl HybridSearchUseCase {
         top_k: usize,
         threshold: f32,
         allowed_document_ids: Option<HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         let excluded: HashSet<String> = match (&allowed_document_ids, &self.chunk_repository) {
             (None, Some(repository)) => repository
                 .find_conversation_attached_chunk_ids()
@@ -589,7 +558,7 @@ fn split_lexical_weight(lexical_weight: f32, sparse_found: bool) -> (f32, f32) {
     }
 }
 
-fn result_dtos(port_dtos: Vec<SearchResultPortDto>) -> Vec<SearchResultDto> {
+fn result_dtos(port_dtos: Vec<SearchResultRecord>) -> Vec<SearchResultDto> {
     SearchMapper::port_dtos_to_domain(port_dtos)
         .into_iter()
         .map(SearchMapper::to_dto)

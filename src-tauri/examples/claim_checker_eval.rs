@@ -32,8 +32,8 @@
 use async_trait::async_trait;
 use lattice::features::conversation::chat::verification::GroundingVerifier;
 use lattice::features::llm::llama_cpp::LlamaCppLlm;
-use lattice::features::qa::dto::SourceDto;
 use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use serde::{Deserialize, Serialize};

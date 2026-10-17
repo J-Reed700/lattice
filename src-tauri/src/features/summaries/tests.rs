@@ -17,15 +17,16 @@ use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
 use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::features::summaries::entity::{DocumentSummary, SummaryHit, SummaryLevel};
-use crate::features::summaries::openings::select_opening_documents;
+use crate::features::summaries::entity::DocumentSummary;
 use crate::features::summaries::repository::{
     document_level_text, SqliteSummaryRepository, SummaryRepositoryPort,
 };
 use crate::features::summaries::runtime::SummaryRuntimePort;
-use crate::features::summaries::search::SummarySearchPort;
 use crate::features::summaries::source::{SummarySection, SummarySource, SummarySourcePort};
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
+use lattice_core::application::ports::summary_search::{
+    select_opening_documents, SummaryHit, SummaryLevel, SummarySearchPort,
+};
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::shared::error::Result;

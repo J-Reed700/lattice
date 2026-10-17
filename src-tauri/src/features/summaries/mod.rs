@@ -14,13 +14,12 @@
 //!
 //! ## Public surface
 //!
-//! - [`entity`] — `DocumentSummary`, `SummaryLevel`, `SummaryHit`
+//! - [`entity`] — `DocumentSummary`
 //! - [`prompt`] — prompt rendering, response parsing, token truncation
 //! - [`repository`] — `SummaryRepositoryPort` + `SqliteSummaryRepository`
 //! - [`source`] — `SummarySourcePort`: document text, sections, cluster label
 //! - [`runtime`] — `SummaryRuntimePort`: lazily-resolved models
-//! - [`search`] — `SummarySearchPort` + `SummarySearch`
-//! - [`openings`] — summary hits to an opening-document list
+//! - [`search`] — `SummarySearch`, the adapter behind core's `SummarySearchPort`
 //! - [`trigger`] — `SummaryTrigger`, the post-index notification indexing calls
 //! - [`di::register`] — one-call wiring
 //!
@@ -33,7 +32,6 @@
 
 pub mod di;
 pub mod entity;
-pub mod openings;
 pub mod prompt;
 pub mod repository;
 pub mod runtime;

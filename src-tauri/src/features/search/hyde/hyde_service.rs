@@ -38,12 +38,12 @@
 //! }
 //! ```
 
-use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::search::hyde::hyde_generator::HyDEGenerator;
 use crate::features::search::hyde::query_classifier::QueryClassifier;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::select_informative_terms;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info};

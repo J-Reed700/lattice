@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::features::conversation::chat::ports::ChatRetrieval;
-use crate::features::search::dto::SearchResponseDto;
-use crate::features::search::use_cases::RerankOptions;
+use lattice_core::application::contracts::search::RerankOptions;
+use lattice_core::application::contracts::search::SearchResponseDto;
 use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 
 /// Rerank the shortlist through the search orchestrator's cross-encoder

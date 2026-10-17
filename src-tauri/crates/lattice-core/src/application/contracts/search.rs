@@ -1,7 +1,18 @@
-//! Search records exchanged through application ports.
+//! Search records exchanged through application ports, the search DTOs the
+//! frontend, chat and the tool executor send, and the library search's ranked
+//! branches and reranked lists.
 
 use crate::domain::entities::search_result::SearchResult;
 use serde::{Deserialize, Serialize};
+
+mod dto;
+mod ranking;
+
+pub use dto::{
+    CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchModeDto, SearchOptions,
+    SearchRequestDto, SearchResponseDto, SearchResultDto,
+};
+pub use ranking::{BranchKind, QueryBranches, RankedBranch, RerankOptions, Reranked};
 
 /// Bounded catalog evidence for planning document retrieval. The preview is
 /// actual opening text, never a generated summary.

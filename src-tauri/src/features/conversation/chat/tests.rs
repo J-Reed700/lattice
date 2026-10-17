@@ -1,6 +1,6 @@
 use super::retrieval::WEB_SOURCE_PREFIX;
 use super::*;
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 
 fn vault_source(document_id: &str, chunk_id: &str) -> SourceDto {
     SourceDto {
