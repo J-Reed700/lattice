@@ -4,6 +4,7 @@ import { Maximize2, X } from 'lucide-react';
 
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
+import { focusReturnTarget } from '@/lib/focusReturn';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
 
@@ -63,7 +64,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   // useEffect here would run after that and capture a soon-unmounted element
   // inside the reader instead of the trigger, so closing would drop focus.
   useLayoutEffect(() => {
-    if (isOpen) returnFocusRef.current = document.activeElement as HTMLElement;
+    if (isOpen) returnFocusRef.current = focusReturnTarget();
   }, [isOpen]);
 
   useEffect(() => {
