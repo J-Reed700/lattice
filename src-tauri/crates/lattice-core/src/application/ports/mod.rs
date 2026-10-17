@@ -87,6 +87,7 @@ pub mod document_scope;
 pub mod embedding_index_binding;
 pub mod embedding_port;
 pub mod embedding_repository_port;
+pub mod explorer_turn;
 pub mod favorites_port;
 pub mod file_library;
 pub mod file_storage_port;

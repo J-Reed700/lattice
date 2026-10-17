@@ -8,12 +8,16 @@
 
 use super::fs;
 use super::index::search::{FolderHit, FolderSearch};
-use super::index::tool::{self as folder_index_tool, TOOL_SEARCH_FOLDER};
+use super::index::tool as folder_index_tool;
 use super::repository;
 use super::scope::Scope;
 use super::tools::{self, number_line, number_width};
+use async_trait::async_trait;
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::tools::explorer::TOOL_SEARCH_FOLDER;
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
+use lattice_core::application::ports::explorer_turn::ExplorerTurnPort;
+use lattice_core::application::ports::ToolDefinition;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::warn;
@@ -182,6 +186,34 @@ impl ExplorerTurn {
                 Err(error) => FunctionResult::error("explorer_error", tools::describe(&error)),
             },
         )
+    }
+}
+
+#[async_trait]
+impl ExplorerTurnPort for ExplorerTurn {
+    fn has_folder_index(&self) -> bool {
+        ExplorerTurn::has_folder_index(self)
+    }
+
+    fn add_tools(&self, turn_tools: &mut Vec<ToolDefinition>) {
+        tools::add_to_turn(turn_tools, ExplorerTurn::has_folder_index(self));
+    }
+
+    async fn context_block(
+        &self,
+        max_chars: usize,
+        tools_offered: bool,
+        question: Option<&str>,
+    ) -> String {
+        ExplorerTurn::context_block(self, max_chars, tools_offered, question).await
+    }
+
+    async fn execute_tool(
+        &self,
+        call: FunctionCall,
+        max_chars: usize,
+    ) -> lattice_core::shared::Result<FunctionResult> {
+        ExplorerTurn::execute_tool(self, call, max_chars).await
     }
 }
 

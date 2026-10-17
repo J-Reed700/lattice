@@ -386,7 +386,7 @@ impl ChatStorage for FakeRuntime {
         &self,
         _conversation_id: &str,
         _focus: Option<&crate::features::explorer::dto::ExplorerFocusDto>,
-    ) -> Option<crate::features::explorer::prompt::ExplorerTurn> {
+    ) -> Option<ExplorerTurn> {
         None
     }
 }
