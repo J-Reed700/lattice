@@ -7,9 +7,17 @@ import { sameModelRef } from '@/utils/chatModelSelection';
 /**
  * The last learning work refused because the Learning model's window was too
  * small. Read whenever Settings → Models mounts, which is where a refused
- * lesson sends the user.
+ * lesson sends the user, and again when the Learning model finishes warming
+ * up (useModelWarmupListener).
  */
 export const LEARNING_WINDOW_SHORTFALL_QUERY_KEY = ['learning-window-shortfall'] as const;
+
+/**
+ * How often a shortfall is read again while one is recorded. It ends when
+ * learning work next runs on a window that covers it, which no event
+ * announces, so the line under the model must not outlive it.
+ */
+export const SHORTFALL_RECHECK_MS = 10_000;
 
 async function loadShortfall(): Promise<LearningWindowShortfallDto | null> {
   const result = await VaultAPI.lastLearningWindowShortfall();
@@ -21,6 +29,8 @@ export function useLearningWindowShortfall(): LearningWindowShortfallDto | null 
   const query = useQuery<LearningWindowShortfallDto | null>({
     queryKey: LEARNING_WINDOW_SHORTFALL_QUERY_KEY,
     queryFn: loadShortfall,
+    refetchOnMount: 'always',
+    refetchInterval: (query) => (query.state.data ? SHORTFALL_RECHECK_MS : false),
   });
   return query.data ?? null;
 }

@@ -1,6 +1,7 @@
 /**
  * Routes `model:warmup-status` events into modelWarmupStore, and re-reads
- * the loaded models, which a finished warm-up may have changed.
+ * what a finished warm-up may have changed: the loaded models and, for the
+ * Learning model, its window shortfall.
  * Mount once in App.tsx — multiple mounts cause duplicate dispatches.
  */
 
@@ -11,6 +12,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { TauriEventNames, EventSchemas, listenValidated } from '@/types/events';
 
 
+import { LEARNING_WINDOW_SHORTFALL_QUERY_KEY } from './useLearningWindowShortfall';
 import { LOADED_MODELS_QUERY_KEY } from './useLoadedModels';
 import { useModelWarmupStore } from '../stores/modelWarmupStore';
 
@@ -33,6 +35,9 @@ export function useModelWarmupListener(): void {
             setRolePhase(role, phase, error ?? null);
             if (phase === 'started') return;
             void queryClient.invalidateQueries({ queryKey: LOADED_MODELS_QUERY_KEY });
+            if (role === 'learning') {
+              void queryClient.invalidateQueries({ queryKey: LEARNING_WINDOW_SHORTFALL_QUERY_KEY });
+            }
           },
           (err) => {
             console.error('[useModelWarmupListener] payload validation failed:', err.format());

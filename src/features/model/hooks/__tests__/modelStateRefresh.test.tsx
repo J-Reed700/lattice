@@ -5,9 +5,10 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VaultAPI } from '@/lib/api';
-import type { LoadedModelDto } from '@/lib/bindings';
+import type { LearningWindowShortfallDto, LoadedModelDto } from '@/lib/bindings';
 import { listenValidated } from '@/types/events';
 
+import { LEARNING_WINDOW_SHORTFALL_QUERY_KEY, SHORTFALL_RECHECK_MS, useLearningWindowShortfall } from '../useLearningWindowShortfall';
 import { DEGRADED_RECHECK_MS, LOADED_MODELS_QUERY_KEY, degradedReasonFor, useLoadedModels } from '../useLoadedModels';
 import { useModelWarmupListener } from '../useModelWarmupListener';
 
@@ -33,6 +34,29 @@ describe('model state that no event ends', () => {
   beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
   afterEach(() => vi.useRealTimers());
 
+  it('drops a Learning window shortfall once the backend no longer records it', async () => {
+    const shortfall: LearningWindowShortfallDto = {
+      model: ornith,
+      needed_tokens: 20_000,
+      window_tokens: 8_704,
+      window_is_saved: true,
+    };
+    api.lastLearningWindowShortfall = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: shortfall })
+      .mockResolvedValue({ ok: true, data: null });
+    const { result } = renderHook(() => useLearningWindowShortfall(), { wrapper: wrapperFor(newClient()) });
+    await waitFor(() => expect(result.current).toEqual(shortfall));
+
+    await vi.advanceTimersByTimeAsync(SHORTFALL_RECHECK_MS);
+
+    await waitFor(() => expect(result.current).toBeNull());
+    // Nothing is recorded, so nothing is polled.
+    const reads = api.lastLearningWindowShortfall.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(SHORTFALL_RECHECK_MS * 3);
+    expect(api.lastLearningWindowShortfall).toHaveBeenCalledTimes(reads);
+  });
+
   it('drops "on CPU" once the model that ran on the CPU is unloaded', async () => {
     const onCpu = { model: ornith, degraded: 'GPU init failed; running on the CPU' } as unknown as LoadedModelDto;
     api.listLoadedModels = vi
@@ -51,7 +75,7 @@ describe('model state that no event ends', () => {
 });
 
 describe('a finished warm-up', () => {
-  it('re-reads the loaded models', async () => {
+  it('re-reads the loaded models, and the shortfall when it was the Learning model', async () => {
     let deliver: ((event: { payload: unknown }) => void) | undefined;
     vi.mocked(listenValidated).mockImplementation(async (_name, _schema, handler) => {
       deliver = handler as typeof deliver;
@@ -68,5 +92,9 @@ describe('a finished warm-up', () => {
 
     deliver?.({ payload: { role: 'chat', phase: 'ready' } });
     expect(invalidated()).toEqual([LOADED_MODELS_QUERY_KEY]);
+
+    invalidate.mockClear();
+    deliver?.({ payload: { role: 'learning', phase: 'failed', error: 'no memory' } });
+    expect(invalidated()).toEqual([LOADED_MODELS_QUERY_KEY, LEARNING_WINDOW_SHORTFALL_QUERY_KEY]);
   });
 });
