@@ -455,13 +455,13 @@ fn connections_reject_unsafe_urls_and_partial_auth() {
         ("https://example.com?token=secret", false),
     ] {
         assert_eq!(
-            validate_connection(&settings(url.into()).llama_cpp).is_ok(),
+            settings(url.into()).llama_cpp.validated_base_url().is_ok(),
             valid
         );
     }
     let mut connection = settings("https://example.com".into()).llama_cpp;
     connection.auth_header_value.clear();
-    assert!(validate_connection(&connection).is_err());
+    assert!(connection.validated_base_url().is_err());
 }
 
 #[tokio::test]

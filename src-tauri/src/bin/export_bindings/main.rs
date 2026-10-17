@@ -442,7 +442,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::mentions::plugin::delete_mention,
             // Settings plugin
             lattice::features::settings::plugin::test_ollama_connection,
-            lattice::features::settings::plugin::test_llama_cpp_connection,
+            lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,
             lattice::features::settings::plugin::get_settings,
             lattice::features::settings::plugin::get_settings_category,

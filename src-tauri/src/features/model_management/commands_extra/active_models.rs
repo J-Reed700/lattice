@@ -215,17 +215,12 @@ pub async fn set_active_embedding_model_impl(
         Err(e) => return Err(embedding_activation_failed(&validated_model_id, e)),
     };
     let load_identity = identity.clone();
-    let model = task::spawn_blocking(move || {
-        crate::features::embedding::candle_service::CandleEmbeddingService::open(
-            &dir,
-            load_identity,
-        )
-    })
-    .await
-    .map_err(|e| AppError::InternalError(format!("Embedding model load task failed: {}", e)))??;
+    let model = container
+        .open_embedding_for_activation(dir, load_identity)
+        .await?;
     crate::infrastructure::persistence::repositories::embedding::generation::prepare(
         container.db_pool(),
-        &model,
+        model.as_ref(),
     )
     .await?;
 
