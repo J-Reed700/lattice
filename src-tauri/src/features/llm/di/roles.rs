@@ -112,9 +112,12 @@ impl RoleModels {
         let mut active_local = None;
         let resolved = match &request.selection {
             ModelSelection::Default => None,
-            ModelSelection::Learning => Some(resolve_learning(&settings).map_err(|error| {
-                refusal::refused(request.role, None, "learning_unset", error)
-            })?),
+            ModelSelection::Learning => {
+                let resolved = resolve_learning(&settings).map_err(|error| {
+                    refusal::refused(request.role, None, "learning_unset", error)
+                })?;
+                Some(resolved)
+            }
             ModelSelection::Chat {
                 choice,
                 request_override,
