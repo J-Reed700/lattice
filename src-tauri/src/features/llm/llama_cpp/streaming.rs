@@ -1,14 +1,17 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
+use crate::features::llm::scheduler::rejection::{self, RequestSize};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 #[derive(Default)]
 pub(crate) struct Decoder {
     buffer: Vec<u8>,
     received_bytes: usize,
     done: bool,
-    retryable_error: bool,
+    /// The failure the server reported inside the stream, when it did.
+    server_failure: Option<ServerFailure>,
     finish_reason: Option<String>,
     allow_tool_calls: bool,
     content: String,
@@ -76,25 +79,198 @@ fn error_kind(error: &Value) -> String {
     }
 }
 
-/// Keep protocol failures typed across durable retries. Only fixed descriptions
-/// of known server failures may be exposed; arbitrary error text can echo input.
-fn generation_error(error: &Value) -> AppError {
-    let code = error.get("code").and_then(Value::as_u64);
-    let cause = match error.get("message").and_then(Value::as_str) {
-        Some("Invalid input batch.") => ": the server could not process its inference batch",
-        Some("Compute error.") => ": the server's inference computation failed",
-        Some("Context size has been exceeded.") => ": the server exhausted its context capacity",
-        _ => "",
-    };
-    let description = format!(
-        "llama.cpp reported a generation error{}{cause}",
-        error_kind(error)
-    );
-    match code {
-        Some(429) => AppError::RateLimitExceeded(description),
-        Some(408) => AppError::Network(description),
-        Some(500..=599) => AppError::ServiceNotAvailable(description),
-        _ => AppError::InvalidState(description),
+/// A fixed account of a server message the client recognises, which says
+/// what happened better than the server's own words.
+fn known_cause(message: &str) -> Option<&'static str> {
+    match message {
+        "Invalid input batch." => Some("the server could not process its inference batch"),
+        "Compute error." => Some("the server's inference computation failed"),
+        "Context size has been exceeded." => Some("the server exhausted its context capacity"),
+        _ if message.contains("System message must be at the beginning") => {
+            Some("the model requires a single system message at the beginning")
+        }
+        _ if message.contains("Unable to generate parser for this template") => {
+            Some("the model's chat template rejected the message format")
+        }
+        _ => None,
+    }
+}
+
+/// A failure the server reported about a request, in an HTTP status or inside
+/// the stream.
+///
+/// The server's words are free text that can quote the prompt or echo what it
+/// was sent. They leave this type only sanitized against the request
+/// ([`rejection::sanitized_message`]), or replaced by a fixed account of a
+/// message the client recognises; the log gets their digest, never the words.
+#[derive(Debug, Clone)]
+pub(crate) struct ServerFailure {
+    /// The HTTP status, or the code a streamed error carried.
+    status: Option<u16>,
+    /// What the client says before the server's account.
+    preface: String,
+    /// The server's labels for the failure, from [`error_kind`].
+    kind: String,
+    /// The server's words, as it sent them.
+    message: Option<String>,
+    /// How long the server asked to be left alone.
+    pub retry_after: Option<Duration>,
+}
+
+impl ServerFailure {
+    /// An `error` event inside an answering stream.
+    pub fn streamed(error: &Value) -> Self {
+        Self {
+            status: error
+                .get("code")
+                .and_then(Value::as_u64)
+                .and_then(|code| u16::try_from(code).ok()),
+            preface: "llama.cpp reported a generation error".into(),
+            kind: error_kind(error),
+            message: error.get("message").and_then(Value::as_str).map(Into::into),
+            retry_after: None,
+        }
+    }
+
+    /// A failed HTTP response from `path`, with the error the body carried.
+    /// OpenAI-compatible servers put it under `error`, as an object or a bare
+    /// string; some put its fields at the top level.
+    pub fn http(
+        status: reqwest::StatusCode,
+        path: &str,
+        body: Option<&Value>,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        let error = body.and_then(|body| match body.get("error") {
+            Some(error @ Value::Object(_)) => Some(error.clone()),
+            Some(Value::String(message)) => Some(json!({ "message": message })),
+            _ => body.get("message").is_some().then(|| body.clone()),
+        });
+        let kind = error.as_ref().map(error_kind).unwrap_or_default();
+        Self {
+            status: Some(status.as_u16()),
+            preface: format!("llama.cpp returned HTTP {status} from {path}"),
+            kind: if kind.is_empty() {
+                format!(" ({})", status.as_u16())
+            } else {
+                kind
+            },
+            message: error
+                .as_ref()
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(Into::into),
+            retry_after,
+        }
+    }
+
+    /// The server was not there to answer, or asked to wait: worth retrying
+    /// however often it happens, and never a verdict on the request.
+    pub fn outage(&self) -> bool {
+        matches!(self.status, Some(408 | 429 | 502 | 503 | 504))
+    }
+
+    /// The server failed while working on the request: worth one more try
+    /// with a fresh prompt cache, but the same failure twice is deterministic.
+    pub fn server_error(&self) -> bool {
+        matches!(self.status, Some(500..=599)) && !self.outage()
+    }
+
+    /// The server refused the request itself; sending it again changes
+    /// nothing.
+    pub fn refusal(&self) -> bool {
+        matches!(self.status, Some(400 | 413 | 422))
+    }
+
+    /// The server's own words, safe to show: a fixed account of a message
+    /// the client recognises, otherwise the words sanitized against the
+    /// request. An authentication failure's words are not shown at all: they
+    /// may repeat the credential that was sent.
+    fn words(&self, request_texts: &[&str]) -> String {
+        if matches!(self.status, Some(401 | 403 | 407)) {
+            return String::new();
+        }
+        let Some(message) = &self.message else {
+            return String::new();
+        };
+        known_cause(message).map_or_else(
+            || rejection::sanitized_message(message, request_texts),
+            Into::into,
+        )
+    }
+
+    /// The server's labels and words, as one comparable line.
+    pub fn account(&self, request_texts: &[&str]) -> String {
+        let words = self.words(request_texts);
+        let kind = self.kind.trim();
+        if words.is_empty() {
+            kind.to_owned()
+        } else {
+            format!("{kind} {words}")
+        }
+    }
+
+    /// The failure as an error, typed so a durable caller can tell an outage
+    /// from a failure of the work.
+    pub fn error(&self, request_texts: &[&str]) -> AppError {
+        let words = self.words(request_texts);
+        let description = if words.is_empty() {
+            format!("{}{}", self.preface, self.kind)
+        } else {
+            format!("{}{}: {words}", self.preface, self.kind)
+        };
+        match self.status {
+            Some(429) => AppError::RateLimitExceeded(description),
+            Some(408 | 502 | 503 | 504) => AppError::Network(description),
+            _ if self.refusal() => self.rejected(request_texts, None, false),
+            Some(500..=599) => AppError::ServiceNotAvailable(description),
+            _ => AppError::InvalidState(description),
+        }
+    }
+
+    /// The failure as a rejection retrying cannot change: the server refused
+    /// the request, or (`twice`) failed it the same way two times. `request`
+    /// is its size and the configured window, when known.
+    pub fn rejected(
+        &self,
+        request_texts: &[&str],
+        request: Option<(RequestSize, usize)>,
+        twice: bool,
+    ) -> AppError {
+        let too_large = rejection::is_size_refusal(
+            self.status,
+            &self.kind,
+            self.message.as_deref().unwrap_or_default(),
+        );
+        rejection::rejected(
+            "llama.cpp",
+            twice,
+            &self.account(request_texts),
+            request,
+            too_large,
+        )
+    }
+
+    /// One structured line per failure: the server's sanitized account and
+    /// its words' digest, against the request's size and the window.
+    pub fn log(&self, request_texts: &[&str], attempt: usize, size: RequestSize, window: usize) {
+        let digest = self
+            .message
+            .as_deref()
+            .map(rejection::digest)
+            .unwrap_or_default();
+        tracing::warn!(
+            status = self.status,
+            kind = self.kind.trim(),
+            sanitized = %self.words(request_texts),
+            sha256 = %digest,
+            prompt_tokens = size.prompt_tokens,
+            counted_exactly = size.counted_exactly,
+            output_tokens = size.output_tokens,
+            window,
+            attempt,
+            "llm.request_rejected"
+        );
     }
 }
 
@@ -108,8 +284,10 @@ impl Decoder {
     pub fn done(&self) -> bool {
         self.done
     }
-    pub fn retryable_error(&self) -> bool {
-        self.retryable_error
+    /// The failure the server reported inside the stream, once [`Self::push`]
+    /// has returned it as an error.
+    pub fn take_server_failure(&mut self) -> Option<ServerFailure> {
+        self.server_failure.take()
     }
     pub fn take_reasoning_delta(&mut self) -> String {
         std::mem::take(&mut self.reasoning_delta)
@@ -146,12 +324,11 @@ impl Decoder {
                 .map_err(|_| AppError::Network("Invalid llama.cpp stream event".into()))?;
             if let Some(error) = event.get("error") {
                 // HTTP 200 can still carry a server failure inside SSE. Keep
-                // its structured status; never classify free-form messages.
-                self.retryable_error = matches!(
-                    error.get("code").and_then(Value::as_u64),
-                    Some(408 | 429 | 500 | 502 | 503 | 504)
-                );
-                return Err(generation_error(error));
+                // its structured status; the caller sanitizes its words.
+                let failure = ServerFailure::streamed(error);
+                let error = failure.error(&[]);
+                self.server_failure = Some(failure);
+                return Err(error);
             }
             if let Some(usage) = event.get("usage").filter(|value| value.is_object()) {
                 self.usage = usage.clone();

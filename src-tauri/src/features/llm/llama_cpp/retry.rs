@@ -1,5 +1,11 @@
 //! Retry generation only: never execute tools or persist an unfinished attempt.
+//!
+//! An outage is retried up to [`MAX_ATTEMPTS`]. A server failure is retried
+//! once with a fresh prompt cache; the same failure on the same request a
+//! second time is deterministic and ends as [`AppError::ModelRejected`], as
+//! does a server's refusal of the request itself.
 use super::*;
+use crate::features::llm::scheduler::rejection;
 
 const MAX_ATTEMPTS: usize = 5;
 
@@ -37,6 +43,8 @@ pub(super) fn prefill_allowance(messages: &[Value]) -> Duration {
 pub(super) enum Failure {
     Retry(AppError, Option<Duration>),
     Permanent(AppError),
+    /// The server reported a failure, in an HTTP status or inside the stream.
+    Server(streaming::ServerFailure),
 }
 
 /// Tells prompt-processing events apart from generated tokens so that only the
@@ -103,7 +111,17 @@ impl LlamaCppLlm {
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
         // Failed drafts and partial tool calls must never enter history.
-        let mut body = self.measured_body(request).await?;
+        let (mut body, size) = self.measured_body(request).await?;
+        let window = self.config.context_window;
+        tracing::info!(
+            model = %self.config.model,
+            prompt_tokens = size.prompt_tokens,
+            counted_exactly = size.counted_exactly,
+            output_reserved = size.output_tokens,
+            window,
+            slot = request.assigned_slot,
+            "llm.request"
+        );
         let first_frame = self.config.prefill_guard.then(|| {
             prefill_allowance(
                 body.get("messages")
@@ -115,62 +133,79 @@ impl LlamaCppLlm {
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);
         let generation = async {
+            // The server's account of the last server failure, to know the
+            // same failure when it comes back.
+            let mut previous: Option<String> = None;
             for attempt in 1..=MAX_ATTEMPTS {
                 let mut emitted = false;
-                match self
+                let outcome = self
                     .attempt(&body, first_frame, on_text, on_reasoning, &mut emitted)
-                    .await
-                {
+                    .await;
+                let (error, retry_after) = match outcome {
                     Ok(response) => return Ok(response),
                     Err(Failure::Permanent(error)) => return Err(error),
-                    Err(Failure::Retry(error, retry_after)) => {
-                        if attempt == MAX_ATTEMPTS
-                            || (emitted && on_retry.is_none())
-                            || self.process_exited()
-                        {
-                            return Err(error);
+                    Err(Failure::Retry(error, retry_after)) => (error, retry_after),
+                    Err(Failure::Server(failure)) => {
+                        let texts = rejection::request_texts(&body);
+                        failure.log(&texts, attempt, size, window);
+                        if failure.refusal() {
+                            return Err(failure.rejected(&texts, Some((size, window)), false));
                         }
-                        // A failed inference may leave unusable server-side
-                        // prompt state. Reprocess the same complete input on the
-                        // next attempt; do not repeat a broken cached prefix.
-                        // Network outages and rate limits keep cache reuse.
-                        if matches!(error, AppError::ServiceNotAvailable(_)) {
-                            if let Some(object) = body.as_object_mut() {
-                                object.insert("cache_prompt".into(), json!(false));
+                        if failure.server_error() {
+                            let account = failure.account(&texts);
+                            if previous.as_deref() == Some(account.as_str()) {
+                                return Err(failure.rejected(&texts, Some((size, window)), true));
                             }
+                            previous = Some(account);
+                        } else if !failure.outage() {
+                            return Err(failure.error(&texts));
                         }
-                        let ceiling_ms = (500u64 << (attempt - 1)).min(30_000);
-                        let jitter = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .subsec_nanos() as u64;
-                        let delay = retry_after
-                            .unwrap_or_else(|| {
-                                Duration::from_millis(
-                                    ceiling_ms / 2 + jitter % (ceiling_ms / 2 + 1),
-                                )
-                            })
-                            .min(Duration::from_secs(30));
-                        // A backoff the budget cannot pay for would be reported as an
-                        // expiry, hiding the cause the server already told us.
-                        if deadline.is_some_and(|deadline| {
-                            deadline.saturating_duration_since(tokio::time::Instant::now()) <= delay
-                        }) {
-                            return Err(error);
-                        }
-                        if let Some(reset) = on_retry {
-                            reset(attempt + 1)?;
-                        }
-                        tracing::warn!(
-                            attempt,
-                            max_attempts = MAX_ATTEMPTS,
-                            error = %error,
-                            "Retrying llama.cpp generation"
-                        );
-                        // Dropping this future cancels both the request and backoff.
-                        tokio::time::sleep(delay).await;
+                        (failure.error(&texts), failure.retry_after)
+                    }
+                };
+                if attempt == MAX_ATTEMPTS
+                    || (emitted && on_retry.is_none())
+                    || self.process_exited()
+                {
+                    return Err(error);
+                }
+                // A failed inference may leave unusable server-side prompt
+                // state. Reprocess the same complete input on the next attempt;
+                // do not repeat a broken cached prefix. Network outages and
+                // rate limits keep cache reuse.
+                if matches!(error, AppError::ServiceNotAvailable(_)) {
+                    if let Some(object) = body.as_object_mut() {
+                        object.insert("cache_prompt".into(), json!(false));
                     }
                 }
+                let ceiling_ms = (500u64 << (attempt - 1)).min(30_000);
+                let jitter = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos() as u64;
+                let delay = retry_after
+                    .unwrap_or_else(|| {
+                        Duration::from_millis(ceiling_ms / 2 + jitter % (ceiling_ms / 2 + 1))
+                    })
+                    .min(Duration::from_secs(30));
+                // A backoff the budget cannot pay for would be reported as an
+                // expiry, hiding the cause the server already told us.
+                if deadline.is_some_and(|deadline| {
+                    deadline.saturating_duration_since(tokio::time::Instant::now()) <= delay
+                }) {
+                    return Err(error);
+                }
+                if let Some(reset) = on_retry {
+                    reset(attempt + 1)?;
+                }
+                tracing::warn!(
+                    attempt,
+                    max_attempts = MAX_ATTEMPTS,
+                    error = %error,
+                    "Retrying llama.cpp generation"
+                );
+                // Dropping this future cancels both the request and backoff.
+                tokio::time::sleep(delay).await;
             }
             unreachable!("bounded attempts always return")
         };
@@ -200,23 +235,7 @@ impl LlamaCppLlm {
             None => send.await,
         }
         .map_err(|error| Failure::Retry(network_error(error), None))?;
-        let transient = matches!(
-            response.status().as_u16(),
-            408 | 429 | 500 | 502 | 503 | 504
-        );
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs);
-        let response = check_status(response).await.map_err(|error| {
-            if transient {
-                Failure::Retry(error, retry_after)
-            } else {
-                Failure::Permanent(error)
-            }
-        })?;
+        let response = server_status(response).await.map_err(Failure::Server)?;
         let (mut response, timings) = read_stream(
             response.bytes_stream(),
             Patience {
@@ -240,11 +259,13 @@ impl LlamaCppLlm {
         // The same request would hit the same limit again; retrying only
         // spends the budget several times over.
         if response.finish_reason == "length" && response.text.trim().is_empty() {
-            return Err(Failure::Permanent(AppError::InvalidState(
-                "the model used its whole answer budget before writing an answer \
-                 (llama.cpp stopped: length)"
-                    .into(),
-            )));
+            let budget = body.get("max_tokens").and_then(Value::as_u64).unwrap_or(0);
+            return Err(Failure::Permanent(AppError::InvalidState(format!(
+                "the model used its whole answer budget of {budget} tokens before writing an \
+                 answer (llama.cpp stopped: length); the prompt was {} tokens of the configured \
+                 context window of {}",
+                response.input_tokens, self.config.context_window
+            ))));
         }
         if response.text.trim().is_empty() && response.tool_calls.is_empty() {
             return Err(Failure::Retry(AppError::Network(
@@ -350,15 +371,14 @@ where
         let chunk = chunk.map_err(|error| Failure::Retry(transport_error(error), None))?;
         let chunk = chunk.as_ref();
         generating |= watch.carries_generated_delta(chunk);
-        // Malformed protocol and invalid tools are permanent; explicit
-        // transient server statuses inside SSE follow the HTTP retry path.
-        let deltas = decoder.push(chunk).map_err(|error| {
-            if decoder.retryable_error() {
-                Failure::Retry(error, None)
-            } else {
-                Failure::Permanent(error)
-            }
-        })?;
+        // Malformed protocol and invalid tools are permanent; a failure the
+        // server reports inside SSE follows the HTTP path.
+        let deltas = decoder
+            .push(chunk)
+            .map_err(|error| match decoder.take_server_failure() {
+                Some(failure) => Failure::Server(failure),
+                None => Failure::Permanent(error),
+            })?;
         for text in deltas {
             *emitted = true;
             on_text(text).map_err(Failure::Permanent)?;

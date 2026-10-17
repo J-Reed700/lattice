@@ -671,3 +671,81 @@ async fn a_call_queues_behind_a_busy_slot() {
     drop(held);
     assert_eq!(llm.complete(&request("hi", None)).await.unwrap().text, "ok");
 }
+
+fn scheduled(model: Arc<GatedModel>) -> ScheduledLlm {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    ScheduledLlm::new(model, scheduler, 512)
+}
+
+/// Whatever backend is behind the port, nothing its configured window cannot
+/// hold is queued or sent.
+#[tokio::test]
+async fn a_request_the_configured_window_cannot_hold_never_reaches_the_backend() {
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone());
+    // About 6 000 tokens by the estimate, in the model's 8 192-token window.
+    let prompt = "x".repeat(24_000);
+    let refused = llm
+        .complete(&CompletionRequest {
+            max_output_tokens: Some(4_096),
+            ..request(&prompt, None)
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
+    let told = refused.to_string();
+    for expected in [
+        "(estimated)",
+        "4096 for the answer",
+        "configured context window is 8192",
+    ] {
+        assert!(told.contains(expected), "{told}");
+    }
+    // A prompt that fills the window leaves no room for any answer at all.
+    let full = llm
+        .complete(&request(&"x".repeat(40_000), None))
+        .await
+        .unwrap_err();
+    assert!(
+        full.to_string().contains("leaves no room for an answer"),
+        "{full}"
+    );
+    assert!(model.seen.lock().is_empty(), "nothing reached the backend");
+
+    // The same prompt with an answer that may take the room left is sent.
+    llm.complete(&request(&prompt, None)).await.unwrap();
+    assert_eq!(model.seen.lock().len(), 1);
+}
+
+/// The estimate never refuses what the backend's own tokenizer says fits.
+#[tokio::test]
+async fn an_exact_count_decides_before_a_request_is_refused() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "tokens": vec![1; 3_000] })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(4_096),
+        ..request(&"x".repeat(24_000), None)
+    })
+    .await
+    .unwrap();
+    assert_eq!(model.seen.lock().len(), 1);
+}

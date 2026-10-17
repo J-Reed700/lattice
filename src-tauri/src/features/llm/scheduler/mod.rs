@@ -33,6 +33,7 @@
 
 mod estimator;
 mod registry;
+pub(crate) mod rejection;
 mod scheduled;
 mod tokenize;
 
