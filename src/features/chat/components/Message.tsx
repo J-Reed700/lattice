@@ -296,6 +296,7 @@ export const Message = memo(({
             claims={isUser ? undefined : claimVerdicts}
             showEvidence={showCitations}
             codeRefs={showsCodeRefs}
+            streaming={isPending}
           />
           </TangentSelection>
           {/* Streaming cursor — spec §3.7 */}

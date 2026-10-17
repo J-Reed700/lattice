@@ -10,6 +10,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
 
 import { CalloutAlerts } from './calloutAlerts';
+import { CodeBlockWithDiagrams } from './codeBlockView';
 import { fileRefFromHref } from './fileRefs';
 import { SlashMenu, type SlashMenuOptions } from './slashMenu';
 import { Wikilink } from './wikilink';
@@ -24,6 +25,11 @@ export interface ExtensionConfig {
   onWikilinkClick?: (title: string) => void;
   /** Enables the `/` menu. Omitted by read-only viewers. */
   slashMenu?: SlashMenuOptions;
+  /**
+   * Draws ```mermaid fences as diagrams in a read-only editor (default on).
+   * An editable editor always keeps the plain code block.
+   */
+  diagrams?: boolean;
 }
 
 export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
@@ -32,7 +38,7 @@ export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
       codeBlock: false, // replaced by CodeBlockLowlight
       link: false, // registered below with custom attributes
     }),
-    CodeBlockLowlight.configure({
+    (config.diagrams === false ? CodeBlockLowlight : CodeBlockWithDiagrams).configure({
       lowlight,
       defaultLanguage: 'plaintext',
     }),
