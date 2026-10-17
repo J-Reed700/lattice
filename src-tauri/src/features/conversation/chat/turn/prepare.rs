@@ -4,7 +4,7 @@ use super::*;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
 use lattice_core::application::ports::llm_port::{ModelRequirements, PinnedModel, ToolSupport};
-use lattice_core::application::ports::LLMPort;
+use lattice_core::application::ports::{LLMPort, ToolDefinition};
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::domain::models::model_ref::ModelRef;
 use tokio_util::sync::CancellationToken;
@@ -292,6 +292,22 @@ pub(super) async fn prepare_turn(
     })
 }
 
+/// What a resumed research turn needs of its model. A request planned with
+/// tools goes on offering them, and its rounds may have called them, so the
+/// model resuming it must call tools too. One planned on a model without
+/// tools resumes as it started, without them.
+pub(super) fn resume_requirements(planned_tools: &[ToolDefinition]) -> ModelRequirements {
+    let tools = if planned_tools.is_empty() {
+        ToolSupport::NotNeeded
+    } else {
+        ToolSupport::Required
+    };
+    ModelRequirements {
+        tools,
+        ..ModelRequirements::default()
+    }
+}
+
 /// A research turn carrying on after a restart: the conversation, the model
 /// and the turn's settings, without reading history or planning again. What
 /// it had planned and found is in `saved`.
@@ -319,16 +335,12 @@ pub(super) async fn resume_turn(
         &conv_id,
         Some(parent),
     )?;
-    // Its saved rounds call tools, so the model resuming them must be able to.
     let (pin, model) = pin_model(
         container,
         &conv_id,
         &turn_id,
         request.model.as_ref(),
-        ModelRequirements {
-            tools: ToolSupport::Required,
-            ..ModelRequirements::default()
-        },
+        resume_requirements(&saved.assembled.tools),
         emit,
     )
     .await?;
