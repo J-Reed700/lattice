@@ -1,4 +1,4 @@
-use super::repository::WorkspaceNoteRecord;
+use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 // Temporary: chat's test runtime still names the page DTO at this path.
 pub(crate) use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::shared::error::{AppError, Result};

@@ -10,13 +10,15 @@
 
 use sqlx::SqlitePool;
 
+use super::capture_store::capture_reference;
 use super::commands::{
     append_sources_and_remap_citations, appended_capture, capture_snippet, hydrate_workspace_note,
     row_to_dto, WorkspaceNoteDto,
 };
 use super::ports::{ArchivedWebPage, LinkedConversationArchive};
-use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
 use crate::features::conversation::repository::ConversationRepository;
+use crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository;
+use lattice_core::application::contracts::notes::{VaultNoteUpsert, WorkspaceNoteRecord};
 use lattice_core::application::contracts::sources::{
     SourceChunkExcerptDto, SourceDto, WebSnapshotDto,
 };
@@ -167,7 +169,7 @@ async fn vault_updates_preserve_saved_source_metadata() {
     );
 
     repository
-        .upsert_from_vault(super::repository::VaultNoteUpsert {
+        .upsert_from_vault(VaultNoteUpsert {
             id: "with_sources",
             title: "Renamed from disk",
             content: "Edited in vault",
@@ -717,10 +719,9 @@ fn capture_request(message_id: &str) -> super::dto::CaptureReferenceRequestDto {
 async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
     let pool = fresh_pool().await;
     let left = DailyNotesRepository::new(pool.clone());
-    let right = DailyNotesRepository::new(pool);
     let (first, second) = tokio::join!(
-        left.capture_reference(capture_request("first")),
-        right.capture_reference(capture_request("second"))
+        capture_reference(&pool, capture_request("first")),
+        capture_reference(&pool, capture_request("second"))
     );
     let first = first.unwrap();
     let second = second.unwrap();
@@ -731,7 +732,7 @@ async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
     assert_eq!(note.conversation_snapshots.len(), 2);
     assert_eq!(note.linked_document_ids.len(), 2);
     assert_eq!(left.list().await.unwrap().len(), 1);
-    left.capture_reference(capture_request("first"))
+    capture_reference(&pool, capture_request("first"))
         .await
         .unwrap();
     let replay = row_to_dto(left.get(&first.note_id).await.unwrap()).unwrap();
@@ -741,14 +742,13 @@ async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
 
 #[tokio::test]
 async fn stale_full_edits_cannot_overwrite_captures_or_vault_writes() {
-    let repository = fresh_repository().await;
-    let first = repository
-        .capture_reference(capture_request("first"))
+    let pool = fresh_pool().await;
+    let repository = DailyNotesRepository::new(pool.clone());
+    let first = capture_reference(&pool, capture_request("first"))
         .await
         .unwrap();
     let mut stale = repository.get(&first.note_id).await.unwrap();
-    repository
-        .capture_reference(capture_request("second"))
+    capture_reference(&pool, capture_request("second"))
         .await
         .unwrap();
     stale.content = "Stale editor draft".into();
@@ -759,7 +759,7 @@ async fn stale_full_edits_cannot_overwrite_captures_or_vault_writes() {
     let saved = repository.get(&first.note_id).await.unwrap();
     assert!(saved.content.contains("Content for second"));
     repository
-        .upsert_from_vault(super::repository::VaultNoteUpsert {
+        .upsert_from_vault(VaultNoteUpsert {
             id: &saved.id,
             title: &saved.title,
             content: "Vault edit",
@@ -776,19 +776,22 @@ async fn stale_full_edits_cannot_overwrite_captures_or_vault_writes() {
 
 #[tokio::test]
 async fn capture_preserves_markdown_and_replaces_legacy_wrappers() {
-    let repository = fresh_repository().await;
+    let pool = fresh_pool().await;
+    let repository = DailyNotesRepository::new(pool.clone());
     let request = capture_request("first");
-    let first = repository.capture_reference(request.clone()).await.unwrap();
+    let first = capture_reference(&pool, request.clone()).await.unwrap();
     let mut row = repository.get(&first.note_id).await.unwrap();
     row.content = "<!-- lattice-capture-start:conversation-1::first -->old content<!-- lattice-capture-end:conversation-1::first -->".into();
     repository.update(&row).await.unwrap();
     let table = "| Name | Score |\n| --- | ---: |\n| Alpha | 10 |";
-    repository
-        .capture_reference(super::dto::CaptureReferenceRequestDto {
+    capture_reference(
+        &pool,
+        super::dto::CaptureReferenceRequestDto {
             message_content: table.into(),
             ..request
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(repository.get(&first.note_id).await.unwrap().content, table);
 }

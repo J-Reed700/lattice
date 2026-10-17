@@ -58,7 +58,7 @@ feature-edge features::indexing features::mentions 1
 feature-edge features::indexing features::search 1
 feature-edge features::indexing features::transcription 1
 feature-edge features::initialization features::download 1
-feature-edge features::learning features::daily_notes 4
+feature-edge features::learning features::daily_notes 1
 feature-edge features::learning features::vault 1
 feature-edge features::llm features::download 9
 feature-edge features::llm features::embedding 2
@@ -70,7 +70,6 @@ feature-edge features::search features::embedding 5
 feature-edge features::settings features::llm 2
 feature-edge features::stats features::tags 1
 feature-edge features::transcription features::download 2
-feature-edge features::vault features::daily_notes 4
 
 feature-reexport features/conversation/chat.rs features::explorer 1
 feature-reexport features/conversation/chat/ports.rs lattice_core 2

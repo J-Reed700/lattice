@@ -121,6 +121,7 @@ pub mod unit_of_work;
 pub mod update_checker_port;
 pub mod vector_search_port;
 pub mod web_service;
+pub mod workspace_notes;
 
 pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
@@ -182,6 +183,7 @@ pub use unit_of_work::{UnitOfWork, UnitOfWorkFactory};
 pub use update_checker_port::{UpdateCheckerPort, UpdateInfoData};
 pub use vector_search_port::VectorSearchPort;
 pub use web_service::WebServiceTrait;
+pub use workspace_notes::WorkspaceNotesPort;
 
 // Unified trait for document repository (combines generic + specific)
 use crate::domain::entities::Document;

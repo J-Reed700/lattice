@@ -274,7 +274,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         .deck_id
         .is_none());
     let notes_repo =
-        crate::features::daily_notes::repository::DailyNotesRepository::new(pool.clone());
+        crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(pool.clone());
     notes_repo.delete(&note_id).await?;
     sqlx::query("DELETE FROM journals WHERE id=?")
         .bind(&original_journal_id)
@@ -310,7 +310,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     repo.delete(&program.summary.id).await?;
     assert!(study.get(&deck_id).await.is_ok());
     assert!(
-        crate::features::daily_notes::repository::DailyNotesRepository::new(pool.clone())
+        crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(pool.clone())
             .get(&recreated_note_id)
             .await
             .is_ok()

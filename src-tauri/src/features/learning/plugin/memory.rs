@@ -6,7 +6,7 @@ pub(super) async fn learning_memory(
 ) -> lattice_core::shared::error::Result<LearningMemoryDto> {
     let repo = LearningRepository::new(container.db_pool().clone());
     let state = repo.memory_state(program_id).await?;
-    let notes_repo = crate::features::daily_notes::repository::DailyNotesRepository::new(
+    let notes_repo = crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(
         container.db_pool().clone(),
     );
     let mut lesson_notes = Vec::with_capacity(state.lesson_notes.len());
