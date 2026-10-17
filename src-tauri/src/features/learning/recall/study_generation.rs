@@ -248,10 +248,6 @@ pub(super) async fn generate_from_conversation(
             llm,
             request,
             None,
-            Some(model_call::Deadline {
-                after: std::time::Duration::from_secs(180),
-                message: "Flashcard generation timed out. Try again.",
-            }),
             "The verified claims and citations exceed this model's context window. Use a model with a larger context window.",
         )
         .await?
@@ -341,7 +337,6 @@ pub(super) async fn generate(
     let raw = model_call::send(
         llm,
         call,
-        None,
         None,
         "The model context is too small for these passages and questions. Try fewer cards or increase the model context window.",
     )

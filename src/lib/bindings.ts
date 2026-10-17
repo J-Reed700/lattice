@@ -4632,6 +4632,15 @@ export type CaptureReferenceRequestDto = { conversationId: string; conversationT
  */
 inboxTitle: string; preferredNoteId: string | null; addSnapshot: boolean }
 export type CaptureReferenceResultDto = { noteId: string; noteTitle: string; linkedDocumentCount: number; snapshotId: string | null }
+/**
+ * A finished capture, addressed to the message it belongs to.
+ */
+export type CapturedSourcesDto = { messageId: string;
+/**
+ * The same list persisted under `metadata.sources`, with every page that
+ * could be read carrying its snapshot.
+ */
+sources: SourceDto[] }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
  * A chat's model choice.
@@ -4721,7 +4730,12 @@ verification?: VerificationReadyDto | null;
  * The model this turn is pinned to. Sent once, as soon as the turn has
  * it, so the reader knows what is answering before the first token.
  */
-model?: TurnModelDto | null }
+model?: TurnModelDto | null;
+/**
+ * Cited pages captured after the turn returned. Arrives once per answer
+ * that cited a page it never read, before that answer's grounding check.
+ */
+captured?: CapturedSourcesDto | null }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.

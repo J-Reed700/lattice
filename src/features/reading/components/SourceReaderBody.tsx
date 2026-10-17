@@ -1,5 +1,6 @@
 import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 
+import { useQuery } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useNavigate } from 'react-router';
 
@@ -11,6 +12,7 @@ import { SourceReaderFooter } from '@/features/reading/components/SourceReaderFo
 import { SourceReaderHeader } from '@/features/reading/components/SourceReaderHeader';
 import { SourceViewer } from '@/features/reading/components/SourceViewer';
 import { WebSourceView } from '@/features/reading/components/WebSourceView';
+import { readingKeys } from '@/features/reading/hooks/readSourceFile';
 import {
   openSourceDocument,
   openSourcePath,
@@ -194,46 +196,29 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isWebArchiveArticle &&
     !isLocalHtmlFile &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
-  const [resolvedPreviewPath, setResolvedPreviewPath] = useState<string | undefined>(undefined);
-  const [isResolvingPreviewPath, setIsResolvingPreviewPath] = useState(false);
-
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
-
-  useEffect(() => {
-    let mounted = true;
-    const resolvePreviewPath = async () => {
-      if (!shouldResolveDocumentPath) {
-        setResolvedPreviewPath(undefined);
-        setIsResolvingPreviewPath(false);
-        return;
-      }
-
-      // Citation metadata can retain the path from when it was indexed. A
-      // stable document ID is authoritative when the file has moved.
-      if (isHttpUrl(source.filePath) || !hasDocumentId) {
-        setResolvedPreviewPath(source.filePath);
-        setIsResolvingPreviewPath(false);
-        return;
-      }
-      setResolvedPreviewPath(undefined);
-      setIsResolvingPreviewPath(true);
-      try {
-        const result = await resolveSourcePath(source.documentId);
-        if (!mounted) return;
-        setResolvedPreviewPath(result.ok ? result.data : source.filePath);
-      } catch {
-        if (!mounted) return;
-        setResolvedPreviewPath(source.filePath);
-      } finally {
-        if (mounted) setIsResolvingPreviewPath(false);
-      }
-    };
-
-    void resolvePreviewPath();
-    return () => {
-      mounted = false;
-    };
-  }, [source.documentId, source.filePath, shouldResolveDocumentPath, hasDocumentId]);
+  // Citation metadata can retain the path from when it was indexed. A stable
+  // document ID is authoritative when the file has moved; a failed lookup
+  // falls back to the cited path.
+  const resolvesFromDocument = shouldResolveDocumentPath && !isHttpUrl(source.filePath);
+  const documentPathQuery = useQuery({
+    queryKey: readingKeys.documentPath(source.documentId ?? ''),
+    queryFn: async () => {
+      const result = await resolveSourcePath(source.documentId!);
+      return result.ok ? result.data : null;
+    },
+    enabled: resolvesFromDocument,
+    retry: false,
+    staleTime: 0,
+  });
+  const isResolvingPreviewPath = resolvesFromDocument && documentPathQuery.isPending;
+  const resolvedPreviewPath = !shouldResolveDocumentPath
+    ? undefined
+    : !resolvesFromDocument
+      ? source.filePath
+      : isResolvingPreviewPath
+        ? undefined
+        : documentPathQuery.data ?? source.filePath;
 
   const {
     spaces,

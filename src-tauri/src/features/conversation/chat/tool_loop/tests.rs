@@ -209,7 +209,7 @@ fn a_malformed_call_is_answered_with_the_error() {
     let Some(CompletionInput::ToolCall { arguments, .. }) = response.tool_calls.first() else {
         panic!("the malformed call must be kept");
     };
-    let reply = crate::features::llm::llama_cpp::invalid_tool_call_problem(arguments)
+    let reply = lattice_core::application::ports::llm_port::invalid_tool_call_problem(arguments)
         .expect("marked invalid");
     assert!(reply.contains("not valid JSON"), "{reply}");
     assert!(reply.contains("{query: rust"), "{reply}");

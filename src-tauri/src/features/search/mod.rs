@@ -4,8 +4,9 @@
 //! FTS5 BM25), filename, and recency search — with weighted reciprocal-rank
 //! fusion and optional reranking.
 //!
-//! `engine::fusion::ReciprocalRankFusion` is the one rank-fusion
-//! implementation; every path that merges ranked lists goes through it.
+//! `lattice_core::application::contracts::search::ReciprocalRankFusion` is
+//! the one rank-fusion implementation; every path that fuses ranked lists
+//! goes through it, the folder index and memory recall included.
 //!
 //! ## Public surface
 //!

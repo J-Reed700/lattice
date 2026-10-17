@@ -4,6 +4,8 @@ use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::interfaces::di::Container;
 use async_trait::async_trait;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::llm_port::{
     ModelRequirements, OptionalLlmLoader, PinnedModel,
 };
@@ -175,12 +177,6 @@ impl ChatRetrieval for Container {
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())
-    }
-    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        Arc::clone(self.ai.intent_pace())
-    }
-    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace> {
-        Arc::clone(self.ai.judge_pace())
     }
 }
 

@@ -129,8 +129,10 @@ No new parser dependency. Line-based, structure-aware:
 ## Search
 
 `FolderSearch::search(query, path_prefix: Option<&str>, top_k)`:
-dense (`embed_query`, top 40) and FTS5 `bm25` (top 40), fused with reciprocal
-rank fusion (k = 60), filtered to `path_prefix` (the sub-folder case and the
+dense (`embed_query`, top 40) and FTS5 `bm25` (top 40), fused with the app's
+shared weighted reciprocal rank fusion (`DEFAULT_RRF_K` = 10, dense at the 0.7
+vector weight, `bm25` at the 0.3 keyword weight; it was a local k = 60
+unweighted copy until 2026-10-16), filtered to `path_prefix` (the sub-folder case and the
 tool's `path` argument), top `top_k` returned as
 `{ path, start_line, end_line, text, score }`. While a run is still going it
 searches what is indexed and the caller says how far along it is.

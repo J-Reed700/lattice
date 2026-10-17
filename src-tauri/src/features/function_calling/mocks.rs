@@ -5,13 +5,13 @@
 #[cfg(test)]
 use super::trait_def::{FunctionExecutorTrait, FunctionRegistryTrait};
 #[cfg(test)]
-use crate::features::function_calling::domain::{
-    FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
-};
-#[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
 use lattice_core::application::contracts::settings::CustomToolSettingsDto;
+#[cfg(test)]
+use lattice_core::application::contracts::tools::{
+    FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
+};
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 #[cfg(test)]

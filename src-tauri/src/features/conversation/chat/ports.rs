@@ -2,15 +2,13 @@
 //!
 //! Every dependency is a trait: the turn never sees a database pool, a concrete
 //! web client or a concrete search use case, so a stage can be driven by fakes.
-pub(crate) use super::dto::ExplorerFocusDto;
 pub(crate) use super::ExplorerTurn;
 use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto;
-pub(crate) use crate::features::function_calling::domain::{
-    FunctionCall, FunctionResult, ToolDefinition,
-};
 use async_trait::async_trait;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
 pub(crate) use lattice_core::application::contracts::settings::SettingsDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 pub(crate) use lattice_core::application::contracts::web::FetchUrlContentOutput;
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort,
@@ -353,15 +351,10 @@ pub trait ChatRetrieval: Send + Sync {
     async fn summary_search(
         &self,
     ) -> Option<Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>>;
-    /// How much prompt the corpus planner can take in time, learned across
-    /// every turn this runtime runs — and never shared with a test's runtime.
+    /// What the corpus planner's servers have shown about their real
+    /// windows, learned across every turn this runtime runs — and never
+    /// shared with a test's runtime.
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
-    /// How much prompt the turn-intent classifier's model reads inside the
-    /// classifier's deadline, learned the same way.
-    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
-    /// How much source text the grounding judge's model reads inside the
-    /// judge's budget, learned the same way.
-    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
 }
 
 #[async_trait]

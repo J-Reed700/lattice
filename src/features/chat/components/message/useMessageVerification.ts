@@ -42,8 +42,8 @@ export function useMessageVerification({
     const contradicted = new Set(contradictedClaims);
     return unsupportedClaims.filter((claim) => !contradicted.has(claim));
   }, [contradictedClaims, contradictedCount, unsupportedClaims]);
-  // Claims nothing checked: the judge ran out of time or the page had no
-  // saved text. Kept apart from the ungrounded ones — "not looked at" is not
+  // Claims nothing checked: the judge gave no usable answer or the page had
+  // no saved text. Kept apart from the ungrounded ones — "not looked at" is not
   // "not found".
   const uncheckedClaims = useMemo(
     () => (verificationSummary?.claimVerdicts ?? [])

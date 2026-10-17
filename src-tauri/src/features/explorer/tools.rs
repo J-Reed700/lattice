@@ -11,7 +11,7 @@
 use super::fs::{self, SearchRequest};
 use super::index::tool::{self as folder_index_tool, TOOL_SEARCH_FOLDER};
 use super::scope::Scope;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::{AppError, Result};
 use serde_json::Value;

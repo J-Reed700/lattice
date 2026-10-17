@@ -28,8 +28,9 @@ truth; this page summarizes them.
 | Piece | Path |
 |-------|------|
 | Tool schemas, `init_function_registry`, `register_custom_query_tools` | `src-tauri/src/features/function_calling/registry.rs` |
-| Wire types (`ToolDefinition`, `FunctionCall`, `FunctionResult`, `RegistryStats`) | `features/function_calling/domain.rs` |
-| Tool input/output DTOs | `features/function_calling/dto.rs` |
+| Wire types (`ToolDefinition`, `FunctionCall`, `FunctionResult`, `RegistryStats`) | `crates/lattice-core/src/application/contracts/tools/calls.rs` |
+| Tool input/output DTOs | `crates/lattice-core/src/application/contracts/tools/dto.rs` |
+| The model-side `ToolDefinition` (`parameters`), its `From` conversion, the OpenAI `tools` shape and the invalid-call marker | `crates/lattice-core/src/application/ports/llm_port{.rs,/tools.rs}` |
 | `FunctionExecutor` (validation + dispatch) | `features/function_calling/executor.rs`, handlers in `executor/{search,document,web,custom}_tools.rs` |
 | Tauri plugin `functions` | `features/function_calling/plugin.rs` |
 | Per-turn tool selection and the tool loop | `features/conversation/chat.rs` (`build_llm_tool_definitions`), `features/conversation/chat/tool_loop.rs` |

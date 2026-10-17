@@ -512,7 +512,6 @@ impl Answer {
                 })?,
             }],
             first_token_logprobs: None,
-            prefill: None,
         })
     }
 }

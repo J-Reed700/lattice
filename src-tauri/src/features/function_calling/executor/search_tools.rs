@@ -1,11 +1,11 @@
 //! `semantic_search` tool handler and search-result shaping helpers.
 
 use super::FunctionExecutor;
-use crate::features::function_calling::domain::FunctionResult;
-use crate::features::function_calling::dto::*;
 use crate::features::search::engine::service::SearchResult as InfraSearchResult;
 use chrono::Utc;
 use lattice_core::application::contracts::search::{SearchRequestDto, SearchResultDto};
+use lattice_core::application::contracts::tools::FunctionResult;
+use lattice_core::application::contracts::tools::*;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;

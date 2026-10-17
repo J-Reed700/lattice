@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
+import { spaceKeys } from '@/features/spaces/api/queries';
+import { useDebounce } from '@/hooks/useDebounce';
 import { VaultAPI } from '@/lib/api';
 import type { SpaceDocument } from '@/types';
 
@@ -24,39 +26,39 @@ export interface SpaceDocumentsResult {
   isLoading: boolean;
 }
 
+const NO_DOCUMENTS: SpaceDocument[] = [];
+
+const spaceDocumentsKey = (spaceId: string | null, conversationId: string | null, query: string) =>
+  [...spaceKeys.all, 'documents', spaceId, conversationId, query] as const;
+
 /** `query` of null means nothing is being looked up. */
 export function useSpaceDocuments(
   spaceId: string | null,
   conversationId: string | null,
   query: string | null
 ): SpaceDocumentsResult {
-  const [documents, setDocuments] = useState<SpaceDocument[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const debouncedQuery = useDebounce(query, DEBOUNCE_MS);
+  const lookup = query === null ? null : debouncedQuery;
 
-  useEffect(() => {
-    if (query === null) {
-      setDocuments([]);
-      setIsLoading(false);
-      return;
-    }
+  const documentsQuery = useQuery({
+    queryKey: spaceDocumentsKey(spaceId, conversationId, lookup ?? ''),
+    queryFn: async () => {
+      const result = await VaultAPI.listSpaceDocuments(spaceId, conversationId, lookup ?? '', MENTION_LIMIT);
+      // A failed lookup offers nothing rather than offering the last space's
+      // answer: the chips it builds decide what the turn is allowed to read.
+      return result.ok ? result.data : NO_DOCUMENTS;
+    },
+    enabled: lookup !== null,
+    // While the next keystroke is looked up, the list it refines stays up, but
+    // never a list from another space or conversation.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[2] === spaceId && previousQuery.queryKey[3] === conversationId ? previous : undefined,
+    staleTime: 0,
+  });
 
-    let cancelled = false;
-    setIsLoading(true);
-    const timer = setTimeout(() => {
-      void VaultAPI.listSpaceDocuments(spaceId, conversationId, query, MENTION_LIMIT).then((result) => {
-        if (cancelled) return;
-        // A failed lookup offers nothing rather than offering the last space's
-        // answer: the chips it builds decide what the turn is allowed to read.
-        setDocuments(result.ok ? result.data : []);
-        setIsLoading(false);
-      });
-    }, DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [spaceId, conversationId, query]);
-
-  return { documents, isLoading };
+  if (query === null) return { documents: NO_DOCUMENTS, isLoading: false };
+  return {
+    documents: lookup === null ? NO_DOCUMENTS : documentsQuery.data ?? NO_DOCUMENTS,
+    isLoading: query !== debouncedQuery || documentsQuery.isFetching,
+  };
 }

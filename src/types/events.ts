@@ -291,12 +291,15 @@ export const TauriEventNames = {
 
 /**
  * `status` values on `llm-stream` events that carry something other than text.
- * `Verification` arrives after the turn has returned: the answer's grounding
- * check runs in the background and reports on the turn's own request id.
+ * `Captured` and `Verification` arrive after the turn has returned, in that
+ * order: the cited pages the answer never read are captured, then its
+ * grounding check runs, both in the background and reporting on the turn's own
+ * request id.
  */
 export const ChatStreamStatus = {
   Step: 'step' as const,
   Retrieval: 'retrieval' as const,
+  Captured: 'captured' as const,
   Verification: 'verification' as const,
 } as const;
 

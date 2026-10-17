@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 /// Replays one canned plan and records what it was asked.
 struct SummaryPlannerStub {
     response: String,
+    window: usize,
     prompts: std::sync::Mutex<Vec<String>>,
 }
 
@@ -17,8 +18,14 @@ impl SummaryPlannerStub {
     fn new(response: &str) -> Self {
         Self {
             response: response.to_string(),
+            window: 32_000,
             prompts: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    fn with_window(mut self, window: usize) -> Self {
+        self.window = window;
+        self
     }
 
     fn last_prompt(&self) -> String {
@@ -43,7 +50,7 @@ impl LLMPort for SummaryPlannerStub {
     }
 
     fn max_context_tokens(&self) -> usize {
-        32_000
+        self.window
     }
 
     fn count_tokens(&self, text: &str) -> usize {
@@ -142,24 +149,34 @@ async fn an_empty_summary_map_reproduces_the_plain_catalog() {
     assert!(!with_tier.last_prompt().contains("\"summary\""));
 }
 
+/// A summary is clipped only when the planner's window cannot hold its row
+/// whole: a 32K window shows a 4,000-word summary in full, a 3,000-token
+/// window shows its compact start.
 #[tokio::test]
-async fn catalog_summaries_are_truncated_per_document() {
-    let stub = SummaryPlannerStub::new(PLAN);
+async fn a_catalog_summary_is_clipped_only_when_the_window_cannot_hold_it() {
     let catalog = catalog();
     let long = "word ".repeat(4_000);
-    plan(
-        &stub,
-        "engine start",
-        None,
-        &catalog,
-        &summaries(&[("doc-1", &long)]),
-        &PlannerTurn::with_health(&PlannerHealth::default()),
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    let prompt = stub.last_prompt();
-    assert!(prompt.len() < long.len());
+    let prompt_on = |stub: SummaryPlannerStub| {
+        let (catalog, long) = (&catalog, &long);
+        async move {
+            plan(
+                &stub,
+                "engine start",
+                None,
+                catalog,
+                &summaries(&[("doc-1", long)]),
+                &PlannerTurn::with_health(&PlannerHealth::default()),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            stub.last_prompt()
+        }
+    };
+    let wide = prompt_on(SummaryPlannerStub::new(PLAN)).await;
+    assert!(wide.contains(long.trim_end()), "the whole summary is shown");
+    let narrow = prompt_on(SummaryPlannerStub::new(PLAN).with_window(3_000)).await;
+    assert!(narrow.len() < long.len(), "the summary is clipped");
 }
 
 #[test]

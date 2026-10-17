@@ -6,6 +6,10 @@
 use super::index::dto::FolderIndexSummaryDto;
 use serde::{Deserialize, Serialize};
 
+// Temporary: chat's test runtime still names the focus at this path.
+#[cfg(test)]
+pub(crate) use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+
 /// A folder the user chose, after canonicalisation.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -77,23 +81,6 @@ pub struct ExplorerSearchResultDto {
     /// A bound was hit (results, files, bytes or time), so there may be more.
     pub truncated: bool,
     pub files_scanned: u32,
-}
-
-/// 1-based, inclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ExplorerLineRangeDto {
-    pub start_line: u32,
-    pub end_line: u32,
-}
-
-/// What the user is looking at when they send: the open file and the
-/// selected lines. Rides along on each Explorer turn.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ExplorerFocusDto {
-    pub open_path: Option<String>,
-    pub selection: Option<ExplorerLineRangeDto>,
 }
 
 /// One folder in the Explorer's folders list.

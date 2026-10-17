@@ -11,7 +11,6 @@ use lattice_core::shared::error::{AppError, Result};
 
 use super::{
     ordered_learning_plan, prompt, shortlist, CorpusSearchPlan, PlannerTurn, PLANNER_SYSTEM,
-    PLANNER_TIMEOUT,
 };
 
 /// What the first retrieval pass already tried. Serialized into the planner's
@@ -60,7 +59,8 @@ impl CorrectionRequest {
 ///
 /// `summaries` is empty whenever the summary tier is off, which is the default,
 /// and an empty map leaves the rows without a summary field. `turn` carries the
-/// local search's candidate documents and this turn's timeout guard.
+/// local search's candidate documents and what refusals taught about the
+/// planner's window.
 pub(in super::super) async fn plan(
     llm: &dyn LLMPort,
     question: &str,
@@ -144,15 +144,11 @@ async fn plan_with(
     turn: &PlannerTurn<'_>,
     cancel: &CancellationToken,
 ) -> Result<CorpusSearchPlan> {
-    if let Some(reason) = turn.unavailable() {
-        return Err(AppError::InvalidState(format!(
-            "Document retrieval planning skipped: {reason}"
-        )));
-    }
-    let target = turn.health.prompt_tokens(llm.model_name());
+    // What the planner's window holds beside the plan: no clock sizes it.
+    let target = turn.health.prompt_tokens(llm);
     // Built to the planner's history share from whole turns by the caller;
     // held to it here in whole lines, with the rest counted.
-    let history = prompt::recent_history(llm, history, target.min(llm.max_context_tokens()));
+    let history = prompt::recent_history(llm, history, target);
     let ranked = shortlist::shortlist(catalog, turn.candidate_ids(), question);
     // The first pass's titles, best first, as many as the history's share of
     // the prompt holds, and the rest counted.
@@ -176,9 +172,11 @@ async fn plan_with(
         correction = correction.is_some(),
         "Corpus planner prompt"
     );
-    let response = tokio::time::timeout(
-        PLANNER_TIMEOUT,
-        llm.complete(&CompletionRequest {
+    // No timeout: a slow planner is not a failed one. The user's Stop
+    // cancels the call, and the adapter's stall detection ends one whose
+    // server has gone quiet. Any error falls back to the local plan.
+    let response = llm
+        .complete(&CompletionRequest {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -201,24 +199,12 @@ async fn plan_with(
             priority: lattice_core::application::ports::llm_port::InferencePriority::Interactive,
             // A stop press takes the plan out of the backend's queue.
             cancel: Some(cancel.clone()),
+            no_time_limit: true,
             ..Default::default()
-        }),
-    )
-    .await;
+        })
+        .await;
     let response = match response {
-        Err(_) => {
-            turn.record_timeout(llm.model_name(), prompt.tokens);
-            tracing::warn!(
-                timeout_s = PLANNER_TIMEOUT.as_secs(),
-                prompt_tokens = prompt.tokens,
-                next_prompt_tokens = turn.health.prompt_tokens(llm.model_name()),
-                "Corpus planner timed out; the next attempt gets a smaller prompt"
-            );
-            return Err(AppError::InvalidState(
-                "Document retrieval planning timed out".into(),
-            ));
-        }
-        Ok(Err(error)) => {
+        Err(error) => {
             if is_window_overflow(&error) {
                 turn.health.overflowed(llm.model_name(), prompt.tokens);
                 tracing::warn!(
@@ -231,11 +217,7 @@ async fn plan_with(
             }
             return Err(error);
         }
-        Ok(Ok(response)) => {
-            turn.health
-                .answered(llm.model_name(), response.prefill, prompt.tokens);
-            response.text
-        }
+        Ok(response) => response.text,
     };
     let response = response
         .trim()

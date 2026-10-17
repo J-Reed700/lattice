@@ -1,3 +1,6 @@
+import type { ReactElement } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -7,6 +10,11 @@ const mocks = vi.hoisted(() => ({ readFileContent: vi.fn(), theme: 'dark' }));
 vi.mock('@/lib/api', () => ({ default: { readFileContent: mocks.readFileContent } }));
 vi.mock('@/hooks/useApplyTheme', () => ({ useEffectiveTheme: () => mocks.theme }));
 
+function renderWithClient(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.theme = 'dark';
@@ -14,7 +22,7 @@ beforeEach(() => {
 
 it('rethemes legacy HTML without refetching it and removes source color overrides', async () => {
   mocks.readFileContent.mockResolvedValue({ ok: true, data: '<style>p { color: black !important; }</style><p style="color: black; background: white" bgcolor="white">Article text</p><script>alert(1)</script>' });
-  const { rerender } = render(<HTMLViewer htmlPath="article.html" />);
+  const { rerender } = renderWithClient(<HTMLViewer htmlPath="article.html" />);
   const frame = await screen.findByTitle<HTMLIFrameElement>('Web Article');
   const content = new DOMParser().parseFromString(frame.srcdoc, 'text/html');
   expect(content.body.textContent?.trim()).toBe('Article text');
@@ -30,7 +38,7 @@ it('rethemes legacy HTML without refetching it and removes source color override
 it('uses the same theme for the escaped markdown fallback', async () => {
   mocks.readFileContent.mockResolvedValueOnce({ ok: false, error: 'Missing' });
   mocks.readFileContent.mockResolvedValueOnce({ ok: true, data: '# Snapshot <script>example</script>' });
-  render(<HTMLViewer htmlPath="/archive/article.html" />);
+  renderWithClient(<HTMLViewer htmlPath="/archive/article.html" />);
   const frame = await screen.findByTitle<HTMLIFrameElement>('Web Article');
   const content = new DOMParser().parseFromString(frame.srcdoc, 'text/html');
   expect(content.querySelector('pre')?.textContent).toBe('# Snapshot <script>example</script>');

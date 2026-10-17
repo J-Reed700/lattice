@@ -3,8 +3,10 @@
 //! Exposes function-calling commands through the plugin IPC surface.
 
 use crate::features::function_calling::commands as function_calling_commands;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats};
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::tools::{
+    FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
+};
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -15,7 +17,7 @@ use tauri::{
 #[specta::specta]
 pub async fn list_available_functions(
     container: State<'_, Container>,
-) -> Result<Vec<super::domain::ToolDefinition>, ApiError> {
+) -> Result<Vec<ToolDefinition>, ApiError> {
     function_calling_commands::list_available_functions(container)
         .await
         .map_err(ApiError::from)

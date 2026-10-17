@@ -340,8 +340,8 @@ fn find_files_matches_substrings_and_globs_and_skips_ignored() {
 
 mod model_tools {
     use super::*;
-    use crate::features::explorer::dto::{ExplorerFocusDto, ExplorerLineRangeDto};
     use crate::features::explorer::{prompt, tools};
+    use lattice_core::application::contracts::explorer::{ExplorerFocusDto, ExplorerLineRangeDto};
     use serde_json::json;
 
     fn numbered_file(scope: &Scope, relative: &str, lines: u32) {

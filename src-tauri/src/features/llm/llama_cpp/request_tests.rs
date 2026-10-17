@@ -2,7 +2,7 @@
 use super::*;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
-    SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice,
+    SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
 };
 
 fn client() -> LlamaCppLlm {

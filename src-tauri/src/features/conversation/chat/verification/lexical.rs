@@ -544,7 +544,7 @@ fn is_claim_candidate(sentence: &str) -> bool {
     // A sentence that points at lines in an Explorer folder (`src/main.rs:10`)
     // is about the file on the user's screen, not about the retrieved
     // passages, so judging it against them can only produce a false verdict.
-    if crate::features::explorer::line_refs::contains_line_reference(s) {
+    if lattice_core::shared::text::contains_line_reference(s) {
         return false;
     }
     // The app's own lines, appended when the model hit its output limit or ran

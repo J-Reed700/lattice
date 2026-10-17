@@ -2,8 +2,10 @@
 //!
 //! The two halves miss different things. Dense retrieval finds "where do we
 //! handle retries?" in code that only says `backoff`; `bm25` finds the exact
-//! identifier a vector blurs. Reciprocal rank fusion (k = 60) merges them on
-//! rank alone, so neither score scale has to be trusted against the other.
+//! identifier a vector blurs. The shared weighted reciprocal rank fusion
+//! merges them on rank alone, so neither score scale has to be trusted against
+//! the other: dense carries the vector weight, `bm25` the keyword weight, at
+//! the library search's `DEFAULT_RRF_K`.
 //!
 //! SQLite is authoritative: a vector whose chunk row is gone (a file deleted
 //! since the last save of the vectors file) is not a hit.
@@ -13,8 +15,14 @@ use super::dto::FolderIndexStatusDto;
 use super::run::StatusCell;
 use super::store::FolderStore;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
+use lattice_core::application::contracts::search::{
+    FusionResult, ReciprocalRankFusion, WeightedRanking,
+};
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::constants::{
+    DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_RRF_K, DEFAULT_VECTOR_FUSION_WEIGHT,
+};
 use lattice_core::shared::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -24,9 +32,6 @@ use tracing::warn;
 /// that is deeper, so fusion never caps what a caller asked for.
 pub const DENSE_CANDIDATES: usize = 40;
 pub const LEXICAL_CANDIDATES: usize = 40;
-/// The usual constant: it keeps one list's first place from drowning out a
-/// passage both lists rank well.
-pub const RRF_K: f32 = 60.0;
 /// Terms a full-text query keeps.
 const MAX_TERMS: usize = 16;
 
@@ -42,18 +47,14 @@ pub struct FolderHit {
     pub score: f32,
 }
 
-/// Reciprocal rank fusion of ranked id lists, best first. Ties go to the
-/// lower id so the order is stable.
-pub fn fuse(lists: &[&[i64]], k: f32) -> Vec<(i64, f32)> {
-    let mut scores: HashMap<i64, f32> = HashMap::new();
-    for list in lists {
-        for (rank, id) in list.iter().enumerate() {
-            *scores.entry(*id).or_default() += 1.0 / (k + rank as f32 + 1.0);
-        }
-    }
-    let mut fused: Vec<(i64, f32)> = scores.into_iter().collect();
-    fused.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    fused
+/// The dense and full-text halves fused by the app's one reciprocal rank
+/// fusion, at the library search's constant and branch weights, best first.
+/// Ties go to the lower id so the order is stable.
+pub(super) fn fuse(dense: Vec<i64>, lexical: Vec<i64>) -> Vec<FusionResult<i64>> {
+    ReciprocalRankFusion::new(DEFAULT_RRF_K).fuse_ranked(vec![
+        WeightedRanking::new(DEFAULT_VECTOR_FUSION_WEIGHT, dense),
+        WeightedRanking::new(DEFAULT_KEYWORD_FUSION_WEIGHT, lexical),
+    ])
 }
 
 /// An FTS5 `MATCH` expression for free text: every word as a quoted literal
@@ -170,8 +171,8 @@ impl FolderSearch {
                 }),
             None => Vec::new(),
         };
-        let fused = fuse(&[&dense, &lexical], RRF_K);
-        let ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
+        let fused = fuse(dense, lexical);
+        let ids: Vec<i64> = fused.iter().map(|entry| entry.id).collect();
         let rows: HashMap<i64, _> = self
             .store
             .chunks_by_ids(&ids)
@@ -180,7 +181,7 @@ impl FolderSearch {
             .map(|row| (row.id, row))
             .collect();
         let mut hits = Vec::new();
-        for (id, score) in fused {
+        for FusionResult { id, score, .. } in fused {
             let Some(row) = rows.get(&id) else {
                 continue;
             };

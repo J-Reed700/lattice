@@ -13,7 +13,6 @@
 //! - `tools` — the model's `list_directory` / `read_file` / `search_files` /
 //!   `find_files`
 //! - `prompt` — the folder block an Explorer turn's prompt carries
-//! - `line_refs` — the `path:10-24` grammar answers use to point at lines
 //! - `repository` — `conversations.explorer_root` and `explorer_folders`
 //! - `folders` — the folders list: rows, threads and each folder's index
 //! - `index` — the open folder's semantic index and `search_folder`
@@ -23,7 +22,6 @@ pub mod dto;
 pub mod folders;
 pub mod fs;
 pub mod index;
-pub mod line_refs;
 pub mod plugin;
 pub mod prompt;
 pub mod repository;

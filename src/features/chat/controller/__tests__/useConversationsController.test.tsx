@@ -351,6 +351,86 @@ describe('useConversationsController optimistic cleanup', () => {
   });
 
   /**
+   * A cited page the turn never read is captured after the answer returns.
+   * Its snapshot lands on the same channel ahead of the check, and the
+   * listener stays up for the check that follows it.
+   */
+  it('fills in cited pages captured after the turn returned, then waits for the check', async () => {
+    let emit: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(async (_event, handler) => {
+      emit = handler as typeof emit;
+      return unlisten;
+    });
+    conversationUiStore.setState({ activeConversationId: 'conversation-1' });
+    const source = {
+      documentId: 'web:https://example.com/a',
+      chunkId: 'web-a',
+      content: 'A search snippet.',
+      score: 0.8,
+      fileName: 'Example',
+      filePath: 'https://example.com/a',
+      mimeType: 'text/html',
+      category: 'Web Page',
+      fileSizeBytes: 0,
+      modifiedAt: '',
+      citationId: 1,
+    };
+    const answer = {
+      id: 'answer-1',
+      conversationId: 'conversation-1',
+      role: 'assistant',
+      content: 'Tomatoes need sun [1].',
+      tokens: 5,
+      status: 'completed',
+      createdAt: '2026-09-24T00:00:00.000Z',
+      metadata: JSON.stringify({
+        sources: [source],
+        capture: { pending: true },
+        verification: { enabled: true, pending: true },
+      }),
+    };
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [answer], total: 1 } });
+    api.chatWithConversation = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { conversationId: 'conversation-1', message: answer.content, messages: [answer], contextUsed: 0, sources: [source] },
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    await act(async () => { await result.current.sendMessage('Where do tomatoes go?'); });
+    expect(result.current.lastMessageSources.get('answer-1')?.[0]?.webSnapshot).toBeUndefined();
+
+    const requestId = api.chatWithConversation.mock.calls[0][3];
+    const snapshot = { url: source.filePath, title: 'Example', text: 'The whole page.', fetchedAt: null, truncated: false };
+    act(() => emit?.({ payload: {
+      conversationId: 'conversation-1',
+      requestId,
+      done: false,
+      status: 'captured',
+      captured: { messageId: 'answer-1', sources: [{ ...source, webSnapshot: snapshot }] },
+    } }));
+
+    await waitFor(() => expect(
+      result.current.lastMessageSources.get('answer-1')?.[0]?.webSnapshot?.text
+    ).toBe('The whole page.'));
+    // The check comes after the capture; the listener waits for it.
+    expect(unlisten).not.toHaveBeenCalled();
+
+    act(() => emit?.({ payload: {
+      conversationId: 'conversation-1',
+      requestId,
+      done: false,
+      status: 'verification',
+      verification: {
+        messageId: 'answer-1',
+        verification: { enabled: true, claimsEvaluated: 1, supportedClaims: 1 },
+      },
+    } }));
+    await waitFor(() => expect(unlisten).toHaveBeenCalled());
+  });
+
+  /**
    * A finish event carries the id of its start. Appending it would make a
    * finished step jump to the bottom of the timeline the moment it completed.
    */

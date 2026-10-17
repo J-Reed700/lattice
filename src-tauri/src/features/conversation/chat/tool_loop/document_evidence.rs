@@ -6,7 +6,7 @@
 //! the active request. Eviction or compaction therefore restores the text on
 //! the next read instead of referring to evidence the model no longer has.
 
-use crate::features::function_calling::domain::FunctionResult;
+use lattice_core::application::contracts::tools::FunctionResult;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 

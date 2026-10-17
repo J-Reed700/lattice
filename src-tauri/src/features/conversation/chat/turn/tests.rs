@@ -231,27 +231,29 @@ struct FakeWeb;
 
 #[async_trait::async_trait]
 impl crate::features::conversation::chat::ports::ChatTools for FakeWeb {
-    fn list_tools(&self) -> Vec<crate::features::function_calling::domain::ToolDefinition> {
+    fn list_tools(&self) -> Vec<lattice_core::application::contracts::tools::ToolDefinition> {
         Vec::new()
     }
     async fn execute(
         &self,
-        call: crate::features::function_calling::domain::FunctionCall,
-    ) -> Result<crate::features::function_calling::domain::FunctionResult> {
+        call: lattice_core::application::contracts::tools::FunctionCall,
+    ) -> Result<lattice_core::application::contracts::tools::FunctionResult> {
         let query = call.arguments["query"]
             .as_str()
             .unwrap_or_default()
             .to_string();
         Ok(
-            crate::features::function_calling::domain::FunctionResult::success(serde_json::json!({
-                "results": [{
-                    "title": format!("About {query}"),
-                    "url": format!("https://example.com/{}", query.replace(' ', "-")),
-                    "snippet": format!("What the web says about {query}."),
-                }],
-                "query": query,
-                "result_count": 1,
-            })),
+            lattice_core::application::contracts::tools::FunctionResult::success(
+                serde_json::json!({
+                    "results": [{
+                        "title": format!("About {query}"),
+                        "url": format!("https://example.com/{}", query.replace(' ', "-")),
+                        "snippet": format!("What the web says about {query}."),
+                    }],
+                    "query": query,
+                    "result_count": 1,
+                }),
+            ),
         )
     }
 }

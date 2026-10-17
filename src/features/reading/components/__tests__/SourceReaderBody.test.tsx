@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/api', () => ({
+  default: { readFileContent: mocks.readFileContent },
   VaultAPI: { readFileContent: mocks.readFileContent },
 }));
 vi.mock('@/features/reading/hooks/sourceFileActions', () => ({

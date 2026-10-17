@@ -129,16 +129,7 @@ pub async fn generate_deck(
     let sources = passages(library, &request.document_ids, &request.focus).await?;
     let now = chrono::Utc::now().timestamp_millis();
     let id = uuid::Uuid::new_v4().to_string();
-    let cards = tokio::time::timeout(
-        std::time::Duration::from_secs(180),
-        super::study_generation::generate(llm, &request, &sources, &id, now),
-    )
-    .await
-    .map_err(|_| {
-        AppError::ServiceNotAvailable(
-            "Question generation timed out. Try fewer cards or a narrower topic.".into(),
-        )
-    })??;
+    let cards = super::study_generation::generate(llm, &request, &sources, &id, now).await?;
     let deck = StudyDeckDto {
         id,
         title: request.title.trim().into(),

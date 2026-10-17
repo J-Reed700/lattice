@@ -1,11 +1,11 @@
 use crate::features::conversation::chat::ports::{ChatRuntime, SettingsDto};
 use crate::features::conversation::chat::router::RouterAction;
-use crate::features::function_calling::dto::WikiSearchOutput;
 use lattice_core::application::contracts::search::{SearchResponseDto, SearchResultDto};
 use lattice_core::application::contracts::settings::{
     RetrievalTuningSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
 };
 use lattice_core::application::contracts::sources::SourceDto;
+use lattice_core::application::contracts::tools::WikiSearchOutput;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::services::context_assembler::EvidenceBudget;
 use lattice_core::domain::qa::hyde::QueryType;
@@ -455,7 +455,7 @@ pub(super) async fn record_tool_document_references(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     tool_name: &str,
-    result: &crate::features::function_calling::domain::FunctionResult,
+    result: &lattice_core::application::contracts::tools::FunctionResult,
 ) -> Result<()> {
     record_tool_document_references_impl(conv_service, conversation_id, tool_name, result).await
 }
@@ -638,7 +638,7 @@ pub(in crate::features::conversation::chat) use self::tool_format::{
 
 pub(super) fn format_tool_result(
     tool_name: &str,
-    result: &crate::features::function_calling::domain::FunctionResult,
+    result: &lattice_core::application::contracts::tools::FunctionResult,
     settings: &ToolOutputSettingsDto,
     allowance: usize,
     page_offset: usize,

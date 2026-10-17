@@ -356,7 +356,6 @@ export function claimVerdictLine(verdict: ClaimVerdict): string {
     if (verdict.unverifiedReason === 'low_confidence') {
       return `Not checked — the checker was not confident enough to call it. ${how}.`;
     }
-    if (verdict.unverifiedReason === 'budget') return 'Not checked — the verification budget ran out.';
     if (verdict.unverifiedReason === 'judge_failed') return 'Not checked — the verification model failed to answer.';
     if (verdict.unverifiedReason === 'no_text') return 'Not checked — the cited source had no saved text.';
     return `Not checked — ${how}.`;

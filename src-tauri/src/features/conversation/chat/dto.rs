@@ -1,9 +1,9 @@
 use super::retrieval::WEB_SOURCE_PREFIX;
 use super::{
-    RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnModelDto, TurnStepDto,
-    VerificationReadyDto,
+    CapturedSourcesDto, RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnModelDto,
+    TurnStepDto, VerificationReadyDto,
 };
-pub(crate) use crate::features::explorer::dto::ExplorerFocusDto;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 pub(super) use lattice_core::application::contracts::sources::SourceDto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -178,6 +178,11 @@ pub struct ChatStreamEventDto {
     /// it, so the reader knows what is answering before the first token.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<TurnModelDto>,
+
+    /// Cited pages captured after the turn returned. Arrives once per answer
+    /// that cited a page it never read, before that answer's grounding check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured: Option<CapturedSourcesDto>,
 }
 
 impl ChatStreamEventDto {

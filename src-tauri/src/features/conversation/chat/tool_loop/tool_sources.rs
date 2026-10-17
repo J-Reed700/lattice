@@ -4,9 +4,10 @@
 
 use super::ToolOutputSettingsDto;
 use crate::features::conversation::chat::dto::SourceDto;
-use crate::features::conversation::chat::ports::FunctionResult;
 use crate::features::conversation::chat::retrieval::build_web_source_citations;
-use crate::features::function_calling::dto::{WikiSearchOutput, WikiSummaryOutput};
+use lattice_core::application::contracts::tools::{
+    FunctionResult, WikiSearchOutput, WikiSummaryOutput,
+};
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };

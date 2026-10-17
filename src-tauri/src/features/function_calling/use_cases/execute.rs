@@ -32,8 +32,8 @@
 //! assert!(response.result.success);
 //! ```
 
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -202,9 +202,9 @@ impl ExecuteFunctionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::function_calling::domain::ToolDefinition;
     use crate::features::function_calling::mocks::MockFunctionExecutor;
     use crate::features::function_calling::registry::FunctionRegistry;
+    use lattice_core::application::contracts::tools::ToolDefinition;
     use serde_json::json;
 
     #[tokio::test]

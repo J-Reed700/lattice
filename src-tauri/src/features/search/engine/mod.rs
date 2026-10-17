@@ -69,7 +69,8 @@
 //!
 //! ### Hybrid Search (Recommended)
 //!
-//! The engine supplies the branches and the fusion arithmetic; the
+//! The engine supplies the branches; the fusion arithmetic is
+//! `lattice_core::application::contracts::search::ReciprocalRankFusion`. The
 //! orchestrator that runs them is
 //! [`HybridSearchUseCase`](crate::features::search::use_cases::HybridSearchUseCase),
 //! which chat, the tool executor, the search page and the retrieval
@@ -106,7 +107,6 @@
 // Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod bm25;
 pub mod fts_query;
-pub mod fusion;
 pub mod profiler;
 pub mod qwen3_reranker;
 pub mod recency;
@@ -121,7 +121,6 @@ pub mod text_search;
 pub mod vector_search;
 
 pub use bm25::{BM25Result, BM25Search};
-pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedRanking};
 pub use profiler::{PerformanceMetrics, Profiler};
 pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};

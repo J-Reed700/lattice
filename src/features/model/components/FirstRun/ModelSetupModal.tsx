@@ -2,8 +2,7 @@
  * Single-bundle first-run install. Backend recommends; modal renders.
  * Click dismisses immediately — downloads continue in the header drawer.
  */
-import { useEffect, useState } from 'react';
-
+import { useQuery } from '@tanstack/react-query';
 import { Cpu } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -15,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { fetchFirstRunStatus, useFirstRunDownloads, type FirstRunStatus } from '@/features/model/hooks/useFirstRunSetup';
+import { firstRunStatusQueryOptions, useFirstRunDownloads } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { router } from '@/routes';
@@ -46,38 +45,16 @@ export function ModelSetupModal({
   onComplete,
   onDismiss,
 }: ModelSetupModalProps) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<FirstRunStatus | null>(null);
+  // Read again on every opening; what was read last stays up meanwhile.
+  const statusQuery = useQuery({ ...firstRunStatusQueryOptions(), enabled: open });
+  const status = statusQuery.data ?? null;
+  const loading = statusQuery.isFetching;
+  const error = statusQuery.isError ? getErrorMessage(statusQuery.error) : null;
   const { downloadEmbeddingModel, downloadChatModel } = useFirstRunDownloads();
   const { systemCapabilities } = useModelCatalog({
     autoLoadCapabilities: true,
     autoLoadModels: false,
   });
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await fetchFirstRunStatus();
-        if (!alive) return;
-        if (!result.ok) {
-          setError(result.error);
-          return;
-        }
-        setStatus(result.data);
-      } catch (err) {
-        if (alive) setError(getErrorMessage(err));
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [open]);
 
   const handleSkip = () => {
     onDismiss();
@@ -97,7 +74,6 @@ export function ModelSetupModal({
 
   const handleInstall = async () => {
     if (!status?.embedding_model && !status?.chat_model) return;
-    setError(null);
 
     // Embedding uses its first-run dedicated command; chat uses the
     // generic download path. Both are fire-and-forget.

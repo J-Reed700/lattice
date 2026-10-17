@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+mod tools;
+
+pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
+
 /// Lazily resolves an optional model without exposing the application's container.
 pub type OptionalLlmLoader = std::sync::Arc<
     dyn Fn() -> futures::future::BoxFuture<'static, Result<Option<std::sync::Arc<dyn LLMPort>>>>
@@ -96,6 +100,11 @@ pub enum InferencePriority {
 ///
 /// Provider-agnostic representation of a callable function.
 /// Infrastructure adapters convert this to provider-specific formats.
+///
+/// The registry's [`contracts::tools::ToolDefinition`](crate::application::contracts::tools::ToolDefinition)
+/// names the schema `input_schema` on the frontend; this one names it
+/// `parameters`, and is persisted that way with each research job. `From`
+/// converts the registry's into this one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     /// Function name (e.g., "semantic_search")
@@ -552,27 +561,6 @@ pub struct CompletionResponse {
     /// provider reports them.
     #[serde(default)]
     pub first_token_logprobs: Option<Vec<(String, f32)>>,
-    /// How the provider read the prompt, when it says: the tokens it had to
-    /// evaluate and the time that took, without queueing or writing. A call
-    /// with a deadline sizes its next prompt from this.
-    #[serde(default)]
-    pub prefill: Option<PrefillTiming>,
-}
-
-/// One request's prompt reading, as the provider measured it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub struct PrefillTiming {
-    /// Prompt tokens evaluated, not counting any reused from a cache.
-    pub tokens: u64,
-    /// Seconds spent evaluating them.
-    pub seconds: f64,
-}
-
-impl PrefillTiming {
-    /// Tokens read per second, when the measure says anything.
-    pub fn tokens_per_second(&self) -> Option<f64> {
-        (self.tokens > 0 && self.seconds > 0.0).then(|| self.tokens as f64 / self.seconds)
-    }
 }
 
 impl CompletionResponse {

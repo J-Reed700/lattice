@@ -589,7 +589,7 @@ fn window_chars(input_budget: usize, chars_per_token: f64) -> usize {
 pub(super) fn tool_schema_text(
     tools: &[lattice_core::application::ports::ToolDefinition],
 ) -> String {
-    crate::features::llm::llama_cpp::tool_specs(tools).to_string()
+    lattice_core::application::ports::llm_port::tool_specs(tools).to_string()
 }
 
 fn elapsed_ms(start: Instant) -> u64 {

@@ -2,15 +2,15 @@ use super::chunker::{self, chunk_text, Chunk, MAX_CHUNK_CHARS, MAX_CHUNK_LINES};
 use super::dto::{FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryState};
 use super::manager::{EmbedderSource, FolderIndexManager, ManagerConfig};
 use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
-use super::search::{fuse, match_expression, FolderHit, RRF_K};
+use super::search::{fuse, match_expression, FolderHit};
 use super::store::{self, FolderStore};
 use super::tool;
-use crate::features::explorer::dto::ExplorerFocusDto;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
 use async_trait::async_trait;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
@@ -757,12 +757,36 @@ mod search {
 
     #[test]
     fn reciprocal_rank_fusion_rewards_agreement() {
-        let fused = fuse(&[&[1, 2, 3], &[3, 4]], RRF_K);
-        let order: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
+        let fused = fuse(vec![1, 2, 3], vec![3, 4]);
+        let order: Vec<i64> = fused.iter().map(|entry| entry.id).collect();
         assert_eq!(order, vec![3, 1, 2, 4]);
-        let (_, top) = fused[0];
-        assert!((top - (1.0 / 63.0 + 1.0 / 61.0)).abs() < 1e-6);
-        assert!(fuse(&[], RRF_K).is_empty());
+        // Dense rank 3 at the vector weight plus full-text rank 1 at the
+        // keyword weight, at k = 10.
+        assert!((fused[0].score - (0.7 / 13.0 + 0.3 / 11.0)).abs() < 1e-6);
+        assert!(fuse(Vec::new(), Vec::new()).is_empty());
+    }
+
+    /// The shared constant and weights, not the old flat `k = 60`: a passage
+    /// only the dense half found, first, beats one both halves ranked
+    /// seventh (`0.7/11 > 1/17`). Flat at `k = 60` the agreement wins
+    /// (`1/61 < 2/67`), and so it does with the weights swapped.
+    #[test]
+    fn fusion_uses_the_library_constant_and_branch_weights() {
+        let mut dense = vec![100];
+        dense.extend(1..=5);
+        dense.push(7);
+        let mut lexical: Vec<i64> = (11..=16).collect();
+        lexical.push(7);
+        let fused = fuse(dense.clone(), lexical.clone());
+        assert_eq!(fused[0].id, 100, "{fused:?}");
+        assert_eq!(fused[0].branch_ranks, vec![Some(0), None]);
+        let agreed = fused.iter().find(|entry| entry.id == 7).unwrap();
+        assert_eq!(agreed.branch_ranks, vec![Some(6), Some(6)]);
+        // The dense half carries the vector weight, not the keyword weight:
+        // swapped, the sole first place weighs 0.3/11 and falls below 1/17.
+        let swapped = fuse(lexical, dense);
+        let position = |id: i64| swapped.iter().position(|entry| entry.id == id);
+        assert!(position(7) < position(100), "{swapped:?}");
     }
 
     #[test]
@@ -1077,7 +1101,7 @@ mod model {
             "{out}"
         );
         assert!(out.contains("`src/b.rs:10-10`\n  10│ fn b() {}\n"), "{out}");
-        assert!(crate::features::explorer::line_refs::contains_line_reference(&out));
+        assert!(lattice_core::shared::text::contains_line_reference(&out));
 
         let long: Vec<String> = (0..200).map(|n| format!("let line_{n} = {n};")).collect();
         let long_refs: Vec<&str> = long.iter().map(String::as_str).collect();

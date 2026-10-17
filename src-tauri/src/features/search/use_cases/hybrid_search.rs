@@ -59,13 +59,12 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::features::search::engine::fusion::{ReciprocalRankFusion, WeightedRanking};
 use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::mapper::SearchMapper;
 use crate::features::search::SparseSearchTrait;
 use lattice_core::application::contracts::search::{
-    BranchKind, QueryBranches, RankedBranch, SearchModeDto, SearchRequestDto, SearchResponseDto,
-    SearchResultDto, SearchResultRecord,
+    BranchKind, QueryBranches, RankedBranch, ReciprocalRankFusion, SearchModeDto, SearchRequestDto,
+    SearchResponseDto, SearchResultDto, SearchResultRecord, WeightedRanking,
 };
 use lattice_core::application::ports::{
     ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
