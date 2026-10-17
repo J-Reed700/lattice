@@ -116,6 +116,9 @@ pub struct Container {
     /// window in [`Container::with_app_handle`].
     web_snapshot_events: Arc<crate::features::web::snapshots::AppEvents>,
 
+    /// Pictures shown inline in chat answers; fetched through `web_service`.
+    pub(crate) chat_images: Arc<crate::features::web::images::ChatImageService>,
+
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
     /// through; `None` in test fixtures.
@@ -366,6 +369,11 @@ impl Container {
             Arc::clone(&web_snapshot_events),
             Arc::clone(core.background()),
         )?;
+        let chat_images = crate::features::web::di::build_chat_images(
+            core.db_pool().clone(),
+            Arc::clone(&web_service),
+            Arc::clone(core.background()),
+        )?;
 
         let turn_cancellation = Arc::new(
             crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
@@ -399,6 +407,7 @@ impl Container {
             jobs,
             web_page_snapshots,
             web_snapshot_events,
+            chat_images,
             turn_cancellation,
             research_waiters,
             outline_run_registry,

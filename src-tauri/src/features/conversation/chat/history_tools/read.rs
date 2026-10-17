@@ -116,6 +116,14 @@ pub(super) async fn execute_read(
     let before = messages.len();
     messages.retain(SourceMessage::is_eligible_source);
     let omitted_failed_outputs = before - messages.len();
+    // The model reads a picture as its caption, as memory and handoff do;
+    // an `img-N` ref belongs to the turn that stored it and means nothing in
+    // another. Byte offsets and cursors count the captioned text, which is
+    // the same on every read.
+    for message in &mut messages {
+        message.content =
+            lattice_core::shared::markdown_media::images_to_captions(&message.content);
+    }
 
     let delivered_ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
     let delivered_sequences: Vec<i64> = messages.iter().map(|m| m.sequence).collect();

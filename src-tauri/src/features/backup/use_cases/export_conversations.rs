@@ -5,14 +5,14 @@
 //! destination would make export an arbitrary-write primitive for the renderer
 //! (the same reasoning that confines `create_backup` to the backups folder).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::features::backup::export_repository::{
-    ExportConversationRow, ExportMessageRow, ExportNoteRow, ExportRepository,
+    ExportConversationRow, ExportImageRow, ExportMessageRow, ExportNoteRow, ExportRepository,
 };
 use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::shared::error::AppError;
@@ -163,11 +163,23 @@ fn timestamp_slug() -> String {
 
 pub struct ExportConversationsUseCase {
     repo: Arc<ExportRepository>,
+    /// Where chat pictures are stored (`~/.lattice/chat-images`); `None`
+    /// exports answers with their image links but no picture files.
+    chat_images_root: Option<PathBuf>,
 }
 
 impl ExportConversationsUseCase {
     pub fn new(repo: Arc<ExportRepository>) -> Self {
-        Self { repo }
+        Self {
+            repo,
+            chat_images_root: None,
+        }
+    }
+
+    /// Copy the pictures answers show from `root` into the export.
+    pub fn with_chat_images_root(mut self, root: PathBuf) -> Self {
+        self.chat_images_root = Some(root);
+        self
     }
 
     /// Writes into `output_root/lattice-export-<YYYYMMDD-HHMMSS>/`.
@@ -196,7 +208,25 @@ impl ExportConversationsUseCase {
 
         match format {
             ExportFormat::Markdown => {
-                write_markdown(&output_dir, &conversations, &by_conversation, &notes).await?;
+                let mut images: HashMap<String, Vec<ExportImageRow>> = HashMap::new();
+                for image in self.repo.list_chat_images().await? {
+                    images
+                        .entry(image.message_id.clone())
+                        .or_default()
+                        .push(image);
+                }
+                let pictures = Pictures {
+                    by_message: &images,
+                    store_root: self.chat_images_root.as_deref(),
+                };
+                write_markdown(
+                    &output_dir,
+                    &conversations,
+                    &by_conversation,
+                    &notes,
+                    &pictures,
+                )
+                .await?;
             }
             ExportFormat::Json { pretty } => {
                 write_json(
@@ -218,11 +248,91 @@ impl ExportConversationsUseCase {
     }
 }
 
+/// The pictures answers show, by message id, and where their files are.
+struct Pictures<'a> {
+    by_message: &'a HashMap<String, Vec<ExportImageRow>>,
+    store_root: Option<&'a Path>,
+}
+
+/// Folder beside `conversations/` the picture files are copied into.
+const IMAGES_DIR: &str = "images";
+
+/// `*Source: <title> — <url> (<license>)*`, leaving out what is unknown.
+fn image_source_line(image: &ExportImageRow) -> String {
+    let mut line = String::from("*Source: ");
+    if let Some(title) = image.source_title.as_deref().filter(|t| !t.is_empty()) {
+        line.push_str(title);
+        line.push_str(" — ");
+    }
+    line.push_str(&image.source_url);
+    if let Some(license) = image.license.as_deref().filter(|l| !l.is_empty()) {
+        line.push_str(&format!(" ({license})"));
+    }
+    line.push('*');
+    line
+}
+
+/// The answer with each `![c](img-N)` pointing at the copied file
+/// (`../images/<id>.<ext>`, relative to `conversations/`) and the picture's
+/// source line under the line that shows it.
+fn with_exported_images(content: &str, images: &[ExportImageRow]) -> String {
+    let mut out = String::with_capacity(content.len());
+    for line in content.split_inclusive('\n') {
+        let mut rewritten = line.to_string();
+        let mut sources = Vec::new();
+        for image in images {
+            let target = format!("]({})", image.image_ref);
+            if rewritten.contains(&target) {
+                let file = format!("](../{IMAGES_DIR}/{}.{})", image.id, image.ext);
+                rewritten = rewritten.replace(&target, &file);
+                sources.push(image_source_line(image));
+            }
+        }
+        out.push_str(&rewritten);
+        if !sources.is_empty() {
+            if !rewritten.ends_with('\n') {
+                out.push('\n');
+            }
+            for source in sources {
+                out.push_str(&source);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+/// Copies the message's picture files into `images/`. A missing file only
+/// costs that picture; the answer is still exported.
+async fn copy_message_images(
+    output_dir: &Path,
+    pictures: &Pictures<'_>,
+    images: &[ExportImageRow],
+) {
+    let Some(store_root) = pictures.store_root else {
+        return;
+    };
+    let images_dir = output_dir.join(IMAGES_DIR);
+    // repository-barrier-allow: export writes its own output directory.
+    if let Err(error) = tokio::fs::create_dir_all(&images_dir).await {
+        tracing::warn!(%error, "Could not create the export's images folder");
+        return;
+    }
+    for image in images {
+        let name = format!("{}.{}", image.id, image.ext);
+        // repository-barrier-allow: export copies the pictures its answers show.
+        if let Err(error) = tokio::fs::copy(store_root.join(&name), images_dir.join(&name)).await {
+            tracing::warn!(%error, file = %name, "Could not copy a chat image into the export");
+        }
+    }
+}
+
 async fn write_markdown(
     output_dir: &Path,
     conversations: &[ExportConversationRow],
     by_conversation: &BTreeMap<String, Vec<ExportMessageRow>>,
     notes: &[ExportNoteRow],
+    pictures: &Pictures<'_>,
 ) -> Result<(), AppError> {
     let conversations_dir = output_dir.join("conversations");
     let journal_dir = output_dir.join("journal");
@@ -254,12 +364,19 @@ async fn write_markdown(
         );
 
         for message in messages {
+            let content = match pictures.by_message.get(&message.id) {
+                Some(images) if !images.is_empty() => {
+                    copy_message_images(output_dir, pictures, images).await;
+                    with_exported_images(&message.content, images)
+                }
+                _ => message.content.clone(),
+            };
             let model = answered_by(message);
             let heading = match model.as_ref().and_then(|model| model.get("name")?.as_str()) {
                 Some(name) => format!("{} · {name}", role_label(&message.role)),
                 None => role_label(&message.role).to_string(),
             };
-            body.push_str(&format!("\n## {heading}\n\n{}\n", message.content));
+            body.push_str(&format!("\n## {heading}\n\n{content}\n"));
         }
 
         let path = conversations_dir.join(export_file_name(&conversation.title, &conversation.id));
@@ -368,6 +485,7 @@ mod tests {
             "CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, model_choice TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
             "CREATE TABLE conversation_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', metadata TEXT)",
             "CREATE TABLE daily_notes_workspace (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE TABLE chat_images (id TEXT PRIMARY KEY, message_id TEXT, ref TEXT NOT NULL, ext TEXT NOT NULL, source_url TEXT NOT NULL, source_title TEXT, license TEXT)",
         ] {
             sqlx::query(statement)
                 .execute(&pool)
@@ -589,5 +707,49 @@ mod tests {
 
         assert_eq!(summary.count(), 0);
         assert!(PathBuf::from(&summary.output_dir).is_dir());
+    }
+
+    #[tokio::test]
+    async fn markdown_export_links_and_copies_the_pictures_an_answer_shows() {
+        let pool = seeded_pool(true).await;
+        sqlx::query("UPDATE conversation_messages SET content = ? WHERE id = 'm2'")
+            .bind("Here:\n![A heron](img-1)\nDone.")
+            .execute(&pool)
+            .await
+            .expect("update message");
+        let id = "0123456789abcdef0123456789abcdef";
+        sqlx::query(
+            "INSERT INTO chat_images (id, message_id, ref, ext, source_url, source_title, license) \
+             VALUES (?, 'm2', 'img-1', 'png', 'https://commons.wikimedia.org/wiki/File:Heron.png', \
+             'File:Heron.png', 'CC BY-SA 4.0')",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("insert image");
+        let store = tempdir().expect("store");
+        std::fs::write(store.path().join(format!("{id}.png")), b"png bytes").expect("image");
+
+        let dir = tempdir().expect("tempdir");
+        let summary = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(pool)))
+            .with_chat_images_root(store.path().to_path_buf())
+            .execute(dir.path().to_path_buf(), ExportFormat::Markdown)
+            .await
+            .expect("export");
+
+        let root = PathBuf::from(&summary.output_dir);
+        let copied = std::fs::read(root.join("images").join(format!("{id}.png"))).expect("copied");
+        assert_eq!(copied, b"png bytes");
+        let file = std::fs::read_dir(root.join("conversations"))
+            .expect("conversations dir")
+            .filter_map(Result::ok)
+            .next()
+            .expect("one conversation");
+        let body = std::fs::read_to_string(file.path()).expect("read");
+        assert!(body.contains(&format!("![A heron](../images/{id}.png)\n")));
+        assert!(body.contains(
+            "*Source: File:Heron.png — https://commons.wikimedia.org/wiki/File:Heron.png (CC BY-SA 4.0)*\nDone."
+        ));
+        assert!(!body.contains("img-1"));
     }
 }

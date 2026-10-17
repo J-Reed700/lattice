@@ -91,6 +91,22 @@ pub fn build_page_snapshots(
     )))
 }
 
+/// Chat pictures: rows, files under `~/.lattice/chat-images`, and fetches
+/// through the one web service so they share its guard, client and pacer.
+pub fn build_chat_images(
+    db_pool: SqlitePool,
+    web_service: Arc<crate::features::web::services::web::WebService>,
+    background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
+) -> Result<Arc<crate::features::web::images::ChatImageService>> {
+    use crate::features::web::images::{store::ImageStore, ChatImageService};
+    Ok(Arc::new(ChatImageService::new(
+        db_pool,
+        ImageStore::default_root()?,
+        web_service,
+        background,
+    )))
+}
+
 /// Minimal BPE tokenizer used when no real tokenizer is available (tests /
 /// first-run before model download). Avoids network fetches and provides
 /// deterministic tokenization.
@@ -159,6 +175,18 @@ impl Container {
         &self,
     ) -> Arc<crate::features::web::snapshots::WebPageSnapshotService> {
         Arc::clone(&self.web_page_snapshots)
+    }
+
+    /// Pictures in chat answers, as the port the conversation feature
+    /// finds, attaches and releases them through.
+    pub fn chat_images(&self) -> Arc<dyn lattice_core::application::ports::ChatImagesPort> {
+        Arc::clone(&self.chat_images) as Arc<dyn lattice_core::application::ports::ChatImagesPort>
+    }
+
+    /// The same service as itself: the `lattice-image` scheme and the
+    /// startup sweep need more than the port.
+    pub fn chat_images_service(&self) -> Arc<crate::features::web::images::ChatImageService> {
+        Arc::clone(&self.chat_images)
     }
 }
 

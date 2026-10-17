@@ -57,6 +57,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 mod address_guard;
+mod bounded;
 mod pacing;
 mod page;
 mod providers;
@@ -67,6 +68,7 @@ pub(crate) use address_guard::validate_url_resolved;
 use address_guard::{
     check_url_host, redirect_policy, refuse_blocked_addresses, PublicOnlyResolver,
 };
+pub use bounded::{BoundedBody, BoundedFetchError};
 use pacing::{SearchCache, SitePacer};
 use page::parse_fetchable_url;
 
@@ -106,7 +108,7 @@ pub(super) enum PageRead {
     Reference,
 }
 /// Maximum decoded bytes accepted from a page before HTML parsing.
-const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
+pub(crate) const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
 /// Maximum decoded bytes accepted from a search provider response.
 const MAX_SEARCH_BODY_BYTES: usize = 2 * 1024 * 1024;
 /// Maximum decoded bytes accepted from the Wikipedia JSON endpoint.

@@ -168,6 +168,10 @@ pub trait ChatStorage: Send + Sync {
     async fn ensure_page_snapshot(&self, conversation_id: &str, url: &str) {
         let _ = (conversation_id, url);
     }
+    /// Pictures an answer shows: found and stored by `find_image`, attached
+    /// when the answer is saved, released when its turn fails or its message
+    /// or conversation is deleted.
+    fn chat_images(&self) -> Arc<dyn lattice_core::application::ports::ChatImagesPort>;
     /// The per-conversation single-flight slots that keep one conversation
     /// from compacting twice at once. One per process, by construction.
     fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots>;

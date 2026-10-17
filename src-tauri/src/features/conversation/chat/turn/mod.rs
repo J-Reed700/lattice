@@ -481,6 +481,7 @@ async fn conclude(
                 "chat_with_conversation: LLM generation FAILED"
             );
             mark_user_message_failed(&turn.conv_service, &answered.user_message_id).await;
+            super::persistence::release_turn_images(container, &turn.turn_id).await;
             metrics.total_ms = elapsed_ms(answered.flow_start);
             finalize::log_flow_timing(&turn.conv_id, &metrics, true);
             Err(error)

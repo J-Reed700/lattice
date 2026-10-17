@@ -44,7 +44,10 @@ fn transcript_passages(messages: &[ConversationMessage]) -> Vec<EvidencePassage>
         .map(|message| EvidencePassage {
             id: message.id.clone(),
             label: format!("{}:", message.role.to_string().to_uppercase()),
-            text: message.content.trim().to_string(),
+            // A picture reaches the summary as its caption.
+            text: lattice_core::shared::markdown_media::images_to_captions(&message.content)
+                .trim()
+                .to_string(),
             rank: 1.0,
         })
         .collect()
@@ -584,6 +587,16 @@ mod tests {
         assert_eq!(passages[0].id, "kept");
         assert_eq!(passages[0].label, "USER:");
         assert_eq!(passages[0].text, "a question");
+        // A picture reaches the summary as its caption, never as its ref.
+        let pictured = transcript_passages(&[message(
+            "pictured",
+            "It flew in 1969.\n\n![Saturn V lifting off](img-1)",
+            "completed",
+        )]);
+        assert_eq!(
+            pictured[0].text,
+            "It flew in 1969.\n\n[Picture: Saturn V lifting off]"
+        );
     }
 
     #[test]

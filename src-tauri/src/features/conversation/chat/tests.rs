@@ -362,6 +362,25 @@ fn deep_research_keeps_its_searches_after_the_first_round() {
     assert!(kept_with_grounded_context("wiki_search", true, true));
     assert!(kept_with_grounded_context("wiki_summary", true, true));
     assert!(!kept_with_grounded_context("list_documents", true, true));
+    // A picture illustrates the answer; grounding does not replace it.
+    assert!(kept_with_grounded_context("find_image", false, false));
+}
+
+#[test]
+fn find_image_rides_the_web_search_toggle() {
+    let web_on: HashSet<String> = ["web_search".to_string()].into_iter().collect();
+    let web_off: HashSet<String> = ["wiki_search".to_string()].into_iter().collect();
+    assert!(optional_builtin_tool_allowed(
+        "find_image",
+        Some(&web_on),
+        false
+    ));
+    assert!(!optional_builtin_tool_allowed(
+        "find_image",
+        Some(&web_off),
+        true
+    ));
+    assert!(!optional_builtin_tool_allowed("find_image", None, true));
 }
 
 #[test]
@@ -673,4 +692,20 @@ fn turn_intent_merge_never_clears_a_set_flag() {
     assert!(!merged.force_kb_search);
     assert!(!merged.force_web_search);
     assert!(!merged.web_fallback);
+}
+
+/// Diagram guidance is on every turn, after whatever system prompt is saved,
+/// and the same text each time so the cached prefix does not move.
+#[test]
+fn diagram_guidance_follows_every_system_prompt() {
+    let custom = LLMPromptSettingsDto {
+        system_prompt: "You are terse.".into(),
+        ..LLMPromptSettingsDto::default()
+    };
+    let first = normalize_prompt_settings(custom.clone()).system_prompt;
+    assert!(first.starts_with("You are terse."));
+    assert!(first.ends_with(prompt_settings::DIAGRAM_GUIDANCE));
+    assert_eq!(first, normalize_prompt_settings(custom).system_prompt);
+    let default = normalize_prompt_settings(LLMPromptSettingsDto::default()).system_prompt;
+    assert_eq!(default.matches("```mermaid").count(), 1);
 }

@@ -150,6 +150,7 @@ impl FunctionRegistryTrait for FunctionRegistry {
 /// - list_documents
 /// - web_search
 /// - fetch_url_content
+/// - find_image
 /// - wiki_search
 /// - wiki_summary
 ///
@@ -410,6 +411,31 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
     )?)?;
 
     registry.register(ToolDefinition::new(
+        "find_image",
+        "Find a real photograph or illustration of a concrete subject (an object, place, organism, person, artwork, machine, event) when seeing it would genuinely help the reader. Searches Wikimedia Commons, or takes the main picture of a page you read this turn when from_page_url is given. Each result is already stored; place one by pasting its `markdown` line as its own paragraph, unchanged. Never write an image address yourself: only `markdown` lines from this result display.",
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What the picture should show, 2-6 words, e.g. 'Saturn V rocket launch'"
+                },
+                "from_page_url": {
+                    "type": "string",
+                    "description": "A page read this turn whose main picture you want instead of a search"
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 6,
+                    "description": "How many candidates to return (default 3)"
+                }
+            },
+            "required": ["query"]
+        })
+    )?)?;
+
+    registry.register(ToolDefinition::new(
         "wiki_search",
         "Search Wikipedia titles and snippets. Use this for factual background when broad web search is noisy or blocked.",
         json!({
@@ -545,7 +571,7 @@ mod tests {
         let registry = init_function_registry().unwrap();
         let tools = registry.list_tools();
 
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
 
         assert!(registry.get_tool("semantic_search").is_some());
         assert!(registry.get_tool("get_document").is_some());
@@ -553,6 +579,7 @@ mod tests {
         assert!(registry.get_tool("list_attachments").is_some());
         assert!(registry.get_tool("web_search").is_some());
         assert!(registry.get_tool("fetch_url_content").is_some());
+        assert!(registry.get_tool("find_image").is_some());
         assert!(registry.get_tool("wiki_search").is_some());
         assert!(registry.get_tool("wiki_summary").is_some());
     }

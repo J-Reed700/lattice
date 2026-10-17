@@ -43,6 +43,21 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 });
             },
         )
+        // Pictures shown inline in chat answers: served only to the main
+        // webview, hash-checked on every request, with the sniffed type.
+        .register_asynchronous_uri_scheme_protocol(
+            lattice::features::web::images::protocol::SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                let label = ctx.webview_label().to_string();
+                // raw-spawn: the scheme handler is called off the Tokio context; the response is sent when the task ends
+                tauri::async_runtime::spawn(async move {
+                    let response =
+                        lattice::features::web::images::protocol::handle(app, label, request).await;
+                    responder.respond(response);
+                });
+            },
+        )
         .setup(|app| {
             // Tracing requires the Tokio runtime available inside this hook.
             setup::setup_tracing();

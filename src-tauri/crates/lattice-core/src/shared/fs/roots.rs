@@ -41,6 +41,11 @@ pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join("Lattice"))
 }
 
+/// Pictures assistant answers show inline: `~/.lattice/chat-images/<id>.<ext>`.
+pub fn chat_images_root() -> Result<PathBuf> {
+    Ok(lattice_home()?.join("chat-images"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

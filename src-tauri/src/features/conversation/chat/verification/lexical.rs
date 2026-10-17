@@ -68,6 +68,11 @@ pub(super) struct LexicalClaim {
 /// Returns one entry per sentence that cleared the claim filters; sentences
 /// that are too short, are questions, or are boilerplate never appear.
 pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<LexicalClaim> {
+    // A diagram's labels and a picture's caption are not claims about the
+    // sources: the check, and the judge reading what it escalates, see the
+    // answer without its fenced blocks and pictures.
+    let response = lattice_core::shared::markdown_media::strip_fences_and_images(response);
+    let response = response.as_str();
     if response.trim().is_empty() || sources.is_empty() {
         return Vec::new();
     }

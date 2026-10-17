@@ -93,6 +93,7 @@ pub(super) async fn finalize_successful_turn(
     let ChatTurn {
         conv_service,
         conversation_id,
+        request_id,
         message: user_message,
         llm,
         ..
@@ -152,7 +153,7 @@ pub(super) async fn finalize_successful_turn(
         serde_json::to_string(&serde_json::Value::Object(metadata_payload)).ok()
     };
 
-    let assistant_msg = commit_turn(
+    let mut assistant_msg = match commit_turn(
         conv_service,
         conversation_id,
         user_message_id,
@@ -160,7 +161,15 @@ pub(super) async fn finalize_successful_turn(
         response_tokens as i64,
         metadata,
     )
-    .await?;
+    .await
+    {
+        Ok(message) => message,
+        Err(error) => {
+            release_turn_images(container, request_id).await;
+            return Err(error);
+        }
+    };
+    attach_turn_images(container, conv_service, request_id, &mut assistant_msg).await;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
     container.consolidate_after_turn(conversation_id.to_string(), summary_refold);
@@ -392,6 +401,64 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
         });
     }
     keepable
+}
+
+/// Attach the pictures the saved answer shows to its message, release the
+/// rest of what the turn stored, and write the attached ones to
+/// `metadata.images` — here and on `message`, so the transcript the turn
+/// returns carries them too. The content keeps its `![caption](img-N)` lines
+/// as the model wrote them. A failure is logged, not returned: the answer is
+/// saved, its pictures show as unavailable, and the startup sweep removes
+/// what stayed leased.
+async fn attach_turn_images(
+    container: &dyn ChatRuntime,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    request_id: &str,
+    message: &mut lattice_core::domain::conversation::ConversationMessage,
+) {
+    let refs = lattice_core::shared::markdown_media::image_refs(&message.content);
+    let attached = match container
+        .chat_images()
+        .attach_to_message(request_id, &message.id, &refs)
+        .await
+    {
+        Ok(attached) => attached,
+        Err(error) => {
+            warn!(%error, request_id, "Could not attach the answer's pictures");
+            return;
+        }
+    };
+    if attached.is_empty() {
+        return;
+    }
+    let images = serde_json::json!(attached);
+    if let Err(error) = conv_service
+        .set_message_metadata_fields(&message.id, vec![("images".to_string(), images.clone())])
+        .await
+    {
+        warn!(%error, request_id, "Could not record the answer's pictures");
+        return;
+    }
+    let mut metadata = message
+        .metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| match value {
+            serde_json::Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .unwrap_or_default();
+    metadata.insert("images".to_string(), images);
+    message.metadata = Some(serde_json::Value::Object(metadata).to_string());
+}
+
+/// Release what a turn that saved no answer stored: it failed, was stopped,
+/// or its answer could not be committed. Logged, never returned, so the
+/// turn's own error is the one reported.
+pub(super) async fn release_turn_images(container: &dyn ChatRuntime, request_id: &str) {
+    if let Err(error) = container.chat_images().release_request(request_id).await {
+        warn!(%error, request_id, "Could not release the turn's pictures");
+    }
 }
 
 pub(super) async fn mark_user_message_failed(

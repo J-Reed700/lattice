@@ -20,6 +20,7 @@ import { TangentSelection } from '@/features/chat/components/tangents/TangentSel
 import { TurnRecord } from '@/features/chat/components/turn/TurnRecord';
 import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
+import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
@@ -178,6 +179,7 @@ export const Message = memo(({
     sources, ownerKey: messageId ?? domMessageId ?? '', isAssistantWithSources,
     showCitations, claimVerdicts, showsCodeRefs, revealInExplorer: revealInFolder, openInExplorer: openInFolder,
   });
+  const figures = useChatFigures(message, citationMap);
   useEffect(() => {
     if (!showCitations) setIsVerificationPanelExpanded(false);
   }, [showCitations]);
@@ -287,6 +289,8 @@ export const Message = memo(({
             claims={isUser ? undefined : claimVerdicts}
             showEvidence={showCitations}
             codeRefs={showsCodeRefs}
+            streaming={isPending}
+            images={figures}
           />
           </TangentSelection>
           {/* Streaming cursor — spec §3.7 */}

@@ -1,8 +1,8 @@
 //! Reading a payload back: the manifest first, then every entry checked before it is written.
 use super::{ProgressEvent, MAX_MANIFEST_BYTES};
 use crate::features::backup::archive::format::{
-    ArchiveError, Manifest, DB_ENTRY, FILES_ENTRY_PREFIX, MANIFEST_ENTRY, SETTINGS_ENTRY,
-    VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX, WEB_SNAPSHOTS_ENTRY_PREFIX,
+    ArchiveError, Manifest, CHAT_IMAGES_ENTRY_PREFIX, DB_ENTRY, FILES_ENTRY_PREFIX, MANIFEST_ENTRY,
+    SETTINGS_ENTRY, VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX, WEB_SNAPSHOTS_ENTRY_PREFIX,
 };
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -38,6 +38,7 @@ pub struct ExtractedPayload {
     pub vault_dir: Option<PathBuf>,
     pub web_archive_dir: Option<PathBuf>,
     pub web_snapshots_dir: Option<PathBuf>,
+    pub chat_images_dir: Option<PathBuf>,
     pub settings_file: Option<PathBuf>,
 }
 
@@ -83,6 +84,7 @@ pub(super) enum EntryGroup {
     Vault,
     WebArchive,
     WebSnapshots,
+    ChatImages,
     Settings,
 }
 
@@ -95,6 +97,7 @@ pub(super) fn classify_entry(name: &str) -> Result<EntryGroup, ArchiveError> {
     let vault_dir = VAULT_ENTRY_PREFIX.trim_end_matches('/');
     let web_archive_dir = WEB_ARCHIVE_ENTRY_PREFIX.trim_end_matches('/');
     let web_snapshots_dir = WEB_SNAPSHOTS_ENTRY_PREFIX.trim_end_matches('/');
+    let chat_images_dir = CHAT_IMAGES_ENTRY_PREFIX.trim_end_matches('/');
 
     if name == MANIFEST_ENTRY {
         Ok(EntryGroup::Manifest)
@@ -110,6 +113,8 @@ pub(super) fn classify_entry(name: &str) -> Result<EntryGroup, ArchiveError> {
         Ok(EntryGroup::WebArchive)
     } else if name == web_snapshots_dir || name.starts_with(WEB_SNAPSHOTS_ENTRY_PREFIX) {
         Ok(EntryGroup::WebSnapshots)
+    } else if name == chat_images_dir || name.starts_with(CHAT_IMAGES_ENTRY_PREFIX) {
+        Ok(EntryGroup::ChatImages)
     } else {
         Err(ArchiveError::Corrupt(format!(
             "backup contains an unexpected entry: {name}"
@@ -177,6 +182,7 @@ pub fn extract_payload<R: Read>(
     let mut saw_vault = false;
     let mut saw_web_archive = false;
     let mut saw_web_snapshots = false;
+    let mut saw_chat_images = false;
     let mut saw_settings = false;
 
     for result in entries {
@@ -212,6 +218,7 @@ pub fn extract_payload<R: Read>(
             EntryGroup::Vault => saw_vault = true,
             EntryGroup::WebArchive => saw_web_archive = true,
             EntryGroup::WebSnapshots => saw_web_snapshots = true,
+            EntryGroup::ChatImages => saw_chat_images = true,
             EntryGroup::Settings => saw_settings = true,
             EntryGroup::Manifest => {}
         }
@@ -241,6 +248,7 @@ pub fn extract_payload<R: Read>(
         vault_dir: saw_vault.then(|| under(dest_dir, VAULT_ENTRY_PREFIX)),
         web_archive_dir: saw_web_archive.then(|| under(dest_dir, WEB_ARCHIVE_ENTRY_PREFIX)),
         web_snapshots_dir: saw_web_snapshots.then(|| under(dest_dir, WEB_SNAPSHOTS_ENTRY_PREFIX)),
+        chat_images_dir: saw_chat_images.then(|| under(dest_dir, CHAT_IMAGES_ENTRY_PREFIX)),
         settings_file: saw_settings.then(|| under(dest_dir, SETTINGS_ENTRY)),
     })
 }

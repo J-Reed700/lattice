@@ -445,3 +445,22 @@ fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
     assert_eq!(claims.len(), 1, "{claims:?}");
     assert!(!claims[0].sentence.contains("src/main.rs"));
 }
+
+/// A diagram's labels and a picture's caption are not claims: a `[1]` inside
+/// a mermaid fence and an image line produce none, and the prose around them
+/// is still checked.
+#[test]
+fn fenced_diagrams_and_picture_lines_make_no_claims() {
+    let sources = [source(
+        "The Saturn V launched Apollo 11 from Kennedy Space Center on 16 July 1969.",
+    )];
+    let claims = lexical_pass(
+        "```mermaid\nflowchart LR\n  A[\"Launch pad cleared for the rocket [1]\"] --> B[Orbit]\n```\n\n\
+         ![Saturn V lifting off from the launch pad [1]](img-1)\n\n\
+         The Saturn V launched Apollo 11 from Kennedy Space Center in July 1969 [1].",
+        &sources,
+    );
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    assert!(claims[0].sentence.contains("Kennedy Space Center"));
+    assert!(claims[0].supported);
+}

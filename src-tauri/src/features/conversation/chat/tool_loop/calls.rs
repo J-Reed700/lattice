@@ -15,6 +15,7 @@ use super::call_labels::{
 use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
+use super::images::{self, FIND_IMAGE};
 use super::tool_sources::{collect_tool_sources, render_with_citations};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
@@ -66,7 +67,9 @@ pub(super) const MAX_CONCURRENT_CALLS: usize = 4;
 /// conversation-history tools stay sequential although they only read: they
 /// share one memo per turn whose answers depend on what was already read, so
 /// together their results would depend on which finished first. A custom
-/// query tool is the user's own endpoint and could do anything.
+/// query tool is the user's own endpoint and could do anything. `find_image`
+/// writes: it stores pictures and numbers their refs after the ones the turn
+/// already holds, so two at once could hand out the same `img-N`.
 pub(super) fn runs_alongside_others(tool: &str) -> bool {
     matches!(
         tool,
@@ -398,12 +401,14 @@ impl<'a> ToolCalls<'a> {
                 None => {}
             }
         }
+        // A picture's subject is not something the answer searched for
+        // evidence on, so it stays out of the turn's queries.
         if let Some(query) = call
             .arguments
             .get("query")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
-            .filter(|query| !query.is_empty())
+            .filter(|query| !query.is_empty() && tool != FIND_IMAGE)
         {
             self.queries.push(query.to_string());
         }
@@ -517,6 +522,9 @@ impl<'a> ToolCalls<'a> {
             let mut memo = self.history_memo.lock().await;
             return history_tools::execute(scope.history.as_ref(), &history_scope, &mut memo, call)
                 .await;
+        }
+        if tool == FIND_IMAGE {
+            return images::execute(scope, call).await;
         }
         if tool == "fetch_url_content" {
             // A page this conversation already read is served from its
@@ -643,8 +651,12 @@ impl<'a> ToolCalls<'a> {
         let page_offset = fetch_memory::fetch_offset(&arguments).unwrap_or(0);
         // The citation numbers this result's sources take come out of the
         // same allowance as the result, so the two together fit it.
+        // A picture's source page is numbered for its caption, which the app
+        // cites; the model is told not to cite the picture line, so the
+        // number is not offered to it.
         let citable: Vec<(u32, &SourceDto)> = sources
             .iter()
+            .filter(|_| tool != FIND_IMAGE)
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();

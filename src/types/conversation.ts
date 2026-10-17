@@ -114,6 +114,30 @@ export const SourceWithMetadataSchema = z.object({
 export const SourcesArraySchema = z.array(SourceWithMetadataSchema);
 
 /**
+ * A picture the answer shows, mirroring `ChatImageDto`. The answer's Markdown
+ * names it by `ref` (`![caption](img-1)`); the file is served from the
+ * `lattice-image` scheme under `fileName`, never from the web.
+ */
+export const ChatImageSchema = z.object({
+  id: z.string().regex(/^[0-9a-f]{32}$/),
+  ref: z.string().regex(/^img-\d+$/),
+  fileName: z.string().regex(/^[0-9a-f]{32}\.(?:jpg|png|gif|webp)$/),
+  mime: z.string().min(1),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  byteSize: z.number().int().min(0),
+  caption: z.string(),
+  // Becomes a link's href: a scheme other than http(s) would run on click.
+  sourceUrl: z.string().regex(/^https?:\/\//i),
+  sourceTitle: z.string().nullable(),
+  origin: z.enum(['wikimedia_commons', 'page']),
+  license: z.string().nullable(),
+  attribution: z.string().nullable(),
+});
+
+export type ChatImage = z.infer<typeof ChatImageSchema>;
+
+/**
  * One claim and how it was checked.
  *
  * `method` says which pass produced the verdict: `lexical` is stemmed token
@@ -370,6 +394,8 @@ export interface OptimisticMessage {
   createdAt: string;
   /** Error message if status='failed' */
   error?: string;
+  /** Pictures found for this answer while it streams, merged by `ref`. */
+  images?: ChatImage[];
   /** Original send options, retained when the unsaved question needs retrying. */
   retryContext?: {
     toolPreferences?: ToolPreferences;
@@ -471,6 +497,7 @@ export const TurnStepKindSchema = z.enum([
   'read_page',
   'wiki',
   'open_document',
+  'find_image',
   'tool',
   'generate',
   'verify',

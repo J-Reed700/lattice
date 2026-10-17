@@ -251,9 +251,11 @@ function PageRow({ page, index }: { page: DeckPage; index: number }) {
         <span className="deck-page-state">
           {/* The word, not only the colour: a refused page has to be readable
               as refused by someone who cannot tell the dots apart. */}
-          {page.state === 'read' || page.state === 'failed'
-            ? (page.note ?? STATE_WORD[page.state])
-            : STATE_WORD[page.state]}
+          {page.picture && page.state === 'read'
+            ? 'picture'
+            : page.state === 'read' || page.state === 'failed'
+              ? (page.note ?? STATE_WORD[page.state])
+              : STATE_WORD[page.state]}
         </span>
       </button>
     </li>

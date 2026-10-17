@@ -23,6 +23,7 @@ const GATHERING: ReadonlySet<TurnStepKind> = new Set<TurnStepKind>([
   'read_page',
   'wiki',
   'open_document',
+  'find_image',
   'tool',
 ]);
 
@@ -109,5 +110,7 @@ export function roundSummary(steps: readonly TurnStep[]): string {
   if (pagesRead > 0) parts.push(`${plural(pagesRead, 'page', 'pages')} read`);
   if (pagesRefused > 0) parts.push(`${pagesRefused} could not be read`);
   if (documents > 0) parts.push(`${plural(documents, 'document', 'documents')} opened`);
+  const pictureSearches = steps.filter(step => step.kind === 'find_image' && step.state === 'done').length;
+  if (pictureSearches > 0) parts.push(plural(pictureSearches, 'picture search', 'picture searches'));
   return parts.join(' · ');
 }

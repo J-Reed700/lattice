@@ -226,6 +226,8 @@ impl ArchiveRestorer {
             .await;
         self.merge_web_snapshots(extracted.web_snapshots_dir.as_deref())
             .await;
+        self.merge_chat_images(extracted.chat_images_dir.as_deref())
+            .await;
         let vault_restored_to = self.restore_vault(extracted.vault_dir.as_deref()).await?;
         self.restore_settings_file(extracted.settings_file.as_deref())
             .await;
@@ -423,6 +425,33 @@ impl ArchiveRestorer {
             }
             Err(e) => {
                 warn!(error = %e, "web snapshot restore task failed");
+                0
+            }
+        }
+    }
+
+    /// Chat pictures go back beside the web archive the same way, never
+    /// overwriting a file already there.
+    async fn merge_chat_images(&self, chat_images_dir: Option<&Path>) -> u64 {
+        let Some(chat_images_dir) = chat_images_dir else {
+            return 0;
+        };
+        let Some(root) = self
+            .web_archive_root
+            .as_deref()
+            .and_then(format::chat_images_root_beside)
+        else {
+            warn!("no web archive root; skipping chat image restore");
+            return 0;
+        };
+        let source = chat_images_dir.to_path_buf();
+        match tokio::task::spawn_blocking(move || copy_missing_tree(&source, &root)).await {
+            Ok(count) => {
+                info!(count, "restored chat images");
+                count
+            }
+            Err(e) => {
+                warn!(error = %e, "chat image restore task failed");
                 0
             }
         }

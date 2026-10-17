@@ -103,6 +103,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             tauri::async_runtime::block_on(container.web_page_snapshots().register_job())?;
             // The scheme handler resolves the service from managed state (not the container).
             app.manage(container.web_page_snapshots());
+            app.manage(container.chat_images_service());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

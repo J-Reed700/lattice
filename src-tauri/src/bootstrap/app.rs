@@ -388,6 +388,15 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     container
         .web_page_snapshots()
         .sweep_in_background("startup");
+    // Chat pictures a turn leased and never attached, and files no row
+    // claims. No turn survives a restart except a research turn, which
+    // resumes from its saved rounds and still owns the pictures they found.
+    let jobs = Arc::clone(container.jobs());
+    container
+        .chat_images_service()
+        .sweep_in_background("startup", async move {
+            crate::features::conversation::chat::resumable_research_requests(jobs.store()).await
+        });
 
     // Collect attachments whose conversation is gone. They are owned by a chat
     // that no longer exists, so they are hidden from the library and reachable

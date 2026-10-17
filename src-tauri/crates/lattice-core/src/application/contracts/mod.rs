@@ -3,6 +3,7 @@
 pub mod explorer;
 pub mod favorites;
 pub mod file_library;
+pub mod images;
 pub mod notes;
 pub mod recent_documents;
 pub mod references;

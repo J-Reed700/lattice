@@ -4,6 +4,26 @@ const DASH_MARKER_REGEX = /^(\s{0,3})[–—−]\s+/u;
 const PAREN_NUMBERED_LIST_REGEX = /^(\s*)(\d+)[)\uFF09]\s*/u;
 const CODE_FENCE_REGEX = /^\s*```/;
 
+/** Whether this line opens or closes a ``` fence, for the line-by-line walks below. */
+function togglesFence(line: string): boolean {
+  return CODE_FENCE_REGEX.test(line);
+}
+
+/**
+ * True when the text ends inside a ``` fence that has not been closed yet.
+ *
+ * A streaming answer is cut at an arbitrary point, and markdown runs an
+ * unclosed fence to the end of the document, so the viewer holds back
+ * anything that would treat that last code block as finished (a diagram).
+ */
+export function hasUnclosedFence(content: string): boolean {
+  let inCodeFence = false;
+  for (const line of content.split('\n')) {
+    if (togglesFence(line)) inCodeFence = !inCodeFence;
+  }
+  return inCodeFence;
+}
+
 /**
  * Normalize assistant markdown into a stable, parser-friendly format.
  *
@@ -24,7 +44,7 @@ export function normalizeAssistantMarkdown(content: string): string {
   const transformed = lines.map((rawLine) => {
     const line = rawLine.replace(/[ \t]+$/g, '');
 
-    if (CODE_FENCE_REGEX.test(line)) {
+    if (togglesFence(line)) {
       inCodeFence = !inCodeFence;
       return line;
     }

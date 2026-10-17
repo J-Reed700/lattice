@@ -390,6 +390,8 @@ pub(super) async fn plan_request(
     let tool_prep_start = Instant::now();
     let tools = select_tools(container, turn, flags, tool_preferences, prompt);
     metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
+    let system_policy = with_picture_guidance(&turn.system_prompt, &tools);
+    let plain_system_prompt = with_picture_guidance(&turn.prompt_settings.system_prompt, &tools);
 
     // Enabled memory must account for unprocessed history before generation,
     // including conversations that have no extracted ledger yet.
@@ -431,7 +433,7 @@ pub(super) async fn plan_request(
                 &turn.llm,
                 &turn.conv_id,
                 memory_context::TurnPrompt {
-                    system_policy: &turn.system_prompt,
+                    system_policy: &system_policy,
                     current_input,
                     inline_evidence,
                     tool_schema_tokens,
@@ -505,7 +507,7 @@ pub(super) async fn plan_request(
             // The date leads the final message here too, never the system
             // prompt: that would change the head of the request every day.
             input: lattice_core::application::services::completion_input::from_context(
-                &turn.prompt_settings.system_prompt,
+                &plain_system_prompt,
                 &turn.context,
                 &format!(
                     "{}\n\n{}",
@@ -549,7 +551,33 @@ pub(super) fn grounded_tool_tokens(
     if tools.is_empty() {
         0
     } else {
-        llm.count_tokens(&tool_loop::tool_schema_text(&tools))
+        let guidance = if offers_pictures(&tools) {
+            llm.count_tokens(PICTURE_GUIDANCE)
+        } else {
+            0
+        };
+        llm.count_tokens(&tool_loop::tool_schema_text(&tools)) + guidance
+    }
+}
+
+/// How to place a picture, sent on every turn that offers `find_image` and on
+/// no other: the same text each time, so it never moves the cached prefix of
+/// a web turn.
+const PICTURE_GUIDANCE: &str = "\nA picture helps when the reader would otherwise have to imagine a \
+    concrete thing. Get one only with find_image and paste its `markdown` line as its own paragraph, \
+    unchanged; never write an image address of your own, and do not add a citation to the picture line.";
+
+fn offers_pictures(tools: &[ToolDefinition]) -> bool {
+    tools.iter().any(|tool| tool.name == "find_image")
+}
+
+/// The turn's standing instructions, with the picture guidance when the turn
+/// can fetch pictures. Charged with the tool schemas by `grounded_tool_tokens`.
+pub(super) fn with_picture_guidance(system_prompt: &str, tools: &[ToolDefinition]) -> String {
+    if offers_pictures(tools) {
+        format!("{system_prompt}{PICTURE_GUIDANCE}")
+    } else {
+        system_prompt.to_string()
     }
 }
 

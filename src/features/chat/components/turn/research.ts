@@ -28,6 +28,8 @@ export interface DeckPage {
   state: PageState;
   /** "1,204 words", or the reason a read failed. */
   note: string | null;
+  /** A page a picture was taken from, not one that was read. */
+  picture?: boolean;
 }
 
 export interface DeckQuery {
@@ -80,7 +82,7 @@ export interface Deck {
   rounds: number;
 }
 
-const WEB_KINDS = new Set<TurnStep['kind']>(['web_search', 'read_page', 'wiki']);
+const WEB_KINDS = new Set<TurnStep['kind']>(['web_search', 'read_page', 'wiki', 'find_image']);
 
 /** `www.` says nothing, and the host is read at a glance. */
 export function hostOf(url: string): string {
@@ -133,6 +135,22 @@ function buildRound(round: number, steps: TurnStep[]): DeckRound {
         state: step.state === 'running' ? 'reading' : step.state === 'done' ? 'read' : 'failed',
         note: step.result ?? null,
       });
+      continue;
+    }
+    if (step.kind === 'find_image') {
+      // The query is already in the label ("Finding a picture of …"); the
+      // links are the pages the pictures came from.
+      for (const link of step.links ?? []) {
+        pages.set(pageKey(link.url), {
+          url: link.url,
+          host: hostOf(link.url),
+          title: link.title ?? null,
+          state: step.state === 'running' ? 'reading' : step.state === 'done' ? 'read' : 'failed',
+          note: null,
+          picture: true,
+        });
+      }
+      if ((step.links?.length ?? 0) === 0) otherSteps.push(step);
       continue;
     }
     if (step.kind === 'web_search' || step.kind === 'wiki') {
