@@ -6,9 +6,17 @@ import { sameModelRef } from '@/utils/chatModelSelection';
 
 /**
  * The models loaded right now. Invalidated when a turn pins its model, which
- * is when a model may just have loaded, or loaded on the CPU.
+ * is when a model may just have loaded, or loaded on the CPU, and when a role
+ * finishes warming up (useModelWarmupListener).
  */
 export const LOADED_MODELS_QUERY_KEY = ['loaded-models'] as const;
+
+/**
+ * How often the list is read again while a model in it runs on the CPU. An
+ * unloaded or evicted model announces nothing, and its "on CPU" must not
+ * outlive it.
+ */
+export const DEGRADED_RECHECK_MS = 15_000;
 
 async function loadLoadedModels(): Promise<LoadedModelDto[]> {
   const result = await VaultAPI.listLoadedModels();
@@ -21,6 +29,7 @@ export function useLoadedModels() {
     queryKey: LOADED_MODELS_QUERY_KEY,
     queryFn: loadLoadedModels,
     staleTime: 15_000,
+    refetchInterval: (query) => (query.state.data?.some((entry) => entry.degraded) ? DEGRADED_RECHECK_MS : false),
   });
   return query.data ?? EMPTY;
 }
