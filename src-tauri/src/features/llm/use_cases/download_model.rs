@@ -168,7 +168,7 @@ impl DownloadModelUseCase {
         if model_metadata.category
             == lattice_core::domain::models::selection::ModelCategory::Embedding
         {
-            use crate::features::embedding::compatibility::EmbeddingCompatibility;
+            use lattice_core::domain::models::selection::EmbeddingCompatibility;
             match &model_metadata.embedding_compatibility {
                 Some(EmbeddingCompatibility::Incompatible {
                     architecture,
