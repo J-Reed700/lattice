@@ -100,7 +100,7 @@ Nothing is persisted here. The captures are saved with the program in `LearningR
 - **Schema:** `outline_schema(depth, sources)`; `sourceIndex` is nullable.
 - **Call:** reason-first, subject "the course outline", brief `OUTLINE_DRAFT_BRIEF`. Output reservation `max_modules x max_lessons x 240 + 1600` when a depth is set, else `OUTLINE_OUTPUT_RESERVE` (4,000).
 - **After the call (code):** `outline_citations::restore_source_quotes` fixes typography only; `outline_linking::strip_unmatched` removes any author quote that does not match its source exactly; `decode_outline` validates structure (a quote without an index is fabrication and an error); `service::validate_outline`. The program is saved as `Draft` with the draft state and the gathered sources.
-- **Errors:** "The goal and source excerpts exceed this model's context window. Choose fewer or shorter sources." (does not fit), "No learning sources could be acquired." (user sources requested but none acquired), parse failures ("The model returned malformed or incomplete learning material. Try again.").
+- **Errors:** "The course goal and its source catalog do not fit in <Learning model>'s <N>-token context window. Raise your Learning model's context length in Settings → Models, or choose a Learning model with a larger window" (does not fit; a configuration error), "No learning sources could be acquired." (user sources requested but none acquired), parse failures ("The model returned malformed or incomplete learning material. Try again.").
 
 Author citations are provisional. They only survive if evidence linking chooses them.
 

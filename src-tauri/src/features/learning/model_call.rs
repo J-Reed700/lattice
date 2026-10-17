@@ -72,14 +72,29 @@ pub(in crate::features::learning) struct Deadline {
     pub message: &'static str,
 }
 
-/// Send `request`. A request the model's window cannot hold fails with
-/// `too_large` and is never sent.
-pub(in crate::features::learning) async fn send(
+/// What a request the model's window cannot hold fails with.
+pub(in crate::features::learning) enum TooLarge<'a> {
+    /// Input the learner can shorten: this message, as invalid input.
+    Input(&'a str),
+    /// Material the learner cannot trim: [`window_too_small`], saying what
+    /// does not fit, with the Learning model, its window and the fix.
+    Window(&'a str),
+}
+
+impl<'a> From<&'a str> for TooLarge<'a> {
+    fn from(message: &'a str) -> Self {
+        Self::Input(message)
+    }
+}
+
+/// Send `request`. A request the model's window cannot hold fails as
+/// `too_large` says and is never sent.
+pub(in crate::features::learning) async fn send<'a>(
     llm: &dyn LLMPort,
     request: GroundedRequest,
     streaming: Option<&Streaming<'_>>,
     deadline: Option<Deadline>,
-    too_large: &str,
+    too_large: impl Into<TooLarge<'a>>,
 ) -> Result<GroundedOutput> {
     let call = async {
         match streaming {
@@ -96,7 +111,10 @@ pub(in crate::features::learning) async fn send(
         None => call.await,
     };
     result.map_err(|error| match error {
-        GroundedGenerationError::Budget(_) => AppError::InvalidInput(too_large.into()),
+        GroundedGenerationError::Budget(_) => match too_large.into() {
+            TooLarge::Input(message) => AppError::InvalidInput(message.into()),
+            TooLarge::Window(what) => window_too_small(llm, what),
+        },
         GroundedGenerationError::Model(error) => error,
     })
 }
@@ -222,6 +240,36 @@ mod tests {
         .map(|error| error.to_string())
         .unwrap_or_default();
         assert!(error.contains("Choose fewer sources."), "{error}");
+        assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() {
+        let llm = recorder(4096);
+        let error = send(
+            &llm,
+            structured(
+                "Return JSON.",
+                "x".repeat(40_000),
+                serde_json::json!({}),
+                500,
+                "low",
+            ),
+            None,
+            None,
+            TooLarge::Window("The requested learning material does not fit"),
+        )
+        .await
+        .err();
+        let Some(AppError::InvalidConfig(message)) = error else {
+            panic!("expected a configuration refusal, got {error:?}");
+        };
+        assert_eq!(
+            message,
+            "The requested learning material does not fit in recorder's 4096-token context \
+             window. Raise your Learning model's context length in Settings → Models, or choose \
+             a Learning model with a larger window"
+        );
         assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
     }
 

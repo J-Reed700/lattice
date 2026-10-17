@@ -354,7 +354,7 @@ async fn send(
             after: MATERIAL_CALL_BUDGET,
             message: "Learning material generation timed out. Try again.",
         }),
-        "The requested learning material does not fit in this model's context window. Choose fewer or shorter sources.",
+        model_call::TooLarge::Window("The requested learning material does not fit"),
     )
     .await?;
     tracing::info!(
