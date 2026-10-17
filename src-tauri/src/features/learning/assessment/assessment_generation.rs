@@ -9,7 +9,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 
 const SYSTEM: &str = "Author source-grounded assessment items. Each item needs an explanation of its rationale and, when sources are supplied, an exact quote from its sourceIndex source. Rubric has two to four task-specific criteria for open formats (title, description, dimension), or an empty array for objectively keyed items. Criteria must state observable incomplete, adequate and strong performance without leaking the answer. Include a concrete scenario and deliverable that require the outcome, not a request to repeat its title. If there are no sources, author from the supplied lesson material and outcomes, set sourceIndex to null and quote to an empty string; never invent citations. MCQ uses answerIndex; short_answer uses acceptedAnswers and empty options; ordering uses options as the shuffled values and orderedValues as the correct permutation; open formats use empty options/keys.";
 
@@ -129,10 +129,6 @@ impl Batch {
                 "low",
             ),
             None,
-            Some(model_call::Deadline {
-                after: Duration::from_secs(120),
-                message: "Assessment authoring timed out.",
-            }),
             "Assessment authoring request exceeds the model context window.",
         )
         .await?;
@@ -434,10 +430,6 @@ pub async fn grade_open(
         llm,
         model_call::structured(system, prompt, schema, 1500, "low"),
         None,
-        Some(model_call::Deadline {
-            after: Duration::from_secs(120),
-            message: "Assessment grading timed out.",
-        }),
         "Assessment grading exceeds the model context window.",
     )
     .await?;

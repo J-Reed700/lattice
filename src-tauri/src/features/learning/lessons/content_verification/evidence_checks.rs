@@ -221,12 +221,6 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
             outcome.reason.unwrap_or_default(),
             outcome.quote,
         ),
-        // Running out of time is an outage the job waits out, not a finding.
-        ClaimJudgment::OutOfTime => {
-            return Err(AppError::ServiceNotAvailable(
-                "The claim checking deadline expired.".into(),
-            ))
-        }
         // Every unverified finding is deterministic: its reason is the cause.
         ClaimJudgment::Unusable => (
             ClaimVerdict::Unverified,
@@ -414,7 +408,7 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
         }
         let mut unresolved = Vec::new();
         for (item, judgment) in pending.into_iter().zip(judgments) {
-            if matches!(judgment, ClaimJudgment::Unusable | ClaimJudgment::OutOfTime) {
+            if matches!(judgment, ClaimJudgment::Unusable) {
                 unresolved.push(item);
             } else {
                 // Save completed siblings before a malformed response needs a

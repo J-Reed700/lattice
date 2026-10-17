@@ -70,6 +70,16 @@ pub(super) struct FinishedAnswer {
     pub(super) summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
 }
 
+/// The saved answer: the turn's response, the answer's message id, and the
+/// cited pages still to capture.
+pub(super) struct SavedAnswer {
+    pub(super) response: ChatResponse,
+    pub(super) message_id: String,
+    /// Cited pages this conversation has no archive of. The answer was saved
+    /// with a pending capture marker when this is not empty.
+    pub(super) uncaptured: Vec<super::source_snapshots::UncapturedPage>,
+}
+
 /// Save `answer` against the question saved as `user_message_id`, and return
 /// the turn's response with the answer's message id.
 pub(super) async fn finalize_successful_turn(
@@ -79,7 +89,7 @@ pub(super) async fn finalize_successful_turn(
     message_tokens: usize,
     context_len: usize,
     answer: FinishedAnswer,
-) -> Result<(ChatResponse, String)> {
+) -> Result<SavedAnswer> {
     let ChatTurn {
         conv_service,
         conversation_id,
@@ -96,7 +106,10 @@ pub(super) async fn finalize_successful_turn(
         turn_record,
         summary_refold,
     } = answer;
-    super::source_snapshots::attach_cited_web_snapshots(
+    // Pages already archived are attached now; a cited page never read is
+    // captured after the answer is saved and returned, so a slow site cannot
+    // hold the answer back.
+    let uncaptured = super::source_snapshots::attach_archived_snapshots(
         container,
         conversation_id,
         &assistant_response,
@@ -108,6 +121,12 @@ pub(super) async fn finalize_successful_turn(
     let mut metadata_payload = serde_json::Map::new();
     if !sources.is_empty() {
         metadata_payload.insert("sources".to_string(), serde_json::json!(&sources));
+    }
+    if !uncaptured.is_empty() {
+        metadata_payload.insert(
+            super::source_snapshots::CAPTURE_KEY.to_string(),
+            super::source_snapshots::pending_capture(),
+        );
     }
     if let Some(memory) = memory_usage {
         metadata_payload.insert("memory".into(), memory);
@@ -178,8 +197,8 @@ pub(super) async fn finalize_successful_turn(
         &assistant_msg,
     );
 
-    Ok((
-        ChatResponse {
+    Ok(SavedAnswer {
+        response: ChatResponse {
             conversation_id: conversation_id.to_string(),
             message: assistant_response,
             messages,
@@ -187,8 +206,9 @@ pub(super) async fn finalize_successful_turn(
             sources,
             timing_metrics: None,
         },
-        assistant_msg.id,
-    ))
+        message_id: assistant_msg.id,
+        uncaptured,
+    })
 }
 
 /// Commit the answer and settle the question in one step, or mark the question

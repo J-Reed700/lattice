@@ -1,13 +1,9 @@
-use lattice_core::application::ports::llm_port::{
-    CompletionRequest, InferencePriority, PrefillTiming,
-};
+use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::completion_input::from_context;
-use lattice_core::application::services::prompt_pace::PromptPace;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -44,7 +40,6 @@ pub(crate) fn intent_schema() -> serde_json::Value {
 }
 
 pub const DEFAULT_INTENT_CONFIDENCE_THRESHOLD: f32 = 0.5;
-const DEFAULT_INTENT_TIMEOUT_MS: u64 = 15_000;
 
 /// The utility model's guess at what a turn needs. It can add to the user-set
 /// flags and never takes anything away. `needs_knowledge_base` and
@@ -83,29 +78,14 @@ pub struct IntentInput {
     pub recent_context: Vec<String>,
 }
 
+/// Asks the utility model what a turn needs. No clock bounds the call: the
+/// user's Stop cancels it, and the adapter's stall detection ends one whose
+/// server has gone quiet. Any error falls back to the user's own flags.
 pub struct IntentClassifier {
     llm: Arc<dyn LLMPort>,
     prompt_template: String,
     confidence_threshold: f32,
-    timeout_ms: u64,
     cancel: Option<CancellationToken>,
-    /// What this classifier's model reads inside the timeout, learned across
-    /// turns. Without one the history is the window share alone.
-    pace: Option<Arc<PromptPace>>,
-}
-
-/// The smallest prompt a timeout shrinks the classifier to: its instructions
-/// (about 250 tokens), the message, and the newest turn or the start of it.
-/// Without one, a run of timeouts on a busy server shrank the history to
-/// nothing, and a follow-up was classified with no idea what it follows.
-const INTENT_PROMPT_FLOOR: usize = 1_024;
-
-/// A pace for the classifier's own deadline, one per chat runtime. The user is
-/// waiting on the turn, so the prompt reads for a small share of the timeout.
-pub fn intent_pace() -> PromptPace {
-    PromptPace::new(Duration::from_millis(DEFAULT_INTENT_TIMEOUT_MS))
-        .on_critical_path()
-        .with_floor(INTENT_PROMPT_FLOOR)
 }
 
 impl IntentClassifier {
@@ -114,7 +94,6 @@ impl IntentClassifier {
             llm,
             DEFAULT_INTENT_PROMPT_TEMPLATE.to_string(),
             DEFAULT_INTENT_CONFIDENCE_THRESHOLD,
-            DEFAULT_INTENT_TIMEOUT_MS,
         )
     }
 
@@ -122,23 +101,13 @@ impl IntentClassifier {
         llm: Arc<dyn LLMPort>,
         prompt_template: String,
         confidence_threshold: f32,
-        timeout_ms: u64,
     ) -> Self {
         Self {
             llm,
             prompt_template,
             confidence_threshold,
-            timeout_ms,
             cancel: None,
-            pace: None,
         }
-    }
-
-    /// Size history to what the model reads within the timeout, and teach
-    /// `pace` from each answer and timeout.
-    pub fn with_pace(mut self, pace: Arc<PromptPace>) -> Self {
-        self.pace = Some(pace);
-        self
     }
 
     /// Stop the classification when the turn is stopped.
@@ -148,16 +117,14 @@ impl IntentClassifier {
     }
 
     /// The input for `message` with as much of `context` (oldest first) as
-    /// this classifier's window gives history, and no more than its model
-    /// reads within the timeout: the newest turns, whole, and a line counting
-    /// any earlier ones left out. A newest turn too long for the room on its
+    /// this classifier's window gives history: the newest turns, whole, and a
+    /// line counting any earlier ones left out. A newest turn too long for the room on its
     /// own is not dropped: its start goes in, marked as continuing, since the
     /// turn a follow-up follows is the one thing the classifier must see.
     pub fn input_for(&self, message: &str, context: &[String]) -> IntentInput {
         use lattice_core::application::services::history_share::{
             auxiliary_history_room, newest_that_fit, omitted_note,
         };
-        use lattice_core::application::services::prompt_pace::history_room_within;
         let bare = render_intent_prompt(
             &self.prompt_template,
             &IntentInput {
@@ -166,14 +133,6 @@ impl IntentClassifier {
             },
         );
         let room = auxiliary_history_room(self.llm.as_ref(), &bare);
-        let room = self.pace.as_deref().map_or(room, |pace| {
-            history_room_within(
-                pace,
-                self.llm.model_name(),
-                room,
-                self.llm.count_tokens(&bare),
-            )
-        });
         let turn_cost = |turn: &String| self.llm.count_tokens(turn).saturating_add(1);
         let (recent, omitted) = newest_that_fit(context, room, turn_cost);
         let (recent, omitted) = match (recent.is_empty(), context.last()) {
@@ -219,17 +178,9 @@ impl IntentClassifier {
 
     pub async fn classify(&self, input: &IntentInput) -> TurnIntent {
         let prompt = render_intent_prompt(&self.prompt_template, input);
-        let timeout_ms = self.timeout_ms.max(1);
-        let sent_tokens = self.llm.count_tokens(&prompt);
 
-        // Part of the turn the user is waiting on.
-        let result = timeout(Duration::from_millis(timeout_ms), self.complete(prompt)).await;
-
-        match result {
-            Ok(Ok((text, prefill))) => {
-                if let Some(pace) = &self.pace {
-                    pace.answered(self.llm.model_name(), prefill, sent_tokens);
-                }
+        match self.complete(prompt).await {
+            Ok(text) => {
                 let mut intent = parse_turn_intent(&text).unwrap_or_else(|| {
                     warn!("Intent classifier returned unparsable output, falling back");
                     TurnIntent::fallback()
@@ -255,22 +206,8 @@ impl IntentClassifier {
 
                 intent
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 warn!(error = %e, "Intent classifier LLM failed, falling back");
-                TurnIntent::fallback()
-            }
-            Err(_) => {
-                if let Some(pace) = &self.pace {
-                    pace.timed_out(self.llm.model_name(), sent_tokens);
-                }
-                warn!(
-                    sent_tokens,
-                    next_prompt_tokens = ?self
-                        .pace
-                        .as_deref()
-                        .map(|pace| pace.tokens(self.llm.model_name())),
-                    "Intent classifier timed out, falling back"
-                );
                 TurnIntent::fallback()
             }
         }
@@ -281,14 +218,16 @@ impl IntentClassifier {
     /// One schema-constrained request. A provider that cannot hold the answer
     /// to the schema still gets the prompt, and the lenient parser reads what
     /// comes back.
-    async fn complete(&self, prompt: String) -> Result<(String, Option<PrefillTiming>)> {
+    async fn complete(&self, prompt: String) -> Result<String> {
         let response = self
             .llm
             .complete(&CompletionRequest {
                 input: from_context("", &[], &prompt),
                 json_schema: Some(intent_schema()),
+                // Part of the turn the user is waiting on: Stop cancels it.
                 priority: InferencePriority::Interactive,
                 cancel: self.cancel.clone(),
+                no_time_limit: true,
                 ..Default::default()
             })
             .await?;
@@ -297,7 +236,7 @@ impl IntentClassifier {
                 "Unexpected tool call in intent classification".into(),
             ));
         }
-        Ok((response.text, response.prefill))
+        Ok(response.text)
     }
 }
 
@@ -345,7 +284,7 @@ mod tests {
             })
         }
 
-        /// A 32K window, whose history share is larger than the pace allows.
+        /// A 32K window, whose history share holds a long chat whole.
         fn wide(response: impl Into<String>) -> Arc<Self> {
             Arc::new(Self {
                 response: response.into(),
@@ -504,6 +443,7 @@ mod tests {
         assert_eq!(sent.len(), 1);
         let request = sent.first().unwrap();
         assert_eq!(request.json_schema, Some(intent_schema()));
+        assert!(request.no_time_limit, "no clock cuts the classifier off");
         let prompt = request.user_text();
         for demand in ["JSON", "strict", "Respond with", "no other text", "bool"] {
             assert!(!prompt.contains(demand), "prompt still asks for: {demand}");
@@ -576,69 +516,108 @@ mod tests {
         assert!(intent.needs_knowledge_base);
     }
 
-    fn bare_tokens(classifier: &IntentClassifier, message: &str) -> usize {
-        classifier.llm.count_tokens(&render_intent_prompt(
-            DEFAULT_INTENT_PROMPT_TEMPLATE,
-            &IntentInput {
-                message: message.into(),
-                recent_context: Vec::new(),
-            },
-        ))
-    }
-
-    /// A long chat on a slow local model timed the classifier out every turn:
-    /// its history was a quarter of the window, more than the model reads
-    /// before the timeout. With a pace the prompt is what the model reads in
-    /// time, and the turns left out are counted.
+    /// The history is what the classifier's window gives it, newest turns
+    /// whole and the rest counted. A small window keeps the newest stretch of
+    /// a long chat; a large one carries it whole. No reading-speed estimate
+    /// shrinks either.
     #[test]
-    fn history_is_sized_to_what_the_model_reads_before_the_timeout() {
+    fn history_is_sized_from_the_classifiers_window() {
+        use lattice_core::application::services::history_share::auxiliary_history_room;
         let context: Vec<String> = (0..60)
             .map(|turn| format!("turn {turn} {}", "word ".repeat(20)))
             .collect();
-        let shared = IntentClassifier::new(MockLLM::wide("{}")).input_for("and then?", &context);
 
-        let pace = Arc::new(intent_pace());
-        let paced = IntentClassifier::new(MockLLM::wide("{}")).with_pace(Arc::clone(&pace));
-        let input = paced.input_for("and then?", &context);
-        assert!(input.recent_context.len() < shared.recent_context.len());
+        let wide = IntentClassifier::new(MockLLM::wide("{}")).input_for("and then?", &context);
+        assert_eq!(wide.recent_context, context, "a 32K window holds it all");
+
+        let narrow = IntentClassifier::new(MockLLM::new("{}"));
+        let input = narrow.input_for("and then?", &context);
+        assert!(input.recent_context.len() > 1 && input.recent_context.len() < context.len());
         assert!(
             input.recent_context[0].contains("earlier messages not shown"),
             "{:?}",
             input.recent_context
         );
-        let sent = paced.llm.count_tokens(&render_intent_prompt(
-            DEFAULT_INTENT_PROMPT_TEMPLATE,
-            &input,
-        ));
-        assert!(sent <= pace.tokens("mock-llm") + 8, "{sent} tokens");
+        assert!(input.recent_context.last().unwrap().starts_with("turn 59 "));
+        let room = auxiliary_history_room(
+            narrow.llm.as_ref(),
+            &render_intent_prompt(
+                DEFAULT_INTENT_PROMPT_TEMPLATE,
+                &IntentInput {
+                    message: "and then?".into(),
+                    recent_context: Vec::new(),
+                },
+            ),
+        );
+        let carried: usize = input.recent_context[1..]
+            .iter()
+            .map(|turn| narrow.llm.count_tokens(turn) + 1)
+            .sum();
+        assert!(carried <= room, "{carried} of {room}");
     }
 
-    /// Timeouts on a busy server used to shrink the classifier's prompt to
-    /// its bare instructions, so a follow-up was classified blind. The floor
-    /// keeps the newest turns in.
-    #[test]
-    fn repeated_timeouts_never_shrink_history_to_nothing() {
-        let pace = Arc::new(intent_pace());
-        for _ in 0..20 {
-            pace.timed_out("mock-llm", pace.tokens("mock-llm"));
+    /// Answers after `delay`, as a slow local model does.
+    struct SlowLLM {
+        delay: std::time::Duration,
+    }
+
+    #[async_trait]
+    impl LLMPort for SlowLLM {
+        async fn complete(
+            &self,
+            _request: &CompletionRequest,
+        ) -> lattice_core::shared::error::Result<CompletionResponse> {
+            tokio::time::sleep(self.delay).await;
+            Ok(CompletionResponse::from_text(
+                r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"confidence":0.9}"#,
+            ))
         }
-        assert_eq!(pace.tokens("mock-llm"), INTENT_PROMPT_FLOOR);
-        let classifier = IntentClassifier::new(MockLLM::new("{}")).with_pace(pace);
-        let context: Vec<String> = (0..60)
-            .map(|turn| format!("turn {turn} {}", "word ".repeat(20)))
-            .collect();
-        let input = classifier.input_for("and then?", &context);
-        assert!(input.recent_context.len() > 1, "{:?}", input.recent_context);
-        assert!(input.recent_context.last().unwrap().starts_with("turn 59 "));
+        fn model_name(&self) -> &str {
+            "slow-llm"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// The classifier used to give up after 15 s and fall back to the user's
+    /// flags. A model that answers after 20 s is slow, not dead: its answer
+    /// is used.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_classifier_is_waited_for() {
+        let classifier = IntentClassifier::new(Arc::new(SlowLLM {
+            delay: std::time::Duration::from_secs(20),
+        }));
+        let started = tokio::time::Instant::now();
+        let intent = classifier.classify(&input()).await;
+        assert!(started.elapsed() >= std::time::Duration::from_secs(20));
+        assert!(intent.needs_knowledge_base);
+        assert!(intent.is_followup);
+        assert!((intent.confidence - 0.9).abs() < f32::EPSILON);
     }
 
     /// A newest turn longer than the whole room used to leave no history at
     /// all. Its start goes in, marked as continuing, and nothing older.
     #[test]
     fn a_newest_turn_too_long_for_the_room_goes_in_partially_and_marked() {
-        let classifier =
-            IntentClassifier::new(MockLLM::new("{}")).with_pace(Arc::new(intent_pace()));
-        let room = INTENT_PROMPT_FLOOR - bare_tokens(&classifier, "and then?");
+        use lattice_core::application::services::history_share::auxiliary_history_room;
+        let classifier = IntentClassifier::new(MockLLM::new("{}"));
+        let room = auxiliary_history_room(
+            classifier.llm.as_ref(),
+            &render_intent_prompt(
+                DEFAULT_INTENT_PROMPT_TEMPLATE,
+                &IntentInput {
+                    message: "and then?".into(),
+                    recent_context: Vec::new(),
+                },
+            ),
+        );
         let context = vec![
             "Assistant: an earlier answer".to_string(),
             format!("Assistant: {}", "word ".repeat(room * 3)),

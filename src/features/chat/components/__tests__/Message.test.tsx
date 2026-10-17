@@ -208,7 +208,7 @@ describe('message verification disclosure', () => {
           citationIds: [1],
           verdict: 'unverified',
           method: 'lexical',
-          unverifiedReason: 'budget',
+          unverifiedReason: 'judge_failed',
         },
       ],
       judgeUsed: true,

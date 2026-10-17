@@ -41,7 +41,6 @@ fn challenge_request(
     );
     request.output_fills_window = true;
     request.call.sampling = Some(SamplingOverride::deterministic());
-    request.call.no_time_limit = true;
     request.call.priority = InferencePriority::Verification;
     request.call.cache_key = crate::features::learning::lesson_progress::cache_key();
     request
@@ -90,7 +89,6 @@ async fn send_challenge_once(
             on_text: &receive,
             on_retry: Some(&retry),
         }),
-        None,
         too_large,
     )
     .await

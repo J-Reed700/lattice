@@ -139,7 +139,7 @@ async fn judge(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Result<Ju
     match judge_for_publication(llm, claim, passages).await {
         ClaimJudgment::Judged(outcome) => Ok(outcome),
         ClaimJudgment::Failed(error) => Err(error),
-        ClaimJudgment::OutOfTime | ClaimJudgment::Unusable => Err(AppError::Other(
+        ClaimJudgment::Unusable => Err(AppError::Other(
             "The claim check returned no usable verdict. The finding is kept; Repair can try again."
                 .into(),
         )),

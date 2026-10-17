@@ -192,8 +192,6 @@ pub struct GroundedOutput {
     pub finish_reason: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
-    /// How the provider read the prompt, when it says.
-    pub prefill: Option<crate::application::ports::llm_port::PrefillTiming>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -550,7 +548,6 @@ async fn run(
         finish_reason: response.finish_reason,
         input_tokens: response.input_tokens,
         output_tokens: response.output_tokens,
-        prefill: response.prefill,
     })
 }
 

@@ -1,5 +1,8 @@
 use super::retrieval::WEB_SOURCE_PREFIX;
-use super::{RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnStepDto, VerificationReadyDto};
+use super::{
+    CapturedSourcesDto, RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnStepDto,
+    VerificationReadyDto,
+};
 pub(crate) use crate::features::explorer::dto::ExplorerFocusDto;
 pub(super) use crate::features::qa::dto::SourceDto;
 use serde::{Deserialize, Serialize};
@@ -170,6 +173,11 @@ pub struct ChatStreamEventDto {
     /// per verified answer, possibly well after `done`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationReadyDto>,
+
+    /// Cited pages captured after the turn returned. Arrives once per answer
+    /// that cited a page it never read, before that answer's grounding check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured: Option<CapturedSourcesDto>,
 }
 
 impl ChatStreamEventDto {

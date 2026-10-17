@@ -355,7 +355,8 @@ async fn the_judge_starts_with_a_label_and_puts_document_first() {
     assert!(request.want_logprobs);
     assert!(request.json_schema.is_none());
     assert!(request.reasoning_effort.is_none());
-    assert!(!request.no_time_limit);
+    // No clock cuts a judge call off: stall detection and shutdown do.
+    assert!(request.no_time_limit);
     // A verdict is a classification. Sampling one from the chat model's
     // distribution made the same claim against the same passage come back
     // supported, unsupported and contradicted across repeats of one request;
@@ -518,7 +519,7 @@ fn evidence_room_follows_the_judge_window() {
         marker: "",
         calls: std::sync::Mutex::new(0),
     }) as Arc<dyn LLMPort>);
-    let room = small.evidence_room_chars("A claim.", 1);
+    let room = small.evidence_room_chars("A claim.");
     // 8,192 tokens less the answer's 4,096 and the prompts, at the
     // estimate's three-quarter under-fill.
     assert!(room > 8_000 && room < 12_288, "got {room}");
@@ -601,7 +602,7 @@ impl LLMPort for OrderingLlm {
 }
 
 /// A claim citing a long page used to be judged part after part before the
-/// claims after it got a call, so the budget ran out on them untried. Every
+/// claims after it got a call, so they waited on every part of it. Every
 /// claim's best part goes first now.
 #[tokio::test]
 async fn every_claims_best_part_is_judged_before_any_claims_second() {
@@ -653,24 +654,17 @@ async fn a_failed_part_stops_the_claims_later_parts() {
     assert_eq!(llm.order.lock().unwrap().len(), 1);
 }
 
-/// A judge on a large window, reporting a slow prefill: 100 tokens a second.
-struct SlowReader;
+/// A judge on a large window.
+struct LargeWindow;
 
 #[async_trait::async_trait]
-impl LLMPort for SlowReader {
+impl LLMPort for LargeWindow {
     async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
-        Ok(CompletionResponse {
-            text: "supported".into(),
-            prefill: Some(lattice_core::application::ports::llm_port::PrefillTiming {
-                tokens: 2_000,
-                seconds: 20.0,
-            }),
-            ..Default::default()
-        })
+        Ok(CompletionResponse::from_text("supported"))
     }
 
     fn model_name(&self) -> &str {
-        "slow-reader"
+        "large-window"
     }
 
     fn max_context_tokens(&self) -> usize {
@@ -686,31 +680,16 @@ impl LLMPort for SlowReader {
     }
 }
 
-/// The judge's 90 s budget against a part sized to its window: on a large
-/// window a part of 120K tokens cannot be read in time, so the claim ran out
-/// of time with the slot held. A part is what the model's measured speed
-/// reads in its share of the budget, shared by the claims waiting; the
-/// window is only the ceiling.
-#[tokio::test]
-async fn a_part_is_what_the_judge_reads_in_time_shared_by_the_open_claims() {
-    let llm = Arc::new(SlowReader) as Arc<dyn LLMPort>;
-    let window_only = ClaimJudge::new(Arc::clone(&llm)).evidence_room_chars("claim", 1);
-    let pace = Arc::new(judge_pace());
-    let judge = ClaimJudge::new(llm).with_pace(Arc::clone(&pace));
-
-    let assumed = judge.evidence_room_chars("claim", 1);
-    assert!(assumed < window_only, "{assumed} of {window_only}");
-    assert!(judge.evidence_room_chars("claim", 4) < assumed);
-
-    // Every answered call teaches the pace through the judge's own port.
-    judge_first(&judge).await;
+/// A part is what the judge's window holds beside the claim and the answer.
+/// No reading-speed estimate shrinks it and no time budget is divided among
+/// the claims waiting: on a 128K window a part carries over 120K tokens.
+#[test]
+fn a_part_is_sized_from_the_judges_window() {
+    let judge = ClaimJudge::new(Arc::new(LargeWindow) as Arc<dyn LLMPort>);
+    let window_room = judge.checker().evidence_room_tokens("claim");
+    assert!(window_room > 120_000, "{window_room}");
     assert_eq!(
-        pace.readable_within("slow-reader", Duration::from_secs(1)),
-        Some(100)
-    );
-    // 100 tokens a second for half of 90 s, between two claims.
-    assert_eq!(
-        judge.evidence_room_chars("claim", 2),
-        chars_within_tokens(2_250, SlowReader.chars_per_token())
+        judge.evidence_room_chars("claim"),
+        chars_within_tokens(window_room, LargeWindow.chars_per_token())
     );
 }

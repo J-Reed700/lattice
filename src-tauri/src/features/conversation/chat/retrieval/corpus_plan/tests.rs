@@ -7,7 +7,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::LLMPort;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 #[test]

@@ -2,6 +2,7 @@
 use super::generate::GeneratedAnswer;
 use super::prepare::PreparedTurn;
 use super::*;
+use crate::features::conversation::chat::source_snapshots::CitationCapture;
 
 pub(super) async fn finalize_turn(
     container: &dyn ChatRuntime,
@@ -95,7 +96,7 @@ pub(super) async fn finalize_turn(
     // Finalization marks the question failed itself when the commit does not
     // land, and reports success once it has: a failure after the answer is
     // saved is not a failed turn.
-    let (mut chat_response, answer_id) = finalize_successful_turn(
+    let saved = finalize_successful_turn(
         container,
         turn.chat_turn(),
         user_message_id,
@@ -114,17 +115,38 @@ pub(super) async fn finalize_turn(
     .await?;
     metrics.finalize_persistence_ms = elapsed_ms(finalize_start);
 
-    if let Some((response, sources, record)) = background_verification {
-        start_background_verification(
+    let verification = background_verification.map(|(response, sources, record)| {
+        background_verification_for(
             container,
             turn,
-            answer_id,
+            saved.message_id.clone(),
             response,
             sources,
             record,
             verification_start,
             emit,
         )
+    });
+    let mut chat_response = saved.response;
+    if saved.uncaptured.is_empty() {
+        if let Some(verification) = verification {
+            verification.spawn().await;
+        }
+    } else {
+        // The check reads the archived pages, so it waits for the capture.
+        CitationCapture {
+            runtime: container.share(),
+            conversation_service: Arc::clone(&turn.conv_service),
+            conversation_id: turn.conv_id.clone(),
+            request_id: turn.turn_id.clone(),
+            message_id: saved.message_id,
+            sources: chat_response.sources.clone(),
+            pages: saved.uncaptured,
+            emit: background_emit(emit, "Failed to emit the captured cited pages"),
+            background: container.background(),
+            then: verification,
+        }
+        .spawn()
         .await;
     }
     metrics.total_ms = elapsed_ms(flow_start);
@@ -136,7 +158,7 @@ pub(super) async fn finalize_turn(
 
 /// The grounding check, after the answer is saved and returned: it reports
 /// through its own event and finishes the turn's verify step when it lands.
-async fn start_background_verification(
+fn background_verification_for(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
     message_id: String,
@@ -145,8 +167,7 @@ async fn start_background_verification(
     record: TurnRecordDto,
     started: Instant,
     emit: &ChatEventSink,
-) {
-    let emit = Arc::clone(emit);
+) -> BackgroundVerification {
     BackgroundVerification {
         conversation_repository: container.chat_records(),
         conversation_service: Arc::clone(&turn.conv_service),
@@ -160,16 +181,23 @@ async fn start_background_verification(
         chat_llm: Arc::clone(&turn.llm),
         turn: Some(record),
         started,
-        emit: Arc::new(move |payload| {
-            if let Err(error) = emit(payload) {
-                warn!(%error, "Failed to emit a finished grounding check");
-            }
-        }),
+        emit: background_emit(emit, "Failed to emit a finished grounding check"),
         background: container.background(),
-        judge_pace: container.judge_pace(),
     }
-    .spawn()
-    .await;
+}
+
+/// The turn's event sink for work that reports after the turn returned, which
+/// has no caller left to hand a failed emit to.
+fn background_emit(
+    emit: &ChatEventSink,
+    failure: &'static str,
+) -> Arc<dyn Fn(ChatStreamEventDto) + Send + Sync> {
+    let emit = Arc::clone(emit);
+    Arc::new(move |payload| {
+        if let Err(error) = emit(payload) {
+            warn!(%error, "{failure}");
+        }
+    })
 }
 
 macro_rules! flow_timing_event {

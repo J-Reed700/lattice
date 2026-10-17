@@ -328,15 +328,10 @@ pub trait ChatRetrieval: Send + Sync {
     async fn summary_search(
         &self,
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>>;
-    /// How much prompt the corpus planner can take in time, learned across
-    /// every turn this runtime runs — and never shared with a test's runtime.
+    /// What the corpus planner's servers have shown about their real
+    /// windows, learned across every turn this runtime runs — and never
+    /// shared with a test's runtime.
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
-    /// How much prompt the turn-intent classifier's model reads inside the
-    /// classifier's deadline, learned the same way.
-    fn intent_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
-    /// How much source text the grounding judge's model reads inside the
-    /// judge's budget, learned the same way.
-    fn judge_pace(&self) -> Arc<lattice_core::application::services::prompt_pace::PromptPace>;
 }
 
 #[async_trait]

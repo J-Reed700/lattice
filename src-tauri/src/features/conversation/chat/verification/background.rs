@@ -1,8 +1,8 @@
 //! Grounding verification after the answer is on screen.
 //!
 //! The check reads every cited page and may ask the utility model about dozens
-//! of claims; run inline it held the finished answer back for up to its whole
-//! budget. So the turn persists the answer with a pending marker and returns,
+//! of claims; run inline it held the finished answer back until every claim
+//! was judged. So the turn persists the answer with a pending marker and returns,
 //! and this task fills the verdicts in: it patches the message's metadata and
 //! tells the window, which swaps the badge from "checking" to the result.
 
@@ -71,8 +71,6 @@ pub(in crate::features::conversation) struct BackgroundVerification {
     pub emit: Arc<dyn Fn(ChatStreamEventDto) + Send + Sync>,
     /// Where the check runs, so shutdown stops it and marks it not checked.
     pub background: Arc<BackgroundTasks>,
-    /// What the judge's model reads within its budget, learned across turns.
-    pub judge_pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
 }
 
 impl BackgroundVerification {
@@ -128,9 +126,7 @@ impl BackgroundVerification {
                 &sources,
             ) => evidence,
         };
-        let verifier = GroundingVerifier::new(judge_llm)
-            .with_tuning(&self.tuning)
-            .with_pace(Arc::clone(&self.judge_pace));
+        let verifier = GroundingVerifier::new(judge_llm).with_tuning(&self.tuning);
         let response = self.response.clone();
         let report = tokio::select! {
             biased;
@@ -296,7 +292,6 @@ mod tests {
             started: Instant::now(),
             emit: Arc::new(move |payload| *event_sink.lock().unwrap() = Some(payload)),
             background: Arc::default(),
-            judge_pace: Arc::new(crate::features::conversation::chat::verification::judge_pace()),
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         let worker_cancel = cancel.clone();
