@@ -99,6 +99,12 @@ pub enum AppError {
     /// Required service is not available
     ServiceNotAvailable(String),
 
+    /// A model server refused a request in a way that retrying cannot change:
+    /// it rejected the request itself, or failed the same request the same way
+    /// twice. The text carries the server's own words, sanitized, and the
+    /// request's size against the configured context window.
+    ModelRejected(String),
+
     /// Serialization error
     Serialization(String),
 
@@ -246,6 +252,7 @@ impl AppError {
             AppError::InvalidState(_) => "INVALID_STATE",
             AppError::Storage(_) => "STORAGE_ERROR",
             AppError::ServiceNotAvailable(_) => "SERVICE_UNAVAILABLE",
+            AppError::ModelRejected(_) => "MODEL_REJECTED",
             AppError::Serialization(_) => "SERIALIZATION_ERROR",
             AppError::Security(_) => "SECURITY_ERROR",
             AppError::KeyringError(_) => "KEYRING_ERROR",
@@ -277,6 +284,7 @@ impl AppError {
             | AppError::UnsupportedFileType { .. } => 400,
             AppError::RateLimitExceeded(_) => 429,
             AppError::ServiceNotAvailable(_) | AppError::AiModelsNotInstalled(_) => 503,
+            AppError::ModelRejected(_) => 502,
             AppError::FileTooLarge { .. } => 413,
             AppError::ConcurrentModification { .. } => 409,
             AppError::Domain(err) if err.is_not_found() => 404,
@@ -541,6 +549,7 @@ impl fmt::Display for AppError {
             AppError::InvalidState(e) => write!(f, "Invalid state: {}", e),
             AppError::Storage(e) => write!(f, "Storage error: {}", e),
             AppError::ServiceNotAvailable(e) => write!(f, "Service not available: {}", e),
+            AppError::ModelRejected(e) => write!(f, "{}", e),
             AppError::Serialization(e) => write!(f, "Serialization error: {}", e),
             AppError::Security(e) => write!(f, "Security error: {}", e),
             AppError::KeyringError(e) => write!(f, "Keyring error: {}", e),

@@ -4149,6 +4149,13 @@ export type AppError =
  */
 { ServiceNotAvailable: string } |
 /**
+ * A model server refused a request in a way that retrying cannot change:
+ * it rejected the request itself, or failed the same request the same way
+ * twice. The text carries the server's own words, sanitized, and the
+ * request's size against the configured context window.
+ */
+{ ModelRejected: string } |
+/**
  * Serialization error
  */
 { Serialization: string } |

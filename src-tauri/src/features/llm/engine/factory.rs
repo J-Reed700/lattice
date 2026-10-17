@@ -426,7 +426,7 @@ pub(crate) async fn create_ollama_llm(
         error!("Failed to create Ollama client: {}", e);
         match e {
             AppError::InvalidInput(msg) => LLMError::InvalidConfig(msg),
-            AppError::Network(msg) => LLMError::ClientUnavailable(msg),
+            AppError::Network(msg) => LLMError::Network(msg),
             _ => LLMError::ClientUnavailable(e.to_string()),
         }
     })?;
@@ -434,13 +434,15 @@ pub(crate) async fn create_ollama_llm(
     let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
     let client = client.with_generation_config(generation_config);
 
-    if !client.health_check().await {
-        error!("Ollama health check failed: {}", endpoint);
-        return Err(LLMError::ClientUnavailable(format!(
-            "Ollama not reachable at {}",
-            endpoint
-        )));
-    }
+    // A server that cannot be connected to is an outage and stays one, so
+    // the caller can wait for it rather than give up on the work.
+    client.reach().await.map_err(|e| {
+        error!("Ollama health check failed: {}: {}", endpoint, e);
+        match e {
+            AppError::Network(msg) => LLMError::Network(msg),
+            _ => LLMError::ClientUnavailable(e.to_string()),
+        }
+    })?;
 
     info!("Ollama LLM client created successfully");
     let scheduler = schedulers.ollama(

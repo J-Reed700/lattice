@@ -1,5 +1,6 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
+use crate::features::llm::scheduler::rejection::RequestSize;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
     SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
@@ -318,8 +319,13 @@ fn a_model_that_needs_thinking_thinks_on_every_request_unless_the_user_pins_it_o
 }
 
 /// A server with an 8,192-token window whose tokenizer answers `tokens`, or
-/// does not exist.
-async fn measured(tokens: Option<usize>, content: &str, asked: u32) -> u64 {
+/// does not exist, sizing a request that fixes its answer at `asked` tokens
+/// or, with `None`, takes the room it is given.
+async fn measured(
+    tokens: Option<usize>,
+    content: &str,
+    asked: Option<u32>,
+) -> Result<(u64, RequestSize)> {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
@@ -345,30 +351,68 @@ async fn measured(tokens: Option<usize>, content: &str, asked: u32) -> u64 {
         prefill_guard: false,
     };
     let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
-    let body = client
+    let (body, size) = client
         .measured_body(&CompletionRequest {
             input: user(content),
-            max_output_tokens: Some(asked),
+            max_output_tokens: asked,
             ..Default::default()
         })
-        .await
-        .unwrap();
-    body["max_tokens"].as_u64().unwrap()
+        .await?;
+    Ok((body["max_tokens"].as_u64().unwrap(), size))
 }
 
 #[tokio::test]
 async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
     let long = "word ".repeat(8_000);
-    // The estimate alone leaves only the floor.
-    assert_eq!(measured(None, &long, 2_000).await, 1_024);
     // The server counts 2,000 tokens, so 2,000 more still fit.
-    assert_eq!(measured(Some(2_000), &long, 2_000).await, 2_000);
+    let (reserved, size) = measured(Some(2_000), &long, Some(2_000)).await.unwrap();
+    assert_eq!(reserved, 2_000);
+    assert!(size.counted_exactly);
 }
 
 #[tokio::test]
-async fn a_prompt_truly_over_budget_still_gets_the_floor() {
+async fn a_fixed_answer_the_window_cannot_hold_is_refused_never_shrunk() {
     let long = "word ".repeat(8_000);
-    assert_eq!(measured(Some(7_900), &long, 2_000).await, 1_024);
+    for (tokens, counted) in [(Some(7_900), "(counted exactly)"), (None, "(estimated)")] {
+        let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
+        assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
+        let told = refused.to_string();
+        for expected in [
+            counted,
+            "2000 for the answer",
+            "configured context window is 8192",
+        ] {
+            assert!(told.contains(expected), "{told}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_cannot_count_is_not_refused_on_the_reservations_margin() {
+    // About 6,000 tokens at four characters a token: the margin reads 9,000,
+    // past the 8,192 window; the plain estimate leaves room.
+    let prose = "word ".repeat(4_800);
+    let (reserved, size) = measured(None, &prose, Some(2_000)).await.unwrap();
+    assert_eq!(reserved, 2_000);
+    assert!(!size.counted_exactly);
+    let (reserved, size) = measured(None, &prose, None).await.unwrap();
+    assert_eq!(size.prompt_tokens + reserved as usize, 8_192);
+    assert!(!size.counted_exactly);
+}
+
+#[tokio::test]
+async fn an_open_answer_takes_the_room_the_prompt_leaves_and_never_more() {
+    let long = "word ".repeat(8_000);
+    // The estimate leaves nothing; the exact count leaves 2,168 of the 8,192.
+    let (reserved, size) = measured(Some(6_000), &long, None).await.unwrap();
+    assert_eq!(size.prompt_tokens + reserved as usize, 8_192);
+    assert!(size.counted_exactly);
+    // A prompt that fills the window leaves no room, and is refused.
+    let refused = measured(Some(8_192), &long, None).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("leaves no room for an answer"),
+        "{refused}"
+    );
 }
 
 #[tokio::test]
@@ -392,7 +436,7 @@ async fn a_prompt_the_estimate_fits_is_not_counted_again() {
         prefill_guard: false,
     };
     let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
-    let body = client
+    let (body, size) = client
         .measured_body(&CompletionRequest {
             input: user("A short question."),
             max_output_tokens: Some(2_000),
@@ -401,4 +445,5 @@ async fn a_prompt_the_estimate_fits_is_not_counted_again() {
         .await
         .unwrap();
     assert_eq!(body["max_tokens"], 2_000);
+    assert!(!size.counted_exactly);
 }

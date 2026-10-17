@@ -191,7 +191,7 @@ async fn template_rejections_explain_the_cause_without_echoing_private_content()
     )
     .await
     .unwrap_err();
-    assert!(matches!(error, AppError::InvalidState(_)));
+    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
     let message = error.to_string();
     assert!(message.contains("single system message at the beginning"));
     for secret in ["Private prompt", "test-credential", "check your connection"] {
@@ -422,7 +422,7 @@ fn sse_length_stop_keeps_the_text_and_reports_the_reason() {
 }
 
 #[test]
-fn sse_error_names_the_servers_error_type_and_never_its_message() {
+fn sse_error_names_the_servers_error_type_and_tells_its_words() {
     let failure = |event: &str| {
         streaming::Decoder::default()
             .push(format!("data: {event}\n\n").as_bytes())
@@ -430,14 +430,19 @@ fn sse_error_names_the_servers_error_type_and_never_its_message() {
             .to_string()
     };
 
-    let named =
-        failure(r#"{"error":{"code":400,"type":"exceed_context_size_error","message":"private"}}"#);
-    assert!(named.contains("(400 exceed_context_size_error)"), "{named}");
-    assert!(!named.contains("private"));
+    let named = failure(
+        r#"{"error":{"code":500,"type":"server_error","message":"slot 1 ran out of memory"}}"#,
+    );
+    assert!(named.contains("(500 server_error)"), "{named}");
+    assert!(named.contains("slot 1 ran out of memory"), "{named}");
 
     // A type that is not an identifier is free text, and is dropped like one.
     let unnamed = failure(r#"{"error":{"type":"The prompt said: private"}}"#);
     assert!(!unnamed.contains("private"));
+
+    // A message the client recognises is told in fixed words.
+    let known = failure(r#"{"error":{"code":500,"message":"Compute error."}}"#);
+    assert!(known.contains("inference computation failed"), "{known}");
 }
 
 #[test]
@@ -920,9 +925,9 @@ async fn response_status_preserves_outages_for_durable_callers() {
             .unwrap();
         let error = check_status(response).await.unwrap_err();
         match status {
-            408 => assert!(matches!(error, AppError::Network(_))),
+            408 | 503 => assert!(matches!(error, AppError::Network(_))),
             429 => assert!(matches!(error, AppError::RateLimitExceeded(_))),
-            503 => assert!(matches!(error, AppError::ServiceNotAvailable(_))),
+            400 => assert!(matches!(error, AppError::ModelRejected(_))),
             _ => assert!(matches!(error, AppError::InvalidState(_))),
         }
     }
@@ -978,7 +983,7 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
     );
 
     let server = sequence_server(vec![ResponseTemplate::new(200).set_body_string(
-        "data: {\"error\":{\"code\":400,\"type\":\"exceed_context_size_error\",\"message\":\"private\"}}\n\n",
+        "data: {\"error\":{\"code\":400,\"type\":\"exceed_context_size_error\",\"message\":\"request (9000 tokens) exceeds the available context size (8192 tokens)\"}}\n\n",
     )])
     .await;
     let error = LlamaCppLlm::new(&settings(server.uri()))
@@ -986,31 +991,39 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
         .complete(&CompletionRequest::default())
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("exceed_context_size_error"));
-    assert!(!error.to_string().contains("private"));
-    assert!(matches!(error, AppError::InvalidState(_)));
+    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
+    let told = error.to_string();
+    for expected in [
+        "llama.cpp rejected this request: (400 exceed_context_size_error) request (9000 tokens)",
+        "configured context window is 131072",
+        "lower the context window in Settings to match the server",
+    ] {
+        assert!(told.contains(expected), "{told}");
+    }
 }
 
 #[test]
-fn streamed_server_errors_preserve_their_failure_category_without_private_text() {
+fn streamed_server_errors_keep_their_failure_category() {
     for (code, expected) in [
         (500, "service"),
-        (503, "service"),
+        (503, "network"),
         (429, "rate"),
         (408, "network"),
-        (400, "invalid"),
+        (400, "rejected"),
+        (401, "invalid"),
     ] {
         let mut decoder = streaming::Decoder::for_completion();
         let event = format!(
             "data: {}\n\n",
-            json!({"error":{"code":code,"type":"server_error","message":"private prompt and credentials"}})
+            json!({"error":{"code":code,"type":"server_error","message":"it failed"}})
         );
         let error = decoder.push(event.as_bytes()).unwrap_err();
-        assert!(!error.to_string().contains("private"));
+        assert!(decoder.take_server_failure().is_some());
         let actual = match error {
             AppError::ServiceNotAvailable(_) => "service",
             AppError::RateLimitExceeded(_) => "rate",
             AppError::Network(_) => "network",
+            AppError::ModelRejected(_) => "rejected",
             AppError::InvalidState(_) => "invalid",
             _ => panic!("Unexpected category"),
         };
@@ -1620,7 +1633,7 @@ fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
 }
 
 #[test]
-fn a_full_window_keeps_the_output_floor_but_a_smaller_cap_is_kept() {
+fn the_estimated_reservation_never_reaches_past_the_window() {
     let client = LlamaCppLlm::connect(
         "http://127.0.0.1:9",
         "token",
@@ -1631,11 +1644,182 @@ fn a_full_window_keeps_the_output_floor_but_a_smaller_cap_is_kept() {
     )
     .unwrap();
     let prompt = |chars: usize| vec![json!({"role":"user","content":"x".repeat(chars)})];
-    // A prompt that leaves the window nearly full still gets the floor.
-    assert_eq!(client.output_room_for(&prompt(30_000), 4_096), 1_024);
+    // A prompt the estimate puts past the window leaves no room at all.
+    assert_eq!(client.output_room_for(&prompt(30_000), 4_096), 0);
+    assert_eq!(client.output_room_for(&prompt(30_000), 512), 0);
     // A small prompt gets what it asked for, up to the room left.
     assert_eq!(client.output_room_for(&prompt(100), 4_096), 4_096);
-    // A cap below the floor is the caller's decision and is kept.
     assert_eq!(client.output_room_for(&prompt(100), 512), 512);
-    assert_eq!(client.output_room_for(&prompt(30_000), 512), 512);
+}
+
+/// A server failure the server reports in its HTTP status, with its words.
+fn server_failure(status: u16, message: &str) -> ResponseTemplate {
+    ResponseTemplate::new(status)
+        .insert_header("Retry-After", "0")
+        .set_body_json(json!({"error":{"code":status,"type":"server_error","message":message}}))
+}
+
+/// The loop seen in production: a request the server fails the same way twice
+/// is not sent a third time, and the error says what the server said and how
+/// large the request was against the configured window.
+#[tokio::test]
+async fn the_same_server_failure_twice_is_one_rejection_and_no_third_attempt() {
+    let server = sequence_server(vec![
+        server_failure(500, "Context size has been exceeded."),
+        server_failure(500, "Context size has been exceeded."),
+    ])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let retries = std::sync::Mutex::new(Vec::new());
+    let error = client
+        .complete_with_retry_progress(
+            &CompletionRequest {
+                no_time_limit: true,
+                ..Default::default()
+            },
+            &|_| Ok(()),
+            &|attempt| {
+                retries.lock().unwrap().push(attempt);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
+    let told = error.to_string();
+    for expected in [
+        "llama.cpp rejected this request twice: (500 server_error) the server exhausted its context capacity.",
+        "configured context window is 131072",
+        "lower the context window in Settings to match the server",
+    ] {
+        assert!(told.contains(expected), "{told}");
+    }
+    assert_eq!(
+        *retries.lock().unwrap(),
+        vec![2],
+        "retried once, then stopped"
+    );
+    let requests = server.received_requests().await.unwrap();
+    let retried: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(retried["cache_prompt"], false);
+}
+
+/// Outages and failures of another kind are not a verdict on the request:
+/// they are retried as before.
+#[tokio::test]
+async fn outages_and_failures_of_another_kind_are_still_retried() {
+    let server = sequence_server(vec![
+        ResponseTemplate::new(503).insert_header("Retry-After", "0"),
+        ResponseTemplate::new(503).insert_header("Retry-After", "0"),
+        server_failure(500, "slot 0 failed"),
+        ResponseTemplate::new(500).set_body_json(
+            json!({"error":{"code":500,"type":"unavailable_error","message":"slot 0 failed"}}),
+        ),
+        sse_response(json!({"content":"Recovered"})),
+    ])
+    .await;
+    let response = LlamaCppLlm::new(&settings(server.uri()))
+        .unwrap()
+        .complete(&CompletionRequest {
+            no_time_limit: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Recovered");
+}
+
+/// A server whose words carry a changing token, a request id or a slot, still
+/// fails the same way: its status and error type are what repeat.
+#[tokio::test]
+async fn a_failure_whose_words_change_each_time_is_still_the_same_failure() {
+    let server = sequence_server(vec![
+        server_failure(500, "slot 0 failed, request 7f3a"),
+        server_failure(500, "slot 1 failed, request 9c21"),
+    ])
+    .await;
+    let error = LlamaCppLlm::new(&settings(server.uri()))
+        .unwrap()
+        .complete(&CompletionRequest {
+            no_time_limit: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
+    assert!(
+        error.to_string().contains("rejected this request twice"),
+        "{error}"
+    );
+}
+
+/// The server's words reach the error; the prompt they quote back does not.
+#[tokio::test]
+async fn a_rejection_shows_the_servers_words_but_never_the_prompt_they_quote() {
+    let private = "my private medical history must never appear in an error message";
+    let quoted = format!("could not decode: {private}");
+    let server = sequence_server(vec![
+        server_failure(500, &quoted),
+        server_failure(500, &quoted),
+    ])
+    .await;
+    let error = LlamaCppLlm::new(&settings(server.uri()))
+        .unwrap()
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: private.into(),
+            }],
+            no_time_limit: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    let told = error.to_string();
+    assert!(
+        told.contains("(500 server_error) could not decode: […]"),
+        "{told}"
+    );
+    assert!(!told.contains("medical history"), "{told}");
+    assert!(
+        told.contains("same request would fail the same way again"),
+        "{told}"
+    );
+}
+
+/// A request whose prompt and fixed answer exceed the configured window is
+/// refused with its numbers and never reaches the server.
+#[tokio::test]
+async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
+    let server = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(sse_response(json!({"content":"never"})))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let settings = LLMSettingsDto {
+        context_window: 4_096,
+        ..settings(server.uri())
+    };
+    let error = LlamaCppLlm::new(&settings)
+        .unwrap()
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "word ".repeat(4_000),
+            }],
+            max_output_tokens: Some(1_024),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
+    let told = error.to_string();
+    for expected in [
+        "1024 for the answer",
+        "configured context window is 4096",
+        "It was not sent",
+    ] {
+        assert!(told.contains(expected), "{told}");
+    }
 }

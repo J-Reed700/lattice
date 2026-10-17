@@ -10,7 +10,7 @@ mod repository;
 mod runtime;
 
 pub use repository::JobStore;
-pub use runtime::{JobContext, JobHandler, JobRuntime};
+pub use runtime::{JobContext, JobHandler, JobRuntime, REPEATED_FAILURE};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -127,8 +127,10 @@ pub enum JobOutcome {
 pub enum JobFailure {
     /// A terminal failure; the user may retry it as a new attempt.
     Fail { code: String, message: String },
-    /// A temporary outage. The job returns to pending and is redelivered after
-    /// the kind's backoff, without a limit on attempts.
+    /// A temporary failure. The job returns to pending and is redelivered after
+    /// the kind's backoff. An outage is retried without a limit on attempts;
+    /// any other failure that repeats with no saved progress in between ends
+    /// the job (see [`JobRuntime`]).
     Defer(Deferral),
 }
 
@@ -144,7 +146,9 @@ pub struct Deferral {
 
 impl JobFailure {
     /// Whether an error is a temporary outage of the network or a service,
-    /// rather than a failure of the work itself.
+    /// rather than a failure of the work itself. A model's rejection
+    /// ([`AppError::ModelRejected`](crate::shared::error::AppError::ModelRejected))
+    /// is not: the same request would be refused again.
     pub fn is_transient(error: &crate::shared::error::AppError) -> bool {
         use crate::shared::error::AppError;
         matches!(
@@ -153,6 +157,16 @@ impl JobFailure {
                 | AppError::ServiceNotAvailable(_)
                 | AppError::RateLimitExceeded(_)
         )
+    }
+
+    /// Whether an error says the service was not reached, or asked to be left
+    /// alone for a while, rather than answering about the work: a lost
+    /// connection, a gateway with nothing behind it, a rate limit. Seeing one
+    /// twice says nothing about the work, so it is retried for as long as the
+    /// outage lasts.
+    pub fn is_outage(error: &crate::shared::error::AppError) -> bool {
+        use crate::shared::error::AppError;
+        matches!(error, AppError::Network(_) | AppError::RateLimitExceeded(_))
     }
 
     /// Outages are deferred; anything else fails the attempt.

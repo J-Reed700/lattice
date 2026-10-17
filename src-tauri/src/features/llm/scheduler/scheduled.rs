@@ -3,12 +3,17 @@
 //! Every method that reaches the model is admitted first, at the priority its
 //! request carries. The same decorator owns the backend's calibrated token estimate, because it is
 //! the one place that sees both what was sent and the usage reported back.
+//!
+//! Before admission, a request that cannot fit the port's configured context
+//! window is refused, whichever backend is behind it: nothing that cannot fit
+//! waits for a slot or reaches a server.
 
 use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::rejection::{window_refusal, RequestSize};
 use super::{
     cancelled_error, AdmissionRequest, InferenceScheduler, Permit, ServerTokenizer, TokenEstimator,
 };
@@ -50,11 +55,59 @@ impl ScheduledLlm {
         self
     }
 
+    /// Refuse a request that cannot fit the configured window, before it is
+    /// queued or sent.
+    ///
+    /// A caller that fixed the answer's size needs all of it beside the
+    /// prompt; any other answer can shrink to the room left, so only a prompt
+    /// that leaves none is refused. The calibrated estimate decides when the
+    /// request plainly fits. When it does not, a backend with a tokenizer
+    /// counts the prompt exactly before anything is refused. Opaque provider
+    /// state (signed reasoning, images) is not text and is left out of both
+    /// counts, so it never causes a refusal.
+    async fn ensure_fits(&self, request: &CompletionRequest) -> Result<()> {
+        let window = self.inner.max_context_tokens();
+        let fixed = request.max_output_tokens.filter(|tokens| *tokens > 0);
+        let answer = fixed.map_or(1, |tokens| usize::try_from(tokens).unwrap_or(usize::MAX));
+        let fits = |prompt: usize| prompt.saturating_add(answer) <= window;
+        let estimate = tokens_for_chars(
+            prompt_texts(request).map(|text| text.chars().count()).sum(),
+            self.estimator.chars_per_token(),
+        );
+        if fits(estimate) {
+            return Ok(());
+        }
+        let (prompt_tokens, counted_exactly) = match &self.tokenizer {
+            Some(_) => match self.count_tokens_exact(&prompt_text(request)).await {
+                Ok(exact) => (exact, true),
+                Err(error) => {
+                    tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
+                    (estimate, false)
+                }
+            },
+            None => (estimate, false),
+        };
+        if fits(prompt_tokens) {
+            return Ok(());
+        }
+        Err(window_refusal(
+            self.inner.model_name(),
+            RequestSize {
+                prompt_tokens,
+                counted_exactly,
+                output_tokens: fixed.unwrap_or(0),
+            },
+            window,
+            fixed.is_some(),
+        ))
+    }
+
     /// Wait for a slot, and pin the request to it when the backend pins.
     async fn admit_typed<'r>(
         &self,
         request: &'r CompletionRequest,
     ) -> Result<(Permit, Cow<'r, CompletionRequest>)> {
+        self.ensure_fits(request).await?;
         let output = request.effective_max_output_tokens(self.output_limit) as usize;
         let prompt = tokens_for_chars(prompt_chars(request), self.estimator.chars_per_token());
         let permit = self
@@ -125,32 +178,54 @@ impl ScheduledLlm {
 }
 
 /// Characters a request puts in front of the model: every message, call and
-/// result, plus the tool schemas, which are read like any other prompt text.
+/// result, plus the tool schemas, which are read like any other prompt text,
+/// plus opaque provider state, which takes room however it is counted.
 pub(super) fn prompt_chars(request: &CompletionRequest) -> usize {
-    let input: usize = request
+    let text: usize = prompt_texts(request).map(|text| text.chars().count()).sum();
+    let native: usize = request
         .input
         .iter()
         .map(|item| match item {
-            CompletionInput::Message { role, content } => {
-                role.chars().count() + content.chars().count()
-            }
-            CompletionInput::ToolCall {
-                name, arguments, ..
-            } => name.chars().count() + arguments.to_string().chars().count(),
-            CompletionInput::ToolResult { output, .. } => output.chars().count(),
             CompletionInput::Native { value } => value.to_string().chars().count(),
+            _ => 0,
         })
         .sum();
-    let tools: usize = request
-        .tools
-        .iter()
-        .map(|tool| {
-            tool.name.chars().count()
-                + tool.description.chars().count()
-                + tool.parameters.to_string().chars().count()
-        })
-        .sum();
-    input + tools
+    text + native
+}
+
+/// The text a tokenizer reads in a request: every message with its role,
+/// every call and result, then the tool schemas. Opaque provider state
+/// (signed reasoning, images) is not text and is left out.
+fn prompt_texts(request: &CompletionRequest) -> impl Iterator<Item = Cow<'_, str>> {
+    let input = request.input.iter().flat_map(|item| match item {
+        CompletionInput::Message { role, content } => {
+            vec![
+                Cow::Borrowed(role.as_str()),
+                Cow::Borrowed(content.as_str()),
+            ]
+        }
+        CompletionInput::ToolCall {
+            name, arguments, ..
+        } => vec![
+            Cow::Borrowed(name.as_str()),
+            Cow::Owned(arguments.to_string()),
+        ],
+        CompletionInput::ToolResult { output, .. } => vec![Cow::Borrowed(output.as_str())],
+        CompletionInput::Native { .. } => Vec::new(),
+    });
+    let tools = request.tools.iter().flat_map(|tool| {
+        [
+            Cow::Borrowed(tool.name.as_str()),
+            Cow::Borrowed(tool.description.as_str()),
+            Cow::Owned(tool.parameters.to_string()),
+        ]
+    });
+    input.chain(tools)
+}
+
+/// [`prompt_texts`] as one text, for a tokenizer to count.
+fn prompt_text(request: &CompletionRequest) -> String {
+    prompt_texts(request).collect::<Vec<_>>().join("\n")
 }
 
 #[async_trait]
