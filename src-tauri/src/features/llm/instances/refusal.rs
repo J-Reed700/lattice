@@ -45,6 +45,10 @@ pub(crate) fn refused(
 }
 
 /// The refusal for a model whose server does not fit in GPU memory.
+///
+/// A load failure, not an outage: the memory stays held until the user
+/// finishes or stops that work, so a job fails once with this message
+/// instead of being retried in the background.
 pub(crate) fn no_memory(
     role: ModelRole,
     name: &str,
@@ -87,7 +91,7 @@ pub(crate) fn no_memory(
             purpose(role)
         )),
     }
-    AppError::ServiceNotAvailable(message)
+    AppError::ModelLoadFailed(message)
 }
 
 /// The refusal for a model whose window is smaller than the work's `floor`.

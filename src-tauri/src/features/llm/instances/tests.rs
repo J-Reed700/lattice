@@ -5,6 +5,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, ModelOrigin,
 };
 use lattice_core::domain::models::model_ref::CloudProvider;
+use lattice_core::shared::runtime::jobs::JobFailure;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -272,8 +273,14 @@ async fn no_room_beside_running_work_is_refused_naming_it_and_unloads_nothing() 
         )
         .await;
 
-    let Err(AppError::ServiceNotAvailable(message)) = refused else {
+    let Err(error) = refused else {
         panic!("expected a refusal for memory");
+    };
+    // Memory held by running work is not an outage: a job fails once with
+    // this message rather than retrying in the background.
+    assert!(!JobFailure::is_transient(&error), "{error}");
+    let AppError::ModelLoadFailed(message) = error else {
+        panic!("expected a load failure, got {error:?}");
     };
     assert_eq!(
         message,

@@ -484,3 +484,21 @@ async fn a_learning_model_too_small_for_a_lesson_fails_once_before_any_model_cal
         "{error}"
     );
 }
+
+#[tokio::test]
+async fn a_learning_model_refused_for_memory_fails_once_naming_what_holds_it() {
+    // The refusal the instance pool gives when the Learning model's server
+    // does not fit beside work that is running.
+    const REFUSAL: &str = "Can't load Qwen3.5-27B as the Learning model: it needs 17.2 GB \
+        (15.9 GB weights + 1.3 GB context at 20,480 tokens) and 6.1 GB is free. \
+        Ornith-1.5-9B (5.5 GB) is answering in 'Research notes'. Wait for them to finish, \
+        stop them, or use Ornith-1.5-9B as the Learning model.";
+    let settled = run_with_model(Arc::new(|| {
+        Box::pin(async { Err(AppError::ModelLoadFailed(REFUSAL.into())) })
+    }))
+    .await;
+
+    assert_eq!(settled.status, Status::Failed, "a refusal is not retried");
+    assert!(settled.finished_at.is_some());
+    assert_eq!(settled.error.as_deref(), Some(REFUSAL), "shown as written");
+}
