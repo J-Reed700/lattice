@@ -170,3 +170,28 @@ fn a_rejection_carries_the_servers_account_the_numbers_and_the_fix() {
         "llama.cpp rejected this request: (422) unprocessable."
     );
 }
+
+#[test]
+fn a_size_refusal_of_an_estimated_prompt_claims_no_lower_server_limit() {
+    let size = RequestSize {
+        prompt_tokens: 110_000,
+        counted_exactly: false,
+        output_tokens: 8_192,
+    };
+    let estimated = rejected(
+        "llama.cpp",
+        false,
+        "(400 exceed_context_size_error) Context size has been exceeded.",
+        Some((size, 131_072)),
+        true,
+    )
+    .to_string();
+    for expected in [
+        "a prompt of 110000 (estimated)",
+        "estimated, not counted, so the request may not fit the configured context window of \
+         131072 after all: shorten the request",
+    ] {
+        assert!(estimated.contains(expected), "{estimated}");
+    }
+    assert!(!estimated.contains("real per-request limit"), "{estimated}");
+}

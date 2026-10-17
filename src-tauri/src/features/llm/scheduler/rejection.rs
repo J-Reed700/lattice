@@ -220,12 +220,23 @@ pub(crate) fn rejected(
             " The request was {}; the configured context window is {window}.",
             size.describe()
         ));
-        if too_large {
+        // Only a counted prompt shows that the request fit; an estimate can
+        // read low on dense text, and then the window was the limit.
+        if too_large && size.counted_exactly {
             text.push_str(&format!(
                 " The server refused a request of {} tokens even though it fits the configured \
                  context window of {window}, so the server's real per-request limit is lower: \
                  lower the context window in Settings to match the server.",
                 size.total()
+            ));
+            return AppError::ModelRejected(text);
+        }
+        if too_large {
+            text.push_str(&format!(
+                " The server refused it as too large. The prompt's size was estimated, not \
+                 counted, so the request may not fit the configured context window of {window} \
+                 after all: shorten the request. If the server also refuses requests that fit, \
+                 lower the context window in Settings to match the server."
             ));
             return AppError::ModelRejected(text);
         }
