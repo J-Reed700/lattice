@@ -125,8 +125,10 @@ async fn a_server_model_needs_its_connection_and_nothing_more() {
     let llama_cpp = ModelRef::LlamaCpp {
         model: "qwen3.5-27b".into(),
     };
-    let mut settings = LLMSettingsDto::default();
-    settings.ollama_url = "http://localhost:11434".into();
+    let mut settings = LLMSettingsDto {
+        ollama_url: "http://localhost:11434".into(),
+        ..LLMSettingsDto::default()
+    };
     settings.llama_cpp.url = "http://localhost:8080".into();
     check(&ollama, Rows(None), &settings).await.unwrap();
     check(&llama_cpp, Rows(None), &settings).await.unwrap();
