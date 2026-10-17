@@ -89,6 +89,14 @@ pub(crate) struct ModelKey {
     pub(crate) tuning: Tuning,
 }
 
+impl ModelKey {
+    /// The server it is a client of. Keys that differ only in tuning are
+    /// clients of one server, which is freed only when the last of them goes.
+    fn server(&self) -> (ModelRef, LaunchProfile) {
+        (self.model.clone(), self.launch)
+    }
+}
+
 /// A loaded model.
 pub(crate) struct LoadedLlm {
     pub(crate) llm: Arc<dyn LLMPort>,
@@ -228,6 +236,11 @@ impl Acquired {
 /// The app's loaded models.
 pub(crate) struct LlmInstances {
     pool: InstancePool<ModelKey, LoadedLlm, Holder>,
+    /// Taken by every admission and, when a new server is to start on the
+    /// GPU, held until it has started. A server is invisible to admission
+    /// until it is running, so two models admitted side by side would each
+    /// be priced against memory the other is about to take.
+    admission: tokio::sync::Mutex<()>,
     /// The Settings default chat model most recently handed out, so work that
     /// only reads "the loaded chat model" finds it without loading one.
     last_default: Mutex<Option<ModelKey>>,
@@ -240,6 +253,7 @@ impl LlmInstances {
     pub(crate) fn new() -> Self {
         Self {
             pool: InstancePool::new(),
+            admission: tokio::sync::Mutex::new(()),
             last_default: Mutex::new(None),
             learning_shortfall: Mutex::new(None),
         }
@@ -254,7 +268,8 @@ impl LlmInstances {
     /// loaded. A new bundled server is admitted first: it must fit in the GPU
     /// memory the others leave, after evicting idle models if that makes
     /// room; otherwise the request is refused with the sizes and who holds
-    /// the memory.
+    /// the memory. New servers are admitted one at a time, each priced after
+    /// the one before it has started. Requests for one key share one load.
     pub(crate) async fn acquire<F, Fut>(
         &self,
         request: Acquire<'_>,
@@ -275,16 +290,26 @@ impl LlmInstances {
         } = request;
         let model = key.model.clone();
         let launch = key.launch;
-        let loaded: Loaded<LoadedLlm, Holder> = self
+        // The admission turn of a server that is starting, held until the
+        // pool has published it, so the next admission both prices it and
+        // can name who holds it.
+        let starting = Mutex::new(None);
+        let loaded: Result<Loaded<LoadedLlm, Holder>> = self
             .pool
             .get_or_load(key, epoch, holder, || async {
                 if let (Some(local), Some(launch)) = (local, launch) {
-                    self.admit(&model, local, launch, floor, role, budget)
+                    let turn = self
+                        .admit(&model, local, launch, floor, role, budget)
                         .await?;
+                    *starting
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = turn;
                 }
                 Ok::<_, AppError>(LoadedLlm::new(load().await?, &model, local))
             })
-            .await?;
+            .await;
+        drop(starting);
+        let loaded = loaded?;
         if !loaded.reused {
             if let Some(reason) = loaded.value.degraded() {
                 tracing::warn!(
@@ -378,7 +403,9 @@ impl LlmInstances {
     }
 
     /// Admit a new server for `local`: launch when it fits; else evict idle
-    /// models and launch if that made room; else refuse.
+    /// models and launch if that made room; else refuse. When a new server is
+    /// to take GPU memory, the admission turn comes back and must be held
+    /// until that server has started.
     async fn admit(
         &self,
         model: &ModelRef,
@@ -387,13 +414,15 @@ impl LlmInstances {
         floor: Option<u32>,
         role: ModelRole,
         budget: &dyn GpuBudget,
-    ) -> Result<()> {
+    ) -> Result<Option<tokio::sync::MutexGuard<'_, ()>>> {
+        let turn = self.admission.lock().await;
         let first = budget.admission(&local.path, launch, floor).await;
         let Admission::Short { needed, spare } = first else {
             admission::log(&local.name, first, &[]);
-            return Ok(());
+            return Ok(starting(first, turn));
         };
         let evicted = self.pool.evict_idle(
+            ModelKey::server,
             |_, loaded| loaded.gpu_bytes.filter(|bytes| *bytes > 0),
             needed.total().saturating_sub(spare),
         );
@@ -426,25 +455,43 @@ impl LlmInstances {
                 "no_memory",
                 refusal::no_memory(role, &local.name, needed, spare, &self.pinners()),
             )),
-            _ => Ok(()),
+            _ => Ok(starting(outcome, turn)),
         }
     }
 
-    /// The models held by running work, with their GPU memory and holders.
+    /// The servers held by running work, with their GPU memory and holders:
+    /// one per server, however many of its clients are in use.
     fn pinners(&self) -> Vec<refusal::Pinner> {
-        self.pool
-            .snapshot()
-            .into_iter()
-            .filter(|entry| entry.stats.in_flight > 0)
-            .filter_map(|entry| {
-                Some(refusal::Pinner {
-                    name: entry.value.name.clone(),
-                    gpu_bytes: entry.value.gpu_bytes.filter(|bytes| *bytes > 0)?,
-                    holders: entry.stats.holders,
-                })
-            })
-            .collect()
+        let mut pinners: Vec<((ModelRef, LaunchProfile), refusal::Pinner)> = Vec::new();
+        for entry in self.pool.snapshot() {
+            let Some(gpu_bytes) = entry.value.gpu_bytes.filter(|bytes| *bytes > 0) else {
+                continue;
+            };
+            if entry.stats.in_flight == 0 {
+                continue;
+            }
+            let server = entry.key.server();
+            match pinners.iter_mut().find(|(known, _)| *known == server) {
+                Some((_, pinner)) => pinner.holders.extend(entry.stats.holders),
+                None => pinners.push((
+                    server,
+                    refusal::Pinner {
+                        name: entry.value.name.clone(),
+                        gpu_bytes,
+                        holders: entry.stats.holders,
+                    },
+                )),
+            }
+        }
+        pinners.into_iter().map(|(_, pinner)| pinner).collect()
     }
+}
+
+/// The admission turn, kept only when `outcome` starts a server on the GPU.
+/// A shared server is already running, and one on the CPU or on a GPU that
+/// does not report its memory has nothing to be priced against.
+fn starting<T>(outcome: Admission, turn: T) -> Option<T> {
+    matches!(outcome, Admission::Fits { .. }).then_some(turn)
 }
 
 impl Default for LlmInstances {

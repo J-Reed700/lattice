@@ -6,7 +6,7 @@
 //! Holders that pin an instance for a piece of work take a [`Lease`], which is
 //! what makes an instance busy: only idle instances are ever evicted.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -131,7 +131,8 @@ where
     /// Concurrent callers for one key share one load; callers for different
     /// keys load in parallel. A dead instance is dropped and loaded again.
     /// Errors are not cached. A load that an invalidation overtook — any since
-    /// `epoch` was read — still answers its caller but is not published.
+    /// `epoch` was read — still answers its caller but is never handed out
+    /// again; while its holder pins it, it is listed as retired.
     /// `holder`, when given, pins the instance before anything can evict it.
     pub(crate) async fn get_or_load<E, F, Fut>(
         &self,
@@ -179,6 +180,13 @@ where
                     usage: Arc::clone(&usage),
                 },
             );
+        } else if lease.is_some() {
+            // It may have been built from settings the invalidation replaced,
+            // so it is not handed out; but it is answering and holds memory,
+            // so whoever asks who holds the memory must still find it.
+            state
+                .retired
+                .push((key, Arc::downgrade(&value), Arc::clone(&usage)));
         }
         Ok(Loaded {
             value,
@@ -207,44 +215,74 @@ where
         keys
     }
 
-    /// Unload idle instances, least recently used first, until at least
-    /// `needed` bytes are freed. `freed` says what unloading one frees, or
-    /// `None` when it frees nothing worth having. When every idle candidate
-    /// together frees less than `needed`, nothing is unloaded: an eviction
-    /// that cannot make room only costs the next request a reload.
-    pub(crate) fn evict_idle(
+    /// Unload idle servers, least recently used first, until at least
+    /// `needed` bytes are freed. Instances whose keys name one `server` are
+    /// clients of one process: it is freed only when the last of them goes,
+    /// so they are priced once, unloaded together, and only when none is in
+    /// use. `freed` says what unloading an instance's server frees, or `None`
+    /// when it frees nothing worth having. When every idle server together
+    /// frees less than `needed`, nothing is unloaded: an eviction that cannot
+    /// make room only costs the next request a reload. The bytes a server
+    /// frees are reported against the first of its instances, and zero
+    /// against the rest.
+    pub(crate) fn evict_idle<S: Eq + Hash>(
         &self,
+        server: impl Fn(&K) -> S,
         freed: impl Fn(&K, &V) -> Option<u64>,
         needed: u64,
     ) -> Vec<(K, u64, EntryStats<H>)> {
         let mut state = self.lock();
-        let mut idle: Vec<(K, u64, (u64, DateTime<Utc>))> = state
+        let busy: HashSet<S> = state
             .live
             .iter()
-            .filter(|(_, slot)| slot.usage.in_flight() == 0)
-            .filter_map(|(key, slot)| {
-                let bytes = freed(key, &slot.value)?;
-                Some((key.clone(), bytes, slot.usage.last_used()))
-            })
+            .filter(|(_, slot)| slot.usage.in_flight() > 0)
+            .map(|(key, _)| server(key))
+            .chain(
+                state
+                    .retired
+                    .iter()
+                    .filter(|(_, value, usage)| usage.in_flight() > 0 && value.strong_count() > 0)
+                    .map(|(key, ..)| server(key)),
+            )
+            .collect();
+        // Per idle server: what unloading it frees, its latest use, and its
+        // instances.
+        let mut servers: HashMap<S, (u64, u64, Vec<K>)> = HashMap::new();
+        for (key, slot) in &state.live {
+            let id = server(key);
+            if busy.contains(&id) {
+                continue;
+            }
+            let entry = servers.entry(id).or_insert((0, 0, Vec::new()));
+            entry.0 = entry.0.max(freed(key, &slot.value).unwrap_or(0));
+            entry.1 = entry.1.max(slot.usage.last_used().0);
+            entry.2.push(key.clone());
+        }
+        let mut idle: Vec<(u64, u64, Vec<K>)> = servers
+            .into_values()
+            .filter(|(bytes, ..)| *bytes > 0)
             .collect();
         if idle
             .iter()
-            .map(|(_, bytes, _)| *bytes)
+            .map(|(bytes, ..)| *bytes)
             .fold(0, u64::saturating_add)
             < needed
         {
             return Vec::new();
         }
-        idle.sort_by_key(|(_, _, (tick, _))| *tick);
+        idle.sort_by_key(|(_, tick, _)| *tick);
         let mut evicted = Vec::new();
         let mut total = 0u64;
-        for (key, bytes, _) in idle {
+        for (bytes, _, keys) in idle {
             if total >= needed {
                 break;
             }
-            if let Some(slot) = state.live.remove(&key) {
-                total = total.saturating_add(bytes);
-                evicted.push((key, bytes, slot.usage.stats(false)));
+            total = total.saturating_add(bytes);
+            for (index, key) in keys.into_iter().enumerate() {
+                if let Some(slot) = state.live.remove(&key) {
+                    let reported = if index == 0 { bytes } else { 0 };
+                    evicted.push((key, reported, slot.usage.stats(false)));
+                }
             }
         }
         evicted

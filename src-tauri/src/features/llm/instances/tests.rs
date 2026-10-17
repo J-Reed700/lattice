@@ -729,3 +729,180 @@ fn a_learning_shortfall_lasts_until_its_model_serves_a_window_that_covers_it() {
     instances.learning_window_served(&model, 20_480);
     assert_eq!(instances.learning_shortfall(), None);
 }
+
+/// A GPU of `usable` bytes, shared by the servers started on it. A server
+/// counts once its load has finished, as the registry counts one only after
+/// it has started.
+struct MeteredBudget {
+    usable: u64,
+    running: std::sync::Mutex<u64>,
+}
+
+impl MeteredBudget {
+    fn footprint(path: &std::path::Path) -> Footprint {
+        Footprint {
+            weights: std::fs::metadata(path).unwrap().len(),
+            cache: GIB,
+            window: 8_704,
+        }
+    }
+
+    fn started(&self, path: &std::path::Path) {
+        *self.running.lock().unwrap() += Self::footprint(path).total();
+    }
+}
+
+#[async_trait::async_trait]
+impl GpuBudget for MeteredBudget {
+    async fn admission(
+        &self,
+        path: &std::path::Path,
+        _: LocalServerOptions,
+        _: Option<u32>,
+    ) -> Admission {
+        let needed = Self::footprint(path);
+        let spare = self.usable.saturating_sub(*self.running.lock().unwrap());
+        if needed.total() <= spare {
+            Admission::Fits { needed, spare }
+        } else {
+            Admission::Short { needed, spare }
+        }
+    }
+    async fn auto_window(&self, _: &std::path::Path, _: LocalServerOptions) -> Option<u32> {
+        None
+    }
+}
+
+/// Start `local` for the chat `title` on `budget`, taking a while to start
+/// as a real server does.
+async fn start_metered(
+    instances: &LlmInstances,
+    budget: &MeteredBudget,
+    local: &LocalModel,
+    title: &str,
+    starts: &AtomicUsize,
+) -> Result<Acquired> {
+    const STARTUP: std::time::Duration = std::time::Duration::from_millis(20);
+    instances
+        .acquire(
+            Acquire {
+                key: local_key(&local.name),
+                epoch: instances.epoch(),
+                role: ModelRole::Chat,
+                holder: Some(chat_holder(title)),
+                local: Some(local),
+                floor: None,
+            },
+            budget,
+            || async {
+                starts.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(STARTUP).await;
+                budget.started(&local.path);
+                Ok(on_gpu(&local.name, &Arc::new(AtomicBool::new(false))))
+            },
+        )
+        .await
+}
+
+#[tokio::test]
+async fn two_models_loading_at_once_are_admitted_one_after_the_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let (large, small) = (
+        local_model(&dir, "Qwen3.5-27B", 15 * GIB),
+        local_model(&dir, "Ornith-1.5-9B", 6 * GIB),
+    );
+    let instances = LlmInstances::new();
+    let budget = MeteredBudget {
+        usable: 20 * GIB,
+        running: std::sync::Mutex::new(0),
+    };
+    let (large_starts, small_starts) = (AtomicUsize::new(0), AtomicUsize::new(0));
+
+    let (first, second, other) = tokio::join!(
+        start_metered(&instances, &budget, &large, "Research notes", &large_starts),
+        start_metered(&instances, &budget, &large, "Second tab", &large_starts),
+        start_metered(&instances, &budget, &small, "Other chat", &small_starts),
+    );
+
+    // One load for one key, however many ask for it at once.
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert_eq!(large_starts.load(Ordering::SeqCst), 1);
+    assert_eq!(first.instance_id, second.instance_id);
+    // The other model was priced after the first had started, not against
+    // the memory both saw free.
+    assert_eq!(
+        small_starts.load(Ordering::SeqCst),
+        0,
+        "nothing was started"
+    );
+    let Err(AppError::ModelLoadFailed(message)) = other else {
+        panic!("expected a refusal for memory");
+    };
+    // The model that won is named with what it holds; whether the second
+    // tab has joined it yet depends on which waiter runs first.
+    assert!(
+        message.starts_with(
+            "Can't load Ornith-1.5-9B for this chat: it needs 7.0 GB (6.0 GB weights + 1.0 GB \
+             context at 8,704 tokens) and 4.0 GB is free. Qwen3.5-27B (15.0 GB) is answering \
+             in 'Research notes'"
+        ),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn a_server_two_roles_hold_is_named_once_in_a_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (busy, wanted) = (
+        local_model(&dir, "Qwen3.5-27B", 16 * GIB),
+        local_model(&dir, "Ornith-1.5-9B", 1),
+    );
+    let instances = LlmInstances::new();
+    let unloaded = Arc::new(AtomicBool::new(false));
+    let mut held = Vec::new();
+    for (tuning, holder) in [
+        (Tuning::Standard, chat_holder("Research notes")),
+        (
+            Tuning::Utility,
+            Holder {
+                role: ModelRole::Utility,
+                work: String::new(),
+            },
+        ),
+    ] {
+        let acquired = instances
+            .acquire(
+                Acquire {
+                    key: ModelKey {
+                        tuning,
+                        ..local_key(&busy.name)
+                    },
+                    epoch: instances.epoch(),
+                    role: holder.role,
+                    holder: Some(holder),
+                    local: Some(&busy),
+                    floor: None,
+                },
+                &FakeBudget::always(fits()),
+                || async { Ok(on_gpu(&busy.name, &unloaded)) },
+            )
+            .await
+            .unwrap();
+        held.push(acquired.into_port());
+    }
+
+    let refused = acquire_local(
+        &instances,
+        &FakeBudget::always(short()),
+        &wanted,
+        Some(chat_holder("Other chat")),
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+
+    let Err(AppError::ModelLoadFailed(message)) = refused else {
+        panic!("expected a refusal for memory");
+    };
+    assert_eq!(message.matches("Qwen3.5-27B (").count(), 1, "{message}");
+    assert!(message.contains("Research notes"), "{message}");
+}

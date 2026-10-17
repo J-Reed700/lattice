@@ -189,7 +189,7 @@ async fn eviction_skips_pinned_instances() {
     let _busy = load(&pool, "chat", Some("answering")).await;
     load(&pool, "utility", None).await;
 
-    let evicted = pool.evict_idle(|_, _| Some(10), 10);
+    let evicted = pool.evict_idle(|key| *key, |_, _| Some(10), 10);
 
     assert_eq!(
         evicted
@@ -208,7 +208,7 @@ async fn eviction_unloads_nothing_when_the_idle_instances_cannot_make_room() {
     let _busy = load(&pool, "chat", Some("answering")).await;
     load(&pool, "utility", None).await;
 
-    assert!(pool.evict_idle(|_, _| Some(10), 11).is_empty());
+    assert!(pool.evict_idle(|key| *key, |_, _| Some(10), 11).is_empty());
     assert!(pool.get(&"utility").is_some());
 }
 
@@ -221,7 +221,7 @@ async fn eviction_takes_the_least_recently_used_first_and_stops_once_there_is_ro
     load(&pool, "a", None).await;
     let only_c_frees_nothing = |key: &&str, _: &Model| (*key != "c").then_some(10);
 
-    let evicted = pool.evict_idle(only_c_frees_nothing, 10);
+    let evicted = pool.evict_idle(|key| *key, only_c_frees_nothing, 10);
 
     assert_eq!(
         evicted.iter().map(|(key, ..)| *key).collect::<Vec<_>>(),
@@ -229,4 +229,58 @@ async fn eviction_takes_the_least_recently_used_first_and_stops_once_there_is_ro
         "b is the least recently used of those that free memory"
     );
     assert!(pool.get(&"a").is_some() && pool.get(&"c").is_some());
+}
+
+/// Keys `model/tuning` name clients of the server `model`.
+fn server_of(key: &&'static str) -> &'static str {
+    key.split('/').next().unwrap_or(key)
+}
+
+#[tokio::test]
+async fn clients_of_one_server_are_priced_once_and_unloaded_together() {
+    let pool = Pool::new();
+    for key in ["a/chat", "a/utility", "b/chat"] {
+        load(&pool, key, None).await;
+    }
+
+    let evicted = pool.evict_idle(server_of, |_, _| Some(10), 10);
+
+    let mut keys: Vec<&str> = evicted.iter().map(|(key, ..)| *key).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["a/chat", "a/utility"]);
+    assert_eq!(evicted.iter().map(|(_, bytes, _)| bytes).sum::<u64>(), 10);
+    assert!(pool.get(&"b/chat").is_some());
+}
+
+#[tokio::test]
+async fn an_idle_client_of_a_server_in_use_frees_nothing_and_stays() {
+    let pool = Pool::new();
+    let _busy = load(&pool, "a/chat", Some("answering")).await;
+    load(&pool, "a/utility", None).await;
+
+    assert!(pool.evict_idle(server_of, |_, _| Some(10), 10).is_empty());
+    assert!(pool.get(&"a/utility").is_some());
+}
+
+#[tokio::test]
+async fn a_pinned_load_overtaken_by_invalidation_is_listed_until_released() {
+    let pool = Pool::new();
+    let epoch = pool.epoch();
+    pool.invalidate(|_| false);
+
+    let stale = pool
+        .get_or_load("chat", epoch, Some("answering in 'Notes'"), || async {
+            Ok::<_, ()>(Model::new("chat"))
+        })
+        .await
+        .unwrap();
+
+    assert!(pool.get(&"chat").is_none(), "never handed out again");
+    let listed = pool.snapshot();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].stats.retired);
+    assert_eq!(listed[0].stats.holders, vec!["answering in 'Notes'"]);
+    drop(listed);
+    drop(stale);
+    assert!(pool.snapshot().is_empty());
 }
