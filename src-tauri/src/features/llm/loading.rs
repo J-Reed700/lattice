@@ -29,8 +29,9 @@ fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
     }
 }
 
-/// Artifacts whose llama-server refused to start, keyed by path and stamped
-/// with the file's size and mtime.
+/// Model files the bundled engine cannot read, keyed by path and stamped with
+/// the file's size and mtime. Only that verdict is kept: a start that timed
+/// out or was killed for memory says nothing about the file.
 ///
 /// Starting a local model means launching a sidecar and reading several
 /// gigabytes of tensors, and a file llama-server cannot parse fails only after
@@ -246,7 +247,7 @@ impl ModelLoader {
     }
 
     /// Start `local` on a bundled server launched with `server`, or share the
-    /// one already running for it. A file that failed to start is reported
+    /// one already running for it. A file the engine cannot read is reported
     /// again without another attempt until the file changes.
     pub(crate) async fn load_local(
         &self,
@@ -276,43 +277,50 @@ impl ModelLoader {
             app_handle: self.app_handle.clone(),
             server,
         };
-        match crate::features::llm::engine::factory::create_llm(
+        crate::features::llm::engine::factory::create_llm(
             config,
             &self.runtime.schedulers,
             &self.runtime.devices,
         )
         .await
-        {
-            Ok(created) => Ok(created),
-            Err(e) => match unusable_sidecar(&e) {
-                Some(error) => {
-                    tracing::error!(
-                        model = %local.name,
-                        error = %e,
-                        "Local model cannot start: the bundled llama-server is unusable"
-                    );
-                    Err(error)
-                }
-                None => {
-                    // The sidecar itself works, so this file is the problem:
-                    // an unsupported architecture, a truncated download, or
-                    // one too large for this machine. Another attempt costs
-                    // the same minute and fails the same way.
-                    let error = format!(
-                        "{} can't be loaded by Lattice's local engine: {e}.",
-                        local.name
-                    );
-                    self.runtime.unloadable.remember(&local.path, error.clone());
-                    tracing::warn!(
-                        model = %local.name,
-                        path = %local.path.display(),
-                        error = %e,
-                        "Local model failed to load; not trying this file again until it changes"
-                    );
-                    Err(AppError::ModelLoadFailed(error))
-                }
-            },
+        .map_err(|error| self.load_failure(local, error))
+    }
+
+    /// The error for a local start that failed. Only a verdict on the file
+    /// itself is remembered: a readiness timeout, a launch killed for memory
+    /// or a GPU that failed to come up says nothing about the bytes, and the
+    /// next request deserves a fresh attempt.
+    fn load_failure(&self, local: &LocalModel, error: LLMError) -> AppError {
+        if let Some(unusable) = unusable_sidecar(&error) {
+            tracing::error!(
+                model = %local.name,
+                error = %error,
+                "Local model cannot start: the bundled llama-server is unusable"
+            );
+            return unusable;
         }
+        if let LLMError::ModelUnsupported(reason) = &error {
+            // Another attempt reads the same bytes and fails the same way,
+            // after paying for a launch and a load.
+            let message = format!("{} can't be loaded: {reason}", local.name);
+            self.runtime
+                .unloadable
+                .remember(&local.path, message.clone());
+            tracing::warn!(
+                model = %local.name,
+                path = %local.path.display(),
+                error = %error,
+                "Local model is unsupported; not trying this file again until it changes"
+            );
+            return AppError::ModelLoadFailed(message);
+        }
+        tracing::warn!(
+            model = %local.name,
+            path = %local.path.display(),
+            error = %error,
+            "Local model failed to start; the next request tries again"
+        );
+        AppError::ModelLoadFailed(format!("{} did not start: {error}", local.name))
     }
 
     /// Connect to `model` on the Ollama server Settings names.

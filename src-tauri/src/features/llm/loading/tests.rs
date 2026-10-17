@@ -147,6 +147,70 @@ async fn a_remembered_load_failure_is_reported_without_loading_again() {
     }
 }
 
+/// A model file on disk, for the failure-memory tests.
+fn fixture_model(dir: &tempfile::TempDir) -> LocalModel {
+    let local = LocalModel {
+        name: "Test model".into(),
+        path: dir.path().join("test-model.gguf"),
+    };
+    std::fs::write(&local.path, b"model fixture").unwrap();
+    local
+}
+
+#[tokio::test]
+async fn a_start_that_failed_for_the_machine_is_not_remembered_and_the_next_load_tries_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let local = fixture_model(&dir);
+    let loader = loader_without_database();
+
+    for transient in [
+        LLMError::GenerationFailed(
+            "llama-server ran out of the 120 s budget shared by every startup attempt".into(),
+        ),
+        LLMError::GenerationFailed("llama-server exited during startup (signal 9)".into()),
+        LLMError::Other("Failed to allocate ephemeral port".into()),
+    ] {
+        let reported = loader.load_failure(&local, transient);
+        assert!(matches!(&reported, AppError::ModelLoadFailed(m)
+            if m.starts_with("Test model did not start: ") && !m.contains("can't be loaded")));
+        assert_eq!(loader.runtime.unloadable.known_failure(&local.path), None);
+    }
+
+    // The next load reaches the engine again; here, with no app to run a
+    // server, it fails for that reason rather than replaying an old one.
+    let next = loader
+        .load_local(
+            &local,
+            GenerationConfig::default(),
+            LocalServerOptions::default(),
+        )
+        .await;
+    assert!(matches!(next, Err(AppError::ModelLoadFailed(m))
+        if m.starts_with("Test model did not start: ") && m.contains("app_handle")));
+}
+
+#[tokio::test]
+async fn a_file_the_engine_cannot_read_is_remembered_with_the_engine_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let local = fixture_model(&dir);
+    let loader = loader_without_database();
+    let reason = "Lattice's bundled local model engine does not support this model \
+                  (unknown model architecture: 'laguna').";
+    let expected = format!("Test model can't be loaded: {reason}");
+
+    let reported = loader.load_failure(&local, LLMError::ModelUnsupported(reason.into()));
+    assert!(matches!(&reported, AppError::ModelLoadFailed(m) if *m == expected));
+
+    let again = loader
+        .load_local(
+            &local,
+            GenerationConfig::default(),
+            LocalServerOptions::default(),
+        )
+        .await;
+    assert!(matches!(again, Err(AppError::ModelLoadFailed(m)) if m == expected));
+}
+
 #[test]
 fn a_local_model_launches_with_its_own_saved_configuration_and_a_remote_one_with_none() {
     use lattice_core::application::contracts::settings::LocalModelConfigDto;

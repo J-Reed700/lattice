@@ -61,7 +61,7 @@ async fn a_chat_model_that_fails_to_warm_up_stays_selected_and_settings_are_unto
     let failed = warm_up_active_chat_model_impl(&container).await;
 
     assert!(matches!(failed, Err(AppError::ModelLoadFailed(message))
-        if message.contains("Ornith-1.5-9B can't be loaded by Lattice's local engine")));
+        if message.contains("Ornith-1.5-9B did not start: ")));
     assert!(still_active_for_chat(&container, &model_id).await);
     assert_eq!(settings_of(&container).await, before);
 }

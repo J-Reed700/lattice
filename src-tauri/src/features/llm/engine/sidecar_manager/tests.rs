@@ -387,10 +387,18 @@ fn unknown_architectures_report_the_engine_mismatch_without_cpu_retries() {
             "gguf_init_from_reader: tensor 'output_norm.weight' has offset 165015872, expected 174722688",
             "has offset 165015872, expected 174722688",
         ),
+        (
+            "llama_model_load: error loading model: missing tensor 'blk.32.nextn.eh_proj.weight'",
+            "missing tensor 'blk.32.nextn.eh_proj.weight'",
+        ),
+        (
+            "llama_model_load: error loading model: done_getting_tensors: wrong number of tensors; expected 851, got 843",
+            "wrong number of tensors; expected 851, got 843",
+        ),
     ] {
         let output = lines(line);
         let err = classify(SidecarBinary::Primary, &exited(Some(1), None), &output);
-        assert_eq!(err.kind, AttemptFailure::Fatal);
+        assert_eq!(err.kind, AttemptFailure::Unsupported);
         assert!(err.message.contains(expected), "{}", err.message);
         assert!(err.message.contains("Update Lattice's model engine"));
         assert!(!err.message.contains("corrupt"));
@@ -404,6 +412,43 @@ fn unknown_architectures_report_the_engine_mismatch_without_cpu_retries() {
                 true,
             ),
             None
+        );
+    }
+}
+
+#[test]
+fn an_unsupported_model_is_the_only_startup_failure_that_condemns_the_file() {
+    let unsupported = classify(
+        SidecarBinary::Primary,
+        &exited(Some(1), None),
+        &lines("llama_model_load: error loading model architecture: unknown model architecture: 'laguna'"),
+    );
+    assert!(matches!(
+        unsupported.into_llm_error(),
+        LLMError::ModelUnsupported(m) if m.contains("laguna")
+    ));
+
+    // The machine, not the file: a readiness timeout, a kill under memory
+    // pressure, and an allocation the loader could not make.
+    for (end, output) in [
+        (
+            StartupEnd::TimedOut(TimeoutKind::Budget(120)),
+            lines("llama_model_load: loading model tensors"),
+        ),
+        (
+            exited(None, Some(SIGKILL)),
+            lines("load_tensors: loading model"),
+        ),
+        (
+            exited(Some(1), None),
+            lines("llama_model_load: error loading model: unable to allocate Metal buffer"),
+        ),
+    ] {
+        let err = classify(SidecarBinary::Primary, &end, &output);
+        assert_ne!(err.kind, AttemptFailure::Unsupported, "{}", err.message);
+        assert!(
+            !matches!(err.into_llm_error(), LLMError::ModelUnsupported(_)),
+            "{end:?}"
         );
     }
 }
