@@ -24,6 +24,9 @@ pub(crate) enum Window {
     Running(u32),
     /// What a server Lattice does not run reports.
     Reported(u32),
+    /// What the model was trained for, when Auto is below the floor and
+    /// cannot rise past this: no amount of free memory makes room.
+    Trained(u32),
 }
 
 /// Log a refusal of `model`, or of a role that names none, as
@@ -127,6 +130,14 @@ pub(crate) fn window_too_small(
             "{needs} {model} is running with {} on this Mac right now. Set its context window \
              to {} or more in Settings → Models, or {}.",
             tokens(running),
+            tokens(floor),
+            larger(role)
+        ),
+        Window::Trained(trained) => format!(
+            "{needs} {model} was trained for {} tokens, and Auto never goes past that. Set its \
+             context window to {} or more in Settings → Models (a stretched window costs some \
+             quality), or {}.",
+            tokens(trained),
             tokens(floor),
             larger(role)
         ),

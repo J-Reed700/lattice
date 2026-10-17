@@ -25,9 +25,10 @@ use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::llm::instances::refusal::{self, Window};
 use crate::features::llm::instances::{
-    Acquire, Acquired, GpuBudget, Holder, LearningShortfall, LlmInstances, ModelKey, Tuning,
+    Acquire, Acquired, GpuBudget, Holder, LaunchProfile, LearningShortfall, LlmInstances, ModelKey,
+    Tuning,
 };
-use crate::features::llm::loading::{launch_profile_for, ModelLoader};
+use crate::features::llm::loading::{launch_profile_for, LocalModel, ModelLoader};
 
 /// What a turn or job asks a model for.
 pub(crate) struct ModelRequest {
@@ -465,21 +466,13 @@ impl RoleModels {
             .requirements
             .min_context_tokens
             .map(|tokens| u32::try_from(tokens).unwrap_or(u32::MAX));
-        let set_window = key.launch.and_then(|launch| launch.context_window);
-        if let (Some(floor), Some(set), Some(local)) = (floor, set_window, &local) {
-            if set < floor {
+        if let (Some(floor), Some(local)) = (floor, &local) {
+            if let Some(window) = self.window_short_of(floor, local, key.launch).await {
                 let auto = self
                     .budget
                     .auto_window(&local.path, key.launch.unwrap_or_default())
                     .await;
-                return Err(self.short_window(
-                    role,
-                    model,
-                    &local.name,
-                    floor,
-                    Window::Set(set),
-                    auto,
-                ));
+                return Err(self.short_window(role, model, &local.name, floor, window, auto));
             }
         }
         let generation = want.tuning.generation(settings);
@@ -516,9 +509,9 @@ impl RoleModels {
 
         let llm = &acquired.loaded.llm;
         let window = u32::try_from(llm.max_context_tokens()).unwrap_or(u32::MAX);
-        // A window set too small was refused before loading; what is left is
-        // a server Auto sized, or one that came up smaller than it was asked
-        // to, or a remote server's own window.
+        // A window known too small was refused before loading; what is left
+        // is a server Auto sized to fit beside the others, or one that came up
+        // smaller than it was asked to, or a remote server's own window.
         if let Some(floor) = floor.filter(|floor| window < *floor) {
             let window = match local {
                 Some(_) => Window::Running(window),
@@ -543,6 +536,29 @@ impl RoleModels {
     /// The refusal for `model`, whose `window` is below the work's `floor`.
     /// A Learning refusal is remembered, so Settings → Models can say so
     /// beside the model until it covers the window.
+    /// The window `local` would have below `floor`, when that is known before
+    /// loading it: one set in Settings → Models, or, under Auto, the length
+    /// the model was trained for when Auto is below the floor too. Auto's
+    /// own window is not enough on its own: evicting idle models to admit
+    /// this one may give it more.
+    async fn window_short_of(
+        &self,
+        floor: u32,
+        local: &LocalModel,
+        launch: LaunchProfile,
+    ) -> Option<Window> {
+        let launch = launch?;
+        if let Some(set) = launch.context_window {
+            return (set < floor).then_some(Window::Set(set));
+        }
+        let trained = self
+            .budget
+            .trained_window(&local.path)
+            .filter(|trained| *trained < floor)?;
+        let auto = self.budget.auto_window(&local.path, launch).await?;
+        (auto < floor).then_some(Window::Trained(trained))
+    }
+
     fn short_window(
         &self,
         role: ModelRole,
@@ -555,7 +571,9 @@ impl RoleModels {
         if role == ModelRole::Learning {
             let (tokens, window_is_saved) = match window {
                 Window::Set(tokens) => (tokens, true),
-                Window::Running(tokens) | Window::Reported(tokens) => (tokens, false),
+                Window::Running(tokens) | Window::Reported(tokens) | Window::Trained(tokens) => {
+                    (tokens, false)
+                }
             };
             self.instances.record_learning_shortfall(LearningShortfall {
                 model: model.clone(),

@@ -27,6 +27,10 @@ pub(crate) trait GpuBudget: Send + Sync {
     /// The window Auto would give `path` on this machine now, or `None` when
     /// the GPU does not report its memory.
     async fn auto_window(&self, path: &Path, launch: LocalServerOptions) -> Option<u32>;
+
+    /// The window `path` was trained for, which Auto never goes past however
+    /// much memory is free; `None` when its header does not say.
+    fn trained_window(&self, path: &Path) -> Option<u32>;
 }
 
 /// The budget of the app's bundled servers: the GPU's reported memory less
@@ -93,6 +97,10 @@ impl GpuBudget for SidecarBudget {
         };
         let (config, capabilities, _) = self.plan(path, auto).await?;
         capabilities.gpu_vram_gb().map(|_| config.context_size)
+    }
+
+    fn trained_window(&self, path: &Path) -> Option<u32> {
+        read_model_info(path).and_then(|info| info.trained_context_length)
     }
 }
 

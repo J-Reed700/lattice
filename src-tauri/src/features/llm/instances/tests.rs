@@ -77,6 +77,9 @@ impl GpuBudget for FakeBudget {
     async fn auto_window(&self, _: &std::path::Path, _: LocalServerOptions) -> Option<u32> {
         None
     }
+    fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
+        None
+    }
 }
 
 /// A downloaded model whose file holds `bytes` bytes of weights.
@@ -769,6 +772,9 @@ impl GpuBudget for MeteredBudget {
         }
     }
     async fn auto_window(&self, _: &std::path::Path, _: LocalServerOptions) -> Option<u32> {
+        None
+    }
+    fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
         None
     }
 }

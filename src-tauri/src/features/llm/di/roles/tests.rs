@@ -364,3 +364,93 @@ async fn the_utility_model_uses_ollama_only_when_ollama_is_the_provider() {
     assert_ne!(llm.provider_name(), "llamacpp");
     assert_eq!(llm.model_name(), "utility-model");
 }
+
+/// A machine on which Auto gives a local model `auto` tokens, and whose
+/// header says it was trained for `trained`.
+struct Windows {
+    auto: u32,
+    trained: u32,
+}
+
+#[async_trait::async_trait]
+impl GpuBudget for Windows {
+    async fn admission(
+        &self,
+        _: &std::path::Path,
+        _: crate::features::llm::engine::factory::LocalServerOptions,
+        _: Option<u32>,
+    ) -> crate::features::llm::engine::sidecar_manager::Admission {
+        crate::features::llm::engine::sidecar_manager::Admission::Unmetered
+    }
+    async fn auto_window(
+        &self,
+        _: &std::path::Path,
+        _: crate::features::llm::engine::factory::LocalServerOptions,
+    ) -> Option<u32> {
+        Some(self.auto)
+    }
+    fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
+        Some(self.trained)
+    }
+}
+
+#[tokio::test]
+async fn a_floor_above_what_auto_can_reach_is_refused_before_loading() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("short.gguf");
+    std::fs::write(&path, b"not a model").unwrap();
+    let row = DownloadedModel::new(
+        "row-short".into(),
+        "Short-8K".into(),
+        "short-8k".into(),
+        ModelLocation::LocalFile { path },
+        11,
+        "GGUF".into(),
+        None,
+    )
+    .unwrap();
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Local,
+        learning_model: Some(ModelRef::Local {
+            model_id: "short-8k".into(),
+        }),
+        ..LLMSettingsDto::default()
+    };
+    let mut models = role_models(settings, Some(row)).await;
+    models.budget = Arc::new(Windows {
+        auto: 8_192,
+        trained: 8_192,
+    });
+    let learning = ModelRequest {
+        role: ModelRole::Learning,
+        selection: ModelSelection::Learning,
+        requirements: ModelRequirements {
+            min_context_tokens: Some(20_000),
+            tools: ToolSupport::NotNeeded,
+        },
+        work: String::new(),
+        conversation_id: None,
+    };
+
+    let refused = models.llm_for(&learning).await;
+
+    let Err(AppError::InvalidConfig(message)) = refused else {
+        panic!("expected a window refusal");
+    };
+    assert_eq!(
+        message,
+        "Learning work needs a context window of at least 20,000 tokens. Your Learning model, \
+         Short-8K, was trained for 8,192 tokens, and Auto never goes past that. Set its context \
+         window to 20,000 or more in Settings → Models (a stretched window costs some quality), \
+         or choose a larger Learning model."
+    );
+    assert!(models.instances.snapshot().is_empty(), "nothing was loaded");
+    assert_eq!(
+        models.instances.learning_shortfall().map(|short| (
+            short.needed,
+            short.window,
+            short.window_is_saved
+        )),
+        Some((20_000, 8_192, false))
+    );
+}
