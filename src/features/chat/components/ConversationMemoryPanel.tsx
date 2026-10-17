@@ -34,6 +34,7 @@ import type {
   ConversationMemoryItemDto,
   MemoryEvidenceDto,
 } from '@/lib/bindings';
+import { focusReturnTarget } from '@/lib/focusReturn';
 import {
   decodeValidatedSpan,
   findMessageElement,
@@ -256,7 +257,7 @@ export function ConversationMemoryPanel({
 
   useEffect(() => {
     if (isOpen) {
-      returnFocusRef.current = document.activeElement as HTMLElement;
+      returnFocusRef.current = focusReturnTarget();
     } else {
       // A fresh open re-reads rather than showing the previous conversation's
       // items while the request is in flight.

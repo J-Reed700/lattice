@@ -3,6 +3,7 @@ import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
+import { focusReturnTarget } from "@/lib/focusReturn"
 import { cn } from "@/lib/utils"
 
 const Dialog = DialogPrimitive.Root
@@ -62,8 +63,7 @@ const DialogContent = React.forwardRef<
           className
         )}
         onOpenAutoFocus={(event) => {
-          const active = document.activeElement
-          returnFocusRef.current = active instanceof HTMLElement && active !== document.body ? active : null
+          returnFocusRef.current = focusReturnTarget()
           onOpenAutoFocus?.(event)
         }}
         onCloseAutoFocus={(event) => {

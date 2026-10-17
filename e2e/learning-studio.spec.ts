@@ -2076,7 +2076,15 @@ async function runPracticeWorkbenchJourney(
   await expect(revealDialog).toBeVisible();
   const keepWorking = revealDialog.getByRole("button", { name: "Keep working" });
   await expect(keepWorking).toBeFocused();
-  await keepWorking.press("Tab");
+  // macOS WebKit (Safari, and the WKWebView the desktop app runs in) moves
+  // Tab only between text fields unless the user turns on Keyboard navigation
+  // in System Settings; Option-Tab is the platform key that reaches buttons.
+  // Chromium and Linux WebKit reach buttons with Tab.
+  const nextControlKey =
+    page.context().browser()?.browserType().name() === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  await keepWorking.press(nextControlKey);
   await expect(revealDialog.getByRole("button", { name: "Reveal solution" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(revealDialog).toHaveCount(0);
