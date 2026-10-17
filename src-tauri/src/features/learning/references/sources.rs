@@ -4,9 +4,9 @@ use crate::features::learning::dto::{GenerateLearningProgramRequestDto, Learning
 use crate::features::learning::dto::{
     LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
 };
-use crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION;
-use crate::features::web::traits::WebServiceTrait;
+use lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION;
 use lattice_core::application::ports::LibraryPassagesPort;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::collections::HashSet;

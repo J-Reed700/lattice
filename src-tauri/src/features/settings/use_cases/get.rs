@@ -1,7 +1,8 @@
 //! Get Settings Use Case
 
 use crate::features::settings::dto::{SettingsCategory, SettingsDto};
-use lattice_core::application::ports::SettingsRepositoryPort;
+use async_trait::async_trait;
+use lattice_core::application::ports::{SettingsReaderPort, SettingsRepositoryPort};
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
@@ -68,6 +69,15 @@ impl GetSettingsUseCase {
     /// ```
     pub async fn get_category(&self, category: SettingsCategory) -> Result<serde_json::Value> {
         self.repository.get_category(category).await
+    }
+}
+
+/// Background workers (the vault watcher and writer) read settings through
+/// this port, so they never name the settings feature.
+#[async_trait]
+impl SettingsReaderPort for GetSettingsUseCase {
+    async fn current_settings(&self) -> Result<SettingsDto> {
+        self.execute().await
     }
 }
 

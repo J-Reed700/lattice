@@ -32,7 +32,7 @@ impl Container {
             });
         }
         let vault_root =
-            crate::features::vault::writeback::resolve_vault_root(&settings.vault.vault_path)
+            lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
                 .ok_or_else(|| {
                     AppError::InvalidConfig(
                         "Vault root could not be resolved (no home directory)".to_string(),

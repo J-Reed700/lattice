@@ -3,9 +3,9 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use crate::features::tags::entity::Tag as TagEntity;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{TagFilter, TagRepository};
@@ -233,9 +233,9 @@ impl crate::features::tags::TagRepositoryTrait for TagRepository {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         let entity = self.get_or_create(name, color).await?;
-        Ok(crate::features::tags::entity::Tag::with_id(
+        Ok(lattice_core::domain::entities::Tag::with_id(
             entity.id().clone(),
             entity.name().clone(),
             entity.color().to_string(),

@@ -74,8 +74,8 @@ where
         resolved_url: Some(article.url),
         text: article.content,
         truncated: article.content_truncated,
-        extraction_version: crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION
-            .into(),
+        extraction_version:
+            lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
     };
     repo.add(
         crate::features::learning::source_library::NewLearningSource {

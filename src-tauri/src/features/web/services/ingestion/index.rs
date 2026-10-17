@@ -1,7 +1,7 @@
 //! Chunking of extracted article text ahead of embedding and storage.
 
 use super::WebIngestionService;
-use crate::features::indexing::use_cases::embedding_input::SpanEmbeddingGroup;
+use lattice_core::application::ports::embedding_port::SpanEmbeddingGroup;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::error::Result;
 

@@ -291,6 +291,21 @@ pub struct EmbeddingTextChunk {
     pub token_count: usize,
 }
 
+/// One structure span's embedding input: the span text with its context prefix
+/// already prepended once, plus the byte range of each chunk inside it.
+///
+/// Late chunking embeds `span_text` in a single forward pass and pools each
+/// range; the chunk-first path embeds `prefix + span_text[range]` per chunk.
+/// Both see the same bytes, and neither changes the chunk content or the
+/// `start_char`/`end_char` offsets that citations resolve against.
+#[derive(Debug, Clone)]
+pub struct SpanEmbeddingGroup {
+    pub span_text: String,
+    pub chunk_ranges: Vec<Range<usize>>,
+    /// Index of this span's first chunk in `document.chunks()`.
+    pub first_chunk_index: usize,
+}
+
 #[cfg(test)]
 mod sparse_default_tests {
     use super::*;

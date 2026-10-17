@@ -17,7 +17,7 @@ use crate::features::learning::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
     outline_progress::OutlineStage, persistence::hash_text, repository::LearningRepository,
 };
-use crate::features::web::traits::WebServiceTrait;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::claim_verification::{
     ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };

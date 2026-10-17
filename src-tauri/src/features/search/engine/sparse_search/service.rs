@@ -6,9 +6,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use crate::features::search::SparseSearchTrait;
 use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::application::ports::SparseSearchTrait;
 use lattice_core::domain::value_objects::SparseEmbedding;
 use lattice_core::shared::error::Result;
 

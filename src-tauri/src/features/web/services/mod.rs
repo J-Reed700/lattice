@@ -6,6 +6,5 @@ pub mod ingestion;
 pub(crate) mod page_cache;
 mod reference_text;
 pub mod snapshot;
-pub(crate) use reference_text::EXTRACTION_VERSION as REFERENCE_TEXT_EXTRACTION_VERSION;
 pub(crate) mod stealth;
 pub mod web;

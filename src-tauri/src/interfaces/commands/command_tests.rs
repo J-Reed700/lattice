@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn test_search_result_serialization() {
-        use crate::features::search::engine::SearchResult;
+        use lattice_core::application::contracts::search::engine::SearchResult;
 
         let result = SearchResult {
             id: "1".to_string(),
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_search_result_with_nulls() {
-        use crate::features::search::engine::SearchResult;
+        use lattice_core::application::contracts::search::engine::SearchResult;
 
         let result = SearchResult {
             id: "1".to_string(),

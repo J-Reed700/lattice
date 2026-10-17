@@ -23,7 +23,6 @@
 
 use std::sync::Arc;
 
-use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::IndexFileResponseDto;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use lattice_core::application::factories::FileMetadataFactory;
@@ -32,6 +31,7 @@ use lattice_core::application::ports::{
     EmbeddingPort, FileStoragePort, RepositoryPort, SearchResultCachePort, VectorSearchPort,
 };
 use lattice_core::domain::entities::Document;
+use lattice_core::domain::entities::Embedding;
 use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use lattice_core::shared::error::{AppError, Result};
 

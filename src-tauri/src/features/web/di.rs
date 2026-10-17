@@ -3,10 +3,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::features::embedding::service::DynamicEmbeddingService;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::engine::storage::IndexStorage;
-use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::services::archive::WebArchiveService;
 use crate::features::web::services::article_extractor::ArticleExtractorService;
 use crate::features::web::services::capture::WebCaptureService;
@@ -32,9 +28,9 @@ pub struct WebDi {
 }
 
 pub fn build(
-    db_pool: SqlitePool,
     model_dir: &Path,
-    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    embedding: Arc<dyn lattice_core::application::ports::EmbeddingPort>,
+    store: Arc<dyn lattice_core::application::ports::IngestedDocumentStorePort>,
     vector_search: Arc<dyn lattice_core::application::ports::VectorSearchPort>,
     query_cache: Arc<dyn lattice_core::application::ports::SearchResultCachePort>,
 ) -> Result<WebDi> {
@@ -52,16 +48,12 @@ pub fn build(
         None => build_fallback_tokenizer()?,
     };
 
-    let embedding_service =
-        Arc::new(DynamicEmbeddingService::new(model_provider)) as Arc<dyn EmbeddingServiceTrait>;
-    let index_storage = Arc::new(IndexStorage::new(db_pool)) as Arc<dyn IndexStorageTrait>;
-
     let web_ingestion_service = Arc::new(
         WebIngestionService::builder()
             .article_extractor(article_extractor_service.clone())
             .web_archive(web_archive.clone())
-            .embedding_service(embedding_service)
-            .index_storage(index_storage)
+            .embedding_service(embedding)
+            .index_storage(store)
             .tokenizer(tokenizer)
             .vector_search(vector_search)
             .query_cache(query_cache)

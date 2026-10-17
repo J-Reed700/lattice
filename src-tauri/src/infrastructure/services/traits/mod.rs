@@ -2,7 +2,7 @@
 //!
 //! This module defines trait interfaces for cross-cutting / infrastructure
 //! service types in the system. Feature-specific traits live with their
-//! feature (e.g. `crate::features::tags::TagServiceTrait`).
+//! feature (e.g. `crate::features::tags::TagRepositoryTrait`).
 
 mod model;
 

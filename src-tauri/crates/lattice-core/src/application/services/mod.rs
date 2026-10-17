@@ -8,6 +8,7 @@ pub mod evidence_retrieval;
 pub mod file_type_detector;
 pub mod grounded_generation;
 pub mod history_share;
+pub mod live_index;
 pub mod model_selection;
 pub mod transcript;
 

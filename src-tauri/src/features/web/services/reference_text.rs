@@ -3,7 +3,6 @@ use lattice_core::shared::error::{AppError, Result};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
 
-pub(crate) const EXTRACTION_VERSION: &str = "web_reference_markdown_v2";
 const MAX_NESTING_DEPTH: usize = 256;
 
 fn invalid_depth() -> AppError {

@@ -26,7 +26,7 @@ use lattice_core::application::ports::{
 };
 
 // Service Traits
-use crate::features::tags::TagServiceTrait;
+use lattice_core::application::ports::TagServiceTrait;
 
 /// Library module for document organization (tags, favorites, mentions)
 ///

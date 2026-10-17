@@ -13,8 +13,8 @@ use crate::features::learning::{
     references::web_research,
     sources::{preview, InitialReference},
 };
-use crate::features::web::traits::WebServiceTrait;
 use futures::StreamExt;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::{
     application::{contracts::web::WebSearchResult, ports::LLMPort},
     shared::error::{AppError, Result},

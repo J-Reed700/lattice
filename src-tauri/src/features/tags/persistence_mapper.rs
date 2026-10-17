@@ -5,8 +5,8 @@
 //! This mapper implements the transformation layer between the anemic
 //! database model (used by SQLx) and the rich domain entity.
 
-use crate::features::tags::entity::Tag as DomainTag;
 use chrono::{DateTime, Utc};
+use lattice_core::domain::entities::Tag as DomainTag;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::{TagId, TagName};
 use serde::{Deserialize, Serialize};

@@ -84,12 +84,14 @@ pub mod credentials_port;
 pub mod database_stats_port;
 pub mod document_repository_port;
 pub mod document_scope;
+pub mod embedding_index_binding;
 pub mod embedding_port;
 pub mod embedding_repository_port;
 pub mod favorites_port;
 pub mod file_library;
 pub mod file_storage_port;
 pub mod file_system_port;
+pub mod ingested_document_store;
 pub mod library_passages;
 pub mod library_search;
 pub mod llm_port;
@@ -105,16 +107,20 @@ pub mod note_index_sink;
 pub mod ocr_port;
 pub mod recent_documents_port;
 pub mod repository_port;
+pub mod search_engines;
 pub mod settings_port;
+pub mod settings_reader;
 pub mod settings_side_effects_port;
 pub mod sparse_term_store_port;
 pub mod summary_search;
 pub mod system_info;
+pub mod tag_service;
 pub mod text_search_port;
 pub mod transcription_port;
 pub mod unit_of_work;
 pub mod update_checker_port;
 pub mod vector_search_port;
+pub mod web_service;
 
 pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
@@ -137,11 +143,13 @@ pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
 mod document_filter;
 pub use document_filter::DocumentFilter;
+pub use embedding_index_binding::EmbeddingIndexBinding;
 pub use embedding_port::EmbeddingPort;
 pub use embedding_repository_port::EmbeddingRepositoryPort;
 pub use favorites_port::FavoritesRepositoryPort;
 pub use file_storage_port::{FileMetadata, FileStoragePort};
 pub use file_system_port::FileSystemPort;
+pub use ingested_document_store::IngestedDocumentStorePort;
 pub use library_passages::{
     LibraryChunk, LibraryDocumentText, LibraryPassageHit, LibraryPassagesPort,
 };
@@ -158,18 +166,22 @@ pub use note_index_sink::NoteIndexSink;
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use repository_port::{Filter, NoFilter, RepositoryPort};
+pub use search_engines::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 pub use settings_port::merge_json_update;
 pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
+pub use settings_reader::SettingsReaderPort;
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
 pub use sparse_term_store_port::{ChunkSparseTerms, SparseTermStorePort};
 pub use system_info::{
     AcceleratorProbe, ComputeType, GpuInfo, NoAcceleratorProbe, SystemInfo, SystemInfoPort,
 };
+pub use tag_service::{DocumentLockGuard, TagServiceTrait};
 pub use text_search_port::TextSearchPort;
 pub use transcription_port::{Transcript, TranscriptSegment, TranscriptionPort};
 pub use unit_of_work::{UnitOfWork, UnitOfWorkFactory};
 pub use update_checker_port::{UpdateCheckerPort, UpdateInfoData};
 pub use vector_search_port::VectorSearchPort;
+pub use web_service::WebServiceTrait;
 
 // Unified trait for document repository (combines generic + specific)
 use crate::domain::entities::Document;

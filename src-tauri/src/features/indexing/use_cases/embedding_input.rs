@@ -1,26 +1,12 @@
 //! Structure-preserving, contextual input shared by imports and rebuilds.
 //! Source text remains byte-for-byte citation evidence; metadata is embedded separately.
 use crate::features::indexing::engine::extraction::is_code_mime;
+use lattice_core::application::ports::embedding_port::SpanEmbeddingGroup;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::entities::{chunk::Chunk, document::Document};
 use lattice_core::domain::value_objects::section_identifier::SectionIdentifier;
 use lattice_core::domain::value_objects::source_context::StructureMode;
 use lattice_core::shared::error::{AppError, Result};
-
-/// One structure span's embedding input: the span text with its context prefix
-/// already prepended once, plus the byte range of each chunk inside it.
-///
-/// Late chunking embeds `span_text` in a single forward pass and pools each
-/// range; the chunk-first path embeds `prefix + span_text[range]` per chunk.
-/// Both see the same bytes, and neither changes the chunk content or the
-/// `start_char`/`end_char` offsets that citations resolve against.
-#[derive(Debug, Clone)]
-pub struct SpanEmbeddingGroup {
-    pub span_text: String,
-    pub chunk_ranges: Vec<std::ops::Range<usize>>,
-    /// Index of this span's first chunk in `document.chunks()`.
-    pub first_chunk_index: usize,
-}
 
 /// Prepare a document's chunks and report how they group into structure spans.
 ///

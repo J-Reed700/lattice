@@ -18,6 +18,10 @@ use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FileStoragePort, VectorSearchPort,
 };
 
+// Embedding and storage
+use crate::features::embedding::service::DynamicEmbedding;
+use crate::features::indexing::engine::storage::IndexStorage;
+
 // Service Traits
 use crate::features::web::{
     ArticleExtractorServiceTrait, WebArchiveServiceTrait, WebCaptureServiceTrait,
@@ -52,9 +56,9 @@ impl IndexingModule {
         // Web first: deletion routes archived articles back through the very
         // archive service that wrote them, so indexing needs that instance.
         let web = crate::features::web::di::build(
-            db_pool.clone(),
             &model_dir,
-            Arc::clone(&model_provider),
+            Arc::new(DynamicEmbedding::new(Arc::clone(&model_provider))),
+            Arc::new(IndexStorage::new(db_pool.clone())),
             Arc::clone(&vector_search),
             Arc::clone(&shared.query_cache),
         )?;

@@ -7,6 +7,7 @@
 
 use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::tags::TagWithCountDto;
 use lattice_core::shared::error::Result;
 use tauri::State;
 

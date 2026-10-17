@@ -8,8 +8,8 @@
 
 #[cfg(test)]
 mod di_integration_tests {
-    use crate::features::embedding::EmbeddingServiceTrait;
     use crate::interfaces::di::MockAppContainer;
+    use lattice_core::application::ports::EmbeddingPort;
     use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
     /// Test complete document indexing workflow using mocks
@@ -66,7 +66,7 @@ mod di_integration_tests {
         assert_eq!(embeddings.len(), 3);
         assert_eq!(embeddings[0].len(), DEFAULT_EMBEDDING_DIM);
 
-        use crate::features::embedding::entity::Embedding as EmbeddingEntity;
+        use lattice_core::domain::entities::Embedding as EmbeddingEntity;
         let chunk_embeddings: Vec<(EmbeddingEntity, Vec<f32>)> = chunk_ids
             .iter()
             .zip(embeddings.iter())
@@ -393,7 +393,7 @@ mod di_integration_tests {
     #[tokio::test]
     async fn test_service_polymorphism() -> Result<(), Box<dyn std::error::Error>> {
         async fn embed_documents(
-            service: &dyn EmbeddingServiceTrait,
+            service: &dyn EmbeddingPort,
             documents: &[String],
         ) -> Vec<Vec<f32>> {
             service
@@ -588,7 +588,7 @@ mod di_integration_tests {
 
         assert_eq!(embeddings.len(), 100);
 
-        use crate::features::embedding::entity::Embedding as EmbeddingEntity;
+        use lattice_core::domain::entities::Embedding as EmbeddingEntity;
         let chunk_embeddings: Vec<(EmbeddingEntity, Vec<f32>)> = chunk_ids
             .iter()
             .zip(embeddings.iter())

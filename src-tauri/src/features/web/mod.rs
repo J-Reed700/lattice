@@ -15,11 +15,9 @@
 //! - `crate::features::web::images` — chat pictures: find, fetch, store,
 //!   lease, serve over `lattice-image`; implements `ChatImagesPort`
 //! - `crate::features::web::plugin::init()` — Tauri plugin
-//! - `crate::features::web::{WebServiceTrait, WebIngestionServiceTrait,
+//! - `crate::features::web::{WebIngestionServiceTrait,
 //!   WebArchiveServiceTrait, WebCaptureServiceTrait}` — service traits
-//!
-//! - `crate::features::web::article_detector` — article/page heuristics
-//!   shared with the file feature
+//!   (`WebServiceTrait` lives in `lattice_core::application::ports`)
 //!
 //! No application-level `WebPort` — web operations flow through
 //! the service traits.
@@ -40,6 +38,5 @@ pub mod mocks;
 
 pub use traits::{
     ArticleExtractorServiceTrait, WebArchiveServiceTrait, WebCaptureServiceTrait,
-    WebIngestionResult, WebIngestionServiceTrait, WebServiceTrait,
+    WebIngestionResult, WebIngestionServiceTrait,
 };
-pub mod article_detector;

@@ -6,19 +6,19 @@
 //! **NOTE**: Tag generation uses local LLM via TagServiceImpl.
 //! See infrastructure/extraction/tag_generator.rs for prompt helpers.
 
-use crate::features::tags::dto::TagWithCountDto as TagWithCount;
-use crate::features::tags::entity::Tag;
 use crate::features::tags::generator::{
     DocumentMetadata, TagGenerator, TAG_GENERATION_SYSTEM_PROMPT,
 };
 use crate::features::tags::repository::TagRepository;
-use crate::features::tags::service::{DocumentLockGuard, DocumentLockTable};
-use crate::features::tags::TagServiceTrait;
+use crate::features::tags::service::DocumentLockTable;
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use async_trait::async_trait;
+use lattice_core::application::contracts::tags::TagWithCountDto as TagWithCount;
 use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::{DocumentLockGuard, TagServiceTrait};
 use lattice_core::application::ports::{LoadedChatModelPort, RepositoryPort};
 use lattice_core::application::services::completion_input::{complete_text, TextCall};
+use lattice_core::domain::entities::Tag;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;

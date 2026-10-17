@@ -30,7 +30,8 @@
 //! `lattice_core::domain::entities::SearchResult`,
 //! and `lattice_core::domain::value_objects::{SearchMode, SearchQuery}`.
 //!
-//! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, SparseSearchTrait}`.
+//! The engine traits (`SearchServiceTrait`, `BM25SearchTrait`, `SparseSearchTrait`)
+//! live in `lattice_core::application::ports::search_engines`.
 //! The library search orchestrator is `use_cases::HybridSearchUseCase`.
 
 pub mod commands;
@@ -45,7 +46,6 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
-pub use trait_def::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 pub mod engine;
 pub mod enrichment_service;
 pub mod hyde;

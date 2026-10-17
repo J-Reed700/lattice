@@ -1,11 +1,11 @@
 //! Text chunk and embedding storage operations.
 
 use super::checksum::calculate_checksum;
-use crate::features::embedding::service::MODEL_NAME;
 use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::features::mentions::repository::MentionRepository;
 use chrono::Utc;
+use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::shared::fs::path::path_to_string;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
@@ -149,7 +149,7 @@ pub async fn store_document(
             embedding_id,
             chunk_id,
             embedding_bytes,
-            MODEL_NAME,
+            DEFAULT_EMBEDDING_MODEL_NAME,
             dimension,
         )
         .execute(&mut *tx)

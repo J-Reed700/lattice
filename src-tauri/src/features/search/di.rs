@@ -21,11 +21,11 @@ use crate::features::search::engine::vector_search::{
 use crate::features::search::enrichment_service::SearchEnrichmentService;
 use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-use crate::features::search::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{
-    ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
+    BM25SearchTrait, ChunkRepositoryPort, DocumentRepository, EmbeddingPort, SearchServiceTrait,
+    SparseSearchTrait, TextSearchPort, VectorSearchPort,
 };
 use lattice_core::domain::models::checkpoint::has_loadable_weights;
 use lattice_core::domain::models::downloaded::DownloadedModel;
@@ -174,7 +174,7 @@ pub async fn build_with_compression(
             let pool = db_pool.clone();
             let identity = identity.clone();
             async move {
-                crate::features::embedding::generation::restore_page(
+                crate::infrastructure::persistence::repositories::embedding::generation::restore_page(
                     &pool, &identity, dimension, &cursor, 128,
                 )
                 .await
@@ -218,7 +218,10 @@ pub async fn build_with_compression(
                 .map_err(|e| {
                     AppError::InternalError(format!("Embedding model load task failed: {e}"))
                 })??;
-                crate::features::embedding::generation::prepare(&db_pool, &model).await?;
+                crate::infrastructure::persistence::repositories::embedding::generation::prepare(
+                    &db_pool, &model,
+                )
+                .await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
                 open_or_rebuild_streaming(
                     &usearch_index,
@@ -272,6 +275,7 @@ pub async fn build_with_compression(
             usearch_index_path,
             compression,
             index_persistence,
+            db_pool.clone(),
             background,
         ),
     );

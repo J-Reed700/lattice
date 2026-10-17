@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use super::{normalized_weights, split_lexical_weight, HybridSearchUseCase};
 use crate::features::search::engine::reranker::{RerankResult, Reranker};
-use crate::features::search::SparseSearchTrait;
 use lattice_core::application::contracts::search::{
     BranchKind, RankedBranch, RerankOptions, SearchModeDto, SearchRequestDto, SearchResponseDto,
     SearchResultDto, SearchResultRecord,
 };
+use lattice_core::application::ports::SparseSearchTrait;
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use lattice_core::shared::error::{AppError, Result};
 

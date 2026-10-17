@@ -1,7 +1,8 @@
 //! Get Tags Use Case
 
-use crate::features::tags::dto::{TagDto, TagWithCountDto};
-use crate::features::tags::TagServiceTrait;
+use crate::features::tags::dto::TagDto;
+use lattice_core::application::contracts::tags::TagWithCountDto;
+use lattice_core::application::ports::TagServiceTrait;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 

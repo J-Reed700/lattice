@@ -25,9 +25,9 @@
 
 use std::sync::Arc;
 
-use crate::features::health::dto::SystemStatsDto;
-use crate::features::tags::entity::Tag as TagEntity;
+use lattice_core::application::contracts::system_stats::SystemStatsDto;
 use lattice_core::application::ports::{DatabaseStatsPort, RepositoryPort};
+use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
 use lattice_core::shared::error::Result;
 

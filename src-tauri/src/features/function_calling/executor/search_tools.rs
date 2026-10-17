@@ -1,8 +1,8 @@
 //! `semantic_search` tool handler and search-result shaping helpers.
 
 use super::FunctionExecutor;
-use crate::features::search::engine::service::SearchResult as InfraSearchResult;
 use chrono::Utc;
+use lattice_core::application::contracts::search::engine::SearchResult as InfraSearchResult;
 use lattice_core::application::contracts::search::{SearchRequestDto, SearchResultDto};
 use lattice_core::application::contracts::tools::FunctionResult;
 use lattice_core::application::contracts::tools::*;
@@ -193,7 +193,11 @@ impl FunctionExecutor {
                 SearchMode::Hybrid => {
                     let response = self
                         .hybrid_search
-                        .execute(SearchRequestDto::hybrid(input.query.clone(), wanted))
+                        .execute_scoped(
+                            SearchRequestDto::hybrid(input.query.clone(), wanted),
+                            None,
+                            None,
+                        )
                         .await?;
                     self.label_hits(response.results).await?
                 }

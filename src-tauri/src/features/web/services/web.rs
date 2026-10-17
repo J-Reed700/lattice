@@ -40,11 +40,11 @@
 use crate::features::web::services::browser_reader::BrowserReader;
 use crate::features::web::services::page_cache::PageCache;
 use crate::features::web::services::stealth;
-use crate::features::web::WebServiceTrait;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use lattice_core::application::contracts::web::*;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::{Client, StatusCode};

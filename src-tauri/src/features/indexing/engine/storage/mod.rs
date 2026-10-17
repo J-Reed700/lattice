@@ -39,6 +39,7 @@ use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
+use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::{Path, PathBuf};
@@ -282,5 +283,35 @@ impl IndexStorageTrait for IndexStorage {
     ) -> Result<String> {
         self.store_document_with_context_and_file(path, file_id, mime_type, chunks, embeddings)
             .await
+    }
+}
+
+/// The two calls an importer that chunks and embeds its own text needs.
+#[async_trait]
+impl IngestedDocumentStorePort for IndexStorage {
+    async fn store_document_with_context_for_model(
+        &self,
+        path: &Path,
+        mime_type: &str,
+        chunks: Vec<ContextualizedChunk>,
+        embeddings: Vec<Vec<f32>>,
+        model_identity: &str,
+    ) -> lattice_core::shared::error::Result<String> {
+        <Self as IndexStorageTrait>::store_document_with_context_for_model(
+            self,
+            path,
+            mime_type,
+            chunks,
+            embeddings,
+            model_identity,
+        )
+        .await
+    }
+
+    async fn chunk_ids_in_order(
+        &self,
+        document_id: &str,
+    ) -> lattice_core::shared::error::Result<Vec<String>> {
+        <Self as IndexStorageTrait>::chunk_ids_in_order(self, document_id).await
     }
 }

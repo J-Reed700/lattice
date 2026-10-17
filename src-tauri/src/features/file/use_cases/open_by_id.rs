@@ -3,7 +3,7 @@
 //! Opens a file by document ID, looking up the file path first.
 
 use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
-use crate::features::web::article_detector::WebArticleDetector;
+use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
 use lattice_core::application::services::FileType;

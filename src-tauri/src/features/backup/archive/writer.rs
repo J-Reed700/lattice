@@ -356,7 +356,7 @@ impl ArchiveWriter {
         };
 
         let vault_root = if settings.vault.enabled {
-            crate::features::vault::writeback::resolve_vault_root(&settings.vault.vault_path)
+            lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
                 .filter(|root| path_exists(root))
         } else {
             None

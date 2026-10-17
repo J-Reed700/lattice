@@ -1,11 +1,11 @@
 //! Tests for reindexing: vector eviction, empty extractions and strategy changes.
 
 use super::*;
-use crate::features::embedding::entity::Embedding;
 use async_trait::async_trait;
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
 use lattice_core::domain::entities::Document;
+use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::types::ValidatedFilePath;
 use std::fs;
 use std::path::Path;

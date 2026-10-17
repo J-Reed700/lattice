@@ -78,8 +78,7 @@ impl Qwen3RerankerService {
         // Hugging Face tokenizers serialize BPE merges as token pairs, while
         // the Rust runtime currently expects the equivalent `"left right"`
         // form.
-        let mut tokenizer =
-            crate::features::embedding::input_policy::load_tokenizer(&tokenizer_path)?;
+        let mut tokenizer = crate::infrastructure::ml::tokenizer::load_tokenizer(&tokenizer_path)?;
         tokenizer.with_padding(None);
         tokenizer
             .with_truncation(None)

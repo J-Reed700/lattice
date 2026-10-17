@@ -33,7 +33,6 @@ impl Container {
                 downloaded_models: self.ai.downloaded_model_repo().clone(),
                 security: self.core.security_context().clone(),
                 index: self.search.runtime_index(),
-                pool: self.db_pool().clone(),
                 strategy: self.search.embedding_strategy(),
             },
         )
