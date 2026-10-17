@@ -1,6 +1,7 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
 use super::{
-    JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob, RecoveryPolicy,
+    Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
+    RecoveryPolicy,
 };
 use crate::shared::{
     error::{AppError, Result},
@@ -22,6 +23,9 @@ use tokio_util::sync::CancellationToken;
 const POLL: Duration = Duration::from_secs(30);
 const RETRY_QUEUED: &str = "Retry queued";
 const WAITING_TURN: &str = "Waiting for its turn";
+/// The error code of a job ended because its failure repeated with nothing
+/// saved in between.
+pub const REPEATED_FAILURE: &str = "repeated_failure";
 
 type Observer = Arc<dyn Fn(&JobDto) + Send + Sync>;
 type Subjects = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
@@ -211,9 +215,23 @@ impl Drop for SubjectLease {
     }
 }
 
+/// What a deferred job's last attempt failed with, and a digest of the work it
+/// had saved by then.
+#[derive(Debug, PartialEq, Eq)]
+struct LastFailure {
+    failure: String,
+    saved_work: String,
+}
+
 /// The application's job runtime, owned by the composition root. Workers run
 /// as its own background tasks: [`JobRuntime::close`] cancels them and
 /// [`JobRuntime::drain`] waits for their final writes.
+///
+/// A deferred job is never retried forever without anyone seeing it: each
+/// deferral shows its attempt number and last error, and a failure other than
+/// an outage that repeats with nothing saved in between ends the job. The
+/// same work failing the same way twice is deterministic; a third attempt
+/// would only spend another backoff to say so again.
 pub struct JobRuntime {
     events: Arc<Events>,
     tasks: BackgroundTasks,
@@ -226,6 +244,9 @@ pub struct JobRuntime {
     wake: Arc<Notify>,
     poll: Duration,
     dispatching: AtomicBool,
+    /// Each deferred job's last failure. Held only while the job is deferred,
+    /// and only in this process: after a restart a job gets one more attempt.
+    deferred: Mutex<HashMap<String, LastFailure>>,
 }
 
 impl JobRuntime {
@@ -250,6 +271,7 @@ impl JobRuntime {
             wake: Arc::new(Notify::new()),
             poll,
             dispatching: AtomicBool::new(false),
+            deferred: Mutex::default(),
         })
     }
 
@@ -441,7 +463,11 @@ impl JobRuntime {
             events: self.events.clone(),
             cancel: cancel.clone(),
         };
-        let finalized = match kind.handler.run(&context).await {
+        let outcome = kind.handler.run(&context).await;
+        if outcome.is_ok() || cancel.is_cancelled() {
+            lock(&self.deferred).remove(id);
+        }
+        let finalized = match outcome {
             Ok(JobOutcome::Completed {
                 result_ref,
                 message,
@@ -479,17 +505,82 @@ impl JobRuntime {
 
     async fn record_failure(&self, id: &str, kind: &Kind, error: &AppError) -> Result<()> {
         let job = self.store().get(id).await?;
-        match kind.handler.failure(&job, error) {
+        let failure = kind.handler.failure(&job, error);
+        let repeated = matches!(failure, JobFailure::Defer(_))
+            && self.repeats_without_progress(&job, error).await?;
+        match failure {
             JobFailure::Fail { code, message } => {
+                lock(&self.deferred).remove(id);
                 tracing::warn!(job_id = id, %error, "Job failed; saved work requires attention");
                 self.store().fail(id, &code, &message).await
             }
+            JobFailure::Defer(_) if repeated => {
+                lock(&self.deferred).remove(id);
+                tracing::warn!(
+                    job_id = id,
+                    code = REPEATED_FAILURE,
+                    %error,
+                    "job.stopped: the same failure repeated with nothing saved in between"
+                );
+                let message = format!(
+                    "{error} The previous attempt failed the same way and nothing was saved \
+                     in between, so another attempt would fail again."
+                );
+                self.store().fail(id, REPEATED_FAILURE, &message).await
+            }
             JobFailure::Defer(deferral) => {
-                tracing::warn!(job_id = id, %error, "Job attempt failed; scheduling automatic retry");
+                let attempt = job.retry_count.saturating_add(1);
+                tracing::warn!(job_id = id, attempt, %error, "Job attempt failed; scheduling automatic retry");
+                let deferral = Deferral {
+                    progress_message: format!(
+                        "{} · attempt {attempt} · last error: {error}",
+                        deferral.progress_message
+                    ),
+                    ..deferral
+                };
                 self.store().defer(id, &deferral, kind.config.backoff).await
             }
         }
         .map(drop)
+    }
+
+    /// Whether `error` is what the job's previous attempt was deferred for,
+    /// with nothing saved since. An outage never is: it says nothing about the
+    /// work. Records this failure as the job's latest either way.
+    async fn repeats_without_progress(&self, job: &JobRecord, error: &AppError) -> Result<bool> {
+        if JobFailure::is_outage(error) {
+            return Ok(false);
+        }
+        let latest = LastFailure {
+            failure: format!("{} {error}", error.error_code()),
+            saved_work: self.saved_work(job).await?,
+        };
+        let mut deferred = lock(&self.deferred);
+        let repeated = deferred.get(&job.id) == Some(&latest);
+        deferred.insert(job.id.clone(), latest);
+        Ok(repeated)
+    }
+
+    /// A digest of everything `job` has saved: its checkpoints, in a stable
+    /// order, and its staged result. Content, not save times, so a checkpoint
+    /// written again unchanged is not progress.
+    async fn saved_work(&self, job: &JobRecord) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let mut saved: Vec<String> = self
+            .store()
+            .checkpoints_with_prefix(&job.id, "")
+            .await?
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect();
+        saved.sort_unstable();
+        saved.extend(job.staged_result.as_ref().map(serde_json::Value::to_string));
+        let mut digest = Sha256::new();
+        for item in &saved {
+            digest.update(item.as_bytes());
+            digest.update([0]);
+        }
+        Ok(hex::encode(digest.finalize()))
     }
 
     /// Saves a job and starts its worker.

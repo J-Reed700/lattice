@@ -21,8 +21,10 @@ pub(in crate::features::learning) fn lesson_job_config() -> JobKindConfig {
 }
 
 /// A disconnected model request is deferred work, not a failed lesson review.
-/// Repeated outages never exhaust a budget; the delay between attempts grows
-/// to five minutes.
+/// Outages never exhaust a budget; the delay between attempts grows to five
+/// minutes. A model's rejection ([`AppError::ModelRejected`]) fails at once,
+/// and the job runtime ends a job whose other failure comes back with nothing
+/// saved in between, so a lesson never retries forever unseen.
 pub(in crate::features::learning) fn lesson_failure(
     job: &JobRecord,
     error: &AppError,
@@ -54,7 +56,7 @@ pub(in crate::features::learning) fn lesson_failure(
         }
         _ => "The model service could not finish the request; preparation will retry automatically",
     };
-    let recovery = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. Repeated service failures can prevent further progress until the service recovers. You can leave this screen or cancel.";
+    let recovery = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. If the same failure comes back with nothing saved in between, preparation stops and shows it instead of retrying again. You can leave this screen or cancel.";
     JobFailure::Defer(Deferral {
         code: "temporarily_unavailable".into(),
         message: format!("{error} {recovery}"),

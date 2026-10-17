@@ -381,6 +381,124 @@ async fn deferred_jobs_wait_for_their_retry_time_and_back_off() -> Result<()> {
     Ok(())
 }
 
+/// Fails every attempt with the same error, first saving a checkpoint that
+/// differs from the last attempt's when `saves`.
+struct Repeating {
+    error: AppError,
+    saves: bool,
+    attempts: std::sync::atomic::AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl JobHandler for Repeating {
+    async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let attempt = self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.saves {
+            context
+                .put_checkpoint("work", &json!({ "attempt": attempt }))
+                .await?;
+        }
+        Err(self.error.clone())
+    }
+}
+
+/// A runtime that redelivers deferred jobs at once, running one [`Repeating`]
+/// job.
+async fn repeating(error: AppError, saves: bool) -> Result<(Arc<JobRuntime>, String)> {
+    let runtime = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(10));
+    runtime
+        .register(
+            KIND,
+            Arc::new(Repeating {
+                error,
+                saves,
+                attempts: Default::default(),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                initial: Duration::ZERO,
+                max: Duration::ZERO,
+            }),
+        )
+        .await?;
+    let id = runtime.submit(&new_job(KIND, "repeats", None)).await?.id;
+    Ok((runtime, id))
+}
+
+/// The saved job once `done` holds for it.
+async fn saved_once(
+    runtime: &JobRuntime,
+    id: &str,
+    done: impl Fn(&JobRecord) -> bool,
+) -> JobRecord {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            let job = runtime.store().get(id).await.unwrap();
+            if done(&job) {
+                return job;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> {
+    let (runtime, id) = repeating(
+        AppError::ServiceNotAvailable("llama.cpp returned HTTP 500".into()),
+        false,
+    )
+    .await?;
+    let job = saved_once(&runtime, &id, |job| job.status.is_finished()).await;
+    assert_eq!(job.status, JobStatus::Failed);
+    assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
+    assert_eq!(job.retry_count, 1, "deferred once, then the repeat ends it");
+    assert!(job.error_message.unwrap().contains("HTTP 500"));
+    runtime.close();
+    runtime.drain().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn progress_between_failures_and_outages_keep_a_job_retrying_visibly() -> Result<()> {
+    for (error, saves, shown) in [
+        (
+            AppError::ServiceNotAvailable("llama.cpp returned HTTP 500".into()),
+            true,
+            "HTTP 500",
+        ),
+        (
+            AppError::Network("connection refused".into()),
+            false,
+            "connection refused",
+        ),
+    ] {
+        let (runtime, id) = repeating(error, saves).await?;
+        let job = saved_once(&runtime, &id, |job| {
+            job.status.is_finished() || (job.retry_count >= 3 && job.status == JobStatus::Pending)
+        })
+        .await;
+        assert_eq!(job.status, JobStatus::Pending, "{shown}");
+        assert!(
+            job.progress_message
+                .contains(&format!("attempt {} · last error: ", job.retry_count)),
+            "{}",
+            job.progress_message
+        );
+        assert!(
+            job.progress_message.contains(shown),
+            "{}",
+            job.progress_message
+        );
+        runtime.close();
+        runtime.drain().await;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
     for (error, expected) in [
@@ -391,6 +509,10 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
         ),
         (
             AppError::InvalidInput("bad request".into()),
+            JobStatus::Failed,
+        ),
+        (
+            AppError::ModelRejected("rejected this request twice".into()),
             JobStatus::Failed,
         ),
     ] {
