@@ -7,43 +7,34 @@
  * no, so a returning user never pays for it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+
+import { useQuery } from '@tanstack/react-query';
 
 import { useFirstRunDismissal } from '@/features/model/hooks/useFirstRunDismissal';
-import { fetchFirstRunStatus } from '@/features/model/hooks/useFirstRunSetup';
+import { firstRunStatusQueryOptions } from '@/features/model/hooks/useFirstRunSetup';
 
 import { ModelSetupModal } from './ModelSetupModal';
 
 export function FirstRunGate() {
   const { dismissed, isPending, dismiss } = useFirstRunDismissal();
-  const [open, setOpen] = useState(false);
-  const asked = useRef(false);
-
+  // `undefined` means the settings read hasn't landed (or failed). Staying
+  // quiet is the right failure mode — the catalog is in Settings either way,
+  // and so is a failed status check.
+  const statusQuery = useQuery({ ...firstRunStatusQueryOptions(), enabled: !isPending && dismissed === false });
+  const statusError = statusQuery.error;
   useEffect(() => {
-    // `undefined` means the settings read hasn't landed (or failed). Staying
-    // quiet is the right failure mode — the catalog is in Settings either way.
-    if (isPending || dismissed !== false || asked.current) return;
-    asked.current = true;
-
-    void (async () => {
-      try {
-        const result = await fetchFirstRunStatus();
-        if (!result.ok) {
-          console.error('Failed to check first-run status:', result.error);
-          return;
-        }
-        if (result.data.needs_setup) setOpen(true);
-      } catch (error) {
-        console.error('Failed to check first-run status:', error);
-      }
-    })();
-  }, [dismissed, isPending]);
+    if (statusError) console.error('Failed to check first-run status:', statusError.message);
+  }, [statusError]);
+  const [closed, setClosed] = useState(false);
+  const open = !closed && statusQuery.data?.needs_setup === true;
+  const setOpen = (next: boolean) => setClosed(!next);
 
   return (
     <ModelSetupModal
       open={open}
       onOpenChange={setOpen}
-      onComplete={() => setOpen(false)}
+      onComplete={() => setClosed(true)}
       onDismiss={dismiss}
     />
   );

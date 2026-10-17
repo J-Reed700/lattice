@@ -1,4 +1,5 @@
 import {
+  queryOptions,
   useMutation,
   useQuery,
   useQueryClient,
@@ -7,7 +8,26 @@ import {
 
 import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
+import type { ConversationMessageBookmarkDto } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
+import { resolveBookmarkPayload } from '@/utils/chatBookmarks';
+
+export const bookmarkPayloadKey = (conversationId: string, messageId: string) =>
+  ['references', 'bookmark-payload', conversationId, messageId] as const;
+
+/**
+ * A bookmarked message's full content and sources, read once when it is first
+ * opened (a saved message does not change). A failed read is shown at once;
+ * opening the reference again reads it again.
+ */
+export const bookmarkPayloadQueryOptions = (bookmark: ConversationMessageBookmarkDto | null) =>
+  queryOptions({
+    queryKey: bookmarkPayloadKey(bookmark?.conversationId ?? '', bookmark?.messageId ?? ''),
+    queryFn: () => resolveBookmarkPayload(bookmark!),
+    enabled: bookmark !== null,
+    retry: false,
+    staleTime: Infinity,
+  });
 
 export function useInboxBookmarksQuery(search: string) {
   const query = search.trim();

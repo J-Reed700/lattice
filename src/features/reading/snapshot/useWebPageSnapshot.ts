@@ -18,6 +18,10 @@ import { type WebPageMode, useWebPageSnapshotStore } from './webPageSnapshotStor
 export const webPageSnapshotQueryKey = (conversationId: string, url: string) =>
   ['web-page-snapshot', conversationId, url] as const;
 
+/** Every snapshot captured in a conversation. */
+export const webPageSnapshotListQueryKey = (conversationId: string) =>
+  ['web-page-snapshots', conversationId] as const;
+
 export interface UseWebPageSnapshot {
   snapshot: WebPageSnapshotDto | null;
   /** True until the first answer about this page arrives. */
@@ -53,6 +57,7 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
       EventSchemas.WebPageSnapshot.Changed,
       ({ payload }) => {
         const conversationMatches = !conversationId || payload.conversationId === conversationId;
+        void queryClient.invalidateQueries({ queryKey: webPageSnapshotListQueryKey(payload.conversationId) });
         const { snapshot } = payload;
         const matches =
           payload.url === url ||
@@ -78,6 +83,7 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
   const mutation = useMutation({
     mutationFn: () => captureWebPageSnapshot(conversationId ?? '', url ?? ''),
     onSuccess: (snapshot) => {
+      void queryClient.invalidateQueries({ queryKey: webPageSnapshotListQueryKey(conversationId ?? '') });
       queryClient.setQueryData<WebPageSnapshotDto | null>(queryKey, (current) => {
         if (
           current &&
