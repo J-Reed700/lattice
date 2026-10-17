@@ -219,7 +219,9 @@ impl Drop for SubjectLease {
 /// had saved by then.
 #[derive(Debug, PartialEq, Eq)]
 struct LastFailure {
-    failure: String,
+    /// The error's code: its kind, never its text, which may carry a request
+    /// id or a slot number that changes on every attempt.
+    failure: &'static str,
     saved_work: String,
 }
 
@@ -552,7 +554,7 @@ impl JobRuntime {
             return Ok(false);
         }
         let latest = LastFailure {
-            failure: format!("{} {error}", error.error_code()),
+            failure: error.error_code(),
             saved_work: self.saved_work(job).await?,
         };
         let mut deferred = lock(&self.deferred);

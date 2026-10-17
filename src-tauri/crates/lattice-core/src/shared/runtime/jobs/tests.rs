@@ -462,6 +462,42 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
     Ok(())
 }
 
+/// Fails every attempt the same way in words that change: a server error
+/// carrying a new request id each time.
+struct Renumbered(std::sync::atomic::AtomicU32);
+
+#[async_trait::async_trait]
+impl JobHandler for Renumbered {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        let request = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(AppError::ServiceNotAvailable(format!(
+            "llama.cpp returned HTTP 500 for request {request}"
+        )))
+    }
+}
+
+#[tokio::test]
+async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
+    let runtime = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(10));
+    runtime
+        .register(
+            KIND,
+            Arc::new(Renumbered(Default::default())),
+            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                initial: Duration::ZERO,
+                max: Duration::ZERO,
+            }),
+        )
+        .await?;
+    let id = runtime.submit(&new_job(KIND, "renumbered", None)).await?.id;
+    let job = saved_once(&runtime, &id, |job| job.status.is_finished()).await;
+    assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
+    assert_eq!(job.retry_count, 1, "deferred once, then the repeat ends it");
+    runtime.close();
+    runtime.drain().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn progress_between_failures_and_outages_keep_a_job_retrying_visibly() -> Result<()> {
     for (error, saves, shown) in [

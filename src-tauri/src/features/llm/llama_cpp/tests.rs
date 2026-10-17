@@ -1704,15 +1704,17 @@ async fn the_same_server_failure_twice_is_one_rejection_and_no_third_attempt() {
     assert_eq!(retried["cache_prompt"], false);
 }
 
-/// Outages and failures that change are not a verdict on the request: they
-/// are retried as before.
+/// Outages and failures of another kind are not a verdict on the request:
+/// they are retried as before.
 #[tokio::test]
-async fn outages_and_changing_failures_are_still_retried() {
+async fn outages_and_failures_of_another_kind_are_still_retried() {
     let server = sequence_server(vec![
         ResponseTemplate::new(503).insert_header("Retry-After", "0"),
         ResponseTemplate::new(503).insert_header("Retry-After", "0"),
         server_failure(500, "slot 0 failed"),
-        server_failure(500, "slot 1 failed"),
+        ResponseTemplate::new(500).set_body_json(
+            json!({"error":{"code":500,"type":"unavailable_error","message":"slot 0 failed"}}),
+        ),
         sse_response(json!({"content":"Recovered"})),
     ])
     .await;
@@ -1725,6 +1727,30 @@ async fn outages_and_changing_failures_are_still_retried() {
         .await
         .unwrap();
     assert_eq!(response.text, "Recovered");
+}
+
+/// A server whose words carry a changing token, a request id or a slot, still
+/// fails the same way: its status and error type are what repeat.
+#[tokio::test]
+async fn a_failure_whose_words_change_each_time_is_still_the_same_failure() {
+    let server = sequence_server(vec![
+        server_failure(500, "slot 0 failed, request 7f3a"),
+        server_failure(500, "slot 1 failed, request 9c21"),
+    ])
+    .await;
+    let error = LlamaCppLlm::new(&settings(server.uri()))
+        .unwrap()
+        .complete(&CompletionRequest {
+            no_time_limit: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
+    assert!(
+        error.to_string().contains("rejected this request twice"),
+        "{error}"
+    );
 }
 
 /// The server's words reach the error; the prompt they quote back does not.

@@ -133,9 +133,9 @@ impl LlamaCppLlm {
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);
         let generation = async {
-            // The server's account of the last server failure, to know the
+            // The last server failure's status and error type, to know the
             // same failure when it comes back.
-            let mut previous: Option<String> = None;
+            let mut previous: Option<(Option<u16>, String)> = None;
             for attempt in 1..=MAX_ATTEMPTS {
                 let mut emitted = false;
                 let outcome = self
@@ -152,11 +152,14 @@ impl LlamaCppLlm {
                             return Err(failure.rejected(&texts, Some((size, window)), false));
                         }
                         if failure.server_error() {
-                            let account = failure.account(&texts);
-                            if previous.as_deref() == Some(account.as_str()) {
+                            let (status, kind) = failure.signature();
+                            if previous
+                                .as_ref()
+                                .is_some_and(|last| last.0 == status && last.1 == kind)
+                            {
                                 return Err(failure.rejected(&texts, Some((size, window)), true));
                             }
-                            previous = Some(account);
+                            previous = Some((status, kind.to_owned()));
                         } else if !failure.outage() {
                             return Err(failure.error(&texts));
                         }

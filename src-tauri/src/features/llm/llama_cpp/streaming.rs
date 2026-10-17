@@ -199,7 +199,14 @@ impl ServerFailure {
         )
     }
 
-    /// The server's labels and words, as one comparable line.
+    /// What tells one failure from another: the status and the server's
+    /// error type. Never its words, which may carry a request id or a slot
+    /// number that changes on every attempt.
+    pub fn signature(&self) -> (Option<u16>, &str) {
+        (self.status, self.kind.trim())
+    }
+
+    /// The server's labels and words, as one line.
     pub fn account(&self, request_texts: &[&str]) -> String {
         let words = self.words(request_texts);
         let kind = self.kind.trim();
