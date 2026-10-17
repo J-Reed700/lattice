@@ -1,17 +1,20 @@
 //! Search records exchanged through application ports, the search DTOs the
-//! frontend, chat and the tool executor send, and the library search's ranked
-//! branches and reranked lists.
+//! frontend, chat and the tool executor send, the library search's ranked
+//! branches and reranked lists, and the one weighted reciprocal-rank fusion
+//! every rank-fusing path in the app shares.
 
 use crate::domain::entities::search_result::SearchResult;
 use serde::{Deserialize, Serialize};
 
 mod dto;
+mod fusion;
 mod ranking;
 
 pub use dto::{
     CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchModeDto, SearchOptions,
     SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
+pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedRanking};
 pub use ranking::{BranchKind, QueryBranches, RankedBranch, RerankOptions, Reranked};
 
 /// Bounded catalog evidence for planning document retrieval. The preview is

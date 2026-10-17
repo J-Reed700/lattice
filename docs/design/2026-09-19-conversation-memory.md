@@ -400,7 +400,7 @@ Existing conversation vectors may supply candidates if the embedding runtime is 
 
 Do not trust denormalized vector-row content as the source; resolve candidate IDs back to original messages. Missing vectors after restore should reduce optional semantic recall, not disable memory or permit lost constraints.
 
-Merge lexical/semantic rankings with deterministic reciprocal-rank fusion (initial `k = 60`), stable sequence/ID tie-breaking, then apply the same ownership and budget filters. Report which modes actually ran. If v1 ships lexical-only, say so and report its paraphrase-recall results; do not call it semantic retrieval.
+Merge lexical/semantic rankings with deterministic reciprocal-rank fusion (initial `k = 60`; since 2026-10-16 the shared `ReciprocalRankFusion` at `DEFAULT_RRF_K` = 10, semantic at the 0.7 vector weight, lexical at the 0.3 keyword weight), stable sequence/ID tie-breaking, then apply the same ownership and budget filters. Report which modes actually ran. If v1 ships lexical-only, say so and report its paraphrase-recall results; do not call it semantic retrieval.
 
 ### 9.3 Model-accessible recovery tools
 
