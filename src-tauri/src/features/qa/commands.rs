@@ -16,12 +16,14 @@ use tauri::State;
 pub async fn check_llm_health(
     container: State<'_, Container>,
 ) -> Result<super::dto::LLMHealthStatusDto> {
-    let llm = container.default_chat_llm().await?;
+    let pinned = container.pinned_default_chat_llm().await?;
+    let llm = &pinned.llm;
     let is_ready = llm.is_ready().await?;
 
     let health_response = super::dto::LLMHealthStatusDto {
         available: is_ready,
-        model: llm.model_name().to_string(),
+        model: pinned.resolved.model.clone(),
+        model_name: llm.model_name().to_string(),
         max_context_tokens: llm.max_context_tokens(),
         backend: "rust-ddd".to_string(),
     };

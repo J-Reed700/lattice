@@ -4,6 +4,7 @@
 //!
 //! These DTOs handle requests and responses for RAG-based Q&A.
 
+use lattice_core::domain::models::model_ref::ModelRef;
 use serde::{Deserialize, Serialize};
 
 /// Request for question-answering.
@@ -327,7 +328,10 @@ mod tests {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct LLMHealthStatusDto {
     pub available: bool,
-    pub model: String,
+    /// The Settings default chat model the check ran on.
+    pub model: ModelRef,
+    /// The name its server reports for it.
+    pub model_name: String,
     pub max_context_tokens: usize,
     pub backend: String,
 }

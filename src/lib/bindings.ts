@@ -6273,7 +6273,15 @@ lastAnswerMemoryIds: string[] }
 /**
  * Serialized health response from the QA command.
  */
-export type LLMHealthStatusDto = { available: boolean; model: string; max_context_tokens: number; backend: string }
+export type LLMHealthStatusDto = { available: boolean;
+/**
+ * The Settings default chat model the check ran on.
+ */
+model: ModelRef;
+/**
+ * The name its server reports for it.
+ */
+model_name: string; max_context_tokens: number; backend: string }
 /**
  * Prompt templates for LLM interactions.
  */

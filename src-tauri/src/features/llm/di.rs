@@ -221,7 +221,13 @@ impl Container {
 
     /// The Settings default chat model, for work that belongs to no chat.
     pub async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        Ok(self.llm_for(&ModelRequest::default_chat()).await?.llm)
+        Ok(self.pinned_default_chat_llm().await?.llm)
+    }
+
+    /// The Settings default chat model with what it resolved to, for work
+    /// that belongs to no chat and reports which model served it.
+    pub async fn pinned_default_chat_llm(&self) -> Result<PinnedModel> {
+        self.llm_for(&ModelRequest::default_chat()).await
     }
 
     /// The router model, loaded through the same instances as every role.
