@@ -76,7 +76,8 @@ mod research_job;
 pub mod retrieval;
 pub mod router;
 pub use research_job::{
-    job_config as research_job_config, DeepResearchJob, ResearchWaiters, DEEP_RESEARCH,
+    job_config as research_job_config, resumable_request_ids as resumable_research_requests,
+    DeepResearchJob, ResearchWaiters, DEEP_RESEARCH,
 };
 mod tool_loop;
 pub mod turn_record;

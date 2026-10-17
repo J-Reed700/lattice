@@ -303,9 +303,26 @@
   border-radius: var(--radius-sm);
 }
 
-/* The frame scrolls sideways, never the page. */
+/* The frame scrolls sideways, never the page. macOS hides the scrollbar, so
+   an edge with drawing beyond it fades out (MermaidFigure sets the flags). */
 .tiptap-viewer .diagram-scroll {
   overflow-x: auto;
+  --fade: 2.5rem;
+}
+
+.tiptap-viewer .diagram-scroll[data-fade-end] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent);
+}
+
+.tiptap-viewer .diagram-scroll[data-fade-start] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - var(--fade)), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - var(--fade)), transparent);
+}
+
+.tiptap-viewer .diagram-scroll[data-fade-start][data-fade-end] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
 }
 
 /* The drawing is a button: a click enlarges it. It is drawn at its natural
@@ -338,6 +355,126 @@
   font-size: 0.8125rem;
   line-height: 1.45;
   color: hsl(var(--text-secondary));
+}
+
+/* A picture in a chat answer (extensions/chatImage.ts). Width and height
+   attributes reserve its box before it loads; it never passes the column or
+   most of the window's height, and keeps its shape. It sits in its own
+   paragraph, whose margins already space it. */
+.tiptap-viewer .chat-figure {
+  display: block;
+  max-width: 100%;
+  margin: 0.25em 0;
+}
+
+.tiptap-viewer .chat-figure-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.tiptap-viewer .chat-figure-open:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+/* ProseMirror's caret helpers after an inline node would add an empty line
+   under the figure; a read-only answer has no caret. (ProseMirror's own
+   stylesheet forces the separator inline with !important.) */
+.tiptap-viewer .chat-figure ~ img.ProseMirror-separator,
+.tiptap-viewer .chat-figure ~ br.ProseMirror-trailingBreak {
+  display: none !important;
+}
+
+.tiptap-viewer .chat-figure img {
+  display: block;
+  margin: 0;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: var(--radius-md);
+  background: hsl(var(--surface-sunken));
+}
+
+/* The caption reads like the citation footnotes under an answer. */
+.tiptap-viewer .chat-figure-caption {
+  display: block;
+  margin-top: 0.55em;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: hsl(var(--text-secondary));
+}
+
+.tiptap-viewer .chat-figure-source {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--border-strong));
+  text-underline-offset: 2px;
+}
+
+.tiptap-viewer .chat-figure-source:hover {
+  color: hsl(var(--text-primary));
+}
+
+.tiptap-viewer .chat-figure-credit {
+  display: block;
+  margin-top: 0.15em;
+  font-size: 0.75rem;
+  color: hsl(var(--text-tertiary));
+}
+
+/* A ref that never arrived, a file that failed its check, or an address the
+   model wrote: said quietly, nothing fetched. */
+.tiptap-viewer .chat-figure-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  padding: 0.9em 1.15em;
+  border: 1px dashed hsl(var(--border-default));
+  border-radius: var(--radius-md);
+  background: hsl(var(--surface-sunken));
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: hsl(var(--text-tertiary));
+}
+
+.tiptap-viewer .chat-figure-placeholder-alt {
+  color: hsl(var(--text-secondary));
+}
+
+.media-lightbox-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(90vh - 8rem);
+  margin: 0 auto;
+  border-radius: var(--radius-md);
+}
+
+.media-lightbox-credit {
+  display: block;
+  font-size: 0.75rem;
+  color: hsl(var(--text-tertiary));
+}
+
+.media-lightbox-action {
+  color: hsl(var(--text-secondary));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--border-strong));
+  text-underline-offset: 2px;
+}
+
+.media-lightbox-action:hover {
+  color: hsl(var(--text-primary));
 }
 
 /* Enlarged in the lightbox (portalled, so not under .tiptap-viewer): as wide

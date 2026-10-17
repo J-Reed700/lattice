@@ -51,6 +51,8 @@ pub enum TurnStepKind {
     ReadPage,
     Wiki,
     OpenDocument,
+    /// A `find_image` call: pictures searched for and stored for the answer.
+    FindImage,
     Tool,
     Generate,
     Verify,

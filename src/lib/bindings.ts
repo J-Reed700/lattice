@@ -4592,6 +4592,23 @@ export type CapturedSourcesDto = { messageId: string;
 sources: SourceDto[] }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
+ * What the window needs to show a stored picture. Travels in the stream
+ * event and in `metadata.images`; the bytes travel over `lattice-image`.
+ */
+export type ChatImageDto = {
+/**
+ * 32 lowercase hex, the file stem.
+ */
+id: string;
+/**
+ * `img-1` as written in the answer.
+ */
+ref: string;
+/**
+ * `<id>.jpg` — what the frontend hands `convertFileSrc`.
+ */
+fileName: string; mime: string; width: number; height: number; byteSize: number; caption: string; sourceUrl: string; sourceTitle: string | null; origin: ImageOrigin; license: string | null; attribution: string | null }
+/**
  * Chat response with conversation metadata
  */
 export type ChatResponse = {
@@ -4667,7 +4684,13 @@ verification?: VerificationReadyDto | null;
  * Cited pages captured after the turn returned. Arrives once per answer
  * that cited a page it never read, before that answer's grounding check.
  */
-captured?: CapturedSourcesDto | null }
+captured?: CapturedSourcesDto | null;
+/**
+ * Pictures a `find_image` call just stored, for the answer's `img-N`
+ * lines to resolve against while it streams. Merged by `ref`; the saved
+ * message carries the attached ones in `metadata.images`.
+ */
+images?: ChatImageDto[] | null }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
@@ -6061,6 +6084,10 @@ export type GetMentionsForDocumentResultDto = { documentId: string; mentions: Me
 export type HealthStatus = { status: string; database: boolean; embedding_model: boolean; llm: boolean; timestamp: string }
 export type HfTokenStatus = { isSet: boolean }
 export type HybridSearchArgs = { query: string; limit: number; search_mode: string }
+/**
+ * Where a stored picture came from.
+ */
+export type ImageOrigin = "wikimedia_commons" | "page"
 export type ImportSettingsRequest = { settings: string; merge: boolean | null }
 /**
  * Response from indexing a file.
@@ -8518,7 +8545,11 @@ export type TurnStepKind =
  * rounds, minutes of reading — is read as the request it was, live and in
  * a week, without the UI having to remember how the composer was set.
  */
-"deep_research" | "route" | "plan" | "search_documents" | "sufficiency" | "corrective_search" | "web_search" | "read_page" | "wiki" | "open_document" | "tool" | "generate" | "verify" | "retry"
+"deep_research" | "route" | "plan" | "search_documents" | "sufficiency" | "corrective_search" | "web_search" | "read_page" | "wiki" | "open_document" |
+/**
+ * A `find_image` call: pictures searched for and stored for the answer.
+ */
+"find_image" | "tool" | "generate" | "verify" | "retry"
 /**
  * A page a step found or opened.
  *

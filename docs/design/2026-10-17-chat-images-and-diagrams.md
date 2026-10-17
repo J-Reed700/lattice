@@ -506,3 +506,28 @@ Integration (owner or last agent, once): `… cargo test --test '*' features::we
 - Vision relevance check if a chat recipe with a projector lands (§9).
 - Pictures in learning lessons with a lesson-owned lease.
 - A `Wikipedia lead image` shortcut (`wiki_summary` already returns the page; its `pageimage` could feed `from_page_url`).
+
+## 16. As built (2026-10-17)
+
+Where the build departed from §6–§12, and why. Everything else is as specified.
+
+**Diagrams (PR 1)**
+- Only `mermaid` blocks take the React node view; every other language gets a plain synchronous `pre/code` view. A React view mounts a tick late (the reader's code-block test saw an empty DOM) and costs a React root per block.
+- The open fence is flagged with a node decoration, not storage: a finished answer whose text does not change must still redraw.
+- Mermaid config is set before every render, not once per theme: excalidraw imports the same module and changes its config.
+- Labels use the UI sans at the small UI size. Wide diagrams draw at natural size down to a 0.85 scale, then scroll inside their frame, with an edge fade where drawing is hidden.
+
+**Pictures (PR 2)**
+- `from_page_url` fetches the page HTML again (guarded, paced, bounded): the page cache keeps extracted text only, so `og:image` is not in it. Follow-up: keep the lead-image URL in the cache entry when the page is first read.
+- Refs are numbered inside the insert statement (no separate `next_ref`), so concurrent calls cannot hand out the same `img-N`; `find_image` also runs alone, never alongside other calls in a round.
+- The row is written before the file; the sweep re-checks the row before deleting a file.
+- The HTTP round-trip is tested through a fake network in lib tests: the guarded client correctly refuses wiremock's loopback server, so the planned wiremock integration test was dropped.
+- With a turn deadline the request timeout is derived from it; without one the web client's existing default applies.
+- `find_image` is offered whenever `web_search` is, including grounded turns. The picture sentence joins the system prompt only when the tool is offered; the diagram sentence is in every system prompt (`prompt_settings.rs`), constant text.
+- The picture's source page is a source entry with `chunk_id = image:<ref>`; the model is not shown a citation number for it.
+- History replay rewrites earlier answers' picture lines to `[Picture: caption]` in both history builders, so a stale `img-N` cannot be copied into a new answer. Code fences pass through memory and handoff unchanged (no `[Diagram]` marker).
+- Lifecycle additions: the startup sweep keeps pictures of research jobs still pending or running (they resume from saved rounds that name them); truncate and regenerate call `remove_unclaimed_files` after commit; fork and conversation tangents copy pictures (`copy_for_messages`: new rows, new files, rewritten `metadata.images`), so deleting the original leaves the branch's pictures working.
+- Frontend: the picture view is plain DOM, enabled only when `TiptapViewer` receives `images` (reader, notes and lessons keep plain images); each figure carries its own citation number; `sourceUrl` must be http(s) or the record is dropped (it becomes a link's href).
+- Markdown export writes pictures beside the conversation as `../images/<id>.<ext>`.
+
+**Testing this branch on a real profile:** the `chat_images` migration (20261017120000) is applied to the app database on first launch. sqlx refuses to start a build that lacks an applied migration, so going back to a build without this branch needs `DROP TABLE chat_images; DELETE FROM _sqlx_migrations WHERE version = 20261017120000;` on that database first.

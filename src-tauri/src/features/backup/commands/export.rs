@@ -42,7 +42,13 @@ fn resolve_export_root(
 }
 
 fn export_use_case(container: &Container) -> ExportConversationsUseCase {
-    ExportConversationsUseCase::new(Arc::new(ExportRepository::new(container.db_pool().clone())))
+    let use_case = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(
+        container.db_pool().clone(),
+    )));
+    match lattice_core::shared::fs::roots::chat_images_root() {
+        Ok(root) => use_case.with_chat_images_root(root),
+        Err(_) => use_case,
+    }
 }
 
 /// Exports all indexed documents to Markdown format

@@ -64,6 +64,9 @@ const TOOL_GET_DOCUMENT: &str = "get_document";
 const TOOL_LIST_DOCUMENTS: &str = "list_documents";
 const TOOL_WEB_SEARCH: &str = "web_search";
 const TOOL_FETCH_URL_CONTENT: &str = "fetch_url_content";
+/// Runs only inside a chat turn (it stores pictures against the turn's
+/// request); registered here for listing and schema validation.
+const TOOL_FIND_IMAGE: &str = "find_image";
 const TOOL_WIKI_SEARCH: &str = "wiki_search";
 const TOOL_WIKI_SUMMARY: &str = "wiki_summary";
 const WIKIPEDIA_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -216,6 +219,10 @@ impl FunctionExecutorTrait for FunctionExecutor {
             TOOL_FETCH_URL_CONTENT => self.handle_fetch_url(&normalized_arguments).await,
             TOOL_WIKI_SEARCH => self.handle_wiki_search(&normalized_arguments).await,
             TOOL_WIKI_SUMMARY => self.handle_wiki_summary(&normalized_arguments).await,
+            TOOL_FIND_IMAGE => Ok(FunctionResult::error(
+                "chat_only",
+                "find_image runs inside a chat turn",
+            )),
             _ => match self
                 .custom_tools
                 .read()
@@ -259,6 +266,7 @@ impl FunctionExecutorTrait for FunctionExecutor {
                         | "list_attachments"
                         | TOOL_WEB_SEARCH
                         | TOOL_FETCH_URL_CONTENT
+                        | TOOL_FIND_IMAGE
                         | TOOL_WIKI_SEARCH
                         | TOOL_WIKI_SUMMARY
                 ) {

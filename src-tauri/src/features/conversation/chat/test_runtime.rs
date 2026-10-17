@@ -5,7 +5,11 @@ use super::ports::*;
 use crate::features::conversation::mocks::MockConversationService;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
+use lattice_core::application::contracts::images::{
+    ChatImageDto, FindImageInput, FindImageOutput, FoundImage,
+};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobRuntime;
@@ -53,6 +57,9 @@ pub(super) struct FakeRuntime {
     /// The conversation records, for a test that reads back what was archived
     /// without a library to search.
     pub(super) records: Option<Arc<dyn ChatRecords>>,
+    /// One picture store per test, so what a turn stored, attached and
+    /// released can be read back.
+    pub(super) images: Arc<FakeChatImages>,
 }
 
 impl Default for FakeRuntime {
@@ -72,7 +79,151 @@ impl Default for FakeRuntime {
             answer_thinking: false,
             page_reader: None,
             records: None,
+            images: Arc::default(),
         }
+    }
+}
+
+/// The page every test picture comes from.
+pub(super) const TEST_PICTURE_PAGE: &str =
+    "https://commons.wikimedia.org/wiki/File:Apollo_11_Launch.jpg";
+
+/// A stored picture as the port reports it, under `r#ref`.
+pub(super) fn test_picture(r#ref: &str) -> ChatImageDto {
+    ChatImageDto {
+        id: format!("{:0>32}", r#ref.trim_start_matches("img-")),
+        r#ref: r#ref.to_string(),
+        file_name: format!("{:0>32}.jpg", r#ref.trim_start_matches("img-")),
+        mime: "image/jpeg".to_string(),
+        width: 1280,
+        height: 1600,
+        byte_size: 2048,
+        caption: "Saturn V lifting off".to_string(),
+        source_url: TEST_PICTURE_PAGE.to_string(),
+        source_title: Some("File:Apollo 11 Launch.jpg".to_string()),
+        origin: lattice_core::application::contracts::images::ImageOrigin::WikimediaCommons,
+        license: Some("Public domain".to_string()),
+        attribution: None,
+    }
+}
+
+/// A picture store that stores what the test gave it and keeps every call,
+/// so a test can see what the turn asked for, attached and released.
+#[derive(Default)]
+pub(super) struct FakeChatImages {
+    /// What the next `find_image` call stores, refs as given.
+    pub(super) canned: Mutex<Vec<ChatImageDto>>,
+    /// Stored and not yet released, by request.
+    stored: Mutex<Vec<(String, ChatImageDto)>>,
+    /// Each call in order: `find <query>`, `attach <request> <message> <refs>`,
+    /// `release_request <id>`, `release_message <id>`, `release_conversation <id>`,
+    /// `remove_unclaimed_files`.
+    pub(super) calls: Mutex<Vec<String>>,
+}
+
+impl FakeChatImages {
+    pub(super) fn with(images: Vec<ChatImageDto>) -> Arc<Self> {
+        Arc::new(Self {
+            canned: Mutex::new(images),
+            ..Self::default()
+        })
+    }
+
+    pub(super) fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn record(&self, call: String) {
+        self.calls.lock().unwrap().push(call);
+    }
+}
+
+#[async_trait::async_trait]
+impl ChatImagesPort for FakeChatImages {
+    async fn find_and_store(
+        &self,
+        scope: &ImageTurnScope,
+        input: FindImageInput,
+        _deadline: Option<std::time::Instant>,
+    ) -> Result<(FindImageOutput, Vec<ChatImageDto>)> {
+        self.record(format!("find {}", input.query));
+        let stored: Vec<ChatImageDto> = std::mem::take(&mut *self.canned.lock().unwrap());
+        self.stored.lock().unwrap().extend(
+            stored
+                .iter()
+                .map(|image| (scope.request_id.clone(), image.clone())),
+        );
+        let images = stored
+            .iter()
+            .map(|image| FoundImage {
+                r#ref: image.r#ref.clone(),
+                caption: image.caption.clone(),
+                source_title: image.source_title.clone(),
+                source_url: image.source_url.clone(),
+                license: image.license.clone(),
+                width: image.width,
+                height: image.height,
+                markdown: format!("![{}]({})", image.caption, image.r#ref),
+            })
+            .collect();
+        Ok((FindImageOutput { images, note: None }, stored))
+    }
+    async fn attach_to_message(
+        &self,
+        request_id: &str,
+        message_id: &str,
+        referenced_refs: &[String],
+    ) -> Result<Vec<ChatImageDto>> {
+        self.record(format!(
+            "attach {request_id} {message_id} {}",
+            referenced_refs.join(",")
+        ));
+        let mut stored = self.stored.lock().unwrap();
+        let attached = stored
+            .iter()
+            .filter(|(request, image)| {
+                request == request_id && referenced_refs.contains(&image.r#ref)
+            })
+            .map(|(_, image)| image.clone())
+            .collect();
+        stored.retain(|(request, _)| request != request_id);
+        Ok(attached)
+    }
+    async fn release_request(&self, request_id: &str) -> Result<()> {
+        self.record(format!("release_request {request_id}"));
+        self.stored
+            .lock()
+            .unwrap()
+            .retain(|(request, _)| request != request_id);
+        Ok(())
+    }
+    async fn release_message(&self, message_id: &str) -> Result<()> {
+        self.record(format!("release_message {message_id}"));
+        Ok(())
+    }
+    async fn release_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.record(format!("release_conversation {conversation_id}"));
+        Ok(())
+    }
+    async fn list_for_message(&self, _message_id: &str) -> Result<Vec<ChatImageDto>> {
+        Ok(Vec::new())
+    }
+    async fn copy_for_messages(
+        &self,
+        _conversation_id: &str,
+        copies: &[lattice_core::application::ports::CopiedMessage],
+    ) -> Result<Vec<(String, Vec<ChatImageDto>)>> {
+        Ok(copies
+            .iter()
+            .map(|copy| {
+                self.record(format!("copy {}", copy.message_id));
+                (copy.message_id.clone(), Vec::new())
+            })
+            .collect())
+    }
+    async fn remove_unclaimed_files(&self) -> Result<u64> {
+        self.record("remove_unclaimed_files".to_string());
+        Ok(0)
     }
 }
 
@@ -148,6 +299,9 @@ impl ChatStorage for FakeRuntime {
     ) -> Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>
     {
         unreachable!("{UNUSED}")
+    }
+    fn chat_images(&self) -> Arc<dyn ChatImagesPort> {
+        self.images.clone()
     }
     fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots> {
         unreachable!("{UNUSED}")

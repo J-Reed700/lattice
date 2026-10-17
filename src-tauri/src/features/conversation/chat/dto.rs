@@ -178,6 +178,12 @@ pub struct ChatStreamEventDto {
     /// that cited a page it never read, before that answer's grounding check.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captured: Option<CapturedSourcesDto>,
+
+    /// Pictures a `find_image` call just stored, for the answer's `img-N`
+    /// lines to resolve against while it streams. Merged by `ref`; the saved
+    /// message carries the attached ones in `metadata.images`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<lattice_core::application::contracts::images::ChatImageDto>>,
 }
 
 impl ChatStreamEventDto {

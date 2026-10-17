@@ -19,7 +19,7 @@ use super::{
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
-    JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, NewJob, RecoveryPolicy,
+    JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -101,6 +101,23 @@ impl Drop for Waiting {
 
 fn operation_id(request_id: &str) -> String {
     format!("{DEEP_RESEARCH}:{request_id}")
+}
+
+/// The requests of research turns still pending or running: each resumes at
+/// a later start from its saved rounds, whose `find_image` results name
+/// pictures leased to that request. The startup picture sweep keeps them.
+///
+/// # Errors
+///
+/// The job store could not be read.
+pub async fn resumable_request_ids(jobs: &JobStore) -> Result<std::collections::HashSet<String>> {
+    let prefix = operation_id("");
+    Ok(jobs
+        .live(DEEP_RESEARCH)
+        .await?
+        .into_iter()
+        .filter_map(|job| job.operation_id.strip_prefix(&prefix).map(str::to_owned))
+        .collect())
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T> {

@@ -79,6 +79,9 @@ impl ChatStorage for Container {
     {
         Container::conversation_memory(self)
     }
+    fn chat_images(&self) -> Arc<dyn lattice_core::application::ports::ChatImagesPort> {
+        Container::chat_images(self)
+    }
     fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots> {
         Container::compaction_slots(self)
     }
@@ -213,6 +216,15 @@ impl ChatPolicy for Container {
         // its library blob. A failure is logged and does not block the delete
         // the user asked for: the startup sweep collects whatever is left.
         delete_conversation_attachments(self, conversation_id).await;
+        // The pictures' files before the rows that name them go with the
+        // conversation. A failure is logged and the delete goes ahead; the
+        // startup sweep removes files no row claims.
+        if let Err(error) = Container::chat_images(self)
+            .release_conversation(conversation_id)
+            .await
+        {
+            warn!(%error, "Could not release a deleted conversation's pictures");
+        }
 
         self.conversation_service()
             .delete_conversation(conversation_id)

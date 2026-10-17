@@ -107,3 +107,93 @@ async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
     assert_eq!(messages[1].content, "answer");
     assert_eq!(messages[0].status, "completed");
 }
+
+/// The pictures the answer shows are attached to its message and written to
+/// `metadata.images`, in the database and in the transcript the turn returns;
+/// the ones it stored and did not use are released with the request.
+#[tokio::test]
+async fn the_pictures_an_answer_shows_are_attached_and_recorded() {
+    use crate::features::conversation::chat::focus::FocusScope;
+    use crate::features::conversation::chat::test_runtime::{
+        test_picture, FakeChatImages, FakeRuntime,
+    };
+    use crate::features::conversation::chat::turn_record::TurnRecorder;
+    use lattice_core::application::contracts::images::FindImageInput;
+    use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
+
+    let (service, pool, id, user_id) = service_with_pending_question().await;
+    let images = FakeChatImages::with(vec![test_picture("img-1"), test_picture("img-2")]);
+    let runtime = FakeRuntime {
+        images: images.clone(),
+        ..FakeRuntime::default()
+    };
+    let scope = ImageTurnScope {
+        conversation_id: id.clone(),
+        request_id: "request-pictures".into(),
+    };
+    let input = FindImageInput {
+        query: "Saturn V launch".into(),
+        from_page_url: None,
+        limit: 3,
+    };
+    images.find_and_store(&scope, input, None).await.unwrap();
+
+    let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
+        Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+    let focus = FocusScope::default();
+    let recorder = TurnRecorder::silent(&id, "request-pictures");
+    let saved = finalize_successful_turn(
+        &runtime,
+        ChatTurn {
+            conv_service: &service,
+            conversation_id: &id,
+            request_id: "request-pictures",
+            message: "question",
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &focus,
+            recorder: &recorder,
+        },
+        &user_id,
+        2,
+        0,
+        FinishedAnswer {
+            response: "It launched in 1969.\n\n![Saturn V lifting off](img-1)".into(),
+            sources: Vec::new(),
+            verification: None,
+            memory_usage: None,
+            retrieval_trace: None,
+            turn_record: None,
+            summary_refold: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        images.calls().last().map(String::as_str),
+        Some(format!("attach request-pictures {} img-1", saved.message_id).as_str())
+    );
+    let raw: String = sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+        .bind(&saved.message_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let stored = metadata["images"].as_array().expect("metadata.images");
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0]["ref"], "img-1");
+    assert_eq!(stored[0]["fileName"], test_picture("img-1").file_name);
+
+    let answer = saved
+        .response
+        .messages
+        .iter()
+        .find(|message| message.id == saved.message_id)
+        .expect("the answer is in the transcript");
+    let returned: serde_json::Value =
+        serde_json::from_str(answer.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(returned["images"][0]["ref"], "img-1");
+    // The content is kept as the model wrote it.
+    assert!(answer.content.ends_with("![Saturn V lifting off](img-1)"));
+}

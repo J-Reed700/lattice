@@ -11,11 +11,90 @@ pub async fn create_conversation_tangent_impl(
     request: CreateTangentRequestDto,
     runtime: &dyn ChatRuntime,
 ) -> Result<ConversationTangentDto, ApiError> {
-    runtime
+    let tangent = runtime
         .conversation_branches()
         .create_tangent(request)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    copy_branch_pictures(runtime, &tangent.conversation_id).await;
+    Ok(tangent)
+}
+
+/// Give a branch its own copies of the pictures its copied messages show,
+/// and point their `metadata.images` at them, so deleting the conversation
+/// it came from leaves them intact. A failure is logged: the branch exists,
+/// and a picture not copied shows from the original while that exists.
+async fn copy_branch_pictures(runtime: &dyn ChatRuntime, conversation_id: &str) {
+    use lattice_core::application::contracts::images::ChatImageDto;
+    use lattice_core::application::ports::CopiedMessage;
+
+    let messages = match runtime
+        .conversation_branches()
+        .get_messages(conversation_id)
+        .await
+    {
+        Ok(messages) => messages,
+        Err(error) => {
+            tracing::warn!(%error, "Could not read a branch to copy its pictures");
+            return;
+        }
+    };
+    let shown: Vec<(String, Vec<ChatImageDto>)> = messages
+        .iter()
+        .filter_map(|message| {
+            let metadata: serde_json::Value =
+                serde_json::from_str(message.metadata.as_deref()?).ok()?;
+            let images: Vec<ChatImageDto> =
+                serde_json::from_value(metadata.get("images")?.clone()).ok()?;
+            (!images.is_empty()).then(|| (message.id.clone(), images))
+        })
+        .collect();
+    if shown.is_empty() {
+        return;
+    }
+    let copies: Vec<CopiedMessage> = shown
+        .iter()
+        .map(|(message_id, images)| CopiedMessage {
+            message_id: message_id.clone(),
+            image_ids: images.iter().map(|image| image.id.clone()).collect(),
+        })
+        .collect();
+    let copied: std::collections::HashMap<String, Vec<ChatImageDto>> = match runtime
+        .chat_images()
+        .copy_for_messages(conversation_id, &copies)
+        .await
+    {
+        Ok(copied) => copied.into_iter().collect(),
+        Err(error) => {
+            tracing::warn!(%error, "Could not copy a branch's pictures");
+            return;
+        }
+    };
+    let conversations = runtime.conversation_service();
+    for (message_id, originals) in shown {
+        let Some(copies) = copied.get(&message_id) else {
+            continue;
+        };
+        let images: Vec<ChatImageDto> = originals
+            .into_iter()
+            .map(|original| {
+                copies
+                    .iter()
+                    .find(|copy| copy.r#ref == original.r#ref)
+                    .cloned()
+                    .unwrap_or(original)
+            })
+            .collect();
+        if let Err(error) = conversations
+            .set_message_metadata_fields(
+                &message_id,
+                vec![("images".to_string(), serde_json::json!(images))],
+            )
+            .await
+        {
+            tracing::warn!(%error, "Could not point a branch message at its pictures");
+        }
+    }
 }
 
 pub async fn list_conversation_tangents_impl(
@@ -64,6 +143,19 @@ fn to_message_dto(
     }
 }
 
+/// Free the picture files of messages a truncate or regenerate deleted.
+/// Their rows went with the messages by cascade, so nothing names the files
+/// any more; they go now rather than at the next start's sweep. A failure is
+/// logged: the sweep collects what is left.
+fn remove_unclaimed_pictures(runtime: &dyn ChatRuntime) {
+    let images = runtime.chat_images();
+    runtime.background().spawn(async move {
+        if let Err(error) = images.remove_unclaimed_files().await {
+            tracing::warn!(%error, "Could not remove the pictures of deleted messages");
+        }
+    });
+}
+
 pub async fn truncate_conversation_after_impl(
     request: TruncateConversationAfterRequestDto,
     runtime: &dyn ChatRuntime,
@@ -78,6 +170,9 @@ pub async fn truncate_conversation_after_impl(
         )
         .await
         .map_err(ApiError::from)?;
+    if deleted > 0 {
+        remove_unclaimed_pictures(runtime);
+    }
 
     let messages = branches
         .get_messages(&request.conversation_id)
@@ -123,6 +218,7 @@ pub async fn fork_conversation_impl(
         )
         .await
         .map_err(ApiError::from)?;
+    copy_branch_pictures(runtime, &new_id).await;
 
     let created = branches
         .find_by_id(&new_id)
@@ -161,6 +257,8 @@ pub async fn regenerate_response_impl(
                 "This conversation has nothing to regenerate.".to_string(),
             ))
         })?;
+    // The answer being replaced is gone, and its pictures with it.
+    remove_unclaimed_pictures(runtime);
 
     // The lifted message's attachment record travels with it, so a regenerate
     // shows the same files the original turn brought in — and, through the

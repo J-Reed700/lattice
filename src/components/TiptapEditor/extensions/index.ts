@@ -10,6 +10,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
 
 import { CalloutAlerts } from './calloutAlerts';
+import { ChatImage, type ChatImageHost } from './chatImage';
 import { CodeBlockWithDiagrams } from './codeBlockView';
 import { fileRefFromHref } from './fileRefs';
 import { SlashMenu, type SlashMenuOptions } from './slashMenu';
@@ -30,6 +31,12 @@ export interface ExtensionConfig {
    * An editable editor always keeps the plain code block.
    */
   diagrams?: boolean;
+  /**
+   * A chat answer's pictures. When given, `img-N` refs resolve against it and
+   * every other image address is a placeholder; when absent, images render as
+   * plain images (documents, notes).
+   */
+  chatImages?: ChatImageHost;
 }
 
 export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
@@ -62,10 +69,12 @@ export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
         class: 'text-[hsl(var(--accent))] hover:text-[hsl(var(--accent-hover))] underline transition-colors duration-fast',
       },
     }),
-    Image.configure({
-      inline: true,
-      allowBase64: true,
-    }),
+    config.chatImages
+      ? ChatImage.configure({ inline: true, allowBase64: true, host: config.chatImages })
+      : Image.configure({
+        inline: true,
+        allowBase64: true,
+      }),
     Highlight.configure({
       multicolor: true,
     }),

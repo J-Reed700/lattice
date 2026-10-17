@@ -20,7 +20,7 @@ import { createFrameBatcher } from '@/utils/frameBatcher';
 
 import {
   applyCapturedSources, applyVerificationPatch, type CapturedSourcesPatch, isCapturePending,
-  isVerificationPending, markVerificationInterrupted, mergeStep, parseSources,
+  isVerificationPending, markVerificationInterrupted, mergeImages, mergeStep, parseImages, parseSources,
   type VerificationPatch, VERIFICATION_WAIT_MS,
 } from './messageMetadata';
 import { prepareOptimisticMessages, reconcilePersistedFailedMessages } from './optimisticMessages';
@@ -249,6 +249,18 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         }
         if (payload.conversationId !== requestConversationId) return;
         if (payload.done) return;
+        // Pictures arrive with the step that found them, before the text that
+        // shows them; the answer resolves its `img-N` refs against this list.
+        const images = parseImages(payload.images);
+        if (images.length > 0) {
+          conversationUiStore.setState(current => {
+            const existing = current.optimisticMessages.get(assistantTempId);
+            if (!existing) return current;
+            const optimisticMessages = new Map(current.optimisticMessages);
+            optimisticMessages.set(assistantTempId, { ...existing, images: mergeImages(existing.images, images) });
+            return { optimisticMessages };
+          });
+        }
         // A round can run for minutes without a single character of text. The
         // steps are the only thing distinguishing "still working" from "hung",
         // and unlike the note they replace they are kept: the same list is

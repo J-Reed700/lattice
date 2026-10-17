@@ -369,3 +369,25 @@ async fn stopping_a_research_turn_still_queued_answers_its_command() {
     jobs.close();
     jobs.drain().await;
 }
+
+/// A research turn still pending or running resumes at a later start, so the
+/// startup picture sweep keeps the pictures leased to its request; a finished
+/// one has nothing left to resume.
+#[tokio::test]
+async fn a_pending_research_turn_keeps_its_request_for_the_picture_sweep() {
+    let store = JobStore::new(pool().await);
+    let pending = research("conversation-a");
+    let finished = research("conversation-b");
+    store
+        .submit(&research_job(&pending).unwrap())
+        .await
+        .unwrap();
+    let done = store
+        .submit(&research_job(&finished).unwrap())
+        .await
+        .unwrap();
+    store.cancel(&done.id).await.unwrap();
+
+    let kept = resumable_request_ids(&store).await.unwrap();
+    assert_eq!(kept, [pending.request_id.unwrap()].into_iter().collect());
+}

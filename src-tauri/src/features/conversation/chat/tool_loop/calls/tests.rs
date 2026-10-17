@@ -28,6 +28,7 @@ fn every_registered_tool_is_classified() {
         names,
         [
             "fetch_url_content",
+            "find_image",
             "get_document",
             "list_attachments",
             "list_documents",
@@ -39,7 +40,10 @@ fn every_registered_tool_is_classified() {
         "a tool was added or removed: decide whether it only reads, then \
          update `runs_alongside_others` and this list together"
     );
-    assert!(names.iter().all(|name| runs_alongside_others(name)));
+    // `find_image` stores pictures and numbers them after the turn's last.
+    assert!(names
+        .iter()
+        .all(|name| runs_alongside_others(name) == (name != "find_image")));
 }
 
 #[test]

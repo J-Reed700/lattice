@@ -148,6 +148,15 @@ impl ContextWindowBuilder {
 
         // Prioritize most recent completed turns, then restore chronological order.
         for msg in messages.iter().rev().filter(|m| m.is_completed()) {
+            // An answer's pictures replay as their captions: an `img-N` ref
+            // belongs to the turn that stored it, and a later answer that
+            // copied one would show another turn's picture, or none.
+            let content = match msg.role {
+                MessageRole::Assistant => {
+                    crate::shared::markdown_media::images_to_captions(&msg.content)
+                }
+                _ => msg.content.clone(),
+            };
             let formatted = format!(
                 "{}: {}",
                 match msg.role {
@@ -155,7 +164,7 @@ impl ContextWindowBuilder {
                     MessageRole::Assistant => "Assistant",
                     MessageRole::System => "System",
                 },
-                msg.content
+                content
             );
 
             let msg_tokens = (self.token_counter)(&formatted);
@@ -232,5 +241,37 @@ mod tests {
         let builder = ContextWindowBuilder::new(conversation_history, 100_000, token_counter);
 
         assert_eq!(builder.max_tokens, 75_000);
+    }
+
+    /// An earlier answer's pictures replay as their captions, so a later turn
+    /// never sees an `img-N` ref it could copy; what the user wrote is kept.
+    #[test]
+    fn a_replayed_answer_shows_its_pictures_as_captions() {
+        use crate::domain::conversation::{ConversationAggregate, MessageRole};
+
+        let mut aggregate =
+            ConversationAggregate::new("Chat".into(), "model".into(), None).unwrap();
+        aggregate
+            .add_message(MessageRole::User, "Show me ![it](img-1)".into(), 3)
+            .unwrap();
+        aggregate
+            .add_message(
+                MessageRole::Assistant,
+                "It flew.\n\n![Saturn V lifting off](img-1)".into(),
+                5,
+            )
+            .unwrap();
+        let builder = ContextWindowBuilder::new(
+            Arc::new(EmptyConversationHistory),
+            100_000,
+            Arc::new(|text: &str| estimate_tokens(text)),
+        );
+        assert_eq!(
+            builder.build_from_aggregate(&aggregate),
+            [
+                "User: Show me ![it](img-1)",
+                "Assistant: It flew.\n\n[Picture: Saturn V lifting off]",
+            ]
+        );
     }
 }
