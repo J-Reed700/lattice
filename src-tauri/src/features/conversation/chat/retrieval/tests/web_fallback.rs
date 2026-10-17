@@ -11,11 +11,11 @@ use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepDto
 use crate::features::conversation::chat::ToolPreferences;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::contracts::search::SearchRequestDto;
 use lattice_core::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked,
 };
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::library_search::LibrarySearchTrait;
 use lattice_core::application::ports::LLMPort;
 use std::sync::Mutex;

@@ -2,15 +2,13 @@
 //!
 //! Every dependency is a trait: the turn never sees a database pool, a concrete
 //! web client or a concrete search use case, so a stage can be driven by fakes.
-pub(crate) use super::dto::ExplorerFocusDto;
 pub(crate) use super::ExplorerTurn;
 use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto;
-pub(crate) use crate::features::function_calling::domain::{
-    FunctionCall, FunctionResult, ToolDefinition,
-};
 use async_trait::async_trait;
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
 pub(crate) use lattice_core::application::contracts::settings::SettingsDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 pub(crate) use lattice_core::application::contracts::web::FetchUrlContentOutput;
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort,

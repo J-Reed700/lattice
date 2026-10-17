@@ -1,5 +1,7 @@
+mod line_refs;
 mod salience;
 
+pub use line_refs::{contains_line_reference, is_line_reference};
 pub use salience::{is_stopword, select_informative_terms};
 
 pub fn safe_truncate(input: &str, max_chars: usize) -> String {

@@ -6,14 +6,14 @@
 //! lines. The open file and the passages ride along on every turn so that a
 //! model without tool calling can still answer about the folder.
 
-use super::dto::ExplorerFocusDto;
 use super::fs;
 use super::index::search::{FolderHit, FolderSearch};
 use super::index::tool::{self as folder_index_tool, TOOL_SEARCH_FOLDER};
 use super::repository;
 use super::scope::Scope;
 use super::tools::{self, number_line, number_width};
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::warn;

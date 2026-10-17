@@ -39,7 +39,7 @@ use std::time::Instant;
 
 use serde::Deserialize;
 
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::conversation_memory::ConversationMemoryReadPort;
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::Result;

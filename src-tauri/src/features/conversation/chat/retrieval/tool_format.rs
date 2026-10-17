@@ -1,9 +1,9 @@
-use crate::features::function_calling::domain::FunctionResult;
-use crate::features::function_calling::dto::{
+use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
+use lattice_core::application::contracts::tools::FunctionResult;
+use lattice_core::application::contracts::tools::{
     CustomQueryToolOutput, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput,
     WikiSummaryOutput,
 };
-use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
 use lattice_core::shared::text::safe_truncate;
 
@@ -427,7 +427,7 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
 #[cfg(test)]
 mod fetched_page_tests {
     use super::*;
-    use crate::features::function_calling::domain::FunctionResult;
+    use lattice_core::application::contracts::tools::FunctionResult;
 
     fn page(content: &str) -> FunctionResult {
         FunctionResult::success(
@@ -526,7 +526,9 @@ mod fetched_page_tests {
     }
 
     fn search_output(documents: usize, matches: usize, excerpt: &str) -> FunctionResult {
-        use crate::features::function_calling::dto::{DocumentEvidence, DocumentEvidenceMatch};
+        use lattice_core::application::contracts::tools::{
+            DocumentEvidence, DocumentEvidenceMatch,
+        };
         let documents = (0..documents)
             .map(|d| DocumentEvidence {
                 document_id: format!("doc-{d}"),

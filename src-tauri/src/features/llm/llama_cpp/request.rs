@@ -1,7 +1,7 @@
 //! The Chat Completions body one request becomes: messages, the output
 //! reservation, sampling for the thinking mode, the thinking switch and tools.
 use super::*;
-use lattice_core::application::ports::llm_port::ThinkingMode;
+use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
 
 impl LlamaCppLlm {
     /// What the server can still be asked to generate once this prompt is in

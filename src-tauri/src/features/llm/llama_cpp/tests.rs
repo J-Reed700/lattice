@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::application::ports::llm_port::invalid_tool_call_problem;
 use wiremock::{
     matchers::{body_partial_json, header, method, path},
     Mock, MockServer, ResponseTemplate,

@@ -5,9 +5,9 @@ use tracing::{debug, warn};
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::function_calling::domain::FunctionResult;
-use crate::features::function_calling::dto::{GetDocumentOutput, SemanticSearchOutput};
 use lattice_core::application::contracts::search::SearchResultDto;
+use lattice_core::application::contracts::tools::FunctionResult;
+use lattice_core::application::contracts::tools::{GetDocumentOutput, SemanticSearchOutput};
 use lattice_core::shared::error::Result;
 
 pub(super) async fn load_space_document_scope(

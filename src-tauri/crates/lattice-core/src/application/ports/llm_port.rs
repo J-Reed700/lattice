@@ -23,6 +23,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+mod tools;
+
+pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
+
 /// Lazily resolves an optional model without exposing the application's container.
 pub type OptionalLlmLoader = std::sync::Arc<
     dyn Fn() -> futures::future::BoxFuture<'static, Result<Option<std::sync::Arc<dyn LLMPort>>>>
@@ -94,6 +98,11 @@ pub enum InferencePriority {
 ///
 /// Provider-agnostic representation of a callable function.
 /// Infrastructure adapters convert this to provider-specific formats.
+///
+/// The registry's [`contracts::tools::ToolDefinition`](crate::application::contracts::tools::ToolDefinition)
+/// names the schema `input_schema` on the frontend; this one names it
+/// `parameters`, and is persisted that way with each research job. `From`
+/// converts the registry's into this one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     /// Function name (e.g., "semantic_search")
