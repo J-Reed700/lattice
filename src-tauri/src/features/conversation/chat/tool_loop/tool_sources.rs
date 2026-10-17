@@ -5,6 +5,7 @@
 use super::ToolOutputSettingsDto;
 use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::retrieval::build_web_source_citations;
+use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::tools::{
     FunctionResult, WikiSearchOutput, WikiSummaryOutput,
 };
@@ -126,6 +127,60 @@ fn is_shown(shown: &str, content: &str) -> bool {
     shown.contains(&probe)
 }
 
+/// One web source per page the stored pictures came from, so a picture's
+/// caption cites its page like any other web source and the page is in the
+/// footnotes. Keyed `web:<url>`, so a page the turn already cites keeps its
+/// number. The chunk is the picture's ref, unique within the turn.
+fn picture_sources(output: &FindImageOutput) -> Vec<SourceDto> {
+    let modified_at = chrono::Utc::now().to_rfc3339();
+    let mut sources: Vec<SourceDto> = Vec::new();
+    for image in &output.images {
+        let document_id = format!("web:{}", image.source_url);
+        if sources
+            .iter()
+            .any(|source| source.document_id == document_id)
+        {
+            continue;
+        }
+        let file_name = image
+            .source_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&image.source_url)
+            .to_string();
+        sources.push(SourceDto {
+            page_number: None,
+            from_ocr: false,
+            document_id,
+            chunk_id: format!("image:{}", image.r#ref),
+            content: image.caption.clone(),
+            score: 1.0,
+            path: Some(image.source_url.clone()),
+            position: Some(1),
+            file_name,
+            file_path: image.source_url.clone(),
+            mime_type: "text/html".to_string(),
+            category: "Web image".to_string(),
+            file_size_bytes: 0,
+            modified_at: modified_at.clone(),
+            // The card's preview: the UI refuses an excerpt over its limit.
+            excerpt: Some(build_excerpt(
+                &image.caption,
+                &[],
+                FETCHED_PAGE_EXCERPT_CHARS,
+            )),
+            highlights: None,
+            section: None,
+            chunk_index: Some(1),
+            chunk_excerpts: None,
+            citation_id: None,
+            web_snapshot: None,
+        });
+    }
+    sources
+}
+
 pub(super) fn collect_tool_sources(
     tool_name: &str,
     result: &FunctionResult,
@@ -209,6 +264,9 @@ pub(super) fn collect_tool_sources(
             }
             Vec::new()
         }
+        "find_image" => serde_json::from_value::<FindImageOutput>(data)
+            .map(|output| picture_sources(&output))
+            .unwrap_or_default(),
         "wiki_search" => {
             if let Ok(output) = serde_json::from_value::<WikiSearchOutput>(data) {
                 let as_web_results: Vec<_> = output
@@ -410,5 +468,41 @@ mod citable_tests {
         assert!(text.chars().count() <= 150, "{}", text.chars().count());
         assert!(!text.contains("its text is in this result above"), "{text}");
         assert!(text.contains("Citable passage [1] — Page A\n"), "{text}");
+    }
+
+    /// Each picture's page becomes one web source, so its caption can cite it;
+    /// two pictures from one page are one source.
+    #[test]
+    fn find_image_adds_one_web_source_per_picture_page() {
+        let picture = |r: &str, url: &str| {
+            serde_json::json!({
+                "ref": r, "caption": "Saturn V lifting off", "source_title": "File:Apollo 11 Launch.jpg",
+                "source_url": url, "license": "Public domain", "width": 1280, "height": 1600,
+                "markdown": format!("![Saturn V lifting off]({r})"),
+            })
+        };
+        let result = FunctionResult::success(serde_json::json!({
+            "images": [
+                picture("img-1", "https://commons.wikimedia.org/wiki/File:A.jpg"),
+                picture("img-2", "https://commons.wikimedia.org/wiki/File:A.jpg"),
+                picture("img-3", "https://commons.wikimedia.org/wiki/File:B.jpg"),
+            ],
+            "note": null,
+        }));
+        let sources = collect_tool_sources(
+            "find_image",
+            &result,
+            &[],
+            &ToolOutputSettingsDto::default(),
+        );
+        assert_eq!(sources.len(), 2);
+        assert_eq!(
+            sources[0].document_id,
+            "web:https://commons.wikimedia.org/wiki/File:A.jpg"
+        );
+        assert_eq!(sources[0].chunk_id, "image:img-1");
+        assert_eq!(sources[0].category, "Web image");
+        assert_eq!(sources[0].file_name, "File:Apollo 11 Launch.jpg");
+        assert_eq!(sources[0].content, "Saturn V lifting off");
     }
 }

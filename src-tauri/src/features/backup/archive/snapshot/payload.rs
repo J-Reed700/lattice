@@ -1,8 +1,9 @@
 //! Writing the payload: scanning the data directory and library into a zstd tar.
 use super::{is_blob_hash, EXCLUDED_TABLES, ZSTD_LEVEL};
 use crate::features::backup::archive::format::{
-    ArchiveError, Manifest, DB_ENTRY, FILES_ENTRY_PREFIX, FORMAT_VERSION, MANIFEST_ENTRY,
-    SETTINGS_ENTRY, VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX, WEB_SNAPSHOTS_ENTRY_PREFIX,
+    ArchiveError, Manifest, CHAT_IMAGES_ENTRY_PREFIX, DB_ENTRY, FILES_ENTRY_PREFIX, FORMAT_VERSION,
+    MANIFEST_ENTRY, SETTINGS_ENTRY, VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX,
+    WEB_SNAPSHOTS_ENTRY_PREFIX,
 };
 use std::collections::HashSet;
 use std::fs::File;
@@ -447,6 +448,18 @@ pub fn write_payload<W: Write>(
     {
         if root.is_dir() {
             let (_, bytes) = scan_tree(&root, WEB_SNAPSHOTS_ENTRY_PREFIX, &excludes, &mut planned);
+            total_bytes = total_bytes.saturating_add(bytes);
+        }
+    }
+    // 4c. Pictures chat answers show, beside the web archive. Absent until
+    // the first `find_image`, so a missing folder is not worth a warning.
+    if let Some(root) = inputs
+        .web_archive_root
+        .as_deref()
+        .and_then(crate::features::backup::archive::format::chat_images_root_beside)
+    {
+        if root.is_dir() {
+            let (_, bytes) = scan_tree(&root, CHAT_IMAGES_ENTRY_PREFIX, &excludes, &mut planned);
             total_bytes = total_bytes.saturating_add(bytes);
         }
     }

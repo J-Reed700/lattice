@@ -12,6 +12,8 @@
 //! - `crate::features::web::services` — WebService, WebCaptureService,
 //!   WebArchiveService, WebIngestionService
 //! - `crate::features::web::commands` — Tauri command handlers
+//! - `crate::features::web::images` — chat pictures: find, fetch, store,
+//!   lease, serve over `lattice-image`; implements `ChatImagesPort`
 //! - `crate::features::web::plugin::init()` — Tauri plugin
 //! - `crate::features::web::{WebServiceTrait, WebIngestionServiceTrait,
 //!   WebArchiveServiceTrait, WebCaptureServiceTrait}` — service traits
@@ -26,6 +28,7 @@ pub mod commands;
 pub mod di;
 pub mod domain;
 pub mod dto;
+pub mod images;
 pub mod plugin;
 pub mod services;
 pub mod snapshots;

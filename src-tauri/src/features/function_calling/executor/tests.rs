@@ -792,4 +792,15 @@ async fn test_executor_records_calls_and_syncs_custom_tools() {
     executor.set_custom_tools(HashMap::new());
     assert!(registry.get_tool("runtime_custom_search").is_none());
     assert!(registry.get_tool("semantic_search").is_some());
+    assert!(registry.get_tool("find_image").is_some());
+
+    // find_image is listed and validated here but only runs inside a chat turn.
+    let call = FunctionCall::new(
+        "call_image",
+        "find_image",
+        serde_json::json!({"query": "Saturn V launch"}),
+    );
+    let result = executor.execute(call).await.expect("execution returns");
+    assert!(!result.success);
+    assert_eq!(result.error_code.as_deref(), Some("chat_only"));
 }

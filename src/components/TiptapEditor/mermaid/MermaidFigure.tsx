@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { MediaLightbox } from '@/components/MediaLightbox';
 
@@ -52,6 +52,27 @@ export function MermaidFigure({ source, children }: MermaidFigureProps) {
   const naturalWidth = result?.kind === 'svg' ? result.width : undefined;
   const codeHidden = svg !== null && !showSource;
 
+  // Which edges of the frame have drawing beyond them. Flags on the element,
+  // not state: they change on every scroll and nothing else depends on them.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const frame = scrollRef.current;
+    if (!frame) return;
+    const measure = () => {
+      const hidden = frame.scrollWidth - frame.clientWidth;
+      frame.toggleAttribute('data-fade-start', hidden > 1 && frame.scrollLeft > 1);
+      frame.toggleAttribute('data-fade-end', hidden > 1 && frame.scrollLeft < hidden - 1);
+    };
+    measure();
+    frame.addEventListener('scroll', measure, { passive: true });
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(frame);
+    return () => {
+      frame.removeEventListener('scroll', measure);
+      observer?.disconnect();
+    };
+  }, [svg, codeHidden]);
+
   return (
     <>
       {svg !== null && (
@@ -66,7 +87,7 @@ export function MermaidFigure({ source, children }: MermaidFigureProps) {
       {codeHidden && (
         // Scrolls sideways when the drawing, at its smallest legible scale,
         // is still wider than the column.
-        <div className="diagram-scroll">
+        <div className="diagram-scroll" ref={scrollRef}>
           <button
             type="button"
             className="diagram-svg"

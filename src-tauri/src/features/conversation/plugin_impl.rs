@@ -315,6 +315,14 @@ pub async fn delete_conversation_message_impl(
     request: DeleteConversationMessageRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
+    // As for a conversation: the files before the rows that name them.
+    if let Err(error) = container
+        .chat_images()
+        .release_message(&request.message_id)
+        .await
+    {
+        tracing::warn!(%error, "Could not release a deleted message's pictures");
+    }
     ConversationRepository::new(container.db_pool().clone())
         .delete_conversation_message(request)
         .await

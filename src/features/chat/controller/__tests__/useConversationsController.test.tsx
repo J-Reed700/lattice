@@ -293,6 +293,47 @@ describe('useConversationsController optimistic cleanup', () => {
     await act(async () => { resolveChat?.({ ok: false, error: 'fixture finished' }); await sending; });
   });
 
+  /** Pictures arrive with the step that found them and are merged by ref. */
+  it('merges streamed pictures into the pending answer by ref', async () => {
+    let emit: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+    vi.mocked(listen).mockImplementationOnce(async (_event, handler) => {
+      emit = handler as typeof emit;
+      return () => {};
+    });
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    let sending: Promise<unknown> | undefined;
+    act(() => { sending = result.current.sendMessage('Show me a canopy'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+    const requestId = api.chatWithConversation.mock.calls[0][3];
+    const send = (payload: Record<string, unknown>) => act(() => emit?.({ payload: {
+      conversationId: 'conversation-1', requestId, done: false, ...payload,
+    } }));
+    const pictures = () => {
+      const draft = [...result.current.optimisticMessages.values()].find(message => message.role === 'assistant');
+      return draft && 'images' in draft ? draft.images ?? [] : [];
+    };
+    const picture = (ref: string, id: string, caption: string) => ({
+      id, ref, fileName: `${id}.jpg`, mime: 'image/jpeg', width: 640, height: 480, byteSize: 1000,
+      caption, sourceUrl: 'https://commons.wikimedia.org/wiki/File:Canopy.jpg', sourceTitle: 'File:Canopy.jpg',
+      origin: 'wikimedia_commons', license: 'CC BY-SA 4.0', attribution: 'A. Photographer',
+    });
+
+    send({ status: 'step', images: [picture('img-1', 'a'.repeat(32), 'Plane trees')] });
+    await waitFor(() => expect(pictures().map(image => image.ref)).toEqual(['img-1']));
+    send({ images: [picture('img-1', 'b'.repeat(32), 'Plane trees, closer'), picture('img-2', 'c'.repeat(32), 'Oaks')] });
+    await waitFor(() => expect(pictures().map(image => [image.ref, image.caption])).toEqual([
+      ['img-1', 'Plane trees, closer'],
+      ['img-2', 'Oaks'],
+    ]));
+    // A malformed entry (a path where a file name belongs) is dropped, not the event.
+    send({ images: [{ ...picture('img-3', 'd'.repeat(32), 'Bad'), fileName: '../../etc/passwd' }] });
+    expect(pictures()).toHaveLength(2);
+    await act(async () => { resolveChat?.({ ok: false, error: 'fixture finished' }); await sending; });
+  });
+
   /**
    * The answer returns before its grounding check; the check lands on the
    * same channel afterwards and must reach the badge without a reload.

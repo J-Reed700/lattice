@@ -197,24 +197,12 @@ impl WebCaptureService {
 
     /// Extract OpenGraph tag
     fn extract_og_tag(&self, document: &Html, property: &str) -> Option<String> {
-        let selector = Selector::parse(&format!("meta[property='{}']", property)).ok()?;
-        document
-            .select(&selector)
-            .next()
-            .and_then(|el| el.value().attr("content"))
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
+        og_tag(document, property)
     }
 
     /// Extract general meta tag
     fn extract_meta_tag(&self, document: &Html, name: &str) -> Option<String> {
-        let selector = Selector::parse(&format!("meta[name='{}']", name)).ok()?;
-        document
-            .select(&selector)
-            .next()
-            .and_then(|el| el.value().attr("content"))
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
+        meta_tag(document, name)
     }
 
     /// Extract title from <title> tag
@@ -359,6 +347,61 @@ struct SchemaOrg {
     author: Option<String>,
     date_published: Option<String>,
     publisher: Option<String>,
+}
+
+/// The `content` of `<meta property="…">` (OpenGraph), trimmed, if not empty.
+pub(crate) fn og_tag(document: &Html, property: &str) -> Option<String> {
+    meta_content(document, &format!("meta[property='{}']", property))
+}
+
+/// The `content` of `<meta name="…">`, trimmed, if not empty.
+pub(crate) fn meta_tag(document: &Html, name: &str) -> Option<String> {
+    meta_content(document, &format!("meta[name='{}']", name))
+}
+
+fn meta_content(document: &Html, selector: &str) -> Option<String> {
+    let selector = Selector::parse(selector).ok()?;
+    document
+        .select(&selector)
+        .next()
+        .and_then(|el| el.value().attr("content"))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Smallest side, in declared pixels, of an in-article `<img>` worth taking
+/// as a page's picture when it names no `og:image`: below this it is an
+/// icon, an avatar or a button.
+const LEAD_IMAGE_MIN_SIDE: u32 = 300;
+
+/// The picture a page offers for itself: `og:image`, then `twitter:image`
+/// (written with either `name` or `property`), then the first `<img>` inside
+/// `<article>` or `<main>` that declares both `width` and `height` of at
+/// least [`LEAD_IMAGE_MIN_SIDE`]. The URL is returned as written; the caller
+/// resolves it against the page.
+pub(crate) fn page_lead_image(html: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    og_tag(&document, "og:image")
+        .or_else(|| og_tag(&document, "og:image:url"))
+        .or_else(|| meta_tag(&document, "twitter:image"))
+        .or_else(|| og_tag(&document, "twitter:image"))
+        .or_else(|| {
+            let selector = Selector::parse("article img, main img").ok()?;
+            let side = |el: &scraper::ElementRef<'_>, attr: &str| {
+                el.value()
+                    .attr(attr)
+                    .and_then(|v| v.trim().trim_end_matches("px").parse::<u32>().ok())
+            };
+            document
+                .select(&selector)
+                .find(|el| {
+                    side(el, "width").is_some_and(|w| w >= LEAD_IMAGE_MIN_SIDE)
+                        && side(el, "height").is_some_and(|h| h >= LEAD_IMAGE_MIN_SIDE)
+                })
+                .and_then(|el| el.value().attr("src"))
+                .map(|src| src.trim().to_string())
+                .filter(|src| !src.is_empty())
+        })
 }
 
 #[async_trait]
@@ -537,5 +580,26 @@ mod tests {
         let keywords = service.extract_keywords(&document);
 
         assert_eq!(keywords, vec!["rust", "programming", "web", "scraping"]);
+    }
+
+    #[test]
+    fn page_lead_image_prefers_og_then_twitter_then_a_large_article_image() {
+        let og = r#"<html><head><meta property="og:image" content=" /lead.jpg ">
+            <meta name="twitter:image" content="/tw.jpg"></head></html>"#;
+        assert_eq!(page_lead_image(og).as_deref(), Some("/lead.jpg"));
+
+        let twitter = r#"<html><head><meta name="twitter:image" content="/tw.jpg"></head></html>"#;
+        assert_eq!(page_lead_image(twitter).as_deref(), Some("/tw.jpg"));
+
+        let article = r#"<html><body><img src="/logo.png" width="800" height="800">
+            <article><img src="/icon.png" width="32" height="32">
+            <img src="/no-size.png"><img src="/photo.jpg" width="640px" height="400"></article>
+            </body></html>"#;
+        assert_eq!(page_lead_image(article).as_deref(), Some("/photo.jpg"));
+
+        assert_eq!(
+            page_lead_image("<html><body><p>No pictures</p></body></html>"),
+            None
+        );
     }
 }

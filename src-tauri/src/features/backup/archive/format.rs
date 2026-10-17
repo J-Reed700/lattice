@@ -62,6 +62,17 @@ pub fn web_snapshots_root_beside(web_archive_root: &std::path::Path) -> Option<s
         .parent()
         .map(|lattice| lattice.join(WEB_SNAPSHOTS_ENTRY_PREFIX.trim_end_matches('/')))
 }
+/// Tar directory prefix of the pictures chat answers show
+/// (`~/.lattice/chat-images`), whose rows ride in the database.
+pub const CHAT_IMAGES_ENTRY_PREFIX: &str = "chat-images/";
+
+/// The chat pictures live beside the saved web articles too, so the backup
+/// derives their root the same way.
+pub fn chat_images_root_beside(web_archive_root: &std::path::Path) -> Option<std::path::PathBuf> {
+    web_archive_root
+        .parent()
+        .map(|lattice| lattice.join(CHAT_IMAGES_ENTRY_PREFIX.trim_end_matches('/')))
+}
 /// Tar entry path of `settings.json`.
 pub const SETTINGS_ENTRY: &str = "settings.json";
 

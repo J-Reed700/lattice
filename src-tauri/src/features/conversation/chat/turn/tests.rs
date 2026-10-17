@@ -441,6 +441,73 @@ async fn a_resumed_research_turn_carries_on_after_its_last_saved_round() {
     assert!(journal.rounds.lock().unwrap().is_empty());
 }
 
+/// A turn that saves no answer — it failed or was stopped — releases the
+/// pictures it stored, so none stays leased to a request that will never
+/// attach them.
+#[tokio::test]
+async fn a_turn_that_saves_no_answer_releases_its_pictures() {
+    let llm = Arc::new(Unanswering {
+        asked: tokio::sync::Notify::new(),
+    });
+    let runtime = FakeRuntime::default();
+    let turn = PreparedTurn::for_test(
+        "stage-failed-conversation",
+        "stage-failed-turn",
+        llm,
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let (sink, _) = recording_sink();
+    let answered = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: "stage-failed-question".into(),
+        message_tokens: 0,
+        flow_start: std::time::Instant::now(),
+    };
+
+    let concluded = conclude(
+        &runtime,
+        &turn,
+        None,
+        answered,
+        Err(AppError::InvalidState("Model returned no answer".into())),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await;
+
+    assert!(concluded.is_err());
+    assert_eq!(
+        runtime.images.calls(),
+        ["release_request stage-failed-turn"]
+    );
+}
+
+/// Picture guidance rides with the tool: present exactly when `find_image` is
+/// offered, the same text every time, after the standing prompt.
+#[test]
+fn picture_guidance_comes_only_with_find_image() {
+    let tool = |name: &str| lattice_core::application::ports::ToolDefinition {
+        name: name.into(),
+        description: String::new(),
+        parameters: serde_json::json!({"type": "object", "properties": {}}),
+    };
+    let without = super::assemble::with_picture_guidance("Policy.", &[tool("web_search")]);
+    assert_eq!(without, "Policy.");
+    let with = super::assemble::with_picture_guidance(
+        "Policy.",
+        &[tool("web_search"), tool("find_image")],
+    );
+    assert!(with.starts_with("Policy.\n"));
+    assert!(with.contains("find_image"));
+    assert_eq!(
+        with,
+        super::assemble::with_picture_guidance("Policy.", &[tool("find_image")])
+    );
+}
+
 #[test]
 fn a_research_turn_resumes_needing_tools_only_when_it_was_planned_with_them() {
     use lattice_core::application::ports::llm_port::ToolSupport;

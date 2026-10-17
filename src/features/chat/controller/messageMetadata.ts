@@ -1,5 +1,7 @@
 import type {
+  ChatImage,
   ConversationMessage,
+  DisplayMessage,
   MessageVerificationSummary,
   RetrievalTrace,
   SourceWithMetadata,
@@ -7,6 +9,7 @@ import type {
   TurnStep,
 } from '@/types/conversation';
 import {
+  ChatImageSchema,
   MessageVerificationSummarySchema,
   RetrievalTraceSchema,
   SourceWithMetadataSchema,
@@ -225,6 +228,40 @@ export const parseRetrievalTrace = (raw: unknown): RetrievalTrace | null => {
  * Absent for every answer written before the record existed, and for any turn
  * that recorded nothing. Never read that as a turn that did nothing.
  */
+/**
+ * The pictures in `metadata.images` or a stream event. One malformed entry is
+ * dropped, not the list: the answer then shows that one as unavailable.
+ */
+export const parseImages = (raw: unknown): ChatImage[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    const parsed = ChatImageSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+};
+
+/** A picture with a `ref` already present replaces it; a new one is added. */
+export const mergeImages = (existing: readonly ChatImage[] | undefined, incoming: readonly ChatImage[]): ChatImage[] => {
+  const merged = [...(existing ?? [])];
+  for (const image of incoming) {
+    const index = merged.findIndex((candidate) => candidate.ref === image.ref);
+    if (index === -1) merged.push(image);
+    else merged[index] = image;
+  }
+  return merged;
+};
+
+/** The pictures a message shows: streamed onto it while pending, stored in its metadata after. */
+export const messageImages = (message: DisplayMessage): ChatImage[] => {
+  if ('images' in message && message.images) return message.images;
+  if (!('metadata' in message) || !message.metadata) return [];
+  try {
+    return parseImages((JSON.parse(message.metadata) as { images?: unknown })?.images);
+  } catch {
+    return [];
+  }
+};
+
 export const parseTurnRecord = (raw: unknown): TurnRecord | null => {
   if (!raw || typeof raw !== 'object') return null;
   const parsed = TurnRecordSchema.safeParse(raw);

@@ -7,9 +7,10 @@ pub(super) const CORE_TOOL_NAMES: [&str; 4] = [
     "list_documents",
     "list_attachments",
 ];
-pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 4] = [
+pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 5] = [
     "web_search",
     "fetch_url_content",
+    "find_image",
     "wiki_search",
     "wiki_summary",
 ];
@@ -39,6 +40,10 @@ pub(super) fn build_optional_tool_allowlist(
 /// without this the model can see a link that plainly holds the answer and have
 /// no way to follow it.
 ///
+/// `find_image` stays too: it illustrates the answer rather than looking for
+/// evidence, so grounding does not make it redundant, and it reaches this
+/// filter only when the turn's web gate let it through.
+///
 /// Deep research also keeps the searches the turn allows. Its first round is
 /// where it starts, and the prompt asks the model to search again for what
 /// that round left uncovered; without them a later round could only reopen
@@ -51,7 +56,7 @@ pub(super) fn kept_with_grounded_context(
 ) -> bool {
     matches!(
         tool_name,
-        "semantic_search" | "get_document" | "list_attachments"
+        "semantic_search" | "get_document" | "list_attachments" | "find_image"
     ) || (tool_name == "fetch_url_content" && can_open_pages)
         || (deep_research && matches!(tool_name, "web_search" | "wiki_search" | "wiki_summary"))
 }
@@ -82,6 +87,10 @@ pub(super) fn deep_research_searches_again(
 /// withholding the tool behind the web-search toggle hands the model an
 /// instruction it cannot follow and it either errors on the call or searches
 /// the web again for a page it already had.
+///
+/// `find_image` rides the web-search toggle instead of a name of its own: it
+/// reaches the web the same way, so a turn with the web off never sees it and
+/// one with the web on always does, keeping the tool list stable turn to turn.
 pub(super) fn optional_builtin_tool_allowed(
     tool_name: &str,
     allowlist: Option<&HashSet<String>>,
@@ -90,7 +99,12 @@ pub(super) fn optional_builtin_tool_allowed(
     if tool_name == "fetch_url_content" && allow_url_fetch {
         return true;
     }
-    allowlist.is_some_and(|list| list.contains(tool_name))
+    let gate = if tool_name == "find_image" {
+        "web_search"
+    } else {
+        tool_name
+    };
+    allowlist.is_some_and(|list| list.contains(gate))
 }
 
 pub(super) fn build_llm_tool_definitions(

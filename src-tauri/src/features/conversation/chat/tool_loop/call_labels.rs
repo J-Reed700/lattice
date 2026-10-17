@@ -48,6 +48,7 @@ pub(super) fn tool_step_kind(tool: &str) -> TurnStepKind {
         "web_search" => TurnStepKind::WebSearch,
         "fetch_url_content" => TurnStepKind::ReadPage,
         "wiki_search" | "wiki_summary" => TurnStepKind::Wiki,
+        "find_image" => TurnStepKind::FindImage,
         _ => TurnStepKind::Tool,
     }
 }
@@ -155,6 +156,15 @@ pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> 
             None => "Reading a web page".to_string(),
         },
         "web_search" => "Searching the web".to_string(),
+        "find_image" => match arguments
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+        {
+            Some(query) => format!("Finding a picture of \"{query}\""),
+            None => "Finding a picture".to_string(),
+        },
         "wiki_search" | "wiki_summary" => "Checking Wikipedia".to_string(),
         "semantic_search" => "Searching your documents".to_string(),
         "list_documents" => "Looking through your documents".to_string(),

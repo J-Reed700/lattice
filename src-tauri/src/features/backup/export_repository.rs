@@ -40,6 +40,19 @@ pub struct ExportNoteRow {
     pub updated_at: String,
 }
 
+/// A picture an exported answer shows, with what its source line needs.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ExportImageRow {
+    pub message_id: String,
+    /// The `ref` column: `img-N` as the answer wrote it.
+    pub image_ref: String,
+    pub id: String,
+    pub ext: String,
+    pub source_url: String,
+    pub source_title: Option<String>,
+    pub license: Option<String>,
+}
+
 pub struct ExportRepository {
     pool: SqlitePool,
 }
@@ -78,6 +91,20 @@ impl ExportRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to read messages for export: {}", e)))
+    }
+
+    /// Every picture an answer holds, in one query like the messages.
+    pub async fn list_chat_images(&self) -> Result<Vec<ExportImageRow>, AppError> {
+        sqlx::query_as::<_, ExportImageRow>(
+            r#"
+            SELECT message_id, ref AS image_ref, id, ext, source_url, source_title, license
+              FROM chat_images
+             WHERE message_id IS NOT NULL
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to read chat images for export: {}", e)))
     }
 
     /// Journal pages (workspace notes), newest first.

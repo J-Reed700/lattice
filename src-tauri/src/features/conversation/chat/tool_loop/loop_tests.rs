@@ -239,6 +239,8 @@ struct Run {
     outcome: Result<ToolLoopOutcome>,
     sources: Vec<SourceDto>,
     steps: Vec<TurnStepDto>,
+    /// Everything the loop sent the window.
+    events: Vec<ChatStreamEventDto>,
 }
 
 async fn run(
@@ -266,7 +268,12 @@ async fn run_on(
 ) -> Run {
     let conv_service: Arc<dyn ConversationServiceTrait> = runtime.conversations.clone();
     let llm: Arc<dyn LLMPort> = model.clone();
-    let sink: ChatEventSink = Arc::new(|_| Ok(()));
+    let events: Arc<Mutex<Vec<ChatStreamEventDto>>> = Arc::default();
+    let captured = Arc::clone(&events);
+    let sink: ChatEventSink = Arc::new(move |event| {
+        captured.lock().unwrap().push(event);
+        Ok(())
+    });
     let recorder = TurnRecorder::silent(CONVERSATION, request_id);
     let settings = ToolOutputSettingsDto {
         // The citable passage each page adds is this long; kept short so a
@@ -314,10 +321,12 @@ async fn run_on(
         None,
     )
     .await;
+    let events = events.lock().unwrap().clone();
     Run {
         outcome,
         sources,
         steps: recorder.steps(),
+        events,
     }
 }
 
@@ -835,4 +844,69 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let last = requests.last().unwrap();
     assert!(last_text(last).ends_with(FINAL_ROUND_INSTRUCTION));
     assert!(!results_mentioning(last, &format!("Text of {PAGE_A}")).is_empty());
+}
+
+/// `find_image` runs in the turn, not through the tool registry: what it
+/// stored goes to the window at once, its step names the page the picture
+/// came from, and that page becomes a web source the caption can cite. The
+/// model is shown the line to paste, not a citation number for it.
+#[tokio::test]
+async fn find_image_streams_its_pictures_and_cites_their_page() {
+    use crate::features::conversation::chat::test_runtime::{
+        test_picture, FakeChatImages, TEST_PICTURE_PAGE,
+    };
+    use crate::features::conversation::chat::turn_record::TurnStepKind;
+
+    let web = Web::with_delays(&[]);
+    let images = FakeChatImages::with(vec![test_picture("img-1")]);
+    let runtime = FakeRuntime {
+        tools: Some(web.clone()),
+        images: images.clone(),
+        ..FakeRuntime::default()
+    };
+    let model = Model::new([
+        calls(&[("pic", "find_image", json!({ "query": "Saturn V launch" }))]),
+        CompletionResponse::from_text("It flew in 1969.\n\n![Saturn V lifting off](img-1)"),
+    ]);
+    let run = run_on(runtime, &model, &[tool("find_image")], ROOMY, 3, "pictures").await;
+
+    assert!(run.outcome.is_ok(), "{:?}", run.outcome.err());
+    assert_eq!(images.calls(), ["find Saturn V launch"]);
+    assert!(
+        web.log().is_empty(),
+        "find_image never reaches the registry"
+    );
+    let streamed: Vec<_> = run
+        .events
+        .iter()
+        .filter_map(|event| event.images.clone())
+        .flatten()
+        .collect();
+    assert_eq!(streamed, [test_picture("img-1")]);
+
+    let step = run
+        .steps
+        .iter()
+        .find(|step| step.kind == TurnStepKind::FindImage)
+        .expect("a find_image step");
+    assert_eq!(step.state, TurnStepState::Done);
+    assert_eq!(step.label, "Finding a picture of \"Saturn V launch\"");
+    assert_eq!(
+        step.result.as_deref(),
+        Some("1 picture from Wikimedia Commons")
+    );
+    assert_eq!(step.links[0].url, TEST_PICTURE_PAGE);
+
+    let page = run
+        .sources
+        .iter()
+        .find(|source| source.document_id == format!("web:{TEST_PICTURE_PAGE}"))
+        .expect("the picture's page is a source");
+    assert_eq!(page.category, "Web image");
+    assert!(page.citation_id.is_some());
+
+    let answered = &model.requests()[1];
+    let result = results_mentioning(answered, "![Saturn V lifting off](img-1)");
+    assert_eq!(result.len(), 1);
+    assert!(!result[0].contains("Citable passage"), "{}", result[0]);
 }

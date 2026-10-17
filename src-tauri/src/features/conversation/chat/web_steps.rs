@@ -6,6 +6,7 @@
 //! second, third and fourth — the ones a long research turn is mostly made of —
 //! were a bare "Searching the web" with nothing under it.
 
+use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
 
 use super::fetch_memory;
@@ -75,6 +76,37 @@ pub(super) fn finish_page(step: StepGuard<'_>, requested_url: &str, page: &Fetch
     );
 }
 
+/// The page a `find_image` call took its picture from, when it was asked
+/// for a page's picture rather than a search.
+fn picture_page(arguments: &serde_json::Value) -> Option<&str> {
+    arguments
+        .get("from_page_url")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+/// Finish a picture search with how many it stored and the pages they came
+/// from, which are what the answer's picture captions cite.
+fn finish_pictures(step: StepGuard<'_>, arguments: &serde_json::Value, output: &FindImageOutput) {
+    let result = match (output.images.len(), picture_page(arguments)) {
+        (0, _) => "no picture".to_string(),
+        (_, Some(_)) => "the page's picture".to_string(),
+        (1, None) => "1 picture from Wikimedia Commons".to_string(),
+        (many, None) => format!("{many} pictures from Wikimedia Commons"),
+    };
+    let mut links: Vec<TurnStepLinkDto> = Vec::new();
+    for image in &output.images {
+        if !links.iter().any(|link| link.url == image.source_url) {
+            links.push(TurnStepLinkDto::new(
+                image.source_url.clone(),
+                image.source_title.as_deref(),
+            ));
+        }
+    }
+    step.done_with_links(Some(result), links);
+}
+
 /// The one argument of a web tool call worth showing, bare — the same form the
 /// pipeline records, so a query reads as a query wherever it was issued.
 pub(super) fn tool_detail(tool: &str, arguments: &serde_json::Value) -> Option<String> {
@@ -84,6 +116,10 @@ pub(super) fn tool_detail(tool: &str, arguments: &serde_json::Value) -> Option<S
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
         "fetch_url_content" => fetch_memory::fetch_target(arguments).map(str::to_owned),
+        "find_image" => arguments
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
         _ => None,
     }
 }
@@ -92,6 +128,9 @@ pub(super) fn tool_detail(tool: &str, arguments: &serde_json::Value) -> Option<S
 pub(super) fn links_for_call(tool: &str, arguments: &serde_json::Value) -> Vec<TurnStepLinkDto> {
     match tool {
         "fetch_url_content" => fetch_memory::fetch_target(arguments)
+            .map(|url| vec![TurnStepLinkDto::new(url, None)])
+            .unwrap_or_default(),
+        "find_image" => picture_page(arguments)
             .map(|url| vec![TurnStepLinkDto::new(url, None)])
             .unwrap_or_default(),
         _ => Vec::new(),
@@ -121,6 +160,12 @@ pub(super) fn finish_tool_step(
             ) {
                 (Some(url), Ok(page)) => finish_page(step, url, &page),
                 _ => step.done(None),
+            }
+        }
+        ("find_image", Some(data)) => {
+            match serde_json::from_value::<FindImageOutput>(data.clone()) {
+                Ok(output) => finish_pictures(step, arguments, &output),
+                Err(_) => step.done(None),
             }
         }
         _ => step.done(None),

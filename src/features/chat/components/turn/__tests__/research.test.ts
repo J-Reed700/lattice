@@ -27,6 +27,22 @@ const rounds = (steps: TurnStep[]) =>
   deckOf(steps).items.filter((item): item is DeckRound => item.type === 'round');
 
 describe('research deck', () => {
+  it('files the page a picture came from as a picture card', () => {
+    const steps = [
+      step({
+        id: 'img',
+        kind: 'find_image',
+        label: 'Finding a picture of "plane tree canopy"',
+        result: '1 picture from Wikimedia Commons',
+        links: [{ url: 'https://commons.wikimedia.org/wiki/File:Canopy.jpg', title: 'File:Canopy.jpg' }],
+      }),
+    ];
+    expect(hasWebResearch(steps)).toBe(true);
+    const [round] = rounds(steps);
+    expect(round.pages).toEqual([expect.objectContaining({ host: 'commons.wikimedia.org', state: 'read', picture: true })]);
+    expect(round.otherSteps).toHaveLength(0);
+  });
+
   it('has nothing to add to a turn that never went to the web', () => {
     const steps = [step({ id: 'kb', kind: 'search_documents' }), step({ id: 'w', kind: 'generate' })];
     expect(hasWebResearch(steps)).toBe(false);

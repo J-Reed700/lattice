@@ -285,7 +285,9 @@ fn plan_fold(passages: &[SourceMessage], room_chars: usize) -> Vec<Vec<FoldPiece
     let mut current: Vec<FoldPiece<'_>> = Vec::new();
     let mut used = 0usize;
     for message in passages {
-        for text in split_message(&message.content, room - framing) {
+        // The summary model cannot see pictures: it reads each as its caption.
+        let content = lattice_core::shared::markdown_media::images_to_captions(&message.content);
+        for text in split_message(&content, room - framing) {
             let size = text.chars().count() + framing;
             if !current.is_empty() && used.saturating_add(size) > room {
                 steps.push(std::mem::take(&mut current));
@@ -426,5 +428,19 @@ mod tests {
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0][0].text, "first");
         assert_eq!(steps[0][1].text, "second");
+    }
+
+    /// The summariser cannot see pictures: it reads each as its caption, and
+    /// the `img-N` ref, which means nothing outside its turn, never reaches it.
+    #[test]
+    fn a_picture_is_folded_as_its_caption() {
+        let passages = vec![message(
+            1,
+            "It flew in 1969.\n\n![Saturn V lifting off](img-1)",
+        )];
+        let steps = plan_fold(&passages, 2_000);
+        let text = &steps[0][0].text;
+        assert!(text.contains("[Picture: Saturn V lifting off]"), "{text}");
+        assert!(!text.contains("img-1"), "{text}");
     }
 }

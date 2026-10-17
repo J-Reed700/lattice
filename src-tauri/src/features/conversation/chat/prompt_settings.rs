@@ -52,10 +52,20 @@ pub(super) fn normalize_prompt_settings(
          then teach one supported concept. A manual need not contain a prewritten lesson to support teaching it. \
          Distinguish 'not found in the excerpts searched' from 'not present anywhere in the documents'.",
     );
+    // Constant text on every turn, so the cached prompt prefix stays the same
+    // whether or not a turn draws anything. The window renders these fences.
+    prompt_settings.system_prompt.push_str(DIAGRAM_GUIDANCE);
     prompt_settings.rag_prompt_template =
         enforce_numeric_citation_format(&prompt_settings.rag_prompt_template);
     prompt_settings
 }
+
+/// Standing guidance for diagrams, appended after the saved system prompt so a
+/// customised prompt still gets it.
+pub(super) const DIAGRAM_GUIDANCE: &str =
+    "\nWhen a process, structure or sequence is clearer drawn than written, add a ```mermaid block \
+     (flowchart, sequenceDiagram, stateDiagram-v2, erDiagram, timeline) with short, quoted labels; \
+     one diagram per idea, prose around it.";
 
 pub(super) fn stable_prompt_signature(input: &str) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf29ce484222325;

@@ -73,6 +73,18 @@ fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// A past message as it is replayed. An assistant answer's pictures become
+/// their captions (`[Picture: caption]`): an `img-N` ref belongs to the turn
+/// that stored it, and a later answer that copied one would show another
+/// turn's picture, or none. Every other byte is kept.
+fn replayed(role: SourceRole, text: &str) -> std::borrow::Cow<'_, str> {
+    if role == SourceRole::Assistant && text.contains("](img-") {
+        std::borrow::Cow::Owned(crate::shared::markdown_media::images_to_captions(text))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 fn role_label(role: SourceRole) -> &'static str {
     match role {
         SourceRole::User => "user",
@@ -125,7 +137,7 @@ pub fn render_memory_item<'a>(
             role_label(span.role),
             span.sequence,
             span.message_id,
-            json_string(text)
+            json_string(&replayed(span.role, text))
         ));
     }
     // An item whose every span stopped resolving is not evidence of anything.
@@ -186,7 +198,7 @@ pub fn render_recalled(
                 role_label(passage.role),
                 passage.sequence,
                 passage.message_id,
-                json_string(&passage.text)
+                json_string(&replayed(passage.role, &passage.text))
             )
         })
         .collect::<Vec<_>>()
@@ -222,11 +234,12 @@ pub fn render_evidence(blocks: &[String]) -> Option<String> {
 ///
 /// No trimming. `completion_input::from_context` trims, and a trimmed user
 /// message is a different message; this path exists so the production memory
-/// path never goes through that.
+/// path never goes through that. The one rewrite is an answer's pictures,
+/// which replay as their captions (see `replayed`).
 pub fn render_recent(message: &SourceMessage) -> CompletionInput {
     CompletionInput::Message {
         role: role_label(message.role).to_string(),
-        content: message.content.clone(),
+        content: replayed(message.role, &message.content).into_owned(),
     }
 }
 
@@ -458,6 +471,32 @@ mod tests {
                 assert_eq!(role, "assistant");
                 assert_eq!(content, "  indented\n\tcode\n  ");
             }
+            other => panic!("unexpected input {other:?}"),
+        }
+    }
+
+    /// An answer's pictures replay as their captions, so a later turn never
+    /// sees an `img-N` ref it could copy; a user's text is left as written.
+    #[test]
+    fn a_recent_answer_replays_its_pictures_as_captions() {
+        let message = |role, content: &str| SourceMessage {
+            id: "m3".into(),
+            conversation_id: "c1".into(),
+            sequence: 3,
+            role,
+            content: content.into(),
+            content_digest: compute_digest(content),
+            status: "completed".into(),
+        };
+        let answer = "It flew.\n\n![Saturn V lifting off](img-1)\n";
+        match render_recent(&message(SourceRole::Assistant, answer)) {
+            CompletionInput::Message { content, .. } => {
+                assert_eq!(content, "It flew.\n\n[Picture: Saturn V lifting off]\n");
+            }
+            other => panic!("unexpected input {other:?}"),
+        }
+        match render_recent(&message(SourceRole::User, answer)) {
+            CompletionInput::Message { content, .. } => assert_eq!(content, answer),
             other => panic!("unexpected input {other:?}"),
         }
     }

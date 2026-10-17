@@ -203,6 +203,14 @@ async fn archive_round_trip_restores_database() {
         b"<html>frozen</html>",
     )
     .unwrap();
+    // A chat picture, beside the web archive as in `~/.lattice`.
+    let chat_images_root = source.path().join("chat-images");
+    std::fs::create_dir_all(&chat_images_root).unwrap();
+    std::fs::write(
+        chat_images_root.join("fedcba9876543210fedcba9876543210.png"),
+        b"\x89PNG picture",
+    )
+    .unwrap();
 
     let db_path = app_data.join("lattice.db");
     let pool = seeded_pool(&db_path, 3).await;
@@ -374,6 +382,17 @@ async fn archive_round_trip_restores_database() {
         .unwrap(),
         b"<html>frozen</html>",
         "frozen web snapshots must come back beside the web archive"
+    );
+    assert_eq!(
+        std::fs::read(
+            target
+                .path()
+                .join("chat-images")
+                .join("fedcba9876543210fedcba9876543210.png")
+        )
+        .unwrap(),
+        b"\x89PNG picture",
+        "chat pictures must come back beside the web archive"
     );
     // The source library keeps everything: a backup is not a sweep.
     assert!(files_root.join(ORPHAN_BLOB).join("ghost.pdf").exists());

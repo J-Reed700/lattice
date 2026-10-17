@@ -5,6 +5,7 @@ mod document_evidence;
 mod document_progress;
 mod final_round;
 mod generation;
+mod images;
 #[cfg(test)]
 mod loop_tests;
 mod research_notes;
