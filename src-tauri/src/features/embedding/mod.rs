@@ -9,10 +9,8 @@
 //! ## Public surface
 //!
 //! - `crate::features::embedding::dto` — embedding DTOs
-//! - `crate::features::embedding::entity` — `Embedding` domain entity
 //! - `crate::features::embedding::use_cases` — embedding use cases
 //! - `crate::features::embedding::onnx_service` — OnnxEmbeddingService
-//! - `crate::features::embedding::remote_service` — RemoteEmbeddingService
 //! - `crate::features::embedding::generator` — EmbeddingGenerator, ModelConfig
 //! - `crate::features::embedding::late_chunking` — late-chunking strategy + pooling rules
 //! - `crate::features::embedding::prefixes` — per-family query/document instruction prefixes
@@ -22,7 +20,6 @@
 //! - `crate::features::embedding::service` — EmbeddingService
 //! - `crate::features::embedding::commands` — Tauri command handlers
 //! - `crate::features::embedding::plugin::init()` — Tauri plugin
-//! - `crate::features::embedding::EmbeddingServiceTrait` — service trait
 //!
 //! Ports (EmbeddingPort, EmbeddingRepositoryPort, MockEmbeddingPort)
 //! stay in `application/ports/`.
@@ -32,7 +29,6 @@ pub mod commands;
 pub mod compatibility;
 pub mod di;
 pub mod dto;
-pub mod entity;
 pub mod generator;
 pub mod input_policy;
 pub mod late_chunking;
@@ -40,12 +36,10 @@ pub(crate) mod loading;
 pub mod plugin;
 pub mod prefixes;
 pub mod qwen3_encoder;
-pub mod remote_service;
 pub mod repository;
 pub(crate) mod runtime;
 pub mod service;
 pub mod sparse_head;
-pub mod trait_def;
 pub mod use_cases;
 pub mod validator;
 
@@ -54,7 +48,3 @@ pub mod mocks;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock_repository;
-
-pub use trait_def::EmbeddingServiceTrait;
-
-pub mod generation;

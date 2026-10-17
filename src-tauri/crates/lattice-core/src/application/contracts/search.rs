@@ -7,6 +7,7 @@ use crate::domain::entities::search_result::SearchResult;
 use serde::{Deserialize, Serialize};
 
 mod dto;
+pub mod engine;
 mod fusion;
 mod ranking;
 

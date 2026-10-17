@@ -12,7 +12,7 @@ use lattice_core::application::ports::{DocumentRepository, VectorSearchPort};
 
 // Service Traits
 use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
-use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
+use lattice_core::application::ports::{BM25SearchTrait, SearchServiceTrait};
 
 /// Search module for semantic, hybrid, and file search
 ///

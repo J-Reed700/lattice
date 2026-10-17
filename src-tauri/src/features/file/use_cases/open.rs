@@ -3,7 +3,7 @@
 //! Opens a file with the system's default application.
 
 use crate::features::file::dto::{OpenFileRequestDto, OpenFileResponseDto};
-use crate::features::web::article_detector::WebArticleDetector;
+use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{FileStoragePort, FileSystemPort};
 use lattice_core::application::services::FileType;

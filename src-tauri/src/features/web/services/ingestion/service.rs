@@ -1,15 +1,15 @@
 //! The `WebIngestionService` type and its end-to-end ingestion workflow.
 
 use super::{WebIngestionConfig, WebIngestionServiceBuilder};
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::use_cases::index_file::{
-    publish_chunks_to_live_index, PublishedChunk,
-};
-use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait};
 use async_trait::async_trait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::application::ports::{SearchResultCachePort, VectorSearchPort};
+use lattice_core::application::services::live_index::{
+    publish_chunks_to_live_index, PublishedChunk,
+};
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
@@ -27,8 +27,8 @@ use tokenizers::Tokenizer;
 ///
 /// - `ArticleExtractorServiceTrait`: Extracts clean article content from URLs
 /// - `WebArchiveServiceTrait`: Saves articles as markdown files in ~/.lattice/web-archive
-/// - `EmbeddingServiceTrait`: Generates vector embeddings for text chunks
-/// - `IndexStorageTrait`: Stores documents with chunks and embeddings
+/// - `EmbeddingPort`: Generates vector embeddings for text chunks
+/// - `IngestedDocumentStorePort`: Stores documents with chunks and embeddings
 ///
 /// # Example
 ///
@@ -62,8 +62,8 @@ use tokenizers::Tokenizer;
 pub struct WebIngestionService {
     pub(super) article_extractor: Arc<dyn ArticleExtractorServiceTrait>,
     pub(super) web_archive: Arc<dyn WebArchiveServiceTrait>,
-    pub(super) embedding_service: Arc<dyn EmbeddingServiceTrait>,
-    pub(super) index_storage: Arc<dyn IndexStorageTrait>,
+    pub(super) embedding_service: Arc<dyn EmbeddingPort>,
+    pub(super) index_storage: Arc<dyn IngestedDocumentStorePort>,
     // reason: required dependency of the public constructors and of the builder's
     // missing-dependency check; chunking currently goes through the embedding service.
     #[allow(dead_code)]
@@ -88,8 +88,8 @@ impl WebIngestionService {
     pub fn new(
         article_extractor: Arc<dyn ArticleExtractorServiceTrait>,
         web_archive: Arc<dyn WebArchiveServiceTrait>,
-        embedding_service: Arc<dyn EmbeddingServiceTrait>,
-        index_storage: Arc<dyn IndexStorageTrait>,
+        embedding_service: Arc<dyn EmbeddingPort>,
+        index_storage: Arc<dyn IngestedDocumentStorePort>,
         tokenizer: Arc<Tokenizer>,
     ) -> Self {
         Self {
@@ -113,8 +113,8 @@ impl WebIngestionService {
     pub fn with_config(
         article_extractor: Arc<dyn ArticleExtractorServiceTrait>,
         web_archive: Arc<dyn WebArchiveServiceTrait>,
-        embedding_service: Arc<dyn EmbeddingServiceTrait>,
-        index_storage: Arc<dyn IndexStorageTrait>,
+        embedding_service: Arc<dyn EmbeddingPort>,
+        index_storage: Arc<dyn IngestedDocumentStorePort>,
         tokenizer: Arc<Tokenizer>,
         config: WebIngestionConfig,
     ) -> Result<Self> {

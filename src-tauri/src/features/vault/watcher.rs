@@ -13,7 +13,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
-use crate::features::settings::use_cases::GetSettingsUseCase;
+use lattice_core::application::ports::SettingsReaderPort;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
@@ -70,7 +70,7 @@ fn filename_key(path: &Path) -> Option<String> {
 }
 
 pub fn start_vault_watcher(
-    settings_uc: Arc<GetSettingsUseCase>,
+    settings_uc: Arc<impl SettingsReaderPort + 'static>,
     db_pool: SqlitePool,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
@@ -79,7 +79,7 @@ pub fn start_vault_watcher(
 ) {
     let scope = Arc::clone(&background);
     scope.spawn(async move {
-        let settings = match settings_uc.execute().await {
+        let settings = match settings_uc.current_settings().await {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(error = %e, "vault watcher: settings read failed — not starting");
@@ -90,7 +90,7 @@ pub fn start_vault_watcher(
             tracing::info!("vault watcher: disabled in settings — not starting");
             return;
         }
-        let configured_root = match super::writeback::resolve_vault_root(&settings.vault.vault_path)
+        let configured_root = match lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
         {
             Some(p) => p,
             None => {

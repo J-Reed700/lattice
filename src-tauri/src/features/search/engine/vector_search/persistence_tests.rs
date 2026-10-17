@@ -102,7 +102,7 @@ async fn incomplete_streamed_batch_cannot_receive_a_valid_manifest() {
         GENERATION,
         DIM,
         |_| async {
-            Ok(crate::features::embedding::generation::RestorePage {
+            Ok(crate::infrastructure::persistence::repositories::embedding::generation::RestorePage {
                 entries: vec![(
                     "emb_chunk0".into(),
                     vec![1.0],
@@ -153,7 +153,7 @@ async fn startup_rebuild_streams_bounded_pages_and_keeps_text_out_of_index() {
                     )
                 })
                 .collect();
-            Ok(crate::features::embedding::generation::RestorePage {
+            Ok(crate::infrastructure::persistence::repositories::embedding::generation::RestorePage {
                 entries,
                 cursor: next,
             })
@@ -566,7 +566,12 @@ async fn cold_start_against_a_forced_rebuild() {
 
     let restore = || {
         let pool = pool.clone();
-        async move { crate::features::embedding::generation::restore(&pool, GENERATION, WIDE).await }
+        async move {
+            crate::infrastructure::persistence::repositories::embedding::generation::restore(
+                &pool, GENERATION, WIDE,
+            )
+            .await
+        }
     };
     let open = || {
         Arc::new(

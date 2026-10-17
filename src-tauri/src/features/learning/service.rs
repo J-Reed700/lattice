@@ -93,7 +93,7 @@ pub async fn generate_with_references_and_progress(
     sources: Vec<LearningSourceDto>,
     references: &[super::sources::InitialReference],
     progress: &super::outline_progress::OutlineProgress,
-    web: Option<&dyn crate::features::web::traits::WebServiceTrait>,
+    web: Option<&dyn lattice_core::application::ports::WebServiceTrait>,
 ) -> Result<LearningProgramDto> {
     validate_request(&request)?;
     if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {

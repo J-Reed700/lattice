@@ -111,7 +111,6 @@ pub mod profiler;
 pub mod qwen3_reranker;
 pub mod recency;
 pub mod reranker;
-pub mod service;
 pub mod snippet;
 pub mod vector_ops;
 
@@ -120,7 +119,7 @@ pub mod sparse_search;
 pub mod text_search;
 pub mod vector_search;
 
-pub use bm25::{BM25Result, BM25Search};
+pub use bm25::BM25Search;
 pub use profiler::{PerformanceMetrics, Profiler};
 pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};
@@ -128,7 +127,6 @@ pub use reranker::{
     blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
     Reranker, RerankerService,
 };
-pub use service::SearchResult;
 pub use sparse_search::{SparseSearchService, SqliteSparseTermStore};
 pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_vector};
 pub use vector_search::USearchVectorIndex;

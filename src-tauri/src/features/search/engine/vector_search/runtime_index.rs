@@ -1,11 +1,13 @@
 //! A shared index handle that can bind the first downloaded model without restarting.
 //! Once bound, changing vector spaces still requires the normal restart migration.
 use super::{IndexPersistence, USearchVectorIndex, VectorIndexCompression};
-use crate::features::embedding::loading::EmbeddingIndexBinding;
-use crate::features::search::{engine::service::SearchResult, SearchServiceTrait};
+use crate::infrastructure::persistence::repositories::embedding::generation;
+use lattice_core::application::contracts::search::engine::SearchResult;
 use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
-use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
+use lattice_core::application::ports::{
+    EmbeddingIndexBinding, EmbeddingPort, SearchServiceTrait, VectorSearchPort,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::{
@@ -37,6 +39,8 @@ pub struct RuntimeVectorIndex {
     /// Writes the bound index and its manifest. Set at startup when a model is
     /// already active, or by [`Self::bind_first`] for the first one.
     persistence: OnceLock<Arc<IndexPersistence>>,
+    /// The database the first bind prepares and restores its generation from.
+    pool: sqlx::SqlitePool,
     /// Where the persistence worker runs, so shutdown flushes and stops it.
     background: Arc<BackgroundTasks>,
 }
@@ -48,6 +52,7 @@ impl RuntimeVectorIndex {
         path: PathBuf,
         compression: VectorIndexCompression,
         persistence: Option<Arc<IndexPersistence>>,
+        pool: sqlx::SqlitePool,
         background: Arc<BackgroundTasks>,
     ) -> Self {
         let bound = OnceLock::new();
@@ -64,6 +69,7 @@ impl RuntimeVectorIndex {
             path,
             compression,
             persistence: persistence_slot,
+            pool,
             background,
         }
     }
@@ -87,12 +93,8 @@ impl RuntimeVectorIndex {
 
     /// Called inside the embedding loader's single-flight operation, before it
     /// publishes a ready model. All search and indexing consumers share this handle.
-    pub async fn bind_first(
-        &self,
-        pool: &sqlx::SqlitePool,
-        model: &dyn EmbeddingPort,
-        late_chunking: bool,
-    ) -> Result<()> {
+    pub async fn bind_first(&self, model: &dyn EmbeddingPort, late_chunking: bool) -> Result<()> {
+        let pool = &self.pool;
         let identity = model.model_identity();
         if let Some(current) = self.identity() {
             return if current == identity && self.dimension() == model.dimension() {
@@ -102,11 +104,9 @@ impl RuntimeVectorIndex {
             };
         }
         if !late_chunking {
-            crate::features::embedding::generation::prepare(pool, model).await?;
+            generation::prepare(pool, model).await?;
         }
-        let rows =
-            crate::features::embedding::generation::restore(pool, &identity, model.dimension())
-                .await?;
+        let rows = generation::restore(pool, &identity, model.dimension()).await?;
         // Opened exactly as startup opens a bound index — same file name, same
         // compression, coalesced saves and a manifest writer — so the next
         // launch finds this index trustworthy instead of rebuilding it.
@@ -155,13 +155,8 @@ impl RuntimeVectorIndex {
 
 #[async_trait::async_trait]
 impl EmbeddingIndexBinding for RuntimeVectorIndex {
-    async fn bind_first(
-        &self,
-        pool: &sqlx::SqlitePool,
-        model: &dyn EmbeddingPort,
-        late_chunking: bool,
-    ) -> Result<()> {
-        RuntimeVectorIndex::bind_first(self, pool, model, late_chunking).await
+    async fn bind_first(&self, model: &dyn EmbeddingPort, late_chunking: bool) -> Result<()> {
+        RuntimeVectorIndex::bind_first(self, model, late_chunking).await
     }
 }
 
@@ -280,13 +275,14 @@ mod tests {
             dir.path().join("usearch-unconfigured.usearch"),
             VectorIndexCompression::None,
             None,
+            pool.clone(),
             Arc::default(),
         ));
         // These handles exist before the user downloads their first model.
         let indexing: Arc<dyn VectorSearchPort> = runtime.clone();
         let searching: Arc<dyn SearchServiceTrait> = runtime.clone();
         runtime
-            .bind_first(&pool, &Model("sha256:first"), false)
+            .bind_first(&Model("sha256:first"), false)
             .await
             .unwrap();
         assert_eq!(indexing.dimension(), 2);
@@ -302,7 +298,7 @@ mod tests {
         assert_eq!(searching.search(&[1., 0.], 1).unwrap().len(), 1);
         assert_eq!(indexing.search(&[1., 0.], 1, 0.).unwrap().len(), 1);
         runtime
-            .bind_first(&pool, &Model("sha256:first"), false)
+            .bind_first(&Model("sha256:first"), false)
             .await
             .unwrap();
         assert_eq!(
@@ -311,7 +307,7 @@ mod tests {
             "repeated load must not clear the index"
         );
         assert!(runtime
-            .bind_first(&pool, &Model("sha256:other"), false)
+            .bind_first(&Model("sha256:other"), false)
             .await
             .is_err());
         assert_eq!(runtime.identity(), Some("sha256:first"));
@@ -338,6 +334,7 @@ mod tests {
             dir.path().join("index"),
             VectorIndexCompression::None,
             None,
+            pool.clone(),
             Arc::default(),
         );
         sqlx::query("DROP TABLE text_embeddings")
@@ -345,14 +342,14 @@ mod tests {
             .await
             .unwrap();
         assert!(runtime
-            .bind_first(&pool, &Model("sha256:first"), false)
+            .bind_first(&Model("sha256:first"), false)
             .await
             .is_err());
         assert_eq!(runtime.identity(), None);
         assert_eq!(runtime.dimension(), 384);
         sqlx::query("CREATE TABLE text_embeddings (chunk_id TEXT, model_name TEXT, dimension INTEGER, embedding BLOB)").execute(&pool).await.unwrap();
         runtime
-            .bind_first(&pool, &Model("sha256:first"), false)
+            .bind_first(&Model("sha256:first"), false)
             .await
             .unwrap();
         assert_eq!(runtime.dimension(), 2);
@@ -370,10 +367,11 @@ mod tests {
             dir.path().join("usearch-unconfigured-mrl1f32.usearch"),
             compression.clone(),
             None,
+            pool.clone(),
             Arc::default(),
         );
         runtime
-            .bind_first(&pool, &Model("sha256:first"), false)
+            .bind_first(&Model("sha256:first"), false)
             .await
             .unwrap();
         assert_eq!(runtime.current().compression(), &compression);

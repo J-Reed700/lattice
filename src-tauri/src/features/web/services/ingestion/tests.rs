@@ -3,12 +3,11 @@
 use super::extract::{ExtractionStrategy, YtDlpMetadata};
 use super::fetch::TempDirectoryGuard;
 use super::WebIngestionService;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::MockArticleExtractorService;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionServiceTrait};
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::application::ports::{EmbeddingPort, IngestedDocumentStorePort};
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::error::{AppError, Result};
@@ -55,7 +54,7 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
 struct MockEmbeddingService;
 
 #[async_trait]
-impl EmbeddingServiceTrait for MockEmbeddingService {
+impl EmbeddingPort for MockEmbeddingService {
     async fn embed_single(&self, _text: &str) -> Result<Vec<f32>> {
         Ok(vec![0.1; 384])
     }
@@ -64,118 +63,32 @@ impl EmbeddingServiceTrait for MockEmbeddingService {
         Ok(texts.iter().map(|_| vec![0.1; 384]).collect())
     }
 
-    async fn embed_contextualized_chunks(
-        &self,
-        chunks: &[ContextualizedChunk],
-    ) -> Result<Vec<Vec<f32>>> {
-        Ok(chunks.iter().map(|_| vec![0.1; 384]).collect())
+    fn dimension(&self) -> usize {
+        384
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
     }
 }
 
 struct MockIndexStorage;
 
 #[async_trait]
-impl IndexStorageTrait for MockIndexStorage {
+impl IngestedDocumentStorePort for MockIndexStorage {
+    async fn store_document_with_context_for_model(
+        &self,
+        _path: &std::path::Path,
+        _mime_type: &str,
+        _chunks: Vec<ContextualizedChunk>,
+        _embeddings: Vec<Vec<f32>>,
+        _model_identity: &str,
+    ) -> Result<String> {
+        Ok("doc-123".to_string())
+    }
+
     async fn chunk_ids_in_order(&self, _document_id: &str) -> Result<Vec<String>> {
         Ok(Vec::new())
-    }
-
-    async fn store_document(
-        &self,
-        _path: &std::path::Path,
-        _mime_type: &str,
-        _chunks: Vec<crate::features::indexing::engine::chunker::TextChunk>,
-        _embeddings: Vec<Vec<f32>>,
-    ) -> crate::features::indexing::engine::error::Result<String> {
-        Ok("doc-123".to_string())
-    }
-
-    async fn document_exists(
-        &self,
-        _path: &std::path::Path,
-    ) -> crate::features::indexing::engine::error::Result<bool> {
-        Ok(false)
-    }
-
-    async fn get_document_by_path(
-        &self,
-        _path: &std::path::Path,
-    ) -> crate::features::indexing::engine::error::Result<
-        Option<crate::features::indexing::engine::storage::DocumentRecord>,
-    > {
-        Ok(None)
-    }
-
-    async fn needs_reindex(
-        &self,
-        _path: &std::path::Path,
-    ) -> crate::features::indexing::engine::error::Result<bool> {
-        Ok(false)
-    }
-
-    async fn mark_document_status(
-        &self,
-        _path: &std::path::Path,
-        _status: &str,
-    ) -> crate::features::indexing::engine::error::Result<()> {
-        Ok(())
-    }
-
-    async fn remove_document(
-        &self,
-        _path: &std::path::Path,
-    ) -> crate::features::indexing::engine::error::Result<()> {
-        Ok(())
-    }
-
-    async fn store_file_metadata_only(
-        &self,
-        _path: &std::path::Path,
-        _file_id: &str,
-        _mime_type: &str,
-    ) -> crate::features::indexing::engine::error::Result<String> {
-        Ok("doc-123".to_string())
-    }
-
-    async fn get_indexed_count(&self) -> crate::features::indexing::engine::error::Result<i64> {
-        Ok(0)
-    }
-
-    async fn get_total_chunks(&self) -> crate::features::indexing::engine::error::Result<i64> {
-        Ok(0)
-    }
-
-    async fn store_document_with_context(
-        &self,
-        _path: &std::path::Path,
-        _mime_type: &str,
-        _chunks: Vec<ContextualizedChunk>,
-        _embeddings: Vec<Vec<f32>>,
-    ) -> crate::features::indexing::engine::error::Result<String> {
-        Ok("doc-123".to_string())
-    }
-
-    async fn store_document_with_context_and_file(
-        &self,
-        _path: &std::path::Path,
-        _file_id: &str,
-        _mime_type: &str,
-        _chunks: Vec<ContextualizedChunk>,
-        _embeddings: Vec<Vec<f32>>,
-    ) -> crate::features::indexing::engine::error::Result<String> {
-        Ok("doc-123".to_string())
-    }
-
-    async fn batch_store_documents(
-        &self,
-        _documents: Vec<(
-            std::path::PathBuf,
-            String,
-            Vec<crate::features::indexing::engine::chunker::TextChunk>,
-            Vec<Vec<f32>>,
-        )>,
-    ) -> crate::features::indexing::engine::error::Result<Vec<String>> {
-        Ok(vec!["doc-123".to_string()])
     }
 }
 
@@ -725,7 +638,7 @@ mod late_chunking {
     }
 
     #[async_trait]
-    impl EmbeddingServiceTrait for RecordingEmbeddingService {
+    impl EmbeddingPort for RecordingEmbeddingService {
         async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
             let mut out = self.embed_batch(&[text.to_owned()]).await?;
             Ok(out.remove(0))
@@ -739,15 +652,12 @@ mod late_chunking {
             Ok(texts.iter().map(|t| vec![t.len() as f32]).collect())
         }
 
-        async fn embed_contextualized_chunks(
-            &self,
-            chunks: &[ContextualizedChunk],
-        ) -> Result<Vec<Vec<f32>>> {
-            let texts: Vec<String> = chunks
-                .iter()
-                .map(|c| c.contextualized_content.clone())
-                .collect();
-            self.embed_batch(&texts).await
+        fn dimension(&self) -> usize {
+            1
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
         }
 
         fn split_text(
@@ -790,110 +700,23 @@ mod late_chunking {
     }
 
     #[async_trait]
-    impl IndexStorageTrait for RecordingStorage {
+    impl IngestedDocumentStorePort for RecordingStorage {
         async fn chunk_ids_in_order(&self, _document_id: &str) -> Result<Vec<String>> {
             let stored = self.stored.lock().expect("lock").len();
             Ok((0..stored).map(|i| format!("chunk-{i}")).collect())
         }
 
-        async fn store_document_with_context(
+        async fn store_document_with_context_for_model(
             &self,
             _path: &std::path::Path,
             _mime_type: &str,
             chunks: Vec<ContextualizedChunk>,
             embeddings: Vec<Vec<f32>>,
-        ) -> crate::features::indexing::engine::error::Result<String> {
+            _model_identity: &str,
+        ) -> Result<String> {
             *self.stored.lock().expect("lock") = chunks;
             *self.vectors.lock().expect("lock") = embeddings;
             Ok("doc-123".to_string())
-        }
-
-        async fn store_document(
-            &self,
-            _path: &std::path::Path,
-            _mime_type: &str,
-            _chunks: Vec<crate::features::indexing::engine::chunker::TextChunk>,
-            _embeddings: Vec<Vec<f32>>,
-        ) -> crate::features::indexing::engine::error::Result<String> {
-            Ok("doc-123".to_string())
-        }
-
-        async fn document_exists(
-            &self,
-            _path: &std::path::Path,
-        ) -> crate::features::indexing::engine::error::Result<bool> {
-            Ok(false)
-        }
-
-        async fn get_document_by_path(
-            &self,
-            _path: &std::path::Path,
-        ) -> crate::features::indexing::engine::error::Result<
-            Option<crate::features::indexing::engine::storage::DocumentRecord>,
-        > {
-            Ok(None)
-        }
-
-        async fn needs_reindex(
-            &self,
-            _path: &std::path::Path,
-        ) -> crate::features::indexing::engine::error::Result<bool> {
-            Ok(false)
-        }
-
-        async fn mark_document_status(
-            &self,
-            _path: &std::path::Path,
-            _status: &str,
-        ) -> crate::features::indexing::engine::error::Result<()> {
-            Ok(())
-        }
-
-        async fn remove_document(
-            &self,
-            _path: &std::path::Path,
-        ) -> crate::features::indexing::engine::error::Result<()> {
-            Ok(())
-        }
-
-        async fn store_file_metadata_only(
-            &self,
-            _path: &std::path::Path,
-            _file_id: &str,
-            _mime_type: &str,
-        ) -> crate::features::indexing::engine::error::Result<String> {
-            Ok("doc-123".to_string())
-        }
-
-        async fn get_indexed_count(&self) -> crate::features::indexing::engine::error::Result<i64> {
-            Ok(0)
-        }
-
-        async fn get_total_chunks(&self) -> crate::features::indexing::engine::error::Result<i64> {
-            Ok(0)
-        }
-
-        async fn store_document_with_context_and_file(
-            &self,
-            _path: &std::path::Path,
-            _file_id: &str,
-            _mime_type: &str,
-            _chunks: Vec<ContextualizedChunk>,
-            _embeddings: Vec<Vec<f32>>,
-        ) -> crate::features::indexing::engine::error::Result<String> {
-            Ok("doc-123".to_string())
-        }
-
-        async fn batch_store_documents(
-            &self,
-            _documents: Vec<(
-                std::path::PathBuf,
-                String,
-                Vec<crate::features::indexing::engine::chunker::TextChunk>,
-                Vec<Vec<f32>>,
-            )>,
-        ) -> crate::features::indexing::engine::error::Result<Vec<String>> {
-            Ok(vec!["doc-123".to_string()])
         }
     }
 

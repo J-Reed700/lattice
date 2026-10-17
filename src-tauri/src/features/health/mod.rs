@@ -5,7 +5,7 @@
 //!
 //! ## Public surface
 //!
-//! - `crate::features::health::dto` — DTOs (HealthCheckResponseDto, SystemStatsDto)
+//! - `crate::features::health::dto` — DTOs (HealthCheckResponseDto)
 //! - `crate::features::health::use_cases::HealthCheckUseCase`
 //! - `crate::features::health::commands` — Tauri command handlers
 //! - `crate::features::health::plugin` — Tauri plugin (`init()`)

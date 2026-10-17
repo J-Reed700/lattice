@@ -3,11 +3,13 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use super::trait_def::{BM25SearchTrait, SearchServiceTrait};
-#[cfg(test)]
-use crate::features::search::engine::service::SearchResult;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::application::contracts::search::engine::BM25Result;
+#[cfg(test)]
+use lattice_core::application::contracts::search::engine::SearchResult;
+#[cfg(test)]
+use lattice_core::application::ports::{BM25SearchTrait, SearchServiceTrait};
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 #[cfg(test)]
@@ -154,14 +156,7 @@ impl SearchServiceTrait for MockSearchService {
 /// Stores query results in memory for deterministic testing.
 /// Useful for testing without database dependencies.
 pub struct MockBM25Search {
-    results: Arc<
-        RwLock<
-            std::collections::HashMap<
-                String,
-                Vec<crate::features::search::engine::bm25::BM25Result>,
-            >,
-        >,
-    >,
+    results: Arc<RwLock<std::collections::HashMap<String, Vec<BM25Result>>>>,
 }
 
 #[cfg(test)]
@@ -189,11 +184,7 @@ impl MockBM25Search {
     ///     }
     /// ]);
     /// ```
-    pub fn set_results(
-        &self,
-        query: &str,
-        results: Vec<crate::features::search::engine::bm25::BM25Result>,
-    ) {
+    pub fn set_results(&self, query: &str, results: Vec<BM25Result>) {
         self.results
             .write()
             .unwrap()
@@ -216,11 +207,7 @@ impl Default for MockBM25Search {
 #[async_trait]
 #[cfg(test)]
 impl BM25SearchTrait for MockBM25Search {
-    async fn search(
-        &self,
-        query: &str,
-        top_k: usize,
-    ) -> Result<Vec<crate::features::search::engine::bm25::BM25Result>> {
+    async fn search(&self, query: &str, top_k: usize) -> Result<Vec<BM25Result>> {
         Ok(self
             .results
             .read()
@@ -238,7 +225,7 @@ impl BM25SearchTrait for MockBM25Search {
         query: &str,
         top_k: usize,
         min_score: f32,
-    ) -> Result<Vec<crate::features::search::engine::bm25::BM25Result>> {
+    ) -> Result<Vec<BM25Result>> {
         let all_results = self.search(query, top_k * 2).await?;
         Ok(all_results
             .into_iter()

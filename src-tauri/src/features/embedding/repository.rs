@@ -10,13 +10,13 @@
 //! - EmbeddingRepositoryTrait (legacy)
 //! - EmbeddingRepositoryPort (DDD)
 
-use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use crate::infrastructure::persistence::repositories::embedding::mapper::{
     EmbeddingDTO, EmbeddingMapper,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::ports::EmbeddingRepositoryPort;
+use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 

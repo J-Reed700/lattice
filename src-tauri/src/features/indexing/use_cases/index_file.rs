@@ -32,7 +32,6 @@
 
 use std::sync::Arc;
 
-use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::LibraryGc;
 use lattice_core::application::ports::UnitOfWorkFactory;
@@ -41,7 +40,11 @@ use lattice_core::application::ports::{
     DocumentIndexObserver, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
     FileStoragePort, SearchResultCachePort, SparseTermStorePort, VectorSearchPort,
 };
+use lattice_core::application::services::live_index::{
+    publish_chunks_to_live_index, PublishedChunk,
+};
 use lattice_core::domain::entities::Document;
+use lattice_core::domain::entities::Embedding;
 use lattice_core::domain::value_objects::SparseEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use tracing::instrument;
@@ -78,48 +81,6 @@ pub struct PreparedDocument {
 pub enum PrepareForIndexingOutcome {
     Prepared(Box<PreparedDocument>),
     Duplicate { document_id: String },
-}
-
-/// One committed chunk ready for the live vector index.
-pub(crate) struct PublishedChunk {
-    pub chunk_id: String,
-    pub content: String,
-    pub embedding: Vec<f32>,
-}
-
-/// Put a committed document's chunks into the live vector index and drop
-/// cached query results, so the document is searchable now rather than after
-/// the next launch rebuilds the index from SQLite.
-///
-/// Shared by every importer that commits chunk rows itself (files, web URLs):
-/// a path that commits without publishing leaves dense search blind to the
-/// document and forces a full HNSW rebuild at the next start.
-pub(crate) async fn publish_chunks_to_live_index(
-    search: Arc<dyn VectorSearchPort>,
-    query_cache: Option<&dyn SearchResultCachePort>,
-    document_id: &str,
-    chunks: Vec<PublishedChunk>,
-) -> Result<()> {
-    let entries: Vec<_> = chunks
-        .into_iter()
-        .map(
-            |chunk| lattice_core::application::ports::vector_search_port::VectorIndexEntry {
-                id: format!("emb_{}", chunk.chunk_id),
-                embedding: chunk.embedding,
-                content: chunk.content,
-                chunk_id: chunk.chunk_id,
-                document_id: document_id.to_owned(),
-            },
-        )
-        .collect();
-    // HNSW updates and disk serialization must not block async DB/chat work.
-    tokio::task::spawn_blocking(move || search.publish_embeddings(entries)).await
-        .map_err(|error| AppError::Other(format!("Search indexing task failed: {error}")))?
-        .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))?;
-    if let Some(cache) = query_cache {
-        cache.invalidate_corpus();
-    }
-    Ok(())
 }
 
 /// Index file use case.

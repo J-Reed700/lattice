@@ -1,11 +1,11 @@
 //! Mock implementations for testing
 //!
-//! This module provides mock implementations of service traits.
+//! This module provides mock implementations of the embedding port.
 
 #[cfg(test)]
-use super::trait_def::EmbeddingServiceTrait;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::application::ports::EmbeddingPort;
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
@@ -62,7 +62,7 @@ impl Default for MockEmbeddingService {
 
 #[cfg(test)]
 #[async_trait]
-impl EmbeddingServiceTrait for MockEmbeddingService {
+impl EmbeddingPort for MockEmbeddingService {
     async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
         Ok(self.hash_to_embedding(text))
     }
@@ -71,13 +71,11 @@ impl EmbeddingServiceTrait for MockEmbeddingService {
         Ok(texts.iter().map(|t| self.hash_to_embedding(t)).collect())
     }
 
-    async fn embed_contextualized_chunks(
-        &self,
-        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
-    ) -> Result<Vec<Vec<f32>>> {
-        Ok(chunks
-            .iter()
-            .map(|c| self.hash_to_embedding(&c.contextualized_content))
-            .collect())
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
     }
 }

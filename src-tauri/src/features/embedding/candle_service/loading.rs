@@ -129,7 +129,7 @@ impl CandleEmbeddingService {
             "Loading Candle embedding model"
         );
 
-        let mut tokenizer = super::super::input_policy::load_tokenizer(&tokenizer_path)?;
+        let mut tokenizer = crate::infrastructure::ml::tokenizer::load_tokenizer(&tokenizer_path)?;
 
         let input_policy = super::super::input_policy::InputPolicy::new(
             tokenizer.clone(),

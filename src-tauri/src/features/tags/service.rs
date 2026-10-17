@@ -6,15 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
-use crate::features::tags::TagServiceTrait;
-
-/// A guard that holds an owned mutex guard
-///
-/// This uses OwnedMutexGuard which internally holds an Arc to the mutex,
-/// eliminating lifetime issues and unsafe code.
-pub struct DocumentLockGuard {
-    _guard: tokio::sync::OwnedMutexGuard<()>,
-}
+use lattice_core::application::ports::{DocumentLockGuard, TagServiceTrait};
 
 const DOCUMENT_LOCK_STRIPES: usize = 64;
 
@@ -47,33 +39,6 @@ impl DocumentLockTable {
             .get(index)
             .cloned()
             .unwrap_or_else(|| Arc::new(Mutex::new(())))
-    }
-}
-
-impl DocumentLockGuard {
-    /// Create a new DocumentLockGuard from an OwnedMutexGuard
-    pub(crate) fn new(guard: tokio::sync::OwnedMutexGuard<()>) -> Self {
-        Self { _guard: guard }
-    }
-
-    /// Create mock lock guard for testing and mocks
-    ///
-    /// ⚠️ **TEST INFRASTRUCTURE ONLY**
-    ///
-    /// This mock is exposed outside `#[cfg(test)]` to enable cross-module testing.
-    /// **Do not use in production code.** Use `DocumentLockGuard::new()` instead.
-    ///
-    /// # Panics
-    ///
-    /// Panics if lock acquisition fails (test infrastructure issue, not production code).
-    #[allow(clippy::expect_used)] // Test infrastructure - panics are acceptable
-    pub fn mock() -> Self {
-        let lock = Arc::new(Mutex::new(()));
-        // IMMACULATE INVARIANT: Test lock should always be available (no contention in tests)
-        let guard = lock.clone().try_lock_owned().expect(
-            "IMMACULATE INVARIANT: Mock lock guard should always acquire successfully in tests",
-        );
-        Self { _guard: guard }
     }
 }
 
@@ -149,7 +114,7 @@ impl TagServiceTrait for TagService {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag, lattice_core::shared::error::AppError> {
+    ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
@@ -171,7 +136,7 @@ impl TagServiceTrait for TagService {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag, lattice_core::shared::error::AppError> {
+    ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
@@ -207,7 +172,7 @@ impl TagServiceTrait for TagService {
 
     async fn get_all_tags(
         &self,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, lattice_core::shared::error::AppError>
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>, lattice_core::shared::error::AppError>
     {
         use crate::features::tags::repository::TagRepository;
 
@@ -220,7 +185,7 @@ impl TagServiceTrait for TagService {
     async fn get_all_tags_with_counts(
         &self,
     ) -> Result<
-        Vec<crate::features::tags::dto::TagWithCountDto>,
+        Vec<lattice_core::application::contracts::tags::TagWithCountDto>,
         lattice_core::shared::error::AppError,
     > {
         use crate::features::tags::repository::TagRepository;
@@ -235,20 +200,22 @@ impl TagServiceTrait for TagService {
 
         Ok(results
             .into_iter()
-            .map(|(tag, count)| crate::features::tags::dto::TagWithCountDto {
-                id: tag.id().to_string(),
-                name: tag.name().to_string(),
-                color: Some(tag.color().to_string()),
-                created_at: tag.created_at().to_rfc3339(),
-                document_count: count,
-            })
+            .map(
+                |(tag, count)| lattice_core::application::contracts::tags::TagWithCountDto {
+                    id: tag.id().to_string(),
+                    name: tag.name().to_string(),
+                    color: Some(tag.color().to_string()),
+                    created_at: tag.created_at().to_rfc3339(),
+                    document_count: count,
+                },
+            )
             .collect())
     }
 
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, lattice_core::shared::error::AppError>
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>, lattice_core::shared::error::AppError>
     {
         use crate::features::tags::repository::TagRepository;
 
@@ -268,7 +235,7 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, lattice_core::shared::error::AppError>
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>, lattice_core::shared::error::AppError>
     {
         use crate::features::tags::repository::TagRepository;
 
@@ -399,7 +366,7 @@ impl TagServiceTrait for TagService {
         &self,
         name: &str,
         color: &str,
-    ) -> Result<crate::features::tags::entity::Tag, lattice_core::shared::error::AppError> {
+    ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
@@ -421,7 +388,7 @@ impl TagServiceTrait for TagService {
     async fn get_all_with_counts(
         &self,
     ) -> Result<
-        Vec<crate::features::tags::dto::TagWithCountDto>,
+        Vec<lattice_core::application::contracts::tags::TagWithCountDto>,
         lattice_core::shared::error::AppError,
     > {
         self.get_all_tags_with_counts().await

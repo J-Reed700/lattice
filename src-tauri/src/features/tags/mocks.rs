@@ -3,14 +3,16 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
+use crate::features::tags::TagRepositoryTrait;
+#[cfg(test)]
+use lattice_core::application::ports::TagServiceTrait;
 #[cfg(test)]
 use lattice_core::shared::error::{AppError, Result};
 // Removed: use lattice_core::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
 #[cfg(test)]
-pub use crate::features::tags::service::DocumentLockGuard;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::application::ports::DocumentLockGuard;
 #[cfg(test)]
 use lattice_core::shared::types::TagName;
 #[cfg(test)]
@@ -20,7 +22,7 @@ use std::sync::{Arc, RwLock};
 /// Mock tag service for testing
 pub struct MockTagService {
     tags: std::sync::Arc<
-        parking_lot::RwLock<std::collections::HashMap<String, crate::features::tags::entity::Tag>>,
+        parking_lot::RwLock<std::collections::HashMap<String, lattice_core::domain::entities::Tag>>,
     >,
     // Track which tags are applied to which documents
     document_tags: std::sync::Arc<
@@ -54,11 +56,11 @@ impl TagServiceTrait for MockTagService {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         let tag_name = TagName::new(name.to_lowercase()).map_err(|e| {
             lattice_core::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
         })?;
-        let tag = crate::features::tags::entity::Tag::new(
+        let tag = lattice_core::domain::entities::Tag::new(
             tag_name,
             color.unwrap_or("#6366f1").to_string(),
         );
@@ -71,7 +73,7 @@ impl TagServiceTrait for MockTagService {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         let mut tags = self.tags.write();
         if let Some((_, tag)) = tags.iter_mut().find(|(_, t)| t.id().to_string() == tag_id) {
             if let Some(n) = name {
@@ -81,7 +83,7 @@ impl TagServiceTrait for MockTagService {
                         e
                     ))
                 })?;
-                *tag = crate::features::tags::entity::Tag::new(
+                *tag = lattice_core::domain::entities::Tag::new(
                     tag_name,
                     color.unwrap_or(tag.color()).to_string(),
                 );
@@ -101,20 +103,20 @@ impl TagServiceTrait for MockTagService {
         Ok(())
     }
 
-    async fn get_all_tags(&self) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    async fn get_all_tags(&self) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         Ok(self.tags.read().values().cloned().collect())
     }
 
     async fn get_all_tags_with_counts(
         &self,
-    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::tags::TagWithCountDto>> {
         self.get_all_with_counts().await
     }
 
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         let tag_names: Vec<String> = {
             let document_tags = self.document_tags.read();
             document_tags
@@ -135,7 +137,7 @@ impl TagServiceTrait for MockTagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         {
             let mut document_tags = self.document_tags.write();
             let doc_tag_set = document_tags.entry(document_id.to_string()).or_default();
@@ -259,7 +261,7 @@ impl TagServiceTrait for MockTagService {
         &self,
         name: &str,
         color: &str,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         let normalized = name.to_lowercase();
         let mut tags = self.tags.write();
 
@@ -273,7 +275,7 @@ impl TagServiceTrait for MockTagService {
                     e
                 ))
             })?;
-            let tag = crate::features::tags::entity::Tag::new(tag_name, color.to_string());
+            let tag = lattice_core::domain::entities::Tag::new(tag_name, color.to_string());
             tags.insert(normalized, tag.clone());
             Ok(tag)
         }
@@ -281,17 +283,19 @@ impl TagServiceTrait for MockTagService {
 
     async fn get_all_with_counts(
         &self,
-    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::tags::TagWithCountDto>> {
         let tags = self.tags.read();
         Ok(tags
             .values()
-            .map(|tag| crate::features::tags::dto::TagWithCountDto {
-                id: tag.id().to_string(),
-                name: tag.name().to_string(),
-                color: Some(tag.color().to_string()),
-                created_at: "2024-01-01T00:00:00Z".to_string(),
-                document_count: 0,
-            })
+            .map(
+                |tag| lattice_core::application::contracts::tags::TagWithCountDto {
+                    id: tag.id().to_string(),
+                    name: tag.name().to_string(),
+                    color: Some(tag.color().to_string()),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    document_count: 0,
+                },
+            )
             .collect())
     }
 }
@@ -301,7 +305,7 @@ impl TagServiceTrait for MockTagService {
 ///
 /// Stores tag entities in-memory for deterministic testing without database dependencies.
 pub struct MockTagRepository {
-    tags: Arc<RwLock<std::collections::HashMap<String, crate::features::tags::entity::Tag>>>,
+    tags: Arc<RwLock<std::collections::HashMap<String, lattice_core::domain::entities::Tag>>>,
     name_index: Arc<RwLock<std::collections::HashMap<String, String>>>, // lowercase_name -> id
     document_tags: Arc<RwLock<std::collections::HashMap<String, Vec<String>>>>, // document_id -> tag_ids
 }
@@ -330,7 +334,7 @@ impl MockTagRepository {
     /// let tag = Tag::new(name, "#ff5733".to_string());
     /// mock.add_tag(tag);
     /// ```
-    pub fn add_tag(&self, tag: crate::features::tags::entity::Tag) {
+    pub fn add_tag(&self, tag: lattice_core::domain::entities::Tag) {
         let id = tag.id().as_str().to_string();
         let name_key = tag.name().as_str().to_lowercase();
 
@@ -370,12 +374,15 @@ impl TagRepositoryTrait for MockTagRepository {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         let entity = self.get_or_create(name, color).await?;
         Ok(entity)
     }
 
-    async fn find_by_name(&self, name: &str) -> Result<Option<crate::features::tags::entity::Tag>> {
+    async fn find_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<lattice_core::domain::entities::Tag>> {
         let name_key = name.to_lowercase();
         let name_index = self.name_index.read().unwrap();
 
@@ -391,7 +398,7 @@ impl TagRepositoryTrait for MockTagRepository {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         // Try to find existing tag
         if let Some(tag) = self.find_by_name(name).await? {
             return Ok(tag);
@@ -405,7 +412,7 @@ impl TagRepositoryTrait for MockTagRepository {
                 ))
             })?;
         let tag_color = color.unwrap_or("#6366f1");
-        let tag = crate::features::tags::entity::Tag::new(tag_name, tag_color.to_string());
+        let tag = lattice_core::domain::entities::Tag::new(tag_name, tag_color.to_string());
 
         let id = tag.id().as_str().to_string();
         let name_key = tag.name().as_str().to_lowercase();
@@ -416,25 +423,25 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(tag)
     }
 
-    async fn find_by_id(&self, id: &str) -> Result<Option<crate::features::tags::entity::Tag>> {
+    async fn find_by_id(&self, id: &str) -> Result<Option<lattice_core::domain::entities::Tag>> {
         Ok(self.tags.read().unwrap().get(id).cloned())
     }
 
     async fn find_by_filter(
         &self,
         _filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         // For mock, just return all tags
         self.find_all().await
     }
 
-    async fn find_all(&self) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    async fn find_all(&self) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         let mut tags: Vec<_> = self.tags.read().unwrap().values().cloned().collect();
         tags.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
         Ok(tags)
     }
 
-    async fn save(&self, entity: &crate::features::tags::entity::Tag) -> Result<()> {
+    async fn save(&self, entity: &lattice_core::domain::entities::Tag) -> Result<()> {
         let id = entity.id().as_str().to_string();
         let name_key = entity.name().as_str().to_lowercase();
 
@@ -447,7 +454,7 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(())
     }
 
-    async fn save_batch(&self, entities: &[crate::features::tags::entity::Tag]) -> Result<()> {
+    async fn save_batch(&self, entities: &[lattice_core::domain::entities::Tag]) -> Result<()> {
         for entity in entities {
             self.save(entity).await?;
         }
@@ -480,7 +487,7 @@ impl TagRepositoryTrait for MockTagRepository {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         let document_tags = self.document_tags.read().unwrap();
         let tag_ids = document_tags.get(document_id).cloned().unwrap_or_default();
 
@@ -526,7 +533,7 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(Vec::new())
     }
 
-    async fn get_all_with_counts(&self) -> Result<Vec<(crate::features::tags::entity::Tag, i64)>> {
+    async fn get_all_with_counts(&self) -> Result<Vec<(lattice_core::domain::entities::Tag, i64)>> {
         let tags = self.tags.read().unwrap();
         let document_tags = self.document_tags.read().unwrap();
 
@@ -553,7 +560,7 @@ impl TagRepositoryTrait for MockTagRepository {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag> {
+    ) -> Result<lattice_core::domain::entities::Tag> {
         let mut tags = self.tags.write().unwrap();
         let tag = tags.get_mut(tag_id).ok_or_else(|| {
             lattice_core::shared::error::AppError::NotFound("Tag not found".to_string())
@@ -569,7 +576,7 @@ impl TagRepositoryTrait for MockTagRepository {
             None => tag.name().clone(),
         };
         let updated_color = color.unwrap_or(tag.color()).to_string();
-        let updated_tag = crate::features::tags::entity::Tag::new(updated_name, updated_color);
+        let updated_tag = lattice_core::domain::entities::Tag::new(updated_name, updated_color);
 
         *tag = updated_tag.clone();
         Ok(updated_tag)
@@ -579,7 +586,7 @@ impl TagRepositoryTrait for MockTagRepository {
         &self,
         _document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         let mut tags = Vec::new();
         for name in tag_names {
             let tag = self.get_or_create(&name, None).await?;
@@ -591,7 +598,7 @@ impl TagRepositoryTrait for MockTagRepository {
     async fn get_tags_for_documents(
         &self,
         _document_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, Vec<crate::features::tags::entity::Tag>>> {
+    ) -> Result<std::collections::HashMap<String, Vec<lattice_core::domain::entities::Tag>>> {
         Ok(std::collections::HashMap::new())
     }
 
@@ -602,7 +609,7 @@ impl TagRepositoryTrait for MockTagRepository {
     async fn get_or_create_batch(
         &self,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
+    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         let mut tags = Vec::new();
         for name in tag_names {
             let tag = self.get_or_create(&name, None).await?;

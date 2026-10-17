@@ -7,7 +7,7 @@ use lattice_core::application::contracts::search::{
 use lattice_core::shared::error::AppError;
 
 pub(super) async fn enrich_vector_results(
-    results: Vec<crate::features::search::engine::service::SearchResult>,
+    results: Vec<lattice_core::application::contracts::search::engine::SearchResult>,
     enrichment_service: std::sync::Arc<dyn SearchEnrichmentServiceTrait>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
     let chunk_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();

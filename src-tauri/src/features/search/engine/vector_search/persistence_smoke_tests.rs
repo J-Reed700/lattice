@@ -1,10 +1,11 @@
 //! Opt-in real-model lifecycle check. All state lives in a temporary directory.
 use super::*;
-use crate::features::embedding::{candle_service::CandleEmbeddingService, generation};
+use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::indexing::use_cases::embedding_input::{
     embed_prepared_chunks, prepare_structured_with_spans,
 };
 use crate::features::search::engine::vector_search::{VectorIndexCompression, VectorQuantization};
+use crate::infrastructure::persistence::repositories::embedding::generation;
 use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::entities::document::Document;

@@ -291,7 +291,7 @@ async fn test_execute_unknown_function() {
 
     let executor = FunctionExecutor::new(FunctionExecutorServices {
         registry: registry as Arc<dyn FunctionRegistryTrait>,
-        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingPort>,
         search_service: search as Arc<dyn SearchServiceTrait>,
         bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
         hybrid_search: hybrid,
@@ -347,7 +347,7 @@ async fn test_validate_arguments() {
 
     let executor = FunctionExecutor::new(FunctionExecutorServices {
         registry: registry as Arc<dyn FunctionRegistryTrait>,
-        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingPort>,
         search_service: search as Arc<dyn SearchServiceTrait>,
         bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
         hybrid_search: hybrid,
@@ -546,7 +546,7 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
 
     let executor = FunctionExecutor::new(FunctionExecutorServices {
         registry: registry as Arc<dyn FunctionRegistryTrait>,
-        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingPort>,
         search_service: search as Arc<dyn SearchServiceTrait>,
         bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
         hybrid_search: hybrid,

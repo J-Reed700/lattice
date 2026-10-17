@@ -61,11 +61,11 @@ use std::sync::Arc;
 
 use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::mapper::SearchMapper;
-use crate::features::search::SparseSearchTrait;
 use lattice_core::application::contracts::search::{
     BranchKind, QueryBranches, RankedBranch, ReciprocalRankFusion, SearchModeDto, SearchRequestDto,
     SearchResponseDto, SearchResultDto, SearchResultRecord, WeightedRanking,
 };
+use lattice_core::application::ports::SparseSearchTrait;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };

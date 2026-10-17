@@ -2,14 +2,14 @@ use super::*;
 use crate::features::conversation::mocks::MockConversationService;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::embedding::mocks::MockEmbeddingService;
-use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::features::tags::mocks::MockTagService;
-use crate::features::tags::TagServiceTrait;
 use crate::features::web::mocks::MockWebIngestionService;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::services::mocks::MockModelManager;
 use crate::infrastructure::services::traits::ModelManagerTrait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::application::ports::TagServiceTrait;
 
 #[tokio::test]
 async fn test_mock_embedding_service() {

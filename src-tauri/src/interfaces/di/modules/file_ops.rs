@@ -24,7 +24,7 @@ use lattice_core::application::ports::{
 };
 
 // Service Traits
-use crate::features::tags::TagServiceTrait;
+use lattice_core::application::ports::TagServiceTrait;
 
 /// File operations module for opening files, metadata, wikilinks
 ///

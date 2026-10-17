@@ -109,7 +109,7 @@ pub async fn read_source_stamp(
     dimension: usize,
 ) -> Result<SourceStamp> {
     let dimension = dimension as i64;
-    // Mirrors `embedding::generation::restore`'s row set. `restore` also drops
+    // Mirrors `generation::restore`'s row set. `restore` also drops
     // a prepared vector whose source text has since changed, which this count
     // cannot see; that direction is safe, because the extra row makes the
     // stamp differ and buys a rebuild.

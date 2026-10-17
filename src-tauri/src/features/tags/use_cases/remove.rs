@@ -1,7 +1,7 @@
 //! Remove Tag from Document Use Case
 
 use crate::features::tags::dto::RemoveTagRequestDto;
-use crate::features::tags::TagServiceTrait;
+use lattice_core::application::ports::TagServiceTrait;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
