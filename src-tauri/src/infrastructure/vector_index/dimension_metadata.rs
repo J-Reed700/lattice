@@ -109,7 +109,7 @@ pub fn wipe_index_files(index_path: &Path) -> Result<()> {
     let vectors_path = vectors_path_for(index_path);
     // A manifest that outlived its index would vouch for a file that no longer
     // exists, and the next launch would trust it.
-    let manifest_path = super::manifest::manifest_path_for(index_path);
+    let manifest_path = super::index_config::manifest_path_for(index_path);
 
     for p in [
         index_path,
@@ -212,7 +212,7 @@ pub enum DimensionCheck {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
-    use crate::features::search::engine::vector_search::compression::VectorQuantization;
+    use crate::infrastructure::vector_index::compression::VectorQuantization;
     use tempfile::TempDir;
 
     fn tmp_index() -> (TempDir, PathBuf) {

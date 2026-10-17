@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
-use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
-use lattice_core::application::ports::SettingsReaderPort;
+use lattice_core::application::contracts::notes::VaultNoteUpsert;
+use lattice_core::application::ports::{SettingsReaderPort, WorkspaceNotesPort};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
@@ -369,7 +369,7 @@ pub(crate) async fn import_one(
     // ON CONFLICT: only the fields that round-trip through markdown.
     // Lattice-only JSON columns (linked_document_ids, highlights_json,
     // etc.) are preserved.
-    let repository = DailyNotesRepository::new(db_pool.clone());
+    let repository = super::repository::workspace_notes(db_pool);
     let result = repository
         .upsert_from_vault_if_unqueued(VaultNoteUpsert {
             id: &parsed.id,
@@ -459,7 +459,7 @@ async fn handle_external_delete(path: &Path, db_pool: &SqlitePool, app_handle: &
         return;
     }
 
-    let repository = DailyNotesRepository::new(db_pool.clone());
+    let repository = super::repository::workspace_notes(db_pool);
     let result = repository.delete_from_vault_if_unqueued(id).await;
 
     match result {

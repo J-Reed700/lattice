@@ -14,7 +14,7 @@ use super::chunker;
 use super::dto::FolderIndexStatusDto;
 use super::run::StatusCell;
 use super::store::FolderStore;
-use crate::features::search::engine::vector_search::USearchVectorIndex;
+use crate::infrastructure::vector_index::USearchVectorIndex;
 use lattice_core::application::contracts::search::{
     FusionResult, ReciprocalRankFusion, WeightedRanking,
 };

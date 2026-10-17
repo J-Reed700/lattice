@@ -5,8 +5,8 @@
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
 use crate::features::indexing::dto::{
-    IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto, IndexFileResponseDto,
-    IndexingStatsDto,
+    ChunkingStrategyDto, IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto,
+    IndexFileResponseDto, IndexingStatsDto,
 };
 use crate::features::indexing::engine::IndexingState;
 use crate::features::indexing::note_index_sink::{
@@ -71,6 +71,69 @@ const MAX_CHUNK_TOKENS: usize = 4096;
 /// clamped into the range the chunker supports.
 pub(crate) fn chunk_tokens_for(chunk_size: u32) -> usize {
     (chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS)
+}
+
+/// The chunk size and file-type filter the user's indexing settings ask for,
+/// or the defaults when the settings cannot be read.
+async fn indexing_defaults(container: &Container) -> (usize, Option<Vec<String>>) {
+    match container.get_settings_use_case().execute().await {
+        Ok(settings) => {
+            let chunk_tokens = chunk_tokens_for(settings.indexing.chunk_size);
+            let include_extensions = if settings.indexing.file_types.is_empty() {
+                None
+            } else {
+                Some(settings.indexing.file_types)
+            };
+            (chunk_tokens, include_extensions)
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "Failed to resolve indexing settings for file plugin; using defaults"
+            );
+            (DEFAULT_CHUNK_TOKENS, None)
+        }
+    }
+}
+
+/// Index one file with the chunk size the user's settings ask for.
+pub async fn index_file_with_settings_impl(
+    container: &Container,
+    path: String,
+    space_id: Option<String>,
+) -> ApiResult<IndexFileResponseDto> {
+    let (chunk_tokens, _) = indexing_defaults(container).await;
+    let request = IndexFileRequestDto {
+        path,
+        chunking_strategy: ChunkingStrategyDto::Semantic {
+            max_tokens: chunk_tokens,
+        },
+        tags: None,
+        metadata: None,
+        space_id,
+    };
+    index_file_impl(container, request).await
+}
+
+/// Index a directory with the chunk size and file types the user's settings
+/// ask for.
+pub async fn index_directory_with_settings_impl(
+    container: &Container,
+    path: String,
+    recursive: bool,
+    space_id: Option<String>,
+) -> ApiResult<IndexDirectoryResponseDto> {
+    let (chunk_tokens, include_extensions) = indexing_defaults(container).await;
+    let request = IndexDirectoryRequestDto {
+        path,
+        recursive,
+        chunking_strategy: ChunkingStrategyDto::Semantic {
+            max_tokens: chunk_tokens,
+        },
+        include_extensions,
+        space_id,
+    };
+    index_directory_impl(container, request).await
 }
 
 fn normalize_space_id(space_id: Option<&str>) -> Option<String> {

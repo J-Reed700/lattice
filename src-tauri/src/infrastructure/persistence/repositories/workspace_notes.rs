@@ -1,9 +1,18 @@
 //! Persistence owner for `daily_notes_workspace`.
+//!
+//! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
+//! cache stays valid.
 
+use async_trait::async_trait;
+use lattice_core::application::contracts::notes::{
+    NoteTimestampRecord, VaultNoteUpsert, WorkspaceNoteRecord,
+};
+use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{FromRow, SqlitePool};
+use sqlx::sqlite::SqliteRow;
+use sqlx::{Row, SqlitePool};
 
-const NOTE_COLUMNS: &str = r#"
+pub(crate) const NOTE_COLUMNS: &str = r#"
     id,
     revision,
     title,
@@ -19,38 +28,37 @@ const NOTE_COLUMNS: &str = r#"
     updated_at
 "#;
 
-#[derive(Debug, Clone, FromRow)]
-pub struct WorkspaceNoteRecord {
-    pub revision: i64,
-    pub id: String,
-    pub title: String,
-    /// Owning journal, or `None` for an unfiled page (quick capture, vault import).
-    pub journal_id: Option<String>,
-    pub content: String,
-    pub linked_document_ids: String,
-    pub linked_conversation_ids: String,
-    pub highlights_json: String,
-    pub sticky_notes_json: String,
-    pub conversation_snapshots_json: String,
-    pub sources_json: String,
-    pub created_at: String,
-    pub updated_at: String,
+/// Decodes one `NOTE_COLUMNS` row. The record lives in core, which does not
+/// depend on the database driver, so it cannot derive `sqlx::FromRow`.
+pub(crate) fn note_from_row(
+    row: SqliteRow,
+) -> std::result::Result<WorkspaceNoteRecord, sqlx::Error> {
+    Ok(WorkspaceNoteRecord {
+        id: row.try_get("id")?,
+        revision: row.try_get("revision")?,
+        title: row.try_get("title")?,
+        journal_id: row.try_get("journal_id")?,
+        content: row.try_get("content")?,
+        linked_document_ids: row.try_get("linked_document_ids")?,
+        linked_conversation_ids: row.try_get("linked_conversation_ids")?,
+        highlights_json: row.try_get("highlights_json")?,
+        sticky_notes_json: row.try_get("sticky_notes_json")?,
+        conversation_snapshots_json: row.try_get("conversation_snapshots_json")?,
+        sources_json: row.try_get("sources_json")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
 }
 
-#[derive(Debug, Clone)]
-pub struct VaultNoteUpsert<'a> {
-    pub id: &'a str,
-    pub title: &'a str,
-    pub content: &'a str,
-    pub created_at: &'a str,
-    pub updated_at: &'a str,
-}
-
-#[derive(Debug, Clone, FromRow)]
-pub struct NoteTimestampRecord {
-    pub id: String,
-    pub updated_at: String,
-    pub created_at: String,
+/// Decodes an `id, updated_at, created_at` row.
+pub(crate) fn timestamp_from_row(
+    row: SqliteRow,
+) -> std::result::Result<NoteTimestampRecord, sqlx::Error> {
+    Ok(NoteTimestampRecord {
+        id: row.try_get("id")?,
+        updated_at: row.try_get("updated_at")?,
+        created_at: row.try_get("created_at")?,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -65,8 +73,9 @@ impl DailyNotesRepository {
 
     pub async fn get(&self, note_id: &str) -> Result<WorkspaceNoteRecord> {
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
             .bind(note_id)
+            .try_map(note_from_row)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
@@ -106,7 +115,8 @@ impl DailyNotesRepository {
     pub async fn list(&self) -> Result<Vec<WorkspaceNoteRecord>> {
         let query =
             format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC");
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
+            .try_map(note_from_row)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| AppError::Database(format!("Failed to list workspace notes: {error}")))
@@ -120,8 +130,9 @@ impl DailyNotesRepository {
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace \
              WHERE journal_id = ? ORDER BY updated_at DESC"
         );
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
             .bind(journal_id)
+            .try_map(note_from_row)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| AppError::Database(format!("Failed to list journal pages: {error}")))
@@ -143,9 +154,10 @@ impl DailyNotesRepository {
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace \
              WHERE title = ? AND journal_id IS ? ORDER BY updated_at DESC LIMIT 1"
         );
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
             .bind(title)
             .bind(journal_id)
+            .try_map(note_from_row)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
@@ -181,7 +193,8 @@ impl DailyNotesRepository {
         let query = format!(
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC LIMIT 1"
         );
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
+            .try_map(note_from_row)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
@@ -199,9 +212,10 @@ impl DailyNotesRepository {
              WHERE date(updated_at) BETWEEN date(?) AND date(?) \
              ORDER BY updated_at DESC"
         );
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
             .bind(start_date)
             .bind(end_date)
+            .try_map(note_from_row)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| AppError::Database(format!("Failed to fetch notes by range: {error}")))
@@ -228,8 +242,9 @@ impl DailyNotesRepository {
              WHERE date(updated_at) {comparison} date(?) \
              ORDER BY updated_at {direction} LIMIT 1"
         );
-        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        sqlx::query(&query)
             .bind(date)
+            .try_map(note_from_row)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
@@ -267,7 +282,7 @@ impl DailyNotesRepository {
 
     /// Insert a canonical workspace note inside a caller-owned transaction.
     /// Learning Studio uses this to commit a lesson-note link and page together.
-    pub async fn insert_in_transaction(
+    pub(crate) async fn insert_in_transaction(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         note: &WorkspaceNoteRecord,
     ) -> Result<()> {
@@ -300,15 +315,16 @@ impl DailyNotesRepository {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         Self::update_in_transaction(&mut tx, note).await?;
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
-        let saved = sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+        let saved = sqlx::query(&query)
             .bind(&note.id)
+            .try_map(note_from_row)
             .fetch_one(&mut *tx)
             .await?;
         tx.commit().await?;
         Ok(saved)
     }
 
-    pub(super) async fn update_in_transaction(
+    pub(crate) async fn update_in_transaction(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         note: &WorkspaceNoteRecord,
     ) -> Result<()> {
@@ -465,28 +481,45 @@ impl DailyNotesRepository {
     }
 
     pub async fn get_timestamp(&self, note_id: &str) -> Result<Option<NoteTimestampRecord>> {
-        sqlx::query_as::<_, NoteTimestampRecord>(
-            "SELECT id, updated_at, created_at FROM daily_notes_workspace WHERE id = ?",
-        )
-        .bind(note_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| {
-            AppError::Database(format!(
-                "Failed to fetch workspace note timestamp {note_id}: {error}"
-            ))
-        })
+        sqlx::query("SELECT id, updated_at, created_at FROM daily_notes_workspace WHERE id = ?")
+            .bind(note_id)
+            .try_map(timestamp_from_row)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| {
+                AppError::Database(format!(
+                    "Failed to fetch workspace note timestamp {note_id}: {error}"
+                ))
+            })
     }
 
     pub async fn list_timestamps(&self) -> Result<Vec<NoteTimestampRecord>> {
-        sqlx::query_as::<_, NoteTimestampRecord>(
-            "SELECT id, updated_at, created_at FROM daily_notes_workspace",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            AppError::Database(format!("Failed to list workspace note timestamps: {error}"))
-        })
+        sqlx::query("SELECT id, updated_at, created_at FROM daily_notes_workspace")
+            .try_map(timestamp_from_row)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| {
+                AppError::Database(format!("Failed to list workspace note timestamps: {error}"))
+            })
+    }
+}
+
+#[async_trait]
+impl WorkspaceNotesPort for DailyNotesRepository {
+    async fn get(&self, note_id: &str) -> Result<WorkspaceNoteRecord> {
+        DailyNotesRepository::get(self, note_id).await
+    }
+
+    async fn get_timestamp(&self, note_id: &str) -> Result<Option<NoteTimestampRecord>> {
+        DailyNotesRepository::get_timestamp(self, note_id).await
+    }
+
+    async fn upsert_from_vault_if_unqueued(&self, note: VaultNoteUpsert<'_>) -> Result<bool> {
+        DailyNotesRepository::upsert_from_vault_if_unqueued(self, note).await
+    }
+
+    async fn delete_from_vault_if_unqueued(&self, note_id: &str) -> Result<bool> {
+        DailyNotesRepository::delete_from_vault_if_unqueued(self, note_id).await
     }
 }
 
@@ -570,5 +603,3 @@ mod vault_race_tests {
             .unwrap());
     }
 }
-
-mod capture;
