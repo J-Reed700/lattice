@@ -225,7 +225,13 @@ pub async fn generate_learning_practical_activity(
     )
     .await
     .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Writing this practical activity",
+    )
+    .await?;
+    let llm = &pin.llm;
     let generated = crate::features::learning::practical_generation::generate_activity(
         llm.as_ref(),
         request.kind,
@@ -341,7 +347,13 @@ pub async fn send_learning_simulation_turn(
     let sources = practical_source_versions(&container, &request.program_id, &source_ids)
         .await
         .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Running this simulation",
+    )
+    .await?;
+    let llm = &pin.llm;
     let reply = crate::features::learning::practical_generation::generate_simulation_turn(
         llm.as_ref(),
         &activity,
@@ -403,7 +415,13 @@ pub async fn finish_learning_simulation(
     let sources = practical_source_versions(&container, &request.program_id, &source_ids)
         .await
         .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Giving simulation feedback",
+    )
+    .await?;
+    let llm = &pin.llm;
     let feedback = crate::features::learning::practical_generation::generate_simulation_turn(
         llm.as_ref(),
         &activity,

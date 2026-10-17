@@ -24,7 +24,7 @@ impl ConversationDtoMapper {
         ConversationDto {
             id: conversation.id.to_string(),
             title: conversation.title.clone(),
-            model_name: conversation.model_name.clone(),
+            model_choice: conversation.model_choice.clone(),
             system_prompt: conversation.system_prompt.clone(),
             created_at: conversation.created_at.to_rfc3339(),
             updated_at: conversation.updated_at.to_rfc3339(),
@@ -70,6 +70,8 @@ impl ConversationDtoMapper {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use lattice_core::domain::conversation::ChatModelChoice;
+    use lattice_core::domain::models::model_ref::ModelRef;
     use lattice_core::shared::types::ConversationId;
 
     #[test]
@@ -77,7 +79,11 @@ mod tests {
         let conversation = Conversation {
             id: ConversationId::new(),
             title: "Test Conversation".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
+            model_choice: ChatModelChoice::Explicit {
+                model: ModelRef::Local {
+                    model_id: "ornith-1.5-9b".into(),
+                },
+            },
             system_prompt: Some("You are helpful".to_string()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -89,7 +95,7 @@ mod tests {
 
         assert_eq!(dto.id, conversation.id.to_string());
         assert_eq!(dto.title, "Test Conversation");
-        assert_eq!(dto.model_name, "claude-sonnet-4-5-20250929");
+        assert_eq!(dto.model_choice, conversation.model_choice);
         assert_eq!(dto.message_count, 5);
         assert_eq!(dto.total_tokens, 1000);
     }
@@ -98,7 +104,6 @@ mod tests {
     fn test_aggregate_to_dto() {
         let aggregate = ConversationAggregate::new(
             "Test Aggregate".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
             Some("System prompt".to_string()),
         )
         .unwrap();
@@ -106,7 +111,7 @@ mod tests {
         let dto = ConversationDtoMapper::aggregate_to_dto(&aggregate);
 
         assert_eq!(dto.title, "Test Aggregate");
-        assert_eq!(dto.model_name, "claude-sonnet-4-5-20250929");
+        assert_eq!(dto.model_choice, ChatModelChoice::Default);
         assert_eq!(dto.message_count, 0);
     }
 }

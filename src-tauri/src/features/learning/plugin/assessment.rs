@@ -90,7 +90,13 @@ pub async fn create_learning_assessment_blueprint(
         .flat_map(|module| module.lessons.iter())
         .cloned()
         .collect();
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::assessment(),
+        "Writing this assessment",
+    )
+    .await?;
+    let llm = &pin.llm;
     let candidates = crate::features::learning::assessment_generation::generate(
         llm.as_ref(),
         &request,
@@ -192,7 +198,13 @@ pub async fn submit_learning_assessment_form(
             LearningItemFormat::Explanation | LearningItemFormat::Artifact
         )
     }) {
-        let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+        let pin = learning_model(
+            &container,
+            model_requirements::assessment(),
+            "Grading this assessment",
+        )
+        .await?;
+        let llm = &pin.llm;
         match crate::features::learning::assessment_generation::grade_open(llm.as_ref(), &form)
             .await
         {

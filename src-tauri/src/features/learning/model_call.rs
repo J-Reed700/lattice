@@ -101,6 +101,18 @@ pub(in crate::features::learning) async fn send(
     })
 }
 
+/// The refusal for material that does not fit the Learning model's window:
+/// `what` says what does not fit, and the message names the model, its
+/// window and the fix. A configuration error, because the window is a
+/// setting, not something the learner typed.
+pub(in crate::features::learning) fn window_too_small(llm: &dyn LLMPort, what: &str) -> AppError {
+    AppError::InvalidConfig(format!(
+        "{what} in {}'s {}-token context window. Raise your Learning model's context length in Settings → Models, or choose a Learning model with a larger window",
+        llm.model_name(),
+        llm.max_context_tokens()
+    ))
+}
+
 /// Whether the model's window holds `request` as it stands.
 pub(in crate::features::learning) fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
     grounded_generation::evidence_room(llm, request).is_ok()

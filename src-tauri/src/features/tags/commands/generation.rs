@@ -146,7 +146,7 @@ pub async fn generate_tags_impl(
     container: &Container,
     request: GenerateTagsRequestDto,
 ) -> Result<GenerateTagsResponseDto> {
-    container.get_or_load_llm().await?;
+    container.default_chat_llm().await?;
 
     let use_case = container.generate_tags_use_case();
     use_case.execute(request).await
@@ -318,7 +318,7 @@ pub async fn auto_tag_all_documents_ddd(
         )));
     }
 
-    container.get_or_load_llm().await?;
+    container.default_chat_llm().await?;
 
     let use_case = container.auto_tag_all_documents_use_case();
     let response = use_case.execute(request).await?;

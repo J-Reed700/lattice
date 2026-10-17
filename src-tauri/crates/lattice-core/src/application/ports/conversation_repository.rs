@@ -21,12 +21,8 @@ pub trait ConversationRepositoryPort: Send + Sync {
         tokens: i64,
         metadata: Option<String>,
     ) -> Result<ConversationMessage>;
-    async fn create<'a>(
-        &self,
-        title: &str,
-        model_name: &str,
-        system_prompt: Option<&'a str>,
-    ) -> Result<Conversation>;
+    async fn create<'a>(&self, title: &str, system_prompt: Option<&'a str>)
+        -> Result<Conversation>;
     async fn load_aggregate(&self, id: &str) -> Result<Option<ConversationAggregate>>;
     async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Conversation>>;
     async fn delete(&self, id: &str) -> Result<()>;

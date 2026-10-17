@@ -3,8 +3,10 @@ use super::budget::TurnBudget;
 use super::*;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
+use lattice_core::application::ports::llm_port::{ModelRequirements, PinnedModel, ToolSupport};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::DocumentReference;
+use lattice_core::domain::models::model_ref::ModelRef;
 use tokio_util::sync::CancellationToken;
 
 /// The turn as it stands once the conversation is open and its history read.
@@ -12,6 +14,8 @@ pub(super) struct PreparedTurn {
     pub(super) turn_id: String,
     pub(super) conv_id: String,
     pub(super) llm: Arc<dyn LLMPort>,
+    /// What answers this turn and why, as its record keeps it.
+    pub(super) model: TurnModelDto,
     /// The user's message, validated.
     pub(super) message: String,
     /// What the request asked for, widened by an explicit document focus.
@@ -34,6 +38,9 @@ pub(super) struct PreparedTurn {
     pub(super) budget: TurnBudget,
     /// Messages of history the turn was planned with.
     pub(super) history_len: usize,
+    /// Held for the whole turn: a model chosen in the meantime never reaches
+    /// it, and dropping it releases the model instance.
+    _pin: PinnedModel,
     /// Held for the whole turn: dropping it unregisters the turn's stop button.
     _guard: TurnCancellationGuard,
 }
@@ -71,11 +78,14 @@ pub(super) fn cancelled() -> AppError {
 }
 
 /// `parent` is the stop of the job running the turn, if one is.
+/// `request_override` answers this request with another model than the
+/// chat's own choice.
 pub(super) async fn prepare_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
     message: &str,
     request_id: Option<String>,
+    request_override: Option<&ModelRef>,
     tool_preferences: Option<&ToolPreferences>,
     parent: Option<&CancellationToken>,
     emit: &ChatEventSink,
@@ -85,7 +95,7 @@ pub(super) async fn prepare_turn(
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     // Register the turn before any of the slow work below it — request
-    // validation, a cold model load, opening the conversation. The composer
+    // validation, opening the conversation, a cold model load. The composer
     // shows Stop from the moment it sends, so a turn that only becomes
     // cancellable once that work is done leaves every stop press in the
     // meantime with nothing to act on. When the caller named the conversation
@@ -122,17 +132,11 @@ pub(super) async fn prepare_turn(
         "chat_with_conversation: tool preferences"
     );
 
-    let llm_start = Instant::now();
-    // A cold load is the longest stretch of the turn. It is not raced against
-    // the cancellation flag: dropping it mid-flight would abandon a half-started
-    // sidecar. The turn is registered by now, so a stop press during the load is
-    // recorded and acted on the moment it returns — before any generation.
-    let llm = container.get_or_load_llm().await?;
-    metrics.load_llm_ms = elapsed_ms(llm_start);
-
+    // The conversation comes first: the model is the chat's own choice, so a
+    // new chat has to exist before its model can be resolved.
     let conversation_init_start = Instant::now();
     let conv_id =
-        get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
+        get_or_create_conversation_id(container, conversation_id, &validated_message).await?;
     let guard = match turn_guard.take() {
         Some(guard) => guard,
         None => TurnCancellationGuard::start(
@@ -143,6 +147,26 @@ pub(super) async fn prepare_turn(
         )?,
     };
     metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
+    if turn_cancellation.is_cancel_requested(&turn_id) {
+        return Err(cancelled());
+    }
+
+    let llm_start = Instant::now();
+    // A cold load is the longest stretch of the turn. It is not raced against
+    // the cancellation flag: dropping it mid-flight would abandon a half-started
+    // sidecar. The turn is registered by now, so a stop press during the load is
+    // recorded and acted on the moment it returns — before any generation.
+    let (pin, model) = pin_model(
+        container,
+        &conv_id,
+        &turn_id,
+        request_override,
+        ModelRequirements::default(),
+        emit,
+    )
+    .await?;
+    let llm = Arc::clone(&pin.llm);
+    metrics.load_llm_ms = elapsed_ms(llm_start);
     if turn_cancellation.is_cancel_requested(&turn_id) {
         return Err(cancelled());
     }
@@ -247,6 +271,7 @@ pub(super) async fn prepare_turn(
         turn_id,
         conv_id,
         llm,
+        model,
         message: validated_message,
         requested_flags: search_flags,
         recorder,
@@ -262,6 +287,7 @@ pub(super) async fn prepare_turn(
         system_prompt,
         budget,
         history_len,
+        _pin: pin,
         _guard: guard,
     })
 }
@@ -269,6 +295,9 @@ pub(super) async fn prepare_turn(
 /// A research turn carrying on after a restart: the conversation, the model
 /// and the turn's settings, without reading history or planning again. What
 /// it had planned and found is in `saved`.
+///
+/// The chat's choice is resolved again: a model that cannot be used now
+/// fails the turn with its cause rather than resuming on another one.
 pub(super) async fn resume_turn(
     container: &dyn ChatRuntime,
     request: &TurnRequest,
@@ -290,7 +319,20 @@ pub(super) async fn resume_turn(
         &conv_id,
         Some(parent),
     )?;
-    let llm = container.get_or_load_llm().await?;
+    // Its saved rounds call tools, so the model resuming them must be able to.
+    let (pin, model) = pin_model(
+        container,
+        &conv_id,
+        &turn_id,
+        request.model.as_ref(),
+        ModelRequirements {
+            tools: ToolSupport::Required,
+            ..ModelRequirements::default()
+        },
+        emit,
+    )
+    .await?;
+    let llm = Arc::clone(&pin.llm);
     if turn_cancellation.is_cancel_requested(&turn_id) {
         return Err(cancelled());
     }
@@ -336,6 +378,7 @@ pub(super) async fn resume_turn(
         turn_id,
         conv_id,
         llm,
+        model,
         message: request.message.clone(),
         requested_flags: flags,
         recorder,
@@ -351,8 +394,34 @@ pub(super) async fn resume_turn(
         system_prompt: String::new(),
         budget,
         history_len: saved.assembled.history_len,
+        _pin: pin,
         _guard: guard,
     })
+}
+
+/// The turn's model, resolved once and pinned until the turn ends, and
+/// announced on the turn's stream before the first token so the reader knows
+/// what is answering.
+pub(super) async fn pin_model(
+    container: &dyn ChatRuntime,
+    conv_id: &str,
+    turn_id: &str,
+    request_override: Option<&ModelRef>,
+    requirements: ModelRequirements,
+    emit: &ChatEventSink,
+) -> Result<(PinnedModel, TurnModelDto)> {
+    let pin = container
+        .chat_llm_for(conv_id, request_override, requirements)
+        .await?;
+    let model = TurnModelDto::pinned(&pin);
+    let announced = ChatStreamEventDto {
+        model: Some(model.clone()),
+        ..ChatStreamEventDto::new(conv_id, turn_id)
+    };
+    if let Err(error) = emit(announced) {
+        warn!(%error, "Failed to announce the turn's model");
+    }
+    Ok((pin, model))
 }
 
 /// Turn steps go out on the turn's stream as they happen.
@@ -379,6 +448,17 @@ impl PreparedTurn {
         >,
     ) -> Result<Self> {
         let settings = SettingsDto::default();
+        let pin = PinnedModel {
+            llm: Arc::clone(&llm),
+            resolved: lattice_core::application::ports::llm_port::ResolvedModel {
+                model: ModelRef::Local {
+                    model_id: llm.model_name().to_string(),
+                },
+                origin: lattice_core::application::ports::llm_port::ModelOrigin::Default,
+            },
+            instance_id: 0,
+            degraded: None,
+        };
         Ok(Self {
             budget: TurnBudget::plan(
                 &llm,
@@ -391,6 +471,7 @@ impl PreparedTurn {
             ),
             turn_id: turn_id.to_string(),
             conv_id: conv_id.to_string(),
+            model: TurnModelDto::pinned(&pin),
             llm,
             message: "question".to_string(),
             requested_flags: SearchFlags::from_preferences(None),
@@ -406,6 +487,7 @@ impl PreparedTurn {
             linked_web_sources_context: None,
             system_prompt: String::new(),
             history_len: 0,
+            _pin: pin,
             _guard: TurnCancellationGuard::start(cancellation, turn_id.to_string(), conv_id, None)?,
         })
     }

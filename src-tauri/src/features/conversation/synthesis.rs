@@ -260,7 +260,9 @@ async fn plan_synthesis(
 
     let mut entries = entries;
     let sources = assign_synthesis_source_ids(&mut entries);
-    let llm = runtime.get_or_load_llm().await?;
+    // Each part runs as a turn in a scratch chat, which follows the Settings
+    // default; the parts are sized for that model.
+    let llm = runtime.default_chat_llm().await?;
     let part_chars = synthesis_part_chars(llm.as_ref());
     let prompts = plan_journal_map_prompts(&entries, part_chars);
     Ok(SynthesisPlan {
@@ -312,13 +314,13 @@ impl SynthesisWork for AppSynthesis {
         plan_synthesis(&*self.runtime, selection).await
     }
 
+    /// A scratch chat follows the Settings default, the model the plan was
+    /// sized for.
     async fn open_scratch(&self) -> Result<String> {
-        let llm = self.runtime.get_or_load_llm().await?;
         Ok(ChatPolicy::create_conversation(
             &*self.runtime,
             CreateConversationRequestDto {
                 title: "Journal synthesis".to_string(),
-                model_name: llm.model_name().to_string(),
                 system_prompt: None,
             },
         )

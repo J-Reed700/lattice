@@ -105,8 +105,8 @@ mod tests {
     async fn insert_conversation(pool: &SqlitePool, id: &str, title: &str, updated_at: &str) {
         sqlx::query(
             r#"
-            INSERT INTO conversations (id, title, model_name, created_at, updated_at)
-            VALUES (?, ?, 'test-model', ?, ?)
+            INSERT INTO conversations (id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
             "#,
         )
         .bind(id)

@@ -120,7 +120,7 @@ async fn complete_turn_is_atomic_and_rejects_replays() {
     use crate::features::conversation::ConversationServiceTrait;
     let (service, pool) = create_test_service().await;
     let conversation = service
-        .create_conversation("Chat".into(), "model".into(), None)
+        .create_conversation("Chat".into(), None)
         .await
         .unwrap();
     let id = conversation.id.to_string();
@@ -216,14 +216,16 @@ async fn test_create_conversation_with_system_prompt() {
     let result = service
         .create_conversation(
             "Test Chat".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
             Some("You are a helpful assistant.".to_string()),
         )
         .await;
 
     let conversation = result.expect("create_conversation should succeed");
     assert_eq!(conversation.title, "Test Chat");
-    assert_eq!(conversation.model_name, "claude-sonnet-4-5-20250929");
+    assert_eq!(
+        conversation.model_choice,
+        lattice_core::domain::conversation::ChatModelChoice::Default
+    );
     assert_eq!(
         conversation.system_prompt,
         Some("You are a helpful assistant.".to_string())
@@ -237,13 +239,7 @@ async fn test_create_conversation_with_system_prompt() {
 async fn test_create_conversation_rejects_empty_title() {
     let (service, _pool) = create_test_service().await;
 
-    let result = service
-        .create_conversation(
-            "".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
-        .await;
+    let result = service.create_conversation("".to_string(), None).await;
 
     assert!(result.is_err());
     match result {
@@ -259,11 +255,7 @@ async fn test_get_conversation_loads_aggregate() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test Conv".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            Some("System prompt".to_string()),
-        )
+        .create_conversation("Test Conv".to_string(), Some("System prompt".to_string()))
         .await
         .expect("create should succeed");
 
@@ -301,11 +293,7 @@ async fn test_list_conversations_with_pagination() {
 
     for i in 0..5 {
         service
-            .create_conversation(
-                format!("Conv {}", i),
-                "claude-sonnet-4-5-20250929".to_string(),
-                None,
-            )
+            .create_conversation(format!("Conv {}", i), None)
             .await
             .expect("create should succeed");
     }
@@ -332,11 +320,7 @@ async fn test_rename_conversation() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Old Title".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Old Title".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -359,11 +343,7 @@ async fn test_add_user_message() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -383,11 +363,7 @@ async fn test_add_assistant_message() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -406,7 +382,7 @@ async fn setting_metadata_fields_keeps_the_other_keys() {
     use crate::features::conversation::ConversationServiceTrait;
     let (service, _pool) = create_test_service().await;
     let conversation = service
-        .create_conversation("Test".to_string(), "model".to_string(), None)
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
     let message = service
@@ -462,11 +438,7 @@ async fn test_add_assistant_message_with_metadata() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -493,11 +465,7 @@ async fn test_add_message_rejects_empty_content() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -534,11 +502,7 @@ async fn test_prune_conversation_to_token_limit() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -569,11 +533,7 @@ async fn test_prune_rejects_invalid_token_limit() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -595,11 +555,7 @@ async fn test_delete_conversation_cascades_to_messages() {
     let (service, pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test Conv".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test Conv".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -642,11 +598,7 @@ async fn test_delete_conversation_cascades_to_document_references() {
     let (service, pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test Conv".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test Conv".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -733,11 +685,7 @@ async fn test_update_system_prompt() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            Some("Old prompt".to_string()),
-        )
+        .create_conversation("Test".to_string(), Some("Old prompt".to_string()))
         .await
         .expect("create should succeed");
 
@@ -763,11 +711,7 @@ async fn test_update_system_prompt_to_none() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            Some("Old prompt".to_string()),
-        )
+        .create_conversation("Test".to_string(), Some("Old prompt".to_string()))
         .await
         .expect("create should succeed");
 
@@ -791,11 +735,7 @@ async fn test_add_document_reference() {
     seed_documents(&pool, &["doc-123"]).await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -827,11 +767,7 @@ async fn test_get_conversation_includes_document_references() {
     let (service, pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -871,11 +807,7 @@ async fn test_two_phase_commit_pattern() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 
@@ -914,11 +846,7 @@ async fn test_two_phase_commit_failure() {
     let (service, _pool) = create_test_service().await;
 
     let conversation = service
-        .create_conversation(
-            "Test".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-            None,
-        )
+        .create_conversation("Test".to_string(), None)
         .await
         .expect("create should succeed");
 

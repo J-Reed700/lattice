@@ -189,7 +189,7 @@ async fn opening_an_old_page_hydrates_and_persists_its_web_snapshot() {
     let conversations = ConversationRepository::new(pool.clone());
     let archive = RepositoryArchive(&conversations);
     let conversation = conversations
-        .create_conversation("Archived source", "test", None)
+        .create_conversation("Archived source", None)
         .await
         .unwrap();
     let conversation_id = conversation.id.to_string();
@@ -250,19 +250,19 @@ async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots()
     let conversations = ConversationRepository::new(pool.clone());
     let archive = RepositoryArchive(&conversations);
     let first = conversations
-        .create_conversation("First", "test", None)
+        .create_conversation("First", None)
         .await
         .unwrap()
         .id
         .to_string();
     let second = conversations
-        .create_conversation("Second", "test", None)
+        .create_conversation("Second", None)
         .await
         .unwrap()
         .id
         .to_string();
     let missing = conversations
-        .create_conversation("No archive", "test", None)
+        .create_conversation("No archive", None)
         .await
         .unwrap()
         .id

@@ -5,6 +5,7 @@ use super::chat::{
 };
 use crate::features::conversation::chat::ports::{ChatRuntime, ConversationBranches};
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::{error::AppError, ipc::ApiError};
 
 pub async fn create_conversation_tangent_impl(
@@ -143,11 +144,13 @@ pub async fn fork_conversation_impl(
     })
 }
 
+/// `model` answers this regeneration only; the chat's choice is untouched.
 pub async fn regenerate_response_impl(
     runtime: &dyn ChatRuntime,
     conversation_id: String,
     tool_preferences: Option<ToolPreferences>,
     request_id: Option<String>,
+    model: Option<ModelRef>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     let branches = runtime.conversation_branches();
@@ -203,6 +206,7 @@ pub async fn regenerate_response_impl(
         request_id,
         attachment_names,
         attachment_document_ids,
+        model,
         window,
     );
 
@@ -289,12 +293,7 @@ mod tests {
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let repo = ConversationRepository::new(pool);
-        let id = repo
-            .create("Thread", "model", None)
-            .await
-            .unwrap()
-            .id
-            .to_string();
+        let id = repo.create("Thread", None).await.unwrap().id.to_string();
         (repo, id)
     }
 

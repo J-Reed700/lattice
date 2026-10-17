@@ -224,12 +224,6 @@ impl Container {
         Ok(self.llm_for(&ModelRequest::default_chat()).await?.llm)
     }
 
-    /// The Settings default chat model. Track B moves every caller to the
-    /// method that says which model it means, and removes this with them.
-    pub async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        self.default_chat_llm().await
-    }
-
     /// The router model, loaded through the same instances as every role.
     pub async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         self.role_models().router_llm().await

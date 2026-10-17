@@ -8,9 +8,11 @@ import { TurnClockContext, formatDuration } from '@/features/chat/components/tur
 import type {
   MessageVerificationSummary,
   RetrievalTrace,
+  TurnModel,
   TurnRecord as TurnRecordData,
   TurnStep,
 } from '@/types/conversation';
+import { runningOnCpuSentence } from '@/utils/chatModelSelection';
 
 import '@/features/chat/components/turn/turn-record.css';
 
@@ -46,6 +48,11 @@ interface TurnRecordProps {
   /** Only while the turn is in flight. */
   liveSteps: TurnStep[] | null;
   /**
+   * The model the in-flight turn is pinned to, from the moment it is pinned:
+   * the reader knows what is answering before the first token arrives.
+   */
+  liveModel?: TurnModel | null;
+  /**
    * When the in-flight turn began, as a wall clock, for the running steps'
    * clocks. A step knows only its offset from the turn's start, so without
    * this a running step can only be timed from when its row was drawn — and a
@@ -67,6 +74,7 @@ export function TurnRecord({
   trace,
   record,
   liveSteps,
+  liveModel = null,
   turnStartedAt = null,
   isPending,
   isWriting,
@@ -95,7 +103,8 @@ export function TurnRecord({
   if (isPending && isWriting) hasStartedWriting.current = true;
   const open = manuallyOpen ?? (isPending && !hasStartedWriting.current);
 
-  const summary = summaryLine({ trace, record, verification, rounds: roundCount(steps) });
+  const answeringWith = isPending ? liveModel : null;
+  const summary = summaryLine({ trace, record, answeringWith, verification, rounds: roundCount(steps) });
   const runningRound = runningStep ? roundOf(steps, runningStep.id) : null;
   // Nothing to say and nothing happening: draw nothing at all.
   if (!summary && steps.length === 0) return null;
@@ -109,7 +118,10 @@ export function TurnRecord({
         onClick={() => setManuallyOpen(!open)}
       >
         <Chevron open={open} />
-        <span className="turn-record-line">
+        <span
+          className="turn-record-line"
+          title={answeringWith?.degraded ? runningOnCpuSentence(answeringWith.name, answeringWith.degraded) : undefined}
+        >
           {runningStep ? (
             // Folded or not, a running turn says what it is doing right now.
             <>
@@ -211,15 +223,22 @@ function TurnNote({ trace }: { trace: RetrievalTrace | null }) {
 function summaryLine({
   trace,
   record,
+  answeringWith,
   verification,
   rounds,
 }: {
   trace: RetrievalTrace | null;
   record: TurnRecordData | null;
+  answeringWith: TurnModel | null;
   verification: MessageVerificationSummary | null;
   rounds: number;
 }): string | null {
   const parts: string[] = [];
+  // While the turn runs, what is answering comes first; the record names it
+  // once the answer is saved.
+  if (answeringWith) {
+    parts.push(`Answering with ${answeringWith.name}${answeringWith.degraded ? ' · on CPU' : ''}`);
+  }
   const retrieval = retrievalSummary(trace);
   if (retrieval) parts.push(retrieval);
   // Only worth a clause when the model went back: every turn that retrieves
@@ -236,7 +255,7 @@ function summaryLine({
   }
   const claims = claimsSummary(verification);
   if (claims) parts.push(claims);
-  if (record?.model) parts.push(record.model.name);
+  if (record?.model) parts.push(modelSummary(record.model));
   if (record && record.timing.totalMs > 0) parts.push(formatDuration(record.timing.totalMs));
   return parts.length > 0 ? parts.join(' · ') : null;
 }
@@ -287,6 +306,24 @@ function retrievalSummary(trace: RetrievalTrace | null): string | null {
   if (trace.scope === 'linked') rest.push('this space');
   return [lead, ...rest].join(' · ');
 }
+
+/**
+ * Which model wrote the answer and why that one: "Qwen3.5-27B · chosen for
+ * this chat", and "· ran on CPU: <reason>" when it fell back. A turn recorded
+ * before turns said why gives the name alone.
+ */
+function modelSummary(model: TurnModel): string {
+  const origin = model.origin ? ORIGIN_LABELS[model.origin] : null;
+  const degraded = model.degraded ? `ran on CPU: ${model.degraded}` : null;
+  return [model.name, origin, degraded].filter(Boolean).join(' · ');
+}
+
+const ORIGIN_LABELS: Record<NonNullable<TurnModel['origin']>, string> = {
+  default: 'app default',
+  chat_override: 'chosen for this chat',
+  request_override: 'one-off',
+  learning_role: 'Learning model',
+};
 
 /** "4 of 5 claims backed", or nothing when nothing was checked. */
 function claimsSummary(verification: MessageVerificationSummary | null): string | null {

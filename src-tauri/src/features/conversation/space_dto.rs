@@ -11,7 +11,6 @@ pub struct ConversationSpaceDto {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     pub space_prompt: Option<String>,
-    pub default_model_name: Option<String>,
     pub tool_preferences_json: Option<String>,
     pub is_archived: bool,
     pub sort_order: i64,
@@ -28,7 +27,6 @@ pub struct ConversationJournalDto {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     pub space_prompt: Option<String>,
-    pub default_model_name: Option<String>,
     pub tool_preferences_json: Option<String>,
     pub is_archived: bool,
     pub sort_order: i64,
@@ -44,7 +42,6 @@ pub struct CreateConversationSpaceRequestDto {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     pub space_prompt: Option<String>,
-    pub default_model_name: Option<String>,
     pub tool_preferences_json: Option<String>,
 }
 
@@ -56,7 +53,6 @@ pub struct CreateConversationJournalRequestDto {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     pub space_prompt: Option<String>,
-    pub default_model_name: Option<String>,
     pub tool_preferences_json: Option<String>,
 }
 
@@ -69,7 +65,6 @@ pub struct UpdateConversationSpaceRequestDto {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     pub space_prompt: Option<String>,
-    pub default_model_name: Option<String>,
     pub tool_preferences_json: Option<String>,
     pub is_archived: Option<bool>,
     pub sort_order: Option<i64>,
@@ -84,7 +79,6 @@ pub struct UpdateConversationJournalRequestDto {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     pub space_prompt: Option<String>,
-    pub default_model_name: Option<String>,
     pub tool_preferences_json: Option<String>,
     pub is_archived: Option<bool>,
     pub sort_order: Option<i64>,

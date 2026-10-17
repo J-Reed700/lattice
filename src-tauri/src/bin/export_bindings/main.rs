@@ -333,6 +333,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::extraction::plugin::extract_and_resolve_links,
             // Conversation plugin
             lattice::features::conversation::plugin::create_conversation,
+            lattice::features::conversation::plugin::set_conversation_model_choice,
             lattice::features::conversation::plugin::get_conversation,
             lattice::features::conversation::plugin::list_conversations,
             lattice::features::conversation::plugin::delete_conversation,

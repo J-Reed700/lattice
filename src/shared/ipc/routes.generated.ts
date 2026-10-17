@@ -334,6 +334,7 @@ export const COMMAND_PLUGINS = {
   set_conversation_archived: 'conversation',
   set_conversation_bookmarked: 'conversation',
   set_conversation_explorer_root: 'explorer',
+  set_conversation_model_choice: 'conversation',
   set_conversation_pinned: 'conversation',
   set_conversation_saved: 'conversation',
   set_document_space_membership: 'conversation',

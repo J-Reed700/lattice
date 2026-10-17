@@ -16,8 +16,8 @@ function setup() {
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   return { client, wrapper };
 }
-const journal = (id: string, name: string) => ({ id, name, description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: '', updatedAt: '' });
-const request = { name: 'New journal', description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null };
+const journal = (id: string, name: string) => ({ id, name, description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: '', updatedAt: '' });
+const request = { name: 'New journal', description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null };
 
 beforeEach(() => {
   vi.clearAllMocks();

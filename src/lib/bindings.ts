@@ -1862,12 +1862,15 @@ async generateChatStarters(spaceId: string | null) : Promise<Result<ChatStarters
  * Re-run the last user message, streaming over `llm-stream` exactly like a
  * normal send. The user message is not duplicated.
  *
+ * `model` answers this regeneration only ("Try with another model"):
+ * nothing is persisted, and the chat's own choice is unchanged.
+ *
  * Flat args, mirroring `chat_with_conversation`, because this re-enters the
  * same streaming flow and needs the same `window`.
  */
-async regenerateResponse(conversationId: string, toolPreferences: ToolPreferences | null, requestId: string | null) : Promise<Result<ChatResponse, ApiError>> {
+async regenerateResponse(conversationId: string, toolPreferences: ToolPreferences | null, requestId: string | null, model: ModelRef | null) : Promise<Result<ChatResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|regenerate_response", { conversationId, toolPreferences, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|regenerate_response", { conversationId, toolPreferences, requestId, model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2828,6 +2831,19 @@ async extractAndResolveLinks(documentId: string, content: string) : Promise<Resu
 async createConversation(request: CreateConversationRequestDto) : Promise<Result<CreateConversationResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|create_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Choose the model this chat is answered by, or `Default` to follow the
+ * Settings default. Refused with the cause and fix when the model cannot be
+ * used now. Changes this chat only, and never a turn already running.
+ */
+async setConversationModelChoice(conversationId: string, choice: ChatModelChoice) : Promise<Result<ConversationDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_conversation_model_choice", { conversationId, choice }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4606,6 +4622,18 @@ inboxTitle: string; preferredNoteId: string | null; addSnapshot: boolean }
 export type CaptureReferenceResultDto = { noteId: string; noteTitle: string; linkedDocumentCount: number; snapshotId: string | null }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
+ * A chat's model choice.
+ *
+ * `Default` follows Settings live; it is not a snapshot. A chat that says
+ * Default moves when Settings moves, and a replaced or deleted default never
+ * strands it. What actually answered is recorded per message, not here.
+ */
+export type ChatModelChoice = { kind: "default" } |
+/**
+ * This chat only; Settings and every other chat are untouched.
+ */
+{ kind: "explicit"; model: ModelRef }
+/**
  * Chat response with conversation metadata
  */
 export type ChatResponse = {
@@ -4950,9 +4978,10 @@ id: string;
  */
 title: string;
 /**
- * LLM model name (e.g., "claude-sonnet-4-5-20250929")
+ * The model this chat asked for. `default` follows the Settings default
+ * live; what answered each message is in that message's turn record.
  */
-modelName: string;
+modelChoice: ChatModelChoice;
 /**
  * Optional system prompt
  */
@@ -5042,7 +5071,7 @@ explorerRoot: string | null;
  */
 tangentParentId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
-export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
+export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
 /**
  * True when this file was attached to this chat rather than filed in the
@@ -5115,7 +5144,7 @@ label: string;
 isMandatory: boolean; createdAtSequence: number; changedAtSequence: number; supersededBy: string | null; relatedItemIds: string[]; evidence: MemoryEvidenceDto[] }
 export type ConversationMessageBookmarkDto = { id: string; conversationId: string; conversationTitle: string; spaceId: string; messageId: string; messageRole: string; messagePreview: string; title: string | null; note: string | null; createdAt: string }
 export type ConversationSnapshotDto = { id: string; conversationId: string; conversationTitle: string; capturedAt: string; messageCount: number; messages: SnapshotMessageDto[] }
-export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
+export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationSpaceMemberDto = { spaceId: string; memberId: string; displayName: string; email: string | null; avatarUrl: string | null; role: string; createdAt: string; updatedAt: string }
 export type ConversationTangentDto = { conversationId: string; parentConversationId: string; sourceConversationId: string; sourceMessageId: string; selectedText: string; title: string; createdAt: string; updatedAt: string;
 /**
@@ -5133,7 +5162,7 @@ export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grow
 export type CorpusTypeCountDto = { type: string; count: number }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
-export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
+export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 /**
  * Request to create a new conversation.
  */
@@ -5142,10 +5171,6 @@ export type CreateConversationRequestDto = {
  * Conversation title
  */
 title: string;
-/**
- * LLM model name
- */
-modelName: string;
 /**
  * Optional system prompt
  */
@@ -5162,7 +5187,7 @@ conversation: ConversationDto;
  * Status message
  */
 status: string }
-export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
+export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
 export type CreateLearningAssessmentBlueprintRequestDto = { operationId: string; programId: string; blueprintId: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; changeReason: string }
 export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
@@ -8671,8 +8696,8 @@ resultsPerPage: number;
  */
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
-export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
-export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
+export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
+export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
 export type UpdateInfoDto = { available: boolean; currentVersion: string; latestVersion: string | null; downloadUrl: string | null; releaseNotes: string | null }
 export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }

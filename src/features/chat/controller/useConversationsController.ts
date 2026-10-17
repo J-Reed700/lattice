@@ -138,6 +138,8 @@ export function useConversationsController(): ConversationsState {
           // active row takes it from the detail read; without this the divider
           // vanishes on reload even though the summary is still applied.
           compaction: detailQuery.data?.compaction ?? conversation.compaction,
+          // The detail read is the one a model change rewrites first.
+          modelChoice: detailQuery.data?.modelChoice ?? conversation.modelChoice,
         }
       : conversation);
   }, [activeId, conversationsQuery.data, detailQuery.data, messagesQuery.data]);
@@ -169,7 +171,7 @@ export function useConversationsController(): ConversationsState {
   const actions = useConversationActions({ queryClient, addRequestedId, lifecycle });
   const {
     invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,
-    loadConversations, loadMessageBookmarks, createConversation,
+    loadConversations, loadMessageBookmarks, createConversation, setConversationModelChoice,
     setConversationSaved, setConversationBookmarked, setConversationPinned,
     setConversationArchived, renameConversation, bookmarkMessage, unbookmarkMessage,
     moveConversationToSpace, loadConversationLinkedDocuments, loadConversationWebSources,
@@ -204,6 +206,7 @@ export function useConversationsController(): ConversationsState {
     messageTurn: messageMetadata.turn,
     liveRetrieval: ui.liveRetrieval,
     liveSteps: ui.liveSteps,
+    liveModel: ui.liveModel,
     composerDraft: ui.composerDraft,
     linkedDocumentsByConversationId,
     webSourcesByConversationId,
@@ -215,6 +218,7 @@ export function useConversationsController(): ConversationsState {
     loadConversations,
     loadMessageBookmarks,
     createConversation,
+    setConversationModelChoice,
     setConversationSaved,
     setConversationBookmarked,
     setConversationPinned,
@@ -247,7 +251,7 @@ export function useConversationsController(): ConversationsState {
   }), [
     addConversationWebSource, bookmarkMessage, bookmarksQuery.isLoading, cancelGeneration,
     clearError, compactConversation, continueInNewConversation, conversations, conversationsQuery.isLoading,
-    createConversation, deleteConversation, dismissFailedMessage,
+    createConversation, deleteConversation, dismissFailedMessage, setConversationModelChoice,
     deleteMessage, documentSpaceMembershipsByDocumentId, linkedDocumentsByConversationId,
     loadConversationLinkedDocuments, loadConversationWebSources, loadConversations,
     loadDocumentSpaceMemberships, loadMessageBookmarks, loadSpaces, messageBookmarkMap,
@@ -260,7 +264,7 @@ export function useConversationsController(): ConversationsState {
     setConversationSaved, setDocumentSpaceMembership, setFilterMode, setSearchQuery,
     setSelectedSpace, spacesQuery.data, truncateAfter, forkConversation,
     ui.activeConversationId, ui.composerDraft, ui.error, ui.filterMode,
-    ui.inFlightGenerations, ui.liveRetrieval, ui.liveSteps, ui.optimisticMessages, ui.searchQuery,
+    ui.inFlightGenerations, ui.liveRetrieval, ui.liveSteps, ui.liveModel, ui.optimisticMessages, ui.searchQuery,
     ui.selectedSpaceId, unbookmarkMessage, webSourcesByConversationId,
   ]);
 }

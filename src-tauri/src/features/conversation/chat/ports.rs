@@ -19,6 +19,7 @@ use lattice_core::application::ports::llm_port::{
     ModelRequirements, OptionalLlmLoader, PinnedModel,
 };
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::Result;
 use std::collections::HashSet;
@@ -26,7 +27,6 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait ChatModels: Send + Sync {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>>;
     /// The model a turn in `conversation_id` runs on, pinned for the turn:
     /// `request_override`, else the chat's choice, else the Settings default.
     async fn chat_llm_for(
@@ -56,6 +56,12 @@ pub trait ChatModels: Send + Sync {
 /// the memory ledger and its recall index.
 #[async_trait]
 pub trait ChatRecords: ConversationMemoryPort + ConversationMemoryReadPort {
+    /// The model this chat asked for.
+    async fn model_choice(&self, conversation_id: &str) -> Result<ChatModelChoice>;
+    /// Record the model this chat asks for. Settings, every other chat and a
+    /// turn already running are untouched.
+    async fn set_model_choice(&self, conversation_id: &str, choice: &ChatModelChoice)
+        -> Result<()>;
     /// The conversation's space and the documents a turn may read in it.
     async fn retrieval_document_scope(
         &self,
@@ -364,11 +370,14 @@ pub trait ChatPolicy: Send + Sync {
         &self,
         request: crate::features::conversation::dto::CreateConversationRequestDto,
     ) -> Result<crate::features::conversation::dto::CreateConversationResponseDto>;
-    /// `cancel` is the turn's stop button: the user is waiting on this
-    /// compaction, so stopping the turn stops it too.
+    /// `llm` is the model the turn is pinned to: the summary has to fit the
+    /// prompt of the model that carries it. `cancel` is the turn's stop
+    /// button: the user is waiting on this compaction, so stopping the turn
+    /// stops it too.
     async fn compact_for_turn(
         &self,
         id: &str,
+        llm: Arc<dyn LLMPort>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
     /// `summary_refold` is the turn's plan asking for the working summary to

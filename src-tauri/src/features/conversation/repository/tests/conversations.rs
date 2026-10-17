@@ -11,16 +11,15 @@ async fn test_create_conversation() {
     let repo = ConversationRepository::new(pool);
 
     let conversation = repo
-        .create_conversation(
-            "Test Chat",
-            "claude-sonnet-4-5-20250929",
-            Some("Be helpful"),
-        )
+        .create_conversation("Test Chat", Some("Be helpful"))
         .await
         .unwrap();
 
     assert_eq!(conversation.title, "Test Chat");
-    assert_eq!(conversation.model_name, "claude-sonnet-4-5-20250929");
+    assert_eq!(
+        conversation.model_choice,
+        lattice_core::domain::conversation::ChatModelChoice::Default
+    );
     assert_eq!(conversation.system_prompt, Some("Be helpful".to_string()));
     assert_eq!(conversation.message_count, 0);
     assert_eq!(conversation.total_tokens, 0);
@@ -32,10 +31,7 @@ async fn test_find_by_id() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    let created = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let created = repo.create_conversation("Test", None).await.unwrap();
 
     let found = repo
         .find_by_id(&created.id.to_string())
@@ -52,10 +48,7 @@ async fn test_find_aggregate_by_id() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     repo.add_message(
         &conversation.id.to_string(),
@@ -83,10 +76,7 @@ async fn test_update_title() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    let conversation = repo
-        .create_conversation("Old Title", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Old Title", None).await.unwrap();
 
     repo.update_title(&conversation.id.to_string(), "New Title")
         .await
@@ -107,10 +97,7 @@ async fn test_delete_conversation() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     repo.delete(&conversation.id.to_string()).await.unwrap();
 
@@ -279,10 +266,7 @@ async fn test_delete_conversation_preserves_space_memberships() {
     seed_documents(&pool, &["doc-1"]).await;
     let repo = ConversationRepository::new(pool.clone());
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     repo.add_document_reference(&conversation.id.to_string(), "doc-1", None, Some(0.9))
         .await
@@ -315,11 +299,11 @@ async fn test_delete_conversation_keeps_membership_when_other_space_conversation
     let repo = ConversationRepository::new(pool.clone());
 
     let conversation_a = repo
-        .create_conversation("Conversation A", "model", None)
+        .create_conversation("Conversation A", None)
         .await
         .unwrap();
     let conversation_b = repo
-        .create_conversation("Conversation B", "model", None)
+        .create_conversation("Conversation B", None)
         .await
         .unwrap();
 
@@ -357,15 +341,9 @@ async fn test_find_all() {
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool);
 
-    repo.create_conversation("Conv 1", "model", None)
-        .await
-        .unwrap();
-    repo.create_conversation("Conv 2", "model", None)
-        .await
-        .unwrap();
-    repo.create_conversation("Conv 3", "model", None)
-        .await
-        .unwrap();
+    repo.create_conversation("Conv 1", None).await.unwrap();
+    repo.create_conversation("Conv 2", None).await.unwrap();
+    repo.create_conversation("Conv 3", None).await.unwrap();
 
     let all = repo.find_all(None, None).await.unwrap();
     assert_eq!(all.len(), 3);
@@ -382,10 +360,7 @@ async fn test_count_and_exists() {
 
     assert_eq!(repo.count().await.unwrap(), 0);
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     assert_eq!(repo.count().await.unwrap(), 1);
     assert!(repo.exists(&conversation.id.to_string()).await.unwrap());
@@ -402,10 +377,7 @@ async fn the_explorer_root_round_trips_through_the_conversation_projections() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let repo = ConversationRepository::new(pool.clone());
-    let conversation = repo
-        .create_conversation("Folder", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Folder", None).await.unwrap();
     let id = conversation.id.to_string();
 
     set_conversation_root(&pool, &id, Some("/Users/me/Code/project"))

@@ -54,7 +54,6 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
     isSavingSpace,
     isArchivingSpace,
     isRestoringSpace,
-    availableSpaceModels,
     saveSpaceEnvironment,
     setSelectedSpaceArchived,
     restoreArchivedSpace,
@@ -67,8 +66,6 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
     setSpaceIconDraft,
     spaceAccentDraft,
     setSpaceAccentDraft,
-    spaceModelDraft,
-    setSpaceModelDraft,
     spacePromptDraft,
     setSpacePromptDraft,
     spaceKbDefault,
@@ -363,18 +360,6 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                   <details className="border-b border-subtle pb-3">
                     <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Defaults</summary>
                     <div className="mt-2 space-y-2">
-                      <input
-                        value={spaceModelDraft}
-                        onChange={(e) => setSpaceModelDraft(e.target.value)}
-                        placeholder="Default model id (optional)"
-                        list="space-model-options"
-                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
-                      />
-                      <datalist id="space-model-options">
-                        {availableSpaceModels.map((modelId) => (
-                          <option key={modelId} value={modelId} />
-                        ))}
-                      </datalist>
                       <textarea
                         value={spacePromptDraft}
                         onChange={(e) => setSpacePromptDraft(e.target.value)}

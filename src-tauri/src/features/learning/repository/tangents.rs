@@ -22,11 +22,10 @@ impl LearningRepository {
         struct ProgramRow {
             title: String,
             goal: String,
-            model_name: String,
         }
 
         let program = sqlx::query_as::<_, ProgramRow>(
-            "SELECT title, goal, model_name FROM learning_programs WHERE id = ?",
+            "SELECT title, goal FROM learning_programs WHERE id = ?",
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
@@ -136,16 +135,15 @@ impl LearningRepository {
             sqlx::query(
                 r#"
                 INSERT OR IGNORE INTO conversation_spaces (
-                    id, name, description, icon, accent_color, space_prompt, default_model_name,
+                    id, name, description, icon, accent_color, space_prompt,
                     tool_preferences_json, is_archived, sort_order, created_at, updated_at
-                ) VALUES (?, ?, ?, 'graduation-cap', NULL, ?, ?, NULL, 0, 0, ?, ?)
+                ) VALUES (?, ?, ?, 'graduation-cap', NULL, ?, NULL, 0, 0, ?, ?)
                 "#,
             )
             .bind(&space_id)
             .bind(&space_name)
             .bind(&space_desc)
             .bind(&space_prompt)
-            .bind(&program.model_name)
             .bind(&now_iso)
             .bind(&now_iso)
             .execute(&mut *tx)
@@ -206,16 +204,15 @@ impl LearningRepository {
         sqlx::query(
             r#"
             INSERT INTO conversations (
-                id, title, model_name, system_prompt, space_id,
+                id, title, system_prompt, space_id,
                 created_at, updated_at, message_count, total_tokens,
                 next_message_sequence,
                 tangent_parent_id, tangent_selection, tangent_context_message_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 2, NULL, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 2, NULL, ?, 1)
             "#,
         )
         .bind(&conversation_id)
         .bind(&title)
-        .bind(&program.model_name)
         .bind(&system_prompt)
         .bind(&space_id)
         .bind(&now_iso)

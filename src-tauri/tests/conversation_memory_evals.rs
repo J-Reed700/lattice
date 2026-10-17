@@ -1793,10 +1793,10 @@ impl Harness {
     }
 
     /// Persist a transcript through the production repository operations.
-    async fn seed(&self, title: &str, model: &str, turns: &[Turn]) -> String {
+    async fn seed(&self, title: &str, turns: &[Turn]) -> String {
         let conversation = self
             .repo
-            .create_conversation(title, model, None)
+            .create_conversation(title, None)
             .await
             .expect("create conversation");
         let id = conversation.id.to_string();
@@ -2218,7 +2218,6 @@ async fn run_once(
         harness
             .seed(
                 "decoy",
-                &config.utility_model,
                 &[
                     Turn {
                         role: "user".into(),
@@ -2233,9 +2232,7 @@ async fn run_once(
             .await;
     }
 
-    let conversation_id = harness
-        .seed("eval", &config.continuation_model, &fixture.turns)
-        .await;
+    let conversation_id = harness.seed("eval", &fixture.turns).await;
 
     let cycles = fixture
         .cycles

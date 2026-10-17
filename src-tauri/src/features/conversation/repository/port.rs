@@ -36,10 +36,9 @@ impl lattice_core::application::ports::conversation_repository::ConversationRepo
     async fn create<'a>(
         &self,
         title: &str,
-        model_name: &str,
         system_prompt: Option<&'a str>,
     ) -> Result<Conversation> {
-        ConversationRepository::create(self, title, model_name, system_prompt).await
+        ConversationRepository::create(self, title, system_prompt).await
     }
     async fn load_aggregate(&self, id: &str) -> Result<Option<ConversationAggregate>> {
         ConversationRepository::load_aggregate(self, id).await

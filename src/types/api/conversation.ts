@@ -22,8 +22,6 @@ export type MessageDto = import('../../lib/bindings').MessageDto;
 export interface CreateConversationRequest {
   /** Conversation title */
   title: string;
-  /** LLM model name */
-  modelName: string;
   /** Optional system prompt */
   systemPrompt?: string;
 }
@@ -140,7 +138,6 @@ export interface CreateConversationSpaceRequest {
   icon?: string | null;
   accentColor?: string | null;
   spacePrompt?: string | null;
-  defaultModelName?: string | null;
   toolPreferencesJson?: string | null;
 }
 
@@ -150,7 +147,6 @@ export interface CreateConversationJournalRequest {
   icon?: string | null;
   accentColor?: string | null;
   spacePrompt?: string | null;
-  defaultModelName?: string | null;
   toolPreferencesJson?: string | null;
 }
 
@@ -161,7 +157,6 @@ export interface UpdateConversationSpaceRequest {
   icon?: string | null;
   accentColor?: string | null;
   spacePrompt?: string | null;
-  defaultModelName?: string | null;
   toolPreferencesJson?: string | null;
   isArchived?: boolean;
   sortOrder?: number;
@@ -174,7 +169,6 @@ export interface UpdateConversationJournalRequest {
   icon?: string | null;
   accentColor?: string | null;
   spacePrompt?: string | null;
-  defaultModelName?: string | null;
   toolPreferencesJson?: string | null;
   isArchived?: boolean;
   sortOrder?: number;

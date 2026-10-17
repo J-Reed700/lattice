@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
+import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
 import { VaultAPI } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
@@ -105,14 +106,16 @@ export const useDownloadedModels = () => {
     return downloadedModels.some((model) => model.model_id === modelId);
   }, [downloadedModels]);
 
-  const warmUpActiveChatModel = useCallback(async () => {
-    const result = await VaultAPI.warmUpActiveChatModel();
+  // A warm-up loads a model, maybe on the CPU: the loaded list says which.
+  const warmUp = useCallback(async (call: () => Promise<ApiResult<void>>) => {
+    const result = await call();
+    await queryClient.invalidateQueries({ queryKey: LOADED_MODELS_QUERY_KEY });
     if (!result.ok) throw new Error(result.error);
-  }, []);
-  const warmUpActiveUtilityModel = useCallback(async () => {
-    const result = await VaultAPI.warmUpActiveUtilityModel();
-    if (!result.ok) throw new Error(result.error);
-  }, []);
+  }, [queryClient]);
+  const warmUpActiveChatModel = useCallback(() => warmUp(VaultAPI.warmUpActiveChatModel), [warmUp]);
+  const warmUpActiveUtilityModel = useCallback(() => warmUp(VaultAPI.warmUpActiveUtilityModel), [warmUp]);
+  /** Loads the Learning model set in Settings; a failure changes no setting. */
+  const warmUpLearningModel = useCallback(() => warmUp(VaultAPI.warmUpLearningModel), [warmUp]);
 
   return {
     downloadedModels,
@@ -126,6 +129,7 @@ export const useDownloadedModels = () => {
     setActiveChatModel: setActiveChatMutation.mutateAsync,
     warmUpActiveChatModel,
     warmUpActiveUtilityModel,
+    warmUpLearningModel,
     setActiveEmbeddingModel: setActiveEmbeddingMutation.mutateAsync,
     setActiveUtilityModel: setActiveUtilityMutation.mutateAsync,
     clearActiveChatModel: clearActiveChatMutation.mutateAsync,

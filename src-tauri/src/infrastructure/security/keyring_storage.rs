@@ -207,6 +207,25 @@ impl SecureStorage {
             "database_password".to_string(),
         ]
     }
+
+    /// A cloud provider's API key, read the way the chat loader reads it: the
+    /// `<PROVIDER>_API_KEY` environment variable (`GOOGLE_API_KEY`, then
+    /// `GEMINI_API_KEY`, for `google`) wins over the keyring entry named for
+    /// the provider. A blank key is no key.
+    pub fn cloud_api_key(&self, provider: &str) -> Result<Option<String>> {
+        let from_env = if provider == "google" {
+            std::env::var("GOOGLE_API_KEY")
+                .or_else(|_| std::env::var("GEMINI_API_KEY"))
+                .ok()
+        } else {
+            std::env::var(format!("{}_API_KEY", provider.to_uppercase())).ok()
+        };
+        let key = match from_env {
+            Some(key) => Some(key),
+            None => self.get_api_key(provider)?,
+        };
+        Ok(key.filter(|key| !key.trim().is_empty()))
+    }
 }
 
 impl Default for SecureStorage {

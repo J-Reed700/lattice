@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { ExplorerFileDto, ExplorerFolderDto, ExplorerEntryDto } from '../../src/lib/bindings';
+import type { ChatModelChoice, DownloadedModelResponse, ExplorerFileDto, ExplorerFolderDto, ExplorerEntryDto } from '../../src/lib/bindings';
 import { makeAppSettings } from '../../src/tests/fixtures/appSettings';
 import { installTauriMock, serveCommands, type MockArgs } from './tauri';
 
@@ -9,7 +9,7 @@ export const OTHER_ROOT = '/fixtures/Other project';
 /** State lives outside the renderer so a reload cannot reset the simulated backend. */
 export async function installExplorerFixture(page: Page) {
   const pageErrors: string[] = [];
-  const state = { failOpen: false, failSearch: false, closeCount: 0, picker: ROOT as string | null };
+  const state = { failOpen: false, failSearch: false, closeCount: 0, picker: ROOT as string | null, models: [] as DownloadedModelResponse[] };
   const settings = makeAppSettings();
   const stamp = '2026-10-08T12:00:00Z';
   const folders: ExplorerFolderDto[] = [ROOT, OTHER_ROOT].map(root => ({
@@ -17,7 +17,7 @@ export async function installExplorerFixture(page: Page) {
     addedAt: stamp, lastOpenedAt: stamp, threadCount: 1, instructions: null, spaceId: 'space_general', lastThreadId: null,
     index: { state: 'indexed', filesTotal: 6, filesIndexed: 6, passagesTotal: 8, passagesEmbedded: 8, bytes: 1024, indexRoot: null, etaSeconds: null, message: null },
   }));
-  const threads = folders.map((folder, i) => ({ id: `thread-${i}`, title: `${folder.name} discussion`, modelName: '', createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false, explorerRoot: folder.root }));
+  const threads = folders.map((folder, i) => ({ id: `thread-${i}`, title: `${folder.name} discussion`, modelChoice: { kind: 'default' } as ChatModelChoice, createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false, explorerRoot: folder.root }));
   const entry = (path: string, kind: 'file' | 'directory' = 'file'): ExplorerEntryDto => ({ path, name: path.split('/').pop()!, kind, size: kind === 'file' ? 128 : null, ignored: false });
   const listings: Record<string, ExplorerEntryDto[]> = {
     '': [entry('src', 'directory'), entry('README.md'), entry('empty.txt'), entry('image.bin'), entry('large.log'), entry('missing.txt')],
@@ -41,7 +41,8 @@ export async function installExplorerFixture(page: Page) {
     list_journal_syntheses: () => [],
     list_all_documents: () => [],
     get_indexed_folders: () => [],
-    list_downloaded_models: () => [],
+    list_downloaded_models: () => state.models,
+    list_loaded_models: () => [],
     list_journals: () => [],
     list_conversation_tangents: () => [],
     list_conversation_linked_documents: () => [],
@@ -50,6 +51,13 @@ export async function installExplorerFixture(page: Page) {
     list_conversations_explorer: () => ({ conversations: threads, total: threads.length }),
     list_conversations: () => ({ conversations: threads, total: threads.length }),
     get_conversation: (args) => ({ conversation: thread(args) }),
+    // A chat's own model: saved on that thread alone, never on Settings.
+    set_conversation_model_choice: (args) => {
+      const target = threads.find(item => item.id === args.conversationId);
+      if (!target) throw new Error('Conversation not found');
+      target.modelChoice = args.choice as ChatModelChoice;
+      return target;
+    },
     get_conversation_messages: () => ({ messages: [], total: 0 }),
     list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
     explorer_folders_list: () => ({ home: '/fixtures', folders }),

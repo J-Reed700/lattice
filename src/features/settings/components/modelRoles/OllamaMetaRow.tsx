@@ -3,9 +3,10 @@
  *
  * One row representing the Ollama server endpoint, backed by a single
  * synthetic row in the `models` table (`model_id = '__ollama_server__'`,
- * `backend = 'ollama'`). Toggling the role buttons here flips the same
+ * `backend = 'ollama'`). Toggling Chat or Utility here flips the same
  * `is_active_for_*` flags used by local models, so the SQLite single-active
- * triggers give us mutual exclusion for free.
+ * triggers give us mutual exclusion for free. Learning is saved in Settings
+ * as the chat tag on this connection.
  *
  * Model tags (chat / utility) live in LLM settings, not on the row — many
  * hosted Ollama deployments block `/api/tags` enumeration, so users type the
@@ -51,7 +52,8 @@ export function OllamaMetaRow() {
   // separate one (mirrors the Rust side in get_or_load_utility_llm).
   const resolvedUtilityTag = utilityTag || chatTag;
 
-  const ollamaRoles = ROLES.filter((r) => r.id === 'chat' || r.id === 'utility');
+  // Learning names the chat tag on this connection: `Ollama{tag}` in Settings.
+  const ollamaRoles = ROLES.filter((r) => r.id === 'chat' || r.id === 'utility' || r.id === 'learning');
 
   const goToChatSettings = () => {
     window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));
@@ -113,7 +115,7 @@ export function OllamaMetaRow() {
                 type="button"
                 disabled
                 className="h-7 cursor-not-allowed rounded-sm px-2 text-xs text-text-disabled"
-                title={`Set the ${role.label.toLowerCase()} tag in Chat settings first`}
+                title={`Set the ${role.id === 'utility' ? 'utility' : 'chat'} tag in Chat settings first`}
               >
                 {role.label}
               </button>

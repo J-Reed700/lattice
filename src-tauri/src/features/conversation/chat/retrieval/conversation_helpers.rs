@@ -306,7 +306,7 @@ mod planning_context_tests {
 
     #[test]
     fn planning_is_bounded_but_can_recover_an_old_subject() {
-        let mut aggregate = ConversationAggregate::new("test".into(), "test".into(), None).unwrap();
+        let mut aggregate = ConversationAggregate::new("test".into(), None).unwrap();
         aggregate
             .add_message(
                 MessageRole::User,
@@ -338,7 +338,7 @@ mod planning_context_tests {
     /// A window with room for every turn carries every turn, whole.
     #[test]
     fn planning_carries_every_turn_the_room_holds() {
-        let mut aggregate = ConversationAggregate::new("test".into(), "test".into(), None).unwrap();
+        let mut aggregate = ConversationAggregate::new("test".into(), None).unwrap();
         for index in 0..20 {
             aggregate
                 .add_message(MessageRole::User, format!("turn {index}"), 3)

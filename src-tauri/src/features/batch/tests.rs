@@ -720,12 +720,10 @@ async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> an
     tokio::time::timeout(Duration::from_secs(2), search.entered.notified()).await?;
     // Publication must not hold the database, so chat can still write.
     let conversation_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO conversations (id, title, model_name) VALUES (?, 'During import', 'test')",
-    )
-    .bind(&conversation_id)
-    .execute(harness.db.pool())
-    .await?;
+    sqlx::query("INSERT INTO conversations (id, title) VALUES (?, 'During import')")
+        .bind(&conversation_id)
+        .execute(harness.db.pool())
+        .await?;
     let conversations = crate::features::conversation::repository::ConversationRepository::new(
         harness.db.pool().clone(),
     );
@@ -907,7 +905,7 @@ async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::R
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
     let pool = harness.db.pool().clone();
-    sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('chat-a', 'A', 'm'), ('chat-b', 'B', 'm')")
+    sqlx::query("INSERT INTO conversations (id, title) VALUES ('chat-a', 'A'), ('chat-b', 'B')")
         .execute(&pool)
         .await?;
     let owner_of = |name: &'static str| {

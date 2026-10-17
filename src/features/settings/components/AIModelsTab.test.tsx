@@ -7,7 +7,7 @@ import { VaultAPI } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { resolveChatModel } from '@/utils/chatModelSelection';
+import { resolveDefaultChatOption } from '@/utils/chatModelSelection';
 
 import { AIModelsTab } from './AIModelsTab';
 
@@ -70,7 +70,7 @@ describe('Downloaded model chat selection', () => {
 
     await user.click(row('llama.cpp connection').getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('llamacpp'));
-    expect(resolveChatModel(settings.llm, 'local-model')).toBe('remote-model.gguf');
+    expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual({ kind: 'llama_cpp', model: 'remote-model.gguf' });
     expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
     expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
     expect(row('Local model').getByRole('button', { name: 'Utility' })).toHaveAttribute('aria-pressed', 'true');
@@ -78,7 +78,7 @@ describe('Downloaded model chat selection', () => {
     await user.click(row('Local model').getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('local'));
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('local-model');
-    expect(resolveChatModel(settings.llm, 'local-model')).toBe('local-model');
+    expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual({ kind: 'local', model_id: 'local-model' });
     expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
     expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
     expect(settings.llm.llamaCpp).toEqual(connection);
@@ -96,7 +96,7 @@ describe('Downloaded model chat selection', () => {
     await user.click(row('Ollama connection').getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('ollama'));
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('__ollama_server__');
-    expect(resolveChatModel(settings.llm, 'local-model')).toBe(settings.llm.model);
+    expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual({ kind: 'ollama', model: settings.llm.model });
   });
 
   it.each(['url', 'model'] as const)('hides an incomplete llama.cpp connection with no %s', async field => {
@@ -190,5 +190,49 @@ describe('Downloaded model chat selection', () => {
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('local-model');
     expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
     expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  describe('Learning', () => {
+    it('says Learning is not set and fixes it with one explicit click on the chat model', async () => {
+      const user = await renderModels();
+      const banner = screen.getByText(/Learning: not set/).closest('[role="status"]') as HTMLElement;
+      expect(banner).toHaveTextContent('Learning: not set — lessons, outlines and study decks will not run until you choose one');
+      await user.click(within(banner).getByRole('button', { name: 'Use Local model (your chat model)' }));
+      await waitFor(() => expect(settings.llm.learningModel).toEqual({ kind: 'local', model_id: 'local-model' }));
+      expect(screen.queryByText(/Learning: not set/)).not.toBeInTheDocument();
+      expect(row('Local model').getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'true');
+      // Learning is a setting of its own: the chat model is untouched.
+      expect(settings.llm.provider).toBe('local');
+      expect(VaultAPI.setActiveChatModel).not.toHaveBeenCalled();
+    });
+
+    it('names a Learning model that is not downloaded any more, keeps the setting, and leads to the grid', async () => {
+      settings.llm.learningModel = { kind: 'local', model_id: 'ornith-1.5-9b' };
+      const user = await renderModels();
+      expect(screen.getByText('Learning model ornith-1.5-9b is not downloaded any more')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Choose another' }));
+      expect(row('Local model').getByRole('button', { name: 'Learning' })).toHaveFocus();
+      expect(settings.llm.learningModel).toEqual({ kind: 'local', model_id: 'ornith-1.5-9b' });
+      expect(VaultAPI.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('says nothing when the Learning model is set and present', async () => {
+      settings.llm.learningModel = { kind: 'local', model_id: 'local-model' };
+      await renderModels();
+      expect(screen.queryByText(/Learning: not set/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/not downloaded any more/)).not.toBeInTheDocument();
+    });
+
+    it('sets the model a connection serves as the Learning model', async () => {
+      settings.llm.ollamaConfigured = true;
+      settings.llm.model = 'qwen3:8b';
+      const user = await renderModels();
+      await user.click(row('llama.cpp connection').getByRole('button', { name: 'Learning' }));
+      await waitFor(() => expect(settings.llm.learningModel).toEqual({ kind: 'llama_cpp', model: 'remote-model.gguf' }));
+      await waitFor(() => expect(row('llama.cpp connection').getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'true'));
+      await user.click(row('Ollama connection').getByRole('button', { name: 'Learning' }));
+      await waitFor(() => expect(settings.llm.learningModel).toEqual({ kind: 'ollama', model: 'qwen3:8b' }));
+      expect(settings.llm.provider).toBe('local');
+    });
   });
 });
