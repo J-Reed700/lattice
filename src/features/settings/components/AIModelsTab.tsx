@@ -2,9 +2,11 @@
  * AIModelsTab — "Downloaded models".
  *
  * Every row in the `models` table (local downloads + the synthetic Ollama
- * server row) is eligible for one or more roles (Chat, Utility, Embedding).
- * Chat selection also updates the LLM provider, which takes precedence over
- * the stored local model assignment. llama.cpp uses its saved connection.
+ * server row) is eligible for one or more roles (Chat, Utility, Embedding,
+ * Learning). Chat selection also updates the LLM provider, which takes
+ * precedence over the stored local model assignment; this is the app-wide
+ * default every chat on the default follows. Learning is a model reference
+ * in Settings. llama.cpp uses its saved connection.
  *
  * Layout: hairline rows. {@link ROLES} drives the toggles;
  * `ModelRolesContext` holds the shared state and mutations.
@@ -19,6 +21,7 @@ import { PageHeader, SettingsSection, SidebarSearch, TooltipProvider } from '@/c
 import { configuredConnections } from '@/utils/configuredConnections';
 
 import { useSettingsQuery } from '../hooks/useSettingsQuery';
+import { LearningModelBanner } from './modelRoles/LearningModelBanner';
 import { LlamaCppMetaRow } from './modelRoles/LlamaCppMetaRow';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
 import { LocalModelRowSkeleton } from './modelRoles/LocalModelRowSkeleton';
@@ -56,7 +59,9 @@ function AIModelsTabContent() {
         <span><strong className="font-semibold text-accent">Chat</strong> · Conversations</span>
         <span><strong className="font-semibold text-accent">Utility</strong> · Background tasks</span>
         <span><strong className="font-semibold text-accent">Embedding</strong> · Library search</span>
+        <span><strong className="font-semibold text-accent">Learning</strong> · Lessons and study decks</span>
       </div>
+      <LearningModelBanner />
       <SettingsSection title="On this computer" actions={<HardDrive className="h-4 w-4 text-text-muted" aria-hidden="true" />}>
       {localModels.length > 0 ? (
         <div className="border-b border-border-subtle py-3">

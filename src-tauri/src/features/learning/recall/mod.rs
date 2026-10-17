@@ -8,6 +8,7 @@ pub(crate) mod recall_tests;
 pub(crate) mod schedule;
 pub mod study_dto;
 mod study_generation;
+pub(in crate::features::learning) use study_generation::deck_output_tokens;
 pub mod study_repository;
 pub(crate) mod study_service;
 #[cfg(test)]

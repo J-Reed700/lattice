@@ -43,8 +43,8 @@ async fn write_test_vector(
 /// A conversation with `user`/`assistant` turns whose text is predictable.
 async fn seed_memory_thread(pool: &SqlitePool) -> String {
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES ('conv-mem', 'Memory', 'model', 'space_general', \
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES ('conv-mem', 'Memory', 'space_general', \
                  '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
     )
     .execute(pool)
@@ -79,7 +79,7 @@ async fn memory_vector_write_skips_deleted_moved_or_edited_sources() {
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
     let other = ConversationRepository::new(pool.clone())
-        .create_conversation("Other", "model", None)
+        .create_conversation("Other", None)
         .await
         .unwrap();
     seed_message(
@@ -586,8 +586,8 @@ async fn a_foreign_span_cannot_be_read_or_committed_through_another_conversation
     let conversation_id = seed_memory_thread(&pool).await;
     // A second thread with a byte-identical message.
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES ('conv-other', 'Other', 'model', 'space_general', \
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES ('conv-other', 'Other', 'space_general', \
                  '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
     )
     .execute(&pool)
@@ -1335,8 +1335,8 @@ async fn recall_is_scoped_to_one_conversation_and_ignores_titles_and_bookmarks()
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES ('conv-other', 'deploy approval notes', 'model', 'space_general', \
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES ('conv-other', 'deploy approval notes', 'space_general', \
                  '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
     )
     .execute(&pool)
@@ -1873,10 +1873,7 @@ async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
         "Budget is [forgotten] for the importer."
     );
 
-    let other = repo
-        .create_conversation("Other", "model", None)
-        .await
-        .unwrap();
+    let other = repo.create_conversation("Other", None).await.unwrap();
     assert!(
         repo.memory_suppressed_spans(&other.id.to_string(), &ids)
             .await

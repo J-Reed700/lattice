@@ -203,8 +203,8 @@ async fn another_conversation_does_not_inherit_them() {
         .unwrap();
 
     sqlx::query(
-        "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
-         VALUES ('conv-2', 'Other', 'model', 'space_general', \
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+         VALUES ('conv-2', 'Other', 'space_general', \
                  '2026-09-01T11:00:00Z', '2026-09-01T11:00:00Z')",
     )
     .execute(&pool)

@@ -14,7 +14,7 @@ test('inline citations support keyboard passage navigation and clean reading', a
   await mockCommands(page, (settings) => {
     localStorage.setItem('chat.sidebar.collapsed', '1');
     const stamp = '2026-10-09T00:00:00Z';
-    const conversation = { id: 'citations-chat', title: 'Citation keyboard check', modelName: 'test', createdAt: stamp, updatedAt: stamp, messageCount: 1, totalTokens: 20, spaceId: 'space_general', isArchived: false };
+    const conversation = { id: 'citations-chat', title: 'Citation keyboard check', createdAt: stamp, updatedAt: stamp, messageCount: 1, totalTokens: 20, spaceId: 'space_general', isArchived: false };
     const text = 'Record the chosen measure. Keep the observation period.';
     const source = {
       documentId: 'web:https://example.org/field-guide', chunkId: 'field-guide-chunk',
@@ -76,7 +76,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     await mockCommands(page, ({ settings, entry }) => {
       localStorage.setItem('chat.sidebar.collapsed', '1');
       const stamp = '2026-10-06T00:00:00Z';
-      const parent = { id: 'tangent-parent', title: 'Main discussion', modelName: '__llamacpp_server__', createdAt: stamp, updatedAt: stamp, messageCount: 2, totalTokens: 50, spaceId: 'space_general', isArchived: false };
+      const parent = { id: 'tangent-parent', title: 'Main discussion', createdAt: stamp, updatedAt: stamp, messageCount: 2, totalTokens: 50, spaceId: 'space_general', isArchived: false };
       const sourceMessages = [
         { id: 'source-question', conversationId: parent.id, role: 'user', content: 'What is a tangent?', tokens: 10, status: 'completed', createdAt: stamp },
         { id: 'source-answer', conversationId: parent.id, role: 'assistant', content: 'A tangent explores one idea without changing the main conversation.', tokens: 40, status: 'completed', createdAt: stamp },
@@ -226,7 +226,7 @@ for (const width of [1440, 620]) {
     settings.llm.llamaCpp.model = 'qwen-test.gguf';
     await mockCommands(page, (settings, ipc) => {
       const stamp = new Date().toISOString();
-      const conversation = { id: 'synthesis-chat', title: 'Forest research', modelName: 'qwen-test.gguf', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 2, totalTokens: 50 };
+      const conversation = { id: 'synthesis-chat', title: 'Forest research', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 2, totalTokens: 50 };
       const messages = [
         { id: 'question', conversationId: conversation.id, role: 'user', content: 'What did we learn about the forest?', tokens: 10, status: 'completed', createdAt: stamp },
         { id: 'answer', conversationId: conversation.id, role: 'assistant', content: 'The canopy provides shade and helps retain moisture.', tokens: 40, status: 'completed', createdAt: stamp },
@@ -749,7 +749,7 @@ test('conversation outline navigates long virtualized replies and tracks the rea
         : `Answer ${Math.ceil(index / 2)}.\n\n${'This paragraph explains the design in detail, including the choices we made and how they affect the project. '.repeat(12)}\n\n`.repeat(9),
       tokens: 100, status: 'completed', createdAt: stamp,
     }));
-    const conversation = { id: 'outline-chat', title: 'Long conversation', modelName: 'test-model', createdAt: stamp, updatedAt: stamp, messageCount: messages.length, totalTokens: 6000, spaceId: 'space_general', isArchived: false };
+    const conversation = { id: 'outline-chat', title: 'Long conversation', createdAt: stamp, updatedAt: stamp, messageCount: messages.length, totalTokens: 6000, spaceId: 'space_general', isArchived: false };
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
@@ -841,8 +841,8 @@ test('conversation outline navigates long virtualized replies and tracks the rea
 test('chat sidebar renames a conversation and opens the spaces editor', async ({ page }) => {
   await mockCommands(page, (settings) => {
     const stamp = new Date().toISOString();
-    const conversation = { id: 'conversation-1', title: 'Reading notes', modelName: 'test-model', systemPrompt: null, createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isSaved: false, isBookmarked: false, isPinned: false, isArchived: false };
-    const space = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
+    const conversation = { id: 'conversation-1', title: 'Reading notes', systemPrompt: null, createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isSaved: false, isBookmarked: false, isPinned: false, isArchived: false };
+    const space = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [space],
@@ -889,7 +889,7 @@ test('chat sidebar renames a conversation and opens the spaces editor', async ({
 test('creates a space in Settings and opens it in Chat', async ({ page }) => {
   await mockCommands(page, (settings) => {
     const stamp = new Date().toISOString();
-    const general = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
+    const general = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
     let spaces = [general];
     return {
       get_settings: () => settings,
@@ -1012,6 +1012,67 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
   await expect(local.getByRole('button', { name: 'Utility', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test:settings')!).llm.provider)).toBe('llamacpp');
   await page.screenshot({ path: testInfo.outputPath('downloaded-models-chat.png'), animations: 'disabled' });
+  expect(errors).toEqual([]);
+});
+
+test('Downloaded assigns the Learning model in Settings without touching the chat model', async ({ page }) => {
+  await mockCommands(page, defaults => {
+    let settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
+    const record = (command: string, args: unknown) => {
+      const calls = JSON.parse(localStorage.getItem('test:calls') ?? '[]');
+      calls.push({ command, args });
+      localStorage.setItem('test:calls', JSON.stringify(calls));
+    };
+    const model = {
+      id: 'local-model', model_id: 'local-model', model_name: 'Local model',
+      file_path: '/models/local.gguf', file_size_bytes: 1000000000,
+      model_type: 'chat', backend: 'local', downloaded_at: '2026-10-01T00:00:00Z',
+      last_used_at: null, use_count: 0, is_active_for_chat: true,
+      is_active_for_embedding: false, is_active_for_utility: false,
+    };
+    return {
+      get_settings: () => settings,
+      update_settings: (args) => {
+        record('update_settings', args);
+        const payload = args as { settings: { updates: Record<string, unknown> } };
+        settings = { ...settings, llm: { ...settings.llm, ...payload.settings.updates } };
+        localStorage.setItem('test:settings', JSON.stringify(settings));
+        return settings;
+      },
+      list_downloaded_models: () => [model],
+      list_loaded_models: () => [],
+      last_learning_window_shortfall: () => null,
+      set_active_chat_model: (args) => {
+        record('set_active_chat_model', args);
+        return null;
+      },
+      get_active_chat_model: () => null,
+      get_active_embedding_model: () => null,
+      get_active_models: () => ({ chat_model: null, embedding_model: null }),
+      list_journals: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+    };
+  }, makeAppSettings());
+  const errors: Error[] = [];
+  page.on('pageerror', error => errors.push(error));
+  await page.goto('/settings');
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await expect(page.getByText('Learning: not set — lessons, outlines and study decks will not run until you choose one')).toBeVisible();
+
+  const local = page.getByText('Local model', { exact: true }).locator('../..');
+  await expect(local.getByRole('button', { name: 'Learning', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await local.getByRole('button', { name: 'Learning', exact: true }).click();
+  await expect(local.getByRole('button', { name: 'Learning', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/Learning: not set/)).toHaveCount(0);
+
+  // One write, to the Learning setting alone: no chat row flag, no provider.
+  const calls = await page.evaluate(() => JSON.parse(localStorage.getItem('test:calls') ?? '[]'));
+  expect(calls).toEqual([{
+    command: 'update_settings',
+    args: { settings: { category: 'llm', updates: { learningModel: { kind: 'local', model_id: 'local-model' } } } },
+  }]);
+  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect(errors).toEqual([]);
 });
 
@@ -1468,7 +1529,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   settings.llm.llamaCpp.model = 'qwen-test.gguf';
   await mockCommands(page, (settings, ipc) => {
     const stamp = new Date().toISOString();
-    const conversation = { id: 'patent-chat', title: 'Patent Training', modelName: '__ollama_server__', createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false };
+    const conversation = { id: 'patent-chat', title: 'Patent Training', createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false };
     const job = { jobId: 'pdf-import', jobType: 'file_import', status: 'completed', totalItems: 45, completedItems: 44, failedItems: 1, createdAt: stamp };
     const earlier = { ...job, jobId: 'earlier-pdf', totalItems: 1, completedItems: 1, failedItems: 0, createdAt: new Date(Date.now() - 3600000).toISOString() };
     let item = { itemId: 'failed-pdf', target: '/Downloads/mpep-2100.pdf', status: 'failed', errorMessage: 'PDF extraction timed out' as string | null };
@@ -1520,7 +1581,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
   await page.goto('/chat?conversationId=patent-chat');
-  await expect(page.getByText('llama.cpp · qwen-test.gguf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Model for this chat: qwen-test.gguf (app default).' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: '1 file failed to import: mpep-2100.pdf' })).toBeVisible();
   const composer = page.getByRole('textbox', { name: 'Message composer' });
   await composer.fill('Help me learn the MPEP using only cited PDF passages.');
@@ -1553,7 +1614,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   await expect(page.getByText('Processing — not ready to search yet', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/lattice-import-recovered.png', animations: 'disabled' });
   await page.goto('/chat?conversationId=patent-chat');
-  await expect(page.getByText('llama.cpp · qwen-test.gguf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Model for this chat: qwen-test.gguf (app default).' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Review import history' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -1564,7 +1625,7 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
   settings.llm.llamaCpp.model = 'qwen-test.gguf';
   await mockCommands(page, (settings, ipc) => {
     const stamp = new Date().toISOString();
-    const conversation = { id: 'retrieval-chat', title: 'Patent Training', modelName: 'qwen-test.gguf', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 0, totalTokens: 0 };
+    const conversation = { id: 'retrieval-chat', title: 'Patent Training', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 0, totalTokens: 0 };
     const recovered = { searchedDocuments: 0, passages: 7, files: 7, scope: 'vault' };
     const oldFailure = { ...recovered, passages: 0, files: 0, unavailableReason: 'the active space has no indexed documents yet' };
     let messages: Fixture<MessageDto>[] = JSON.parse(localStorage.getItem('test:retrieval-messages') ?? '[]');

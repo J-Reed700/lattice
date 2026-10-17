@@ -5,7 +5,7 @@
  * Every card in the grid (local cards + the Ollama meta-card) reads from
  * this context and calls `assignRole()` to mutate.
  *
- * Why a context: chat/utility/embedding assignments are shared state that
+ * Why a context: chat/utility/embedding/learning assignments are shared state that
  * multiple sibling cards need to read. Prop-drilling from the tab root gets
  * messy; a context keeps the cards decoupled and the mutation path unified.
  */
@@ -18,6 +18,7 @@ import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
+import { modelRefForRow } from '@/utils/chatModelSelection';
 
 import type { RoleId } from './roleConfig';
 
@@ -26,6 +27,8 @@ interface ModelRolesContextValue {
   localModels: DownloadedModel[];
   ollamaModels: DownloadedModel[];
   chatProvider: LLMSettings['provider'] | undefined;
+  /** The saved LLM settings; Chat and Learning read their state from them. */
+  llmSettings: LLMSettings | undefined;
   isLoading: boolean;
   /** Why the last refresh failed; null once one succeeds. */
   error: string | null;
@@ -52,7 +55,8 @@ interface ProviderProps {
 export function ModelRolesProvider({ children }: ProviderProps) {
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
-  const chatProvider = settings?.llm.provider;
+  const llmSettings = settings?.llm;
+  const chatProvider = llmSettings?.provider;
   const {
     fetchDownloadedModels,
     setActiveChatModel,
@@ -123,6 +127,17 @@ export function ModelRolesProvider({ children }: ProviderProps) {
           } else {
             await setActiveUtilityModel(modelId);
           }
+        } else if (role === 'learning') {
+          // A reference in Settings, not a row flag: it can name an Ollama
+          // tag as well as a file, and nothing else ever writes it.
+          let learningModel = null;
+          if (modelId !== null) {
+            const model = models.find(candidate => candidate.model_id === modelId);
+            if (!model) throw new Error('Model is no longer available. Please refresh and try again.');
+            learningModel = modelRefForRow(model, llmSettings);
+            if (!learningModel) throw new Error('Set the Ollama chat tag in Chat settings first.');
+          }
+          await updateSettings({ category: 'llm', updates: { learningModel } });
         }
       } catch (error) {
         toast.error(`Failed to set ${role} role`, {
@@ -143,6 +158,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       clearActiveUtilityModel,
       refresh,
       chatProvider,
+      llmSettings,
       models,
       updateSettings,
     ],
@@ -156,12 +172,13 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       localModels,
       ollamaModels,
       chatProvider,
+      llmSettings,
       isLoading,
       error,
       refresh,
       assignRole,
     };
-  }, [models, chatProvider, isLoading, error, refresh, assignRole]);
+  }, [models, chatProvider, llmSettings, isLoading, error, refresh, assignRole]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

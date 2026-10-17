@@ -31,7 +31,6 @@ impl ConversationRepository {
             icon,
             accent_color,
             space_prompt,
-            default_model_name,
             tool_preferences_json,
         } = request;
 
@@ -46,31 +45,30 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(
-        r#"
+            r#"
         INSERT INTO journals (
             id, name, description, icon, accent_color, space_prompt,
-            default_model_name, tool_preferences_json, is_archived, sort_order, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
         "#,
-    )
-    .bind(&id)
-    .bind(name)
-    .bind(description)
-    .bind(icon)
-    .bind(accent_color)
-    .bind(space_prompt)
-    .bind(default_model_name)
-    .bind(tool_preferences_json)
-    .bind(&now)
-    .bind(&now)
-    .execute(&self.pool)
-    .await
-    .map_err(|e| AppError::Database(format!("Failed to create journal: {}", e)))?;
+        )
+        .bind(&id)
+        .bind(name)
+        .bind(description)
+        .bind(icon)
+        .bind(accent_color)
+        .bind(space_prompt)
+        .bind(tool_preferences_json)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to create journal: {}", e)))?;
 
         let created = sqlx::query_as::<_, ConversationJournalDto>(
             r#"
         SELECT
-            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            id, name, description, icon, accent_color, space_prompt,
             tool_preferences_json, is_archived, sort_order, created_at, updated_at
         FROM journals
         WHERE id = ?
@@ -88,7 +86,7 @@ impl ConversationRepository {
         let journals = sqlx::query_as::<_, ConversationJournalDto>(
             r#"
         SELECT
-            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            id, name, description, icon, accent_color, space_prompt,
             tool_preferences_json, is_archived, sort_order, created_at, updated_at
         FROM journals
         ORDER BY is_archived ASC, sort_order ASC, updated_at DESC
@@ -117,7 +115,6 @@ impl ConversationRepository {
             icon = COALESCE(?, icon),
             accent_color = COALESCE(?, accent_color),
             space_prompt = COALESCE(?, space_prompt),
-            default_model_name = COALESCE(?, default_model_name),
             tool_preferences_json = COALESCE(?, tool_preferences_json),
             is_archived = COALESCE(?, is_archived),
             sort_order = COALESCE(?, sort_order),
@@ -130,7 +127,6 @@ impl ConversationRepository {
         .bind(request.icon)
         .bind(request.accent_color)
         .bind(request.space_prompt)
-        .bind(request.default_model_name)
         .bind(request.tool_preferences_json)
         .bind(is_archived)
         .bind(request.sort_order)
@@ -150,7 +146,7 @@ impl ConversationRepository {
         let updated = sqlx::query_as::<_, ConversationJournalDto>(
             r#"
         SELECT
-            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            id, name, description, icon, accent_color, space_prompt,
             tool_preferences_json, is_archived, sort_order, created_at, updated_at
         FROM journals
         WHERE id = ?
@@ -407,7 +403,7 @@ impl ConversationRepository {
         SELECT
             c.id,
             c.title,
-            c.model_name,
+            c.model_choice,
             c.system_prompt,
             c.created_at,
             c.updated_at,
@@ -494,32 +490,8 @@ impl ConversationRepository {
 
         let conversations = rows
             .into_iter()
-            .map(|row| crate::features::conversation::dto::ConversationDto {
-                id: row.id,
-                title: row.title,
-                model_name: row.model_name,
-                system_prompt: row.system_prompt,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                message_count: row.message_count,
-                total_tokens: row.total_tokens,
-                space_id: Some(row.space_id),
-                is_saved: Some(row.is_saved != 0),
-                is_bookmarked: Some(row.is_bookmarked != 0),
-                is_pinned: Some(row.is_pinned != 0),
-                is_archived: Some(row.is_archived != 0),
-                saved_at: row.saved_at,
-                bookmarked_at: row.bookmarked_at,
-                pinned_at: row.pinned_at,
-                archived_at: row.archived_at,
-                last_message_preview: row.last_message_preview,
-                compaction: None,
-                forked_from_conversation_id: row.forked_from_conversation_id,
-                forked_from_message_id: row.forked_from_message_id,
-                explorer_root: row.explorer_root,
-                tangent_parent_id: None,
-            })
-            .collect::<Vec<_>>();
+            .map(ConversationExplorerRow::into_dto)
+            .collect::<Result<Vec<_>, AppError>>()?;
 
         Ok(ListConversationsResponseDto {
             total: conversations.len(),

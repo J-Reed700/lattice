@@ -1177,6 +1177,41 @@ async warmUpActiveUtilityModel() : Promise<Result<null, ApiError>> {
 }
 },
 /**
+ * Loads the Learning model ahead of the first learning job. A failure is
+ * reported and changes no setting.
+ */
+async warmUpLearningModel() : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|warm_up_learning_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The models loaded right now, with who holds each.
+ */
+async listLoadedModels() : Promise<Result<LoadedModelDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|list_loaded_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The last learning work refused because the Learning model's window was
+ * too small, while that model has not covered the window since.
+ */
+async lastLearningWindowShortfall() : Promise<Result<LearningWindowShortfallDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|last_learning_window_shortfall") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Detect system hardware capabilities.
  *
  * Returns comprehensive system information:
@@ -1839,12 +1874,15 @@ async generateChatStarters(spaceId: string | null) : Promise<Result<ChatStarters
  * Re-run the last user message, streaming over `llm-stream` exactly like a
  * normal send. The user message is not duplicated.
  *
+ * `model` answers this regeneration only ("Try with another model"):
+ * nothing is persisted, and the chat's own choice is unchanged.
+ *
  * Flat args, mirroring `chat_with_conversation`, because this re-enters the
  * same streaming flow and needs the same `window`.
  */
-async regenerateResponse(conversationId: string, toolPreferences: ToolPreferences | null, requestId: string | null) : Promise<Result<ChatResponse, ApiError>> {
+async regenerateResponse(conversationId: string, toolPreferences: ToolPreferences | null, requestId: string | null, model: ModelRef | null) : Promise<Result<ChatResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|regenerate_response", { conversationId, toolPreferences, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|regenerate_response", { conversationId, toolPreferences, requestId, model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2805,6 +2843,19 @@ async extractAndResolveLinks(documentId: string, content: string) : Promise<Resu
 async createConversation(request: CreateConversationRequestDto) : Promise<Result<CreateConversationResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|create_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Choose the model this chat is answered by, or `Default` to follow the
+ * Settings default. Refused with the cause and fix when the model cannot be
+ * used now. Changes this chat only, and never a turn already running.
+ */
+async setConversationModelChoice(conversationId: string, choice: ChatModelChoice) : Promise<Result<ConversationDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_conversation_model_choice", { conversationId, choice }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4592,6 +4643,18 @@ export type CapturedSourcesDto = { messageId: string;
 sources: SourceDto[] }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
+ * A chat's model choice.
+ *
+ * `Default` follows Settings live; it is not a snapshot. A chat that says
+ * Default moves when Settings moves, and a replaced or deleted default never
+ * strands it. What actually answered is recorded per message, not here.
+ */
+export type ChatModelChoice = { kind: "default" } |
+/**
+ * This chat only; Settings and every other chat are untouched.
+ */
+{ kind: "explicit"; model: ModelRef }
+/**
  * Chat response with conversation metadata
  */
 export type ChatResponse = {
@@ -4664,6 +4727,11 @@ step?: TurnStepDto | null;
  */
 verification?: VerificationReadyDto | null;
 /**
+ * The model this turn is pinned to. Sent once, as soon as the turn has
+ * it, so the reader knows what is answering before the first token.
+ */
+model?: TurnModelDto | null;
+/**
  * Cited pages captured after the turn returned. Arrives once per answer
  * that cited a page it never read, before that answer's grounding check.
  */
@@ -4712,6 +4780,10 @@ publishedDate?: string | null;
  * Excerpt (first ~200 characters of text)
  */
 excerpt?: string | null }
+/**
+ * A cloud provider, each with its own keyring entry and endpoint.
+ */
+export type CloudProvider = "openai" | "anthropic" | "google"
 /**
  * Summary of a cluster for list views. Centroid + full member list are
  * intentionally omitted — those are internal.
@@ -4932,9 +5004,10 @@ id: string;
  */
 title: string;
 /**
- * LLM model name (e.g., "claude-sonnet-4-5-20250929")
+ * The model this chat asked for. `default` follows the Settings default
+ * live; what answered each message is in that message's turn record.
  */
-modelName: string;
+modelChoice: ChatModelChoice;
 /**
  * Optional system prompt
  */
@@ -5024,7 +5097,7 @@ explorerRoot: string | null;
  */
 tangentParentId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
-export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
+export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
 /**
  * True when this file was attached to this chat rather than filed in the
@@ -5097,7 +5170,7 @@ label: string;
 isMandatory: boolean; createdAtSequence: number; changedAtSequence: number; supersededBy: string | null; relatedItemIds: string[]; evidence: MemoryEvidenceDto[] }
 export type ConversationMessageBookmarkDto = { id: string; conversationId: string; conversationTitle: string; spaceId: string; messageId: string; messageRole: string; messagePreview: string; title: string | null; note: string | null; createdAt: string }
 export type ConversationSnapshotDto = { id: string; conversationId: string; conversationTitle: string; capturedAt: string; messageCount: number; messages: SnapshotMessageDto[] }
-export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
+export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationSpaceMemberDto = { spaceId: string; memberId: string; displayName: string; email: string | null; avatarUrl: string | null; role: string; createdAt: string; updatedAt: string }
 export type ConversationTangentDto = { conversationId: string; parentConversationId: string; sourceConversationId: string; sourceMessageId: string; selectedText: string; title: string; createdAt: string; updatedAt: string;
 /**
@@ -5115,7 +5188,7 @@ export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grow
 export type CorpusTypeCountDto = { type: string; count: number }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
-export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
+export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 /**
  * Request to create a new conversation.
  */
@@ -5124,10 +5197,6 @@ export type CreateConversationRequestDto = {
  * Conversation title
  */
 title: string;
-/**
- * LLM model name
- */
-modelName: string;
 /**
  * Optional system prompt
  */
@@ -5144,7 +5213,7 @@ conversation: ConversationDto;
  * Status message
  */
 status: string }
-export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
+export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
 export type CreateLearningAssessmentBlueprintRequestDto = { operationId: string; programId: string; blueprintId: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; changeReason: string }
 export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
@@ -5397,7 +5466,15 @@ export type DownloadStatusResponse = { id: string; url: string; destination: str
 /**
  * Response for get_models_with_metadata command
  */
-export type DownloadedModelResponse = { id: string; model_name: string; model_id: string; file_path: string; file_size_bytes: number; model_type: string; downloaded_at: string; last_used_at: string | null; use_count: number; is_active_for_chat: boolean; is_active_for_embedding: boolean; is_active_for_utility: boolean; backend: string; trained_context_length?: number | null }
+export type DownloadedModelResponse = { id: string; model_name: string; model_id: string; file_path: string; file_size_bytes: number; model_type: string; downloaded_at: string; last_used_at: string | null; use_count: number; is_active_for_chat: boolean; is_active_for_embedding: boolean; is_active_for_utility: boolean; backend: string; trained_context_length?: number | null;
+/**
+ * Whether the GGUF's chat template declares tool calling.
+ */
+supports_tool_calling?: boolean | null;
+/**
+ * The context window saved for this model in Settings; `None` is Auto.
+ */
+configured_context_length?: number | null }
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
@@ -6222,7 +6299,15 @@ lastAnswerMemoryIds: string[] }
 /**
  * Serialized health response from the QA command.
  */
-export type LLMHealthStatusDto = { available: boolean; model: string; max_context_tokens: number; backend: string }
+export type LLMHealthStatusDto = { available: boolean;
+/**
+ * The Settings default chat model the check ran on.
+ */
+model: ModelRef;
+/**
+ * The name its server reports for it.
+ */
+model_name: string; max_context_tokens: number; backend: string }
 /**
  * Prompt templates for LLM interactions.
  */
@@ -6386,6 +6471,13 @@ toolOutput: ToolOutputSettingsDto;
  * Router settings for conversation scope and intent routing
  */
 router: RouterSettingsDto;
+/**
+ * The model every learning job runs on: lesson preparation, outlines,
+ * practice, study decks, assessments, diagnostics, learning memory.
+ * `None` means not set, and learning work refuses until it is; it never
+ * borrows the chat default.
+ */
+learningModel: ModelRef | null;
 /**
  * Additional directories to scan for externally managed local models
  */
@@ -6834,6 +6926,25 @@ export type LearningSourceWorkspaceDto = { programId: string; sources: LearningS
 export type LearningTangentDto = { conversationId: string; programId: string; programTitle: string; spaceId: string; moduleId: string; moduleTitle: string; lessonId: string; lessonTitle: string; sectionIndex: number | null; sectionTitle: string | null; selectedText: string; title: string; createdAt: number; updatedAt: string; messageCount: number; contextMessageCount: number }
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
 export type LearningTutorRequestKind = "hint" | "question" | "critique"
+/**
+ * The last learning work refused because the Learning model's window was
+ * too small, while that model has not covered the window since. Settings →
+ * Models shows it beside the model that holds the Learning role.
+ */
+export type LearningWindowShortfallDto = { model: ModelRef;
+/**
+ * The window the refused work needed, in tokens.
+ */
+needed_tokens: number;
+/**
+ * The window the model had, in tokens.
+ */
+window_tokens: number;
+/**
+ * Whether that window was the one saved for the model in Settings →
+ * Models, rather than what Auto or the model's server gave it.
+ */
+window_is_saved: boolean }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -6893,6 +7004,22 @@ export type ListWorkspaceNotesRequestDto = {
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+/**
+ * A model loaded right now, for diagnostics.
+ */
+export type LoadedModelDto = { model: ModelRef; provider: string; context_tokens: number;
+/**
+ * Turns and jobs holding it now.
+ */
+in_flight: number;
+/**
+ * Who holds it: a role and the conversation or job it serves.
+ */
+pinned_by: string[]; loaded_at: string; last_used_at: string; gpu_bytes: number | null;
+/**
+ * Why it runs degraded (on CPU), when it does.
+ */
+degraded: string | null }
 /**
  * Per-model launch configuration for a bundled local GGUF model.
  */
@@ -7114,6 +7241,26 @@ embedding_dimensions: number | null;
  */
 embedding_compatibility: EmbeddingCompatibilityDto | null }
 /**
+ * Why a turn or job runs on the model it runs on.
+ */
+export type ModelOrigin =
+/**
+ * The chat model set in Settings.
+ */
+"default" |
+/**
+ * The chat's own choice.
+ */
+"chat_override" |
+/**
+ * This request only; nothing is persisted.
+ */
+"request_override" |
+/**
+ * The Learning model set in Settings.
+ */
+"learning_role"
+/**
  * Model recommendation DTO for frontend.
  */
 export type ModelRecommendationDto = {
@@ -7137,6 +7284,31 @@ popularity_downloads?: number | null;
  * Popularity metric from upstream provider (likes)
  */
 popularity_likes?: number | null }
+/**
+ * A model a chat or a role can name.
+ *
+ * Endpoints are connection configuration, not identity: `Ollama` and
+ * `LlamaCpp` carry the model only, and the URL and auth header come from
+ * Settings when the model is loaded, so moving a server moves every chat
+ * that names it.
+ */
+export type ModelRef =
+/**
+ * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
+ */
+{ kind: "local"; model_id: string } |
+/**
+ * A tag served by the Ollama endpoint configured in Settings.
+ */
+{ kind: "ollama"; model: string } |
+/**
+ * A model name served by the llama.cpp endpoint configured in Settings.
+ */
+{ kind: "llama_cpp"; model: string } |
+/**
+ * A cloud provider's model; the key comes from the keyring.
+ */
+{ kind: "cloud"; provider: CloudProvider; model: string }
 /**
  * Model search result DTO for frontend.
  */
@@ -8458,7 +8630,16 @@ messages: MessageDto[] }
  * The model that answered **this** turn, which is not necessarily the one the
  * conversation is filed under: a chat can be re-pointed between turns.
  */
-export type TurnModelDto = { id: string; name: string }
+export type TurnModelDto = { id: string; name: string;
+/**
+ * The model the turn was pinned to. Absent only from records written
+ * before turns recorded it.
+ */
+model?: ModelRef | null; origin?: ModelOrigin | null; provider?: string | null; contextTokens?: number | null;
+/**
+ * Why the model ran degraded (on CPU), when it did.
+ */
+degraded?: string | null }
 /**
  * The whole record of one turn.
  */
@@ -8568,8 +8749,8 @@ resultsPerPage: number;
  */
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
-export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
-export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
+export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
+export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
 export type UpdateInfoDto = { available: boolean; currentVersion: string; latestVersion: string | null; downloadUrl: string | null; releaseNotes: string | null }
 export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }

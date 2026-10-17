@@ -1,6 +1,7 @@
 use super::{
-    curriculum::LearningGenerationJob, dto::*, embedded_runtime::BuiltinRuntimes, plan_dto::*,
-    portability_dto::*, practical_dto::*, repository::LearningRepository, service,
+    curriculum::LearningGenerationJob, dto::*, embedded_runtime::BuiltinRuntimes,
+    model_requirements, plan_dto::*, portability_dto::*, practical_dto::*,
+    repository::LearningRepository, service,
 };
 use crate::features::web::traits::WebServiceTrait;
 use crate::interfaces::di::Container;
@@ -12,6 +13,19 @@ use tauri::{
 
 pub(super) use super::source_identity::source_request_hash;
 use super::source_identity::validate_source_ids;
+
+/// The Learning model for one command, pinned until the command returns and
+/// refused before any work when its window is below what `work` needs.
+/// Never a chat's model or the chat default.
+async fn learning_model(
+    container: &Container,
+    requirements: lattice_core::application::ports::llm_port::ModelRequirements,
+    work: &str,
+) -> Result<lattice_core::application::ports::llm_port::PinnedModel, ApiError> {
+    let pin = container.learning_llm(requirements.clone()).await?;
+    model_requirements::ensure_window(pin.llm.as_ref(), &requirements, work)?;
+    Ok(pin)
+}
 
 fn source_library(container: &Container) -> super::source_library::LearningSourceLibraryRepository {
     super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone())

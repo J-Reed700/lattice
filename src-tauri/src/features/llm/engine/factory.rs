@@ -13,7 +13,7 @@
 //!     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 //! };
 //!
-//! let llm = create_llm(config, &schedulers, &devices).await?;
+//! let llm = create_llm(config, &schedulers, &devices).await?.llm;
 //! ```
 
 use async_trait::async_trait;
@@ -22,11 +22,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use crate::features::llm::engine::gguf_metadata::GgufModelInfo;
 use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
-use crate::features::llm::engine::sidecar_manager::SpeculativeDecoding;
-use crate::features::llm::engine::system::BackendDevices;
+use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SpeculativeDecoding};
+use crate::features::llm::engine::system::{BackendDevices, SystemCapabilities};
 use crate::features::llm::engine::types::LLMError;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
@@ -79,7 +80,7 @@ pub enum LLMConfig {
 
 /// How the user asked a bundled server to run, as opposed to which model it
 /// runs.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct LocalServerOptions {
     /// The user's explicit context window, if they set one. `None` lets the
     /// sidecar size it from the model and the GPU.
@@ -141,7 +142,7 @@ impl LocalServerOptions {
 ///
 /// # Returns
 ///
-/// `Ok(Arc<dyn LLMPort>)` if client created successfully, `Err` otherwise
+/// The client, with the bundled server it runs on for a local model, or `Err`
 ///
 /// # Errors
 ///
@@ -159,7 +160,7 @@ impl LocalServerOptions {
 /// };
 ///
 /// match create_llm(config, &schedulers, &devices).await {
-///     Ok(llm) => println!("LLM ready: {}", llm.model_name()),
+///     Ok(created) => println!("LLM ready: {}", created.llm.model_name()),
 ///     Err(e) => eprintln!("Failed to create LLM: {}", e),
 /// }
 /// ```
@@ -167,7 +168,7 @@ pub(crate) async fn create_llm(
     config: LLMConfig,
     schedulers: &SchedulerRegistry,
     devices: &BackendDevices,
-) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
+) -> std::result::Result<CreatedLlm, LLMError> {
     match config {
         LLMConfig::Local {
             model_path,
@@ -202,16 +203,35 @@ pub(crate) async fn create_llm(
             auth_header,
             generation_config,
         } => {
-            create_ollama_llm(
+            let llm = create_ollama_llm(
                 &endpoint,
                 &model,
                 auth_header,
                 generation_config,
                 schedulers,
             )
-            .await
+            .await?;
+            Ok(CreatedLlm { llm, server: None })
         }
     }
+}
+
+/// A model client, and the bundled server it runs on when Lattice runs one.
+pub(crate) struct CreatedLlm {
+    pub(crate) llm: Arc<dyn LLMPort>,
+    pub(crate) server: Option<ServerFacts>,
+}
+
+/// How a bundled server actually came up, which can differ from what was asked
+/// for: the sidecar falls back to the CPU when the GPU will not start it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServerFacts {
+    /// The window, in tokens, it was launched with.
+    pub(crate) context_size: u32,
+    /// Layers offloaded to the GPU; 0 runs on the CPU.
+    pub(crate) n_gpu_layers: u32,
+    /// How it differs from the configuration asked for, when it does.
+    pub(crate) degraded: Option<String>,
 }
 
 /// Create a local-LLM client backed by the bundled `llama-server`
@@ -234,8 +254,8 @@ async fn create_local_llm_sidecar(
     server: LocalServerOptions,
     schedulers: &SchedulerRegistry,
     devices: &BackendDevices,
-) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
-    use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
+) -> std::result::Result<CreatedLlm, LLMError> {
+    use crate::features::llm::engine::sidecar_manager::{SidecarManager, SidecarRegistry};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
     use tauri::Manager;
 
@@ -266,30 +286,107 @@ async fn create_local_llm_sidecar(
         capabilities.summary()
     );
 
-    // Leave room for servers other roles already hold on the GPU.
-    let resident_bytes = app
-        .try_state::<crate::features::llm::engine::sidecar_manager::SidecarRegistry>()
-        .map_or(0, |registry| registry.resident_gpu_bytes(model_path));
-    let mut config =
-        SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities, resident_bytes)
-            .with_kv_cache_quantization(
-                server.kv_cache_quantization,
-                &capabilities,
-                resident_bytes,
-            );
+    // Leave room for servers other models already hold on the GPU.
+    let other_models_bytes = app
+        .try_state::<SidecarRegistry>()
+        .map_or(0, |registry| registry.other_models_gpu_bytes(model_path));
+    let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
+    let config = sidecar_config(
+        model_path,
+        n_gpu_layers,
+        server,
+        &capabilities,
+        other_models_bytes,
+        gguf_info.as_ref(),
+    );
+
+    let handle = SidecarManager::start_shared(app, config).await?;
+    let binary = handle.binary().label();
+    let facts = ServerFacts {
+        context_size: handle.context_size(),
+        n_gpu_layers: handle.n_gpu_layers(),
+        degraded: handle.degraded().map(str::to_owned),
+    };
+    if let Some(degraded) = &facts.degraded {
+        // The user asked for one configuration and got another — slower, or
+        // with a smaller window. Never silent.
+        warn!(
+            binary,
+            n_gpu_layers = facts.n_gpu_layers,
+            context_size = facts.context_size,
+            "Local LLM started in a degraded configuration: {degraded}"
+        );
+    }
+    let model_name = model_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("local")
+        .to_string();
+
+    let supports_tools = crate::features::llm::engine::gguf_metadata::file_supports_tool_calling(
+        model_path,
+        gguf_info.as_ref(),
+    );
+
+    let model_thinking =
+        crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);
+    let llm = crate::features::llm::llama_cpp::LlamaCppLlm::sidecar(
+        handle,
+        model_name,
+        generation_config,
+        supports_tools,
+        model_thinking,
+    )
+    .map_err(|e| LLMError::Other(e.to_string()))?;
+    info!(
+        binary,
+        n_gpu_layers = facts.n_gpu_layers,
+        supports_tools,
+        ?model_thinking,
+        "Local LLM (sidecar) ready"
+    );
+    Ok(CreatedLlm {
+        llm: llm.schedule(schedulers).await,
+        server: Some(facts),
+    })
+}
+
+/// The server `model_path` is started as: sized from `capabilities` beside
+/// the `other_models_bytes` of GPU memory other models' servers hold, then
+/// shaped by `server`, what the user asked for. A non-negative `n_gpu_layers`
+/// overrides the detected offload; `gguf_info` is the file's header.
+///
+/// Admission prices a server with this before it is started, so it must
+/// arrive at exactly the configuration the start does.
+pub(crate) fn sidecar_config(
+    model_path: &Path,
+    n_gpu_layers: i32,
+    server: LocalServerOptions,
+    capabilities: &SystemCapabilities,
+    other_models_bytes: u64,
+    gguf_info: Option<&GgufModelInfo>,
+) -> SidecarConfig {
+    let mut config = SidecarConfig::from_capabilities(
+        model_path.to_path_buf(),
+        capabilities,
+        other_models_bytes,
+    )
+    .with_kv_cache_quantization(
+        server.kv_cache_quantization,
+        capabilities,
+        other_models_bytes,
+    );
     if let Some(requested) = server.context_window {
-        config = config.with_context_override(requested, &capabilities, resident_bytes);
+        config = config.with_context_override(requested, capabilities, other_models_bytes);
     }
     config.parallel_slots = server.parallel_slots;
     config.seed = server.seed;
 
-    let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
     // Whether this GGUF can draft comes from the catalog or the GGUF header's
     // `nextn_predict_layers`; the user's choice only applies to a model that can.
     config.mtp_capable =
         lattice_core::domain::models::curated::chat_model_uses_mtp_draft(model_path)
             || gguf_info
-                .as_ref()
                 .and_then(|info| info.nextn_predict_layers)
                 .is_some_and(|layers| layers > 0);
     config.speculative_decoding = server.speculative_decoding;
@@ -305,52 +402,7 @@ async fn create_local_llm_sidecar(
             config.n_gpu_layers = override_ngl;
         }
     }
-
-    let handle = SidecarManager::start_shared(app, config).await?;
-    let binary = handle.binary().label();
-    let n_gpu_layers = handle.n_gpu_layers();
-    if let Some(degraded) = handle.degraded() {
-        // The user asked for one configuration and got another — slower, or
-        // with a smaller window. Never silent.
-        warn!(
-            binary,
-            n_gpu_layers,
-            context_size = handle.context_size(),
-            "Local LLM started in a degraded configuration: {degraded}"
-        );
-    }
-    let model_name = model_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("local")
-        .to_string();
-
-    let supports_tools = model_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling)
-        || gguf_info
-            .as_ref()
-            .is_some_and(|info| info.supports_tool_calling());
-
-    let model_thinking =
-        crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);
-    let llm = crate::features::llm::llama_cpp::LlamaCppLlm::sidecar(
-        handle,
-        model_name,
-        generation_config,
-        supports_tools,
-        model_thinking,
-    )
-    .map_err(|e| LLMError::Other(e.to_string()))?;
-    info!(
-        binary,
-        n_gpu_layers,
-        supports_tools,
-        ?model_thinking,
-        "Local LLM (sidecar) ready"
-    );
-    Ok(llm.schedule(schedulers).await)
+    config
 }
 
 /// Create an Ollama LLM client.

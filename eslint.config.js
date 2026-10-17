@@ -38,6 +38,23 @@ const VIEW_NATIVE_SELECTORS = [
   },
 ];
 
+// A chat's model picker changes that chat, never the app. The global chat
+// model (the active row, the provider and the model tag Ollama, llama.cpp or
+// a cloud provider is asked for) is set in Settings → Models and nowhere
+// else, so only the settings and model features may reach it. Settings are
+// written only there too: an `updates` object built elsewhere and passed in
+// could carry any of those keys.
+const GLOBAL_CHAT_MODEL_MESSAGE =
+  'Only Settings changes the app-wide chat model. A chat sets its own model with ' +
+  'setConversationModelChoice; one answer with another model is regenerateResponse with { model }.';
+const GLOBAL_CHAT_MODEL_SELECTORS = [
+  { selector: 'MemberExpression[property.name=/^(setActiveChatModel|clearActiveChatModel|updateSettings)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: 'ObjectPattern > Property[key.name=/^(setActiveChatModel|clearActiveChatModel|updateSettings)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: "ImportSpecifier[imported.name='useUpdateSettingsMutation']", message: GLOBAL_CHAT_MODEL_MESSAGE },
+  { selector: 'Property[key.name="updates"] > ObjectExpression > Property[key.name=/^(provider|model|llamaCpp)$/]', message: GLOBAL_CHAT_MODEL_MESSAGE },
+];
+const GLOBAL_CHAT_MODEL_OWNERS = ['src/features/settings/**', 'src/features/model/**'];
+
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 
 /**
@@ -64,9 +81,7 @@ const isBackendSource = (source) =>
 // View files that imported VaultAPI, a feature client or the transport when
 // the rule arrived. Do not add to this list: move the file's backend calls
 // into a query or mutation hook, then delete its entry.
-const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
-  'src/features/settings/components/modelRoles/LocalModelRow.tsx',
-], (text) => valueImportSources(text).some(isBackendSource));
+const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [], (text) => valueImportSources(text).some(isBackendSource));
 
 // View files that imported a Tauri plugin or convertFileSrc when the rule
 // arrived. Do not add to this list: wrap the native call in a hook or shared
@@ -441,6 +456,24 @@ export default [
     ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...VIEW_NATIVE_ALLOWLIST],
     rules: {
       'no-restricted-syntax': ['error', ...VIEW_NATIVE_SELECTORS],
+    },
+  },
+
+  // Settings is the only global switch for the chat model. A flat-config
+  // block replaces an earlier block's no-restricted-syntax, so views that
+  // keep the native-access selectors get both lists in the second block.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/**/__tests__/**', 'src/tests/**', '**/*.stories.{ts,tsx}', ...GLOBAL_CHAT_MODEL_OWNERS],
+    rules: {
+      'no-restricted-syntax': ['error', ...GLOBAL_CHAT_MODEL_SELECTORS],
+    },
+  },
+  {
+    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}'],
+    ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...GLOBAL_CHAT_MODEL_OWNERS, ...VIEW_NATIVE_ALLOWLIST],
+    rules: {
+      'no-restricted-syntax': ['error', ...VIEW_NATIVE_SELECTORS, ...GLOBAL_CHAT_MODEL_SELECTORS],
     },
   },
 

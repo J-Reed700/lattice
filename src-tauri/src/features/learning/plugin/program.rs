@@ -76,13 +76,19 @@ pub async fn generate_learning_program(
             let sources = crate::features::learning::sources::acquire(&deps, &request).await?;
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
             // A temporary model outage is waited out, call by call; see
-            // `patient_model`.
-            let llm = patiently(progress.as_ref(), Backoff::default(), |_| {
-                container.get_or_load_llm()
+            // `patient_model`. A refusal, such as no Learning model or too
+            // small a window, is not an outage and fails once.
+            let pin = patiently(progress.as_ref(), Backoff::default(), |_| {
+                container.learning_llm(model_requirements::outline())
             })
             .await?;
-            progress.model(llm.model_name());
-            let llm = PatientModel::new(llm.as_ref(), progress.as_ref());
+            progress.model(pin.llm.model_name());
+            model_requirements::ensure_window(
+                pin.llm.as_ref(),
+                &model_requirements::outline(),
+                "Drafting this course outline",
+            )?;
+            let llm = PatientModel::new(pin.llm.as_ref(), progress.as_ref());
             service::generate_with_references_and_progress(
                 &LearningRepository::new(container.db_pool().clone()),
                 &container.draft_run_registry(),
@@ -124,12 +130,17 @@ pub async fn repair_learning_outline(
     progress
         .run(async {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
-            let llm = patiently(progress.as_ref(), Backoff::default(), |_| {
-                container.get_or_load_llm()
+            let pin = patiently(progress.as_ref(), Backoff::default(), |_| {
+                container.learning_llm(model_requirements::outline())
             })
             .await?;
-            progress.model(llm.model_name());
-            let llm = PatientModel::new(llm.as_ref(), progress.as_ref());
+            progress.model(pin.llm.model_name());
+            model_requirements::ensure_window(
+                pin.llm.as_ref(),
+                &model_requirements::outline(),
+                "Repairing this course outline",
+            )?;
+            let llm = PatientModel::new(pin.llm.as_ref(), progress.as_ref());
             crate::features::learning::outline_draft::repair_saved(
                 &LearningRepository::new(container.db_pool().clone()),
                 &container.draft_run_registry(),

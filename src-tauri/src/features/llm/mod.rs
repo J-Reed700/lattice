@@ -20,11 +20,15 @@
 //!   each inference backend: priorities, cancellation, slot affinity and
 //!   calibrated token counts.
 //!
+//! - `crate::features::llm::instances` — every model loaded now, for every
+//!   role, with GPU admission before a new bundled server starts.
+//!
 //! No port (`LLMPort` stays in `application/ports/`). No plugin.
 
 pub mod commands;
 pub mod di;
 pub mod dto;
+pub(crate) mod instances;
 pub(crate) mod loading;
 pub mod use_cases;
 

@@ -341,7 +341,7 @@ mod tests {
     }
 
     fn message(source: SourceDto) -> ConversationMessage {
-        let mut aggregate = ConversationAggregate::new("test".into(), "test".into(), None).unwrap();
+        let mut aggregate = ConversationAggregate::new("test".into(), None).unwrap();
         aggregate
             .add_message(MessageRole::Assistant, "An earlier answer [1]".into(), 10)
             .unwrap();

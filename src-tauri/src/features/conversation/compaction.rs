@@ -18,6 +18,7 @@ use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
     COMPACTION_DEADLINE,
 };
+use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -30,10 +31,14 @@ pub const KEEP_RECENT_MIN: i64 = 2;
 /// Build the compaction job for this container, or `None` when no utility model
 /// is available.
 ///
+/// `continuation_llm` is the model the conversation's next turn runs on: the
+/// chat's own model, which need not be the Settings default.
+///
 /// The caller decides whether missing compaction is blocking: a turn may
 /// continue without it only if all unprocessed source still fits in its prompt.
 pub async fn build_job(
     runtime: &dyn ChatRuntime,
+    continuation_llm: Arc<dyn LLMPort>,
     keep_recent_messages: Option<i64>,
 ) -> Result<Option<CompactionJob>> {
     let utility = match runtime.get_or_load_utility_llm().await {
@@ -49,7 +54,6 @@ pub async fn build_job(
     // prompt, so both the counter and the budget come from that model rather than
     // the utility one. Recomputed per call because switching model changes both,
     // and a stale budget accepts a summary the next turn cannot carry.
-    let continuation_llm = runtime.get_or_load_llm().await?;
     let utility_llm = utility.unwrap_or_else(|| Arc::clone(&continuation_llm));
     let count_tokens: TokenCounter = {
         let llm = Arc::clone(&continuation_llm);
@@ -139,14 +143,15 @@ fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
 /// Runs at most one pass. A successful job (including a partial commit or no-op)
 /// is not permission to generate: the caller must reassemble and verify that no
 /// unprocessed source is missing. Errors leave the transcript intact and prevent
-/// generation from using the incomplete pre-compaction plan. `cancel` is the
-/// turn's stop button.
+/// generation from using the incomplete pre-compaction plan. `llm` is the
+/// model the turn is pinned to; `cancel` is the turn's stop button.
 pub async fn compact_for_turn(
     runtime: &dyn ChatRuntime,
     conversation_id: &str,
+    llm: Arc<dyn LLMPort>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    let job = build_job(runtime, None).await?.ok_or_else(|| {
+    let job = build_job(runtime, llm, None).await?.ok_or_else(|| {
         AppError::ServiceNotAvailable(
             "No utility model is available to compact this conversation.".into(),
         )
@@ -194,6 +199,10 @@ pub async fn compact_for_turn(
 /// move, because its window had to drop turns the summary does not cover.
 /// Without it consolidation extracts and leaves the summary alone, so the
 /// next request still opens the same way.
+///
+/// The chat's model is resolved again rather than taken from the turn: the
+/// chat may have chosen another model by now, and the summary is sized for
+/// the turn that comes next.
 pub fn consolidate_after_turn(
     runtime: Arc<dyn ChatRuntime>,
     conversation_id: String,
@@ -206,12 +215,19 @@ pub fn consolidate_after_turn(
             if !runtime.settings().await?.llm.bounded_conversation_memory {
                 return Ok(());
             }
-            let built = tokio::select! {
+            // Held until the job is done, like a turn's pin.
+            let (_continuation, built) = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Ok(()),
-                result = build_job(&*runtime, None) => result,
+                result = async {
+                    let continuation = runtime
+                        .chat_llm_for(&conversation_id, None, ModelRequirements::default())
+                        .await?;
+                    let built = build_job(&*runtime, Arc::clone(&continuation.llm), None).await?;
+                    Ok::<_, AppError>((continuation, built))
+                } => result?,
             };
-            let job = built?.ok_or_else(|| {
+            let job = built.ok_or_else(|| {
                 AppError::ServiceNotAvailable(
                     "No utility model available for memory consolidation".into(),
                 )

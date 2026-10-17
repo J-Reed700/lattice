@@ -55,7 +55,7 @@ impl ConversationRepository {
 
         #[derive(sqlx::FromRow)]
         struct SourceConversationRow {
-            model_name: String,
+            model_choice: Option<String>,
             system_prompt: Option<String>,
             space_id: String,
             explorer_root: Option<String>,
@@ -64,7 +64,7 @@ impl ConversationRepository {
 
         let source = sqlx::query_as::<_, SourceConversationRow>(
             r#"
-            SELECT model_name, system_prompt, space_id, explorer_root, tangent_parent_id
+            SELECT model_choice, system_prompt, space_id, explorer_root, tangent_parent_id
             FROM conversations
             WHERE id = ?
             "#,
@@ -160,7 +160,7 @@ impl ConversationRepository {
         sqlx::query(
             r#"
             INSERT INTO conversations
-                (id, title, model_name, system_prompt, space_id, explorer_root,
+                (id, title, model_choice, system_prompt, space_id, explorer_root,
                  created_at, updated_at, message_count, total_tokens,
                  forked_from_conversation_id, forked_from_message_id,
                  tangent_parent_id, tangent_selection, tangent_context_message_count)
@@ -169,7 +169,7 @@ impl ConversationRepository {
         )
         .bind(new_id)
         .bind(new_title)
-        .bind(&source.model_name)
+        .bind(&source.model_choice)
         .bind(&source.system_prompt)
         .bind(&source.space_id)
         // A branch of an Explorer thread reads the same folder; without it the
@@ -278,9 +278,9 @@ impl ConversationRepository {
         let inserted = sqlx::query(
             r#"
             INSERT INTO conversations
-                (id, title, model_name, system_prompt, space_id, explorer_root,
+                (id, title, model_choice, system_prompt, space_id, explorer_root,
                  created_at, updated_at, message_count, total_tokens)
-            SELECT ?, ?, model_name, system_prompt, space_id, explorer_root, ?, ?, 0, 0
+            SELECT ?, ?, model_choice, system_prompt, space_id, explorer_root, ?, ?, 0, 0
             FROM conversations
             WHERE id = ?
             "#,

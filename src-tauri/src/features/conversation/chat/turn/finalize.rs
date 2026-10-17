@@ -67,10 +67,7 @@ pub(super) async fn finalize_turn(
         tokens.completion = Some(turn.llm.count_tokens(&assistant_response) as u64);
     }
     let turn_record = TurnRecordDto {
-        model: Some(TurnModelDto {
-            id: turn.llm.model_name().to_string(),
-            name: turn.llm.model_name().to_string(),
-        }),
+        model: Some(turn.model.clone()),
         steps: turn.recorder.steps(),
         timing: TurnTimingDto {
             total_ms: elapsed_ms(flow_start),

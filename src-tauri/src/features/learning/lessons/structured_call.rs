@@ -341,7 +341,7 @@ async fn send(
         llm,
         request,
         unbounded.then_some(&streaming),
-        "The requested learning material does not fit in this model's context window. Choose fewer or shorter sources.",
+        model_call::TooLarge::Window("The requested learning material does not fit"),
     )
     .await?;
     tracing::info!(

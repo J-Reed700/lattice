@@ -205,6 +205,7 @@ pub(crate) async fn run_unwatched_turn(
         None,
         None,
         None,
+        None,
         Arc::new(|_| Ok(())),
     )
     .await
@@ -251,18 +252,18 @@ async fn validate_and_guard_chat_request(
     runtime.validate_message(message).await
 }
 
+/// The named conversation, or a new one titled from the message. A new chat
+/// follows the Settings default model, so creating it needs no model.
 async fn get_or_create_conversation_id(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
     validated_message: &str,
-    llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
 ) -> Result<String> {
     match conversation_id {
         Some(id) => Ok(id),
         None => {
             let request = CreateConversationRequestDto {
                 title: generate_title(validated_message),
-                model_name: llm.model_name().to_string(),
                 system_prompt: None,
             };
             let response = container.create_conversation(request).await?;

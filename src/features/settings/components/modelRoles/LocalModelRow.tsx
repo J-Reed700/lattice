@@ -18,16 +18,18 @@ import { Box, Flame, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { IconButton } from '@/components/ui';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
 import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
-import type { RoleWarmupState } from '@/features/model/stores/modelWarmupStore';
-import { VaultAPI } from '@/lib/api';
+import type { RoleWarmupState, WarmupRole } from '@/features/model/stores/modelWarmupStore';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
+import { modelRefForRow } from '@/utils/chatModelSelection';
 
+import { LearningWindowNotice } from './LearningWindowNotice';
 import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
-import { isChatModelSelected, ROLES } from './roleConfig';
+import { isChatModelSelected, isLearningModel, ROLES } from './roleConfig';
 
 function formatFileSize(bytes: number): string {
   const mb = bytes / (1024 * 1024);
@@ -49,15 +51,20 @@ interface Props {
 }
 
 export function LocalModelRow({ model }: Props) {
-  const { refresh, chatProvider } = useModelRoles();
+  const { refresh, chatProvider, llmSettings } = useModelRoles();
   const chatActive = isChatModelSelected(model, chatProvider);
-  const { deleteDownloadedModel } = useDownloadedModels();
+  const learningActive = isLearningModel(model, llmSettings);
+  const { deleteDownloadedModel, warmUpActiveChatModel, warmUpActiveUtilityModel, warmUpLearningModel } =
+    useDownloadedModels();
+  const loadedModels = useLoadedModels();
+  const degraded = degradedReasonFor(modelRefForRow(model, llmSettings), loadedModels);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isWarming, setIsWarming] = useState(false);
   const chatWarmup = useModelWarmupStore((state) => state.chat);
   const utilityWarmup = useModelWarmupStore((state) => state.utility);
+  const learningWarmup = useModelWarmupStore((state) => state.learning);
   const setRolePhase = useModelWarmupStore((state) => state.setRolePhase);
   const claimRole = useModelWarmupStore((state) => state.claimRole);
 
@@ -67,7 +74,8 @@ export function LocalModelRow({ model }: Props) {
   useEffect(() => {
     if (chatActive) claimRole('chat', model.id);
     if (model.is_active_for_utility) claimRole('utility', model.id);
-  }, [claimRole, model.id, chatActive, model.is_active_for_utility]);
+    if (learningActive) claimRole('learning', model.id);
+  }, [claimRole, model.id, chatActive, model.is_active_for_utility, learningActive]);
 
   // The backend's own reason this model didn't load for a role it holds
   // (boot prewarm or the warm-up button). Chat first: it blocks more.
@@ -77,37 +85,48 @@ export function LocalModelRow({ model }: Props) {
       : null;
   const loadError =
     (chatActive ? failedFor(chatWarmup) : null) ??
-    (model.is_active_for_utility ? failedFor(utilityWarmup) : null);
+    (model.is_active_for_utility ? failedFor(utilityWarmup) : null) ??
+    (learningActive ? failedFor(learningWarmup) : null);
+  const isReady = [
+    chatActive ? chatWarmup : null,
+    model.is_active_for_utility ? utilityWarmup : null,
+    learningActive ? learningWarmup : null,
+  ].some((role) => role?.phase === 'ready' && role.modelId === model.id);
 
-  // Warm up whichever roles this model is currently active for. Each
-  // role has its own LLM cache on the backend (chat / utility), so a
-  // single model can be active in two slots and needs both warmed.
-  // Run sequentially -- a single GGUF can't load twice in parallel
-  // without thrashing memory.
+  // Warm up whichever roles this model is currently active for. Roles that
+  // share this model and its launch settings share one loaded instance, so
+  // the later ones find it ready. Run sequentially -- a single GGUF can't
+  // load twice in parallel without thrashing memory. A failure reports and
+  // changes no assignment.
   const handleWarmUp = async () => {
     setIsWarming(true);
     try {
-      const targets: Array<{
-        role: 'chat' | 'utility';
-        call: () => Promise<{ ok: boolean; error?: string }>;
-      }> = [];
+      const targets: Array<{ role: WarmupRole; call: () => Promise<void> }> = [];
       if (chatActive) {
-        targets.push({ role: 'chat', call: VaultAPI.warmUpActiveChatModel });
+        targets.push({ role: 'chat', call: warmUpActiveChatModel });
       }
       if (model.is_active_for_utility) {
-        targets.push({ role: 'utility', call: VaultAPI.warmUpActiveUtilityModel });
+        targets.push({ role: 'utility', call: warmUpActiveUtilityModel });
+      }
+      if (learningActive) {
+        targets.push({ role: 'learning', call: warmUpLearningModel });
       }
       if (targets.length === 0) {
         toast.error('Nothing to warm up', {
-          message: 'Assign this model to chat or utility first.',
+          message: 'Assign this model to chat, utility or learning first.',
         });
         return;
       }
       for (const target of targets) {
         setRolePhase(target.role, 'started', null, model.id);
-        const result = await target.call();
-        setRolePhase(target.role, result.ok ? 'ready' : 'failed', result.error ?? null, model.id);
-        if (!result.ok) throw new Error(`${target.role}: ${result.error}`);
+        try {
+          await target.call();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setRolePhase(target.role, 'failed', message, model.id);
+          throw new Error(`${target.role}: ${message}`);
+        }
+        setRolePhase(target.role, 'ready', null, model.id);
       }
       const roleSummary = targets.map((t) => t.role).join(' + ');
       toast.success(`${model.model_name} warmed up (${roleSummary})`, {
@@ -148,7 +167,7 @@ export function LocalModelRow({ model }: Props) {
     .filter(Boolean)
     .join(' · ');
 
-  const canWarmUp = chatActive || model.is_active_for_utility;
+  const canWarmUp = chatActive || model.is_active_for_utility || learningActive;
   const isLanguageModel = model.model_type !== 'embedding';
 
   return (
@@ -167,6 +186,17 @@ export function LocalModelRow({ model }: Props) {
             >
               Didn&apos;t load: {loadError.split('\n')[0]}
             </div>
+          ) : degraded ? (
+            // Loaded, but on the CPU: it works, slowly, and says why.
+            <div role="status" title={degraded} className="mt-0.5 line-clamp-3 wrap-break-word text-xs text-text-secondary">
+              {isReady ? 'Ready' : 'Loaded'} (on CPU: {degraded})
+            </div>
+          ) : null}
+          {learningActive ? (
+            <LearningWindowNotice
+              model={modelRefForRow(model, llmSettings)}
+              savedWindow={model.configured_context_length ?? null}
+            />
           ) : null}
         </div>
 
@@ -217,7 +247,11 @@ export function LocalModelRow({ model }: Props) {
       <ConfirmDialog
         isOpen={showDeleteConfirm}
         title="Delete model?"
-        message={`Remove ${model.model_name} and its files? This cannot be undone.`}
+        message={
+          learningActive
+            ? `Remove ${model.model_name} and its files? This cannot be undone. This is your Learning model. Lessons will stop until you choose another.`
+            : `Remove ${model.model_name} and its files? This cannot be undone.`
+        }
         confirmLabel="Delete"
         variant="danger"
         onConfirm={handleDelete}

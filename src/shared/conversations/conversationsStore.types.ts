@@ -1,3 +1,4 @@
+import type { ChatModelChoice, ModelRef } from '@/lib/bindings';
 import type {
   ConversationLinkedDocumentDto,
   ConversationSpaceDto,
@@ -13,6 +14,7 @@ import type {
   RetrievalTrace,
   SourceWithMetadata,
   ToolPreferences,
+  TurnModel,
   TurnRecord,
   TurnStep,
 } from '@/types/conversation';
@@ -25,6 +27,13 @@ import type {
  * Callers must not announce an answer, or an error, for either.
  */
 export type GenerationOutcome = 'answered' | 'busy' | 'cancelled' | 'failed';
+
+/** How to re-run a turn. */
+export interface RegenerateOptions {
+  toolPreferences?: ToolPreferences;
+  /** Answer this one time with this model; the chat's own choice is untouched. */
+  model?: ModelRef;
+}
 
 /** How a `/compact` ended: the record it applied, or why it did not run. */
 export type CompactionResult = { ok: true; record: CompactionRecord } | { ok: false; error: string };
@@ -77,6 +86,8 @@ export interface ConversationsState {
   liveRetrieval: Map<string, RetrievalTrace>;
   /** What the in-flight turn has done so far, per conversation id. */
   liveSteps: Map<string, TurnStep[]>;
+  /** The model the in-flight turn is pinned to, per conversation id. */
+  liveModel: Map<string, TurnModel>;
   /** Text the composer should adopt on its next render. */
   composerDraft: string | null;
   linkedDocumentsByConversationId: Map<string, ConversationLinkedDocumentDto[]>;
@@ -95,6 +106,12 @@ export interface ConversationsState {
    * the only right answer.
    */
   createConversation: (_title: string, _spaceId?: string | null) => Promise<string>;
+  /**
+   * Set the model this chat answers with: its own, or the Settings default.
+   * Changes this chat only; resolves with the saved conversation and throws
+   * the backend's reason when the model cannot be used.
+   */
+  setConversationModelChoice: (_id: string, _choice: ChatModelChoice) => Promise<Conversation>;
   setConversationSaved: (_id: string, _value: boolean) => Promise<void>;
   setConversationBookmarked: (_id: string, _value: boolean) => Promise<void>;
   setConversationPinned: (_id: string, _value: boolean) => Promise<void>;
@@ -139,7 +156,7 @@ export interface ConversationsState {
    */
   regenerateResponse: (
     _conversationId: string,
-    _toolPreferences?: ToolPreferences
+    _options?: RegenerateOptions
   ) => Promise<GenerationOutcome>;
   truncateAfter: (
     _conversationId: string,

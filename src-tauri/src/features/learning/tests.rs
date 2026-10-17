@@ -1452,6 +1452,15 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     assert_eq!(tangent1.title, selected_text);
     assert_eq!(tangent1.message_count, 1);
     assert_eq!(tangent1.context_message_count, 1);
+    // A learning tangent is a chat of its own: it follows the Settings
+    // default, never the program's model.
+    let model_choice: Option<String> =
+        sqlx::query_scalar("SELECT model_choice FROM conversations WHERE id = ?")
+            .bind(&tangent1.conversation_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(model_choice, None);
 
     // Verify Course Space creation
     let space_row =

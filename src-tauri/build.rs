@@ -93,6 +93,9 @@ fn main() {
                     "set_active_utility_model",
                     "warm_up_active_chat_model",
                     "warm_up_active_utility_model",
+                    "warm_up_learning_model",
+                    "list_loaded_models",
+                    "last_learning_window_shortfall",
                     "get_active_chat_model",
                     "get_active_embedding_model",
                     "get_active_models",
@@ -129,6 +132,7 @@ fn main() {
                 "conversation",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "create_conversation",
+                    "set_conversation_model_choice",
                     "generate_chat_starters",
                     "get_conversation",
                     "list_conversations",

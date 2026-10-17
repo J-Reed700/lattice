@@ -239,12 +239,10 @@ async fn conversation_claims_keep_verified_answers_and_resolve_their_citations(
     initialize_database(db.pool()).await?;
     let repo = StudyRepository::new(db.pool().clone());
     let conversation_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO conversations (id,title,model_name) VALUES (?,'Research notes','test')",
-    )
-    .bind(&conversation_id)
-    .execute(db.pool())
-    .await?;
+    sqlx::query("INSERT INTO conversations (id,title) VALUES (?,'Research notes')")
+        .bind(&conversation_id)
+        .execute(db.pool())
+        .await?;
     let source = |number: i64, name: &str, content: &str| {
         json!({
             "documentId": format!("document-{number}"),

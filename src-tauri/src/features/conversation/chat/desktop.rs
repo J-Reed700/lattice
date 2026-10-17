@@ -1,5 +1,6 @@
 //! Tauri adapter for the transport-independent turn workflow.
 use super::{ChatResponse, ChatRuntime, ToolPreferences};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -25,6 +26,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
     attachment_document_ids: Option<Vec<String>>,
+    model: Option<ModelRef>,
     window: tauri::Window<R>,
 ) -> Result<ChatResponse> {
     let emit = Arc::new(move |payload| {
@@ -41,6 +43,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         request_id,
         attachment_names,
         attachment_document_ids,
+        model,
         emit,
     )
     .await

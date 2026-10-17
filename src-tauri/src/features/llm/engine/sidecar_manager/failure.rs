@@ -74,8 +74,15 @@ pub(super) enum AttemptFailure {
     /// as an unrecognized startup failure is what silently dropped a whole
     /// session to CPU-only at half context.
     Retry,
-    /// Bad input (missing model file, no free port); retrying won't help.
+    /// This attempt cannot proceed (missing model file, no free port, the
+    /// app shutting down). The ladder stops, but nothing here is a verdict on
+    /// the file: the next load may well succeed.
     Fatal,
+    /// The model file is one this build cannot read: an unknown architecture
+    /// or quantization type, or a tensor layout the loader rejects. Every
+    /// later attempt, on any build and with any offload, reads the same bytes
+    /// and fails the same way, so this alone is remembered against the file.
+    Unsupported,
 }
 
 #[derive(Debug)]
@@ -99,6 +106,7 @@ impl AttemptError {
                 LLMError::GenerationFailed(self.message)
             }
             AttemptFailure::Fatal => LLMError::Other(self.message),
+            AttemptFailure::Unsupported => LLMError::ModelUnsupported(self.message),
         }
     }
 
@@ -123,7 +131,7 @@ impl AttemptError {
 /// | primary, cpu        | binary unusable / GPU init | CPU build           | stop                |
 /// | primary, cpu        | model startup              | stop                | stop                |
 /// | CPU build           | anything                   | stop                | —                   |
-/// | any                 | fatal                      | stop                | stop                |
+/// | any                 | fatal / unsupported model  | stop                | stop                |
 pub(super) fn next_attempt(
     failed: Attempt,
     failure: AttemptFailure,
@@ -134,7 +142,9 @@ pub(super) fn next_attempt(
         gpu_offload: false,
     });
     match (failed.binary, failure) {
-        (SidecarBinary::Cpu, _) | (_, AttemptFailure::Fatal) => None,
+        (SidecarBinary::Cpu, _) | (_, AttemptFailure::Fatal) | (_, AttemptFailure::Unsupported) => {
+            None
+        }
         // A bind collision that survived its retries is not fixed by a
         // different build or a smaller context.
         (_, AttemptFailure::Retry) => None,
@@ -239,11 +249,14 @@ pub(super) fn startup_failure(
         // CPU offload cannot add an architecture or custom quantization type to
         // the same executable. Name the incompatibility rather than suggesting
         // a corrupt download or retrying on CPU.
-        return AttemptError::fatal(format!(
-            "Lattice's bundled local model engine does not support this model ({detail}). \
-             Update Lattice's model engine or select a compatible model. \
-             Downloading the same file again or switching to CPU will not add support."
-        ));
+        return AttemptError {
+            kind: AttemptFailure::Unsupported,
+            message: format!(
+                "Lattice's bundled local model engine does not support this model ({detail}). \
+                 Update Lattice's model engine or select a compatible model. \
+                 Downloading the same file again or switching to CPU will not add support."
+            ),
+        };
     }
 
     // llama.cpp initializes its backends before touching the model, so a
@@ -479,10 +492,35 @@ pub(super) fn line_is_model_loader(lower: &str) -> bool {
     NEEDLES.iter().any(|needle| lower.contains(needle))
 }
 
-/// Loader diagnostics that prove the GGUF uses an architecture or custom
-/// quantization format the bundled `llama-server` executable does not support.
+/// What llama.cpp's model loader says after `error loading model:` when the
+/// file's own structure is not one this build reads. Each names the file,
+/// never the machine. An allocation failure arrives under the same prefix,
+/// so the prefix alone proves nothing.
+const LOADER_REJECTIONS: &[&str] = &[
+    "missing tensor '",
+    "wrong number of tensors",
+    "has wrong shape",
+    "key not found in model",
+];
+
+/// Loader diagnostics that prove the GGUF uses an architecture, custom
+/// quantization format or tensor layout the bundled `llama-server` executable
+/// does not support.
 pub(super) fn unsupported_model_detail(output: &[String]) -> Option<&str> {
+    const LOADER_ERROR: &str = "error loading model:";
     for line in output {
+        if let Some(index) = line.find(LOADER_ERROR) {
+            let detail = line
+                .get(index + LOADER_ERROR.len()..)
+                .unwrap_or_default()
+                .trim();
+            if LOADER_REJECTIONS
+                .iter()
+                .any(|needle| detail.contains(needle))
+            {
+                return Some(clip(detail, ERROR_LINE_MAX_BYTES));
+            }
+        }
         if let Some(index) = line.find("unknown model architecture:") {
             if let Some(detail) = line.get(index..) {
                 return Some(clip(detail.trim(), ERROR_LINE_MAX_BYTES));

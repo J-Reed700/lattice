@@ -11,7 +11,7 @@
 //!
 //! ## Invariants
 //!
-//! - Conversations must have a valid model name
+//! - Conversations must have a title
 //! - Messages maintain chronological order
 //! - Token counts are tracked accurately
 //! - Context window limits are enforced
@@ -31,7 +31,6 @@
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut conversation = ConversationAggregate::new(
 //!     "My Conversation".to_string(),
-//!     "claude-sonnet-4-5-20250929".to_string(),
 //!     Some("You are a helpful assistant.".to_string()),
 //! );
 //!
@@ -57,6 +56,7 @@
 //! # }
 //! ```
 
+use super::ChatModelChoice;
 use crate::shared::error::{AppError, Result};
 use crate::shared::types::ConversationId;
 use chrono::{DateTime, Utc};
@@ -88,37 +88,29 @@ pub struct ConversationAggregate {
 }
 
 impl ConversationAggregate {
-    /// Create a new conversation.
+    /// Create a new conversation. It follows the Settings default model until
+    /// the chat chooses its own.
     ///
     /// # Arguments
     ///
     /// * `title` - Human-readable conversation title
-    /// * `model_name` - LLM model identifier (e.g., "claude-sonnet-4-5-20250929")
     /// * `system_prompt` - Optional system instructions for the LLM
     ///
     /// # Errors
     ///
-    /// Returns an error if title or model_name is empty.
-    ///
-    /// # Invariants
-    ///
-    /// - Title is non-empty
-    /// - Model name is non-empty
-    pub fn new(title: String, model_name: String, system_prompt: Option<String>) -> Result<Self> {
+    /// Returns an error if the title is empty.
+    pub fn new(title: String, system_prompt: Option<String>) -> Result<Self> {
         if title.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Conversation title cannot be empty".into(),
             ));
-        }
-        if model_name.trim().is_empty() {
-            return Err(AppError::InvalidInput("Model name cannot be empty".into()));
         }
 
         Ok(Self {
             conversation: Conversation {
                 id: ConversationId::new(),
                 title,
-                model_name,
+                model_choice: ChatModelChoice::Default,
                 system_prompt,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -395,8 +387,8 @@ impl ConversationAggregate {
         &self.conversation.title
     }
 
-    pub fn model_name(&self) -> &str {
-        &self.conversation.model_name
+    pub fn model_choice(&self) -> &ChatModelChoice {
+        &self.conversation.model_choice
     }
 
     pub fn system_prompt(&self) -> Option<&str> {
@@ -446,7 +438,8 @@ impl ConversationAggregate {
 pub struct Conversation {
     pub id: ConversationId,
     pub title: String,
-    pub model_name: String,
+    /// The model this chat asked for; `Default` follows Settings.
+    pub model_choice: ChatModelChoice,
     pub system_prompt: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

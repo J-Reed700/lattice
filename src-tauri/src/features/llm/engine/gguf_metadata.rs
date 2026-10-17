@@ -275,6 +275,15 @@ impl GgufModelInfo {
     }
 }
 
+/// Whether the model file at `path` can call tools: the curated catalog says
+/// so by its file name, or `info`, its header, does.
+pub fn file_supports_tool_calling(path: &Path, info: Option<&GgufModelInfo>) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling)
+        || info.is_some_and(GgufModelInfo::supports_tool_calling)
+}
+
 /// Read what the GGUF header says about a model.
 ///
 /// Returns `None` when the file cannot be read or is not GGUF. A truncated or
@@ -570,6 +579,12 @@ pub struct GgufFileInspector;
 impl lattice_core::application::ports::ModelFileInspector for GgufFileInspector {
     fn trained_context_length(&self, path: &Path) -> Option<u32> {
         read_model_info(path).and_then(|info| info.trained_context_length)
+    }
+
+    fn supports_tool_calling(&self, path: &Path) -> Option<bool> {
+        let info = read_model_info(path);
+        let supports = file_supports_tool_calling(path, info.as_ref());
+        (supports || info.is_some()).then_some(supports)
     }
 }
 

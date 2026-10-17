@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { ConversationFilterMode } from '@/shared/conversations/conversationsStore.types';
-import type { OptimisticMessage, RetrievalTrace, TurnStep } from '@/types/conversation';
+import type { OptimisticMessage, RetrievalTrace, TurnModel, TurnStep } from '@/types/conversation';
 
 export interface ConversationUiState {
   selectedSpaceId: string | null;
@@ -28,6 +28,12 @@ export interface ConversationUiState {
    * the persisted `metadata.turn` is the record.
    */
   liveSteps: Map<string, TurnStep[]>;
+  /**
+   * The model the in-flight turn is pinned to, per conversation. Sent once,
+   * as soon as the turn has it; cleared with `liveSteps`, after which the
+   * persisted turn record names the model.
+   */
+  liveModel: Map<string, TurnModel>;
   /** Text the composer should adopt on its next render (deep links, retries). */
   composerDraft: string | null;
   error: string | null;
@@ -46,6 +52,7 @@ export const useConversationUiStore = create<ConversationUiState>(() => ({
   optimisticMessages: new Map(),
   liveRetrieval: new Map(),
   liveSteps: new Map(),
+  liveModel: new Map(),
   composerDraft: null,
   error: null,
   requestedLinkedConversationIds: new Set(),

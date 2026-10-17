@@ -10,10 +10,7 @@ async fn test_add_document_reference() {
     seed_documents(&pool, &["doc-123"]).await;
     let repo = ConversationRepository::new(pool);
 
-    let conversation = repo
-        .create_conversation("Test", "model", None)
-        .await
-        .unwrap();
+    let conversation = repo.create_conversation("Test", None).await.unwrap();
 
     repo.add_document_reference(
         &conversation.id.to_string(),
@@ -45,7 +42,7 @@ async fn referencing_a_chunk_again_moves_it_to_the_latest_turn() {
     seed_documents(&pool, &["doc-a", "doc-b"]).await;
     let repo = ConversationRepository::new(pool);
     let id = repo
-        .create_conversation("Test", "model", None)
+        .create_conversation("Test", None)
         .await
         .unwrap()
         .id

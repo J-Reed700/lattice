@@ -80,7 +80,13 @@ pub(super) fn generation_worker(
         }),
         load_llm: std::sync::Arc::new(move || {
             let container = model_container.clone();
-            Box::pin(async move { container.get_or_load_llm().await })
+            Box::pin(async move {
+                container
+                    .learning_llm(
+                        crate::features::learning::model_requirements::lesson_preparation(),
+                    )
+                    .await
+            })
         }),
         refresh_sources: std::sync::Arc::new(move |program_id| {
             let deps = source_deps.clone();

@@ -4,6 +4,7 @@
 //!
 //! These DTOs handle requests and responses for creating, updating, and managing conversations.
 
+use lattice_core::domain::conversation::ChatModelChoice;
 use serde::{Deserialize, Serialize};
 
 /// Conversation representation.
@@ -18,8 +19,9 @@ pub struct ConversationDto {
     /// Conversation title
     pub title: String,
 
-    /// LLM model name (e.g., "claude-sonnet-4-5-20250929")
-    pub model_name: String,
+    /// The model this chat asked for. `default` follows the Settings default
+    /// live; what answered each message is in that message's turn record.
+    pub model_choice: ChatModelChoice,
 
     /// Optional system prompt
     pub system_prompt: Option<String>,
@@ -126,9 +128,6 @@ pub struct MessageDto {
 pub struct CreateConversationRequestDto {
     /// Conversation title
     pub title: String,
-
-    /// LLM model name
-    pub model_name: String,
 
     /// Optional system prompt
     pub system_prompt: Option<String>,
@@ -326,7 +325,7 @@ mod tests {
         let conversation = ConversationDto {
             id: "conv-123".to_string(),
             title: "My Conversation".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
+            model_choice: ChatModelChoice::Default,
             system_prompt: Some("You are a helpful assistant.".to_string()),
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
@@ -383,7 +382,6 @@ mod tests {
     fn test_create_conversation_request_dto_serialization() {
         let request = CreateConversationRequestDto {
             title: "New Chat".to_string(),
-            model_name: "claude-sonnet-4-5-20250929".to_string(),
             system_prompt: None,
         };
 
@@ -391,7 +389,6 @@ mod tests {
         let deserialized: CreateConversationRequestDto = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.title, "New Chat");
-        assert_eq!(deserialized.model_name, "claude-sonnet-4-5-20250929");
     }
 
     #[test]

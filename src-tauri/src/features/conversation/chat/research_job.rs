@@ -128,8 +128,7 @@ pub(super) async fn run(
         Some(id) if !id.trim().is_empty() => id,
         _ => {
             let message = validate_and_guard_chat_request(container, &request.message).await?;
-            let llm = container.get_or_load_llm().await?;
-            get_or_create_conversation_id(container, None, &message, &llm).await?
+            get_or_create_conversation_id(container, None, &message).await?
         }
     };
     request.conversation_id = Some(conversation_id);

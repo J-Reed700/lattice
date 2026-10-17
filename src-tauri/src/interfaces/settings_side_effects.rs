@@ -1,36 +1,29 @@
-//! The `SettingsSideEffectsPort` the Container wires: LLM cache
-//! invalidation, the custom-tool refresh, and the vault's backfill and
-//! pre-flight. It reaches into several features, so it is composed here
-//! rather than inside settings.
+//! The `SettingsSideEffectsPort` the Container wires: invalidating the
+//! loaded LLMs a change makes stale, the custom-tool refresh, and the vault's
+//! backfill and pre-flight. It reaches into several features, so it is
+//! composed here rather than inside settings.
 
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
 use crate::features::function_calling::FunctionExecutorTrait;
+use crate::features::llm::instances::LlmInstances;
 use crate::features::vault::writeback::VaultWriterHandle;
-use crate::interfaces::di::container::{ChatLlmCache, NamedLlmCache};
+use lattice_core::application::ports::llm_port::InvalidationCause;
 use lattice_core::application::ports::{SettingsRepositoryPort, SettingsSideEffectsPort};
 use lattice_core::shared::error::Result;
 
-/// Container-bound implementation of `SettingsSideEffectsPort`. Holds
-/// references to the same primitive caches the legacy
-/// `Container::invalidate_*` methods touched, so a settings update or
-/// reset triggered through any code path (Tauri command, internal
-/// helper, test) invalidates the LLM cache, router LLM cache, and
-/// custom-tool runtime configuration.
+/// Container-bound implementation of `SettingsSideEffectsPort`, so a
+/// settings update, reset or import through any code path (Tauri command,
+/// internal helper, test) invalidates the loaded LLMs it makes stale and
+/// refreshes the custom-tool runtime configuration.
 ///
-/// Each field is the same `Arc` that lives on Container — they share
-/// the same underlying cache state, so this impl observes the same state
-/// the rest of Container does.
+/// Each field is the same `Arc` that lives on Container, so this impl
+/// observes the same state the rest of Container does.
 pub(crate) struct ContainerSettingsSideEffects {
-    /// LLM client cache. Same `Arc` as `Container::llm_cache`.
-    pub(crate) llm_cache: ChatLlmCache,
-
-    /// Router LLM cache. Same `Arc` as `Container::router_llm_cache`.
-    pub(crate) router_llm_cache: NamedLlmCache,
-
-    pub(crate) utility_llm_cache: NamedLlmCache,
+    /// The loaded LLMs. Same `Arc` as `Container::llm_instances`.
+    pub(crate) llm_instances: Arc<LlmInstances>,
 
     /// Function executor for refreshing custom-tool runtime config.
     pub(crate) function_executor: Arc<dyn FunctionExecutorTrait>,
@@ -88,23 +81,31 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
             }
         }
 
-        // Invalidate the LLM caches when LLM settings (or a global
-        // / no-category mutation, which could touch anything) changed.
-        // Other categories (Search, Indexing, Display, etc.) don't
-        // affect the LLM cache — skipping the invalidation here means
-        // a search-config change doesn't cause a needless model
-        // reload on the next chat turn.
+        // Only LLM settings (or a global / no-category mutation, which could
+        // touch anything) reach a loaded model; a search-config change must
+        // not cost the next chat turn a reload.
         let touched_llm = matches!(category, Some(SettingsCategory::Llm) | None);
 
         if touched_llm {
-            self.llm_cache.invalidate();
-            self.router_llm_cache.invalidate();
-            self.utility_llm_cache.invalidate();
-            // Custom-tool runtime config refresh — re-read settings
-            // and push the active custom_tools map into the function
-            // executor. Best-effort: log but don't fail.
+            // Re-read what was written; compare it with what was there, so
+            // only the models whose client or server it changes are dropped.
+            // Best-effort: log but don't fail.
             match self.settings_repository.get_all().await {
                 Ok(settings) => {
+                    if let Some(previous) = &hints.previous_llm {
+                        if previous.learning_model != settings.llm.learning_model {
+                            tracing::info!(
+                                from = ?previous.learning_model.as_ref().map(ToString::to_string),
+                                to = ?settings.llm.learning_model.as_ref().map(ToString::to_string),
+                                "settings.learning_model_set"
+                            );
+                        }
+                    }
+                    self.llm_instances
+                        .invalidate(&InvalidationCause::SettingsChanged {
+                            previous: hints.previous_llm.map(Box::new),
+                            current: Some(Box::new(settings.llm.clone())),
+                        });
                     let custom_tool_map: std::collections::HashMap<
                         String,
                         crate::features::settings::dto::CustomToolSettingsDto,
@@ -118,6 +119,13 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                     self.function_executor.set_custom_tools(custom_tool_map);
                 }
                 Err(error) => {
+                    // Unread, the change cannot be compared: every loaded
+                    // model may be stale.
+                    self.llm_instances
+                        .invalidate(&InvalidationCause::SettingsChanged {
+                            previous: hints.previous_llm.map(Box::new),
+                            current: None,
+                        });
                     tracing::warn!(
                         "Failed to refresh custom tools after settings update; \
                          keeping previous configuration: {error}"

@@ -62,7 +62,7 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
         ConversationRepository::new(pool.clone()),
     )));
     let conversation_id = service
-        .create_conversation("Chat".into(), "model".into(), None)
+        .create_conversation("Chat".into(), None)
         .await
         .unwrap()
         .id

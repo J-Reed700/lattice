@@ -24,6 +24,7 @@ mod recall;
 pub use lesson::{prepare_lesson, prepare_lesson_with_references};
 pub(in crate::features::learning) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};
+pub(in crate::features::learning) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
 const MIN_TEXT: usize = 3;
@@ -33,8 +34,8 @@ const MAX_OPTION: usize = 500;
 const MAX_EXPLANATION: usize = 1600;
 const MIN_QUOTE_CHARS: usize = 25;
 pub(in crate::features::learning) const MAX_QUOTE_CHARS: usize = 1200;
-const OUTLINE_OUTPUT_RESERVE: usize = 4000;
-const LESSON_OUTPUT_RESERVE: usize = 10000;
+pub(in crate::features::learning) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
+pub(in crate::features::learning) const LESSON_OUTPUT_RESERVE: usize = 10000;
 
 /// Added to a draft brief when the material cites saved sources.
 const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt.";

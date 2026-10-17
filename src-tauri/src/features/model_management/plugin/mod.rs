@@ -78,6 +78,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::clear_active_utility_model,
             commands::warm_up_active_chat_model,
             commands::warm_up_active_utility_model,
+            commands::warm_up_learning_model,
+            commands::list_loaded_models,
+            commands::last_learning_window_shortfall,
             // Catalog/discovery commands
             crate::features::model_management::commands::detect_system_capabilities,
             crate::features::model_management::commands::get_compatible_models,

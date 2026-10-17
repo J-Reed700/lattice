@@ -14,15 +14,13 @@ async fn setup() -> (SqlitePool, ConversationRepository) {
         ("two", "space_general"),
         ("three", "other"),
     ] {
-        sqlx::query(
-            "INSERT INTO conversations(id,title,model_name,space_id) VALUES (?,?, 'test',?)",
-        )
-        .bind(id)
-        .bind(id)
-        .bind(space)
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO conversations(id,title,space_id) VALUES (?,?,?)")
+            .bind(id)
+            .bind(id)
+            .bind(space)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     (pool.clone(), ConversationRepository::new(pool))
 }

@@ -20,11 +20,10 @@ pub async fn set_active_chat_model_impl(
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {
+            // Nothing is unloaded: the next request for the default resolves
+            // to the new row, and a model no longer named is evicted only when
+            // its memory is wanted.
             info!(model_id = %validated_model_id, "Active chat model set");
-
-            // Invalidate LLM cache
-            container.invalidate_llm_cache();
-            info!("LLM cache invalidated - new model will be loaded on next access");
             Ok(())
         }
         Err(e) => {
@@ -46,9 +45,6 @@ pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), A
     match use_case.execute().await {
         Ok(()) => {
             info!("Active chat model cleared");
-
-            container.invalidate_llm_cache();
-            info!("LLM cache invalidated after clearing active model");
             Ok(())
         }
         Err(e) => {
@@ -90,9 +86,9 @@ pub async fn get_active_chat_model_impl(container: &Container) -> Result<String,
 
     match use_case.execute().await {
         Ok(maybe_model) => {
-            let inspector = container.model_file_inspector();
+            let facts = ModelFacts::read(container).await;
             let response: Option<DownloadedModelResponse> =
-                maybe_model.map(|m| DownloadedModelResponse::from_model(m, inspector.as_ref()));
+                maybe_model.map(|m| DownloadedModelResponse::from_model(m, &facts));
             serde_json::to_string(&response).map_err(|e| {
                 AppError::Serialization(format!("Failed to serialize chat model: {}", e))
             })
@@ -115,9 +111,9 @@ pub async fn get_active_embedding_model_impl(container: &Container) -> Result<St
 
     match use_case.execute().await {
         Ok(maybe_model) => {
-            let inspector = container.model_file_inspector();
+            let facts = ModelFacts::read(container).await;
             let response: Option<DownloadedModelResponse> =
-                maybe_model.map(|m| DownloadedModelResponse::from_model(m, inspector.as_ref()));
+                maybe_model.map(|m| DownloadedModelResponse::from_model(m, &facts));
             serde_json::to_string(&response).map_err(|e| {
                 AppError::Serialization(format!("Failed to serialize embedding model: {}", e))
             })
@@ -150,13 +146,9 @@ pub async fn set_active_utility_model_impl(
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {
+            // The next utility call resolves to the new row; nothing is
+            // unloaded.
             info!(model_id = %validated_model_id, "Active utility model set");
-
-            // The utility LLM has its own cache (distinct from chat).
-            // Invalidate so the next HyDE/router call rebuilds against
-            // the newly-active model.
-            container.invalidate_utility_llm_cache();
-            info!("Utility LLM cache invalidated - utility role updated");
             Ok(())
         }
         Err(e) => {
@@ -175,9 +167,6 @@ pub async fn clear_active_utility_model_impl(container: &Container) -> Result<()
     match use_case.clear().await {
         Ok(()) => {
             info!("Active utility model cleared");
-
-            container.invalidate_utility_llm_cache();
-            info!("Utility LLM cache invalidated after clearing utility model");
             Ok(())
         }
         Err(e) => {

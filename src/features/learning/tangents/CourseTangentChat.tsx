@@ -15,8 +15,9 @@ import { CitationVisibilityToggle } from '@/features/reading/components/Citation
 import type { LearningTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
+import type { RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
-import type { ConversationMessage, ToolPreferences } from '@/types/conversation';
+import type { ConversationMessage } from '@/types/conversation';
 
 const EMPTY_MESSAGES: ConversationMessage[] = [];
 
@@ -122,8 +123,8 @@ export function CourseTangentChat({
       ),
       composerDraft: null,
       setComposerDraft: (value: string | null) => setInput(value ?? ''),
-      regenerateResponse: async (conversationId: string, preferences?: ToolPreferences) => {
-        const outcome = await base.regenerateResponse(conversationId, preferences);
+      regenerateResponse: async (conversationId: string, options?: RegenerateOptions) => {
+        const outcome = await base.regenerateResponse(conversationId, options);
         if (outcome === 'failed') {
           setInput(
             [...persisted].reverse().find((message) => message.role === 'user')?.content ?? '',

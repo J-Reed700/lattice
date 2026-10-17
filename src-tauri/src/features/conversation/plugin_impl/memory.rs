@@ -4,6 +4,7 @@ use crate::features::conversation::dto::{
     CompactConversationRequestDto, CompactConversationResponseDto,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::shared::ipc::ApiError;
 
 /// Read the bounded-memory ledger for a conversation, for the details view.
@@ -73,11 +74,18 @@ pub async fn compact_conversation_impl(
         ));
     }
 
-    // The job never loads a model. §12: without a utility model, say that
-    // compaction cannot proceed rather than committing something unvalidated.
-    // A `None` is only an error on this path, because here the user asked.
+    // The summary is sized for the chat's own model, the one its next turn
+    // runs on; the pin holds that model until the job is done. §12: without a
+    // utility model, say that compaction cannot proceed rather than committing
+    // something unvalidated. A `None` is only an error on this path, because
+    // here the user asked.
+    let continuation = container
+        .chat_llm_for(conversation_id, None, ModelRequirements::default())
+        .await
+        .map_err(ApiError::from)?;
     let job = crate::features::conversation::compaction::build_job(
         container,
+        std::sync::Arc::clone(&continuation.llm),
         request.keep_recent_messages,
     )
     .await

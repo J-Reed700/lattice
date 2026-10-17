@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// The flat sampling fields are the answer profile, used when the model
 /// answers directly; `thinking` is the profile for requests that think first.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
     /// Temperature for sampling (0.0 = deterministic, 2.0 = very random).

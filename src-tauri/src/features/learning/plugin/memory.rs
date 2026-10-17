@@ -127,7 +127,13 @@ pub async fn generate_learning_card_drafts(
             source.excerpt.clone_from(text);
         }
     }
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let pin = learning_model(
+        &container,
+        model_requirements::recall_drafts(request.count),
+        "Drafting recall cards",
+    )
+    .await?;
+    let llm = &pin.llm;
     let drafts = crate::features::learning::generation::generate_recall_drafts(
         llm.as_ref(),
         &program,
