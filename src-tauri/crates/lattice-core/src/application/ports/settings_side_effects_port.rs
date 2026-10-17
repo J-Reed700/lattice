@@ -4,14 +4,17 @@
 //! persisted. The one exception is `check_vault_enable`, which runs before
 //! the write so it can still refuse it.
 
-use crate::application::contracts::settings::SettingsCategory;
+use crate::application::contracts::settings::{LLMSettingsDto, SettingsCategory};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SettingsTransitionHints {
     /// `vault.enabled` flipped false → true in this update.
     pub vault_just_enabled: bool,
+    /// The LLM settings before the write, so a reaction can tell what
+    /// changed. `None` when they could not be read.
+    pub previous_llm: Option<LLMSettingsDto>,
 }
 
 #[async_trait]

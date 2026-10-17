@@ -135,11 +135,12 @@ mod readiness;
 mod registry;
 mod startup;
 
-pub use config::{SidecarBinary, SidecarConfig, SpeculativeDecoding};
+pub(crate) use config::resident_bytes_of;
+pub use config::{Footprint, SidecarBinary, SidecarConfig, SpeculativeDecoding};
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;
 pub(super) use process::SpawnedChild;
-pub use registry::{kill_registered_sidecars, reap_orphan_sidecars, SidecarRegistry};
+pub use registry::{kill_registered_sidecars, reap_orphan_sidecars, Admission, SidecarRegistry};
 pub use startup::SidecarManager;
 
 use config::*;

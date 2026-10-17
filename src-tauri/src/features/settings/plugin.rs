@@ -7,6 +7,8 @@ use crate::features::settings::dto::{
     UpdateSettingsRequestDto,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::llm_port::InvalidationCause;
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::http::reqwest_client_builder;
 use lattice_core::shared::ipc::ApiError;
@@ -601,19 +603,23 @@ pub async fn set_cloud_api_key(
     provider: String,
     key: String,
 ) -> Result<(), ApiError> {
-    if !matches!(provider.as_str(), "openai" | "anthropic" | "google") || key.trim().is_empty() {
+    let cloud = match provider.as_str() {
+        "openai" => Some(CloudProvider::Openai),
+        "anthropic" => Some(CloudProvider::Anthropic),
+        "google" => Some(CloudProvider::Google),
+        _ => None,
+    };
+    let Some(cloud) = cloud.filter(|_| !key.trim().is_empty()) else {
         return Err(ApiError::from(AppError::InvalidInput(
             "Choose a cloud provider and enter its API key".into(),
         )));
-    }
+    };
     container
         .set_api_key_use_case()
         .execute(provider, key)
         .await
         .map_err(ApiError::from)?;
-    container.invalidate_llm_cache();
-    container.invalidate_router_llm_cache();
-    container.invalidate_utility_llm_cache();
+    container.invalidate_llm_instances(InvalidationCause::CredentialsChanged { provider: cloud });
     Ok(())
 }
 

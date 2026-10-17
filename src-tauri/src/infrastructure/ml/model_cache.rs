@@ -14,12 +14,6 @@ pub(crate) trait CachedModel {
     fn is_alive(&self) -> bool;
 }
 
-impl CachedModel for std::sync::Arc<dyn lattice_core::application::ports::LLMPort> {
-    fn is_alive(&self) -> bool {
-        lattice_core::application::ports::LLMPort::is_alive(self.as_ref())
-    }
-}
-
 impl CachedModel for std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort> {
     fn is_alive(&self) -> bool {
         true
@@ -83,22 +77,7 @@ impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
     /// Errors and absent models are retryable, never cached. Cancellation
     /// releases the load lock. Invalidation does not cancel existing callers:
     /// they may receive their result, but cannot repopulate the new generation.
-    pub(crate) async fn get_or_load<E, F, Fut>(
-        &self,
-        key: K,
-        generation: u64,
-        load: F,
-    ) -> Result<Option<V>, E>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Option<V>, E>>,
-    {
-        self.get_or_load_with_policy(key, generation, || async {
-            load().await.map(|value| (value, true))
-        })
-        .await
-    }
-
+    ///
     /// The loader may return a usable value without publishing it (for
     /// example, a degraded embedding model). This still serializes loads.
     pub(crate) async fn get_or_load_with_policy<E, F, Fut>(
@@ -130,24 +109,11 @@ impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
     }
 }
 
-impl lattice_core::application::ports::LoadedChatModelPort
-    for ModelCache<(), std::sync::Arc<dyn lattice_core::application::ports::LLMPort>>
-{
-    fn current_model(
-        &self,
-    ) -> Option<std::sync::Arc<dyn lattice_core::application::ports::LLMPort>> {
-        self.get(&(), self.generation())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::llm::engine::factory::MockLLMPort;
-    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-    use lattice_core::application::ports::{LLMPort, LoadedChatModelPort};
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
 
@@ -157,53 +123,47 @@ mod tests {
         }
     }
 
-    /// A port over a process that can be killed from the test.
-    struct Killable {
-        alive: Arc<std::sync::atomic::AtomicBool>,
+    impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
+        /// Load and always publish.
+        async fn get_or_load<E, F, Fut>(
+            &self,
+            key: K,
+            generation: u64,
+            load: F,
+        ) -> Result<Option<V>, E>
+        where
+            F: FnOnce() -> Fut,
+            Fut: std::future::Future<Output = Result<Option<V>, E>>,
+        {
+            self.get_or_load_with_policy(key, generation, || async {
+                load().await.map(|value| (value, true))
+            })
+            .await
+        }
     }
 
-    #[async_trait::async_trait]
-    impl LLMPort for Killable {
-        async fn complete(
-            &self,
-            request: &CompletionRequest,
-        ) -> lattice_core::shared::error::Result<CompletionResponse> {
-            Ok(CompletionResponse::from_text(
-                self.respond(request.user_text()).await?,
-            ))
-        }
-        fn model_name(&self) -> &str {
-            "killable"
-        }
-        fn max_context_tokens(&self) -> usize {
-            4096
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len()
-        }
-        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-            Ok(true)
-        }
+    /// A model over a process that can be killed from the test.
+    #[derive(Clone)]
+    struct Killable {
+        alive: Arc<AtomicBool>,
+    }
+
+    impl CachedModel for Killable {
         fn is_alive(&self) -> bool {
             self.alive.load(Ordering::SeqCst)
-        }
-    }
-    impl Killable {
-        async fn respond(&self, _prompt: &str) -> lattice_core::shared::error::Result<String> {
-            Ok(String::new())
         }
     }
 
     #[tokio::test]
     async fn dead_server_is_a_miss_and_the_next_request_reloads() {
-        let cache: ModelCache<(), Arc<dyn LLMPort>> = ModelCache::new();
+        let cache: ModelCache<(), Killable> = ModelCache::new();
         let loads = AtomicUsize::new(0);
-        let first_alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let load = |alive: Arc<std::sync::atomic::AtomicBool>| {
+        let first_alive = Arc::new(AtomicBool::new(true));
+        let load = |alive: Arc<AtomicBool>| {
             let loads = &loads;
             move || async move {
                 loads.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, ()>(Some(Arc::new(Killable { alive }) as Arc<dyn LLMPort>))
+                Ok::<_, ()>(Some(Killable { alive }))
             }
         };
         let generation = cache.generation();
@@ -221,7 +181,7 @@ mod tests {
         first_alive.store(false, Ordering::SeqCst);
         assert!(cache.get(&(), generation).is_none());
 
-        let fresh = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let fresh = Arc::new(AtomicBool::new(true));
         let reloaded = cache
             .get_or_load((), generation, load(fresh))
             .await
@@ -234,41 +194,6 @@ mod tests {
         );
         assert!(reloaded.is_alive());
         assert!(cache.get(&(), generation).is_some());
-    }
-
-    #[tokio::test]
-    async fn chat_provider_tracks_invalidation_without_revoking_existing_handles() {
-        let cache = ModelCache::new();
-        let provider: &dyn LoadedChatModelPort = &cache;
-        assert!(provider.current_model().is_none());
-        let model: Arc<dyn LLMPort> = Arc::new(MockLLMPort::new());
-        cache
-            .get_or_load((), cache.generation(), || async {
-                Ok::<_, ()>(Some(model.clone()))
-            })
-            .await
-            .unwrap();
-        let retained = provider.current_model().unwrap();
-        assert!(Arc::ptr_eq(&retained, &model));
-        cache.invalidate();
-        assert!(provider.current_model().is_none());
-        assert_eq!(retained.model_name(), "mock-llm");
-    }
-
-    #[tokio::test]
-    async fn chat_provider_never_exposes_invalidated_load() {
-        let cache = ModelCache::new();
-        let provider: &dyn LoadedChatModelPort = &cache;
-        let model: Arc<dyn LLMPort> = Arc::new(MockLLMPort::new());
-        let loaded = cache
-            .get_or_load((), cache.generation(), || async {
-                cache.invalidate();
-                Ok::<_, ()>(Some(model))
-            })
-            .await
-            .unwrap();
-        assert!(loaded.is_some());
-        assert!(provider.current_model().is_none());
     }
 
     #[tokio::test]

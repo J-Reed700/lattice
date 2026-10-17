@@ -68,6 +68,7 @@ impl UpdateSettingsUseCase {
         let hints =
             lattice_core::application::ports::settings_side_effects_port::SettingsTransitionHints {
                 vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
+                previous_llm: previous.map(|settings| settings.llm),
             };
         self.side_effects
             .on_settings_updated(request.category, hints)

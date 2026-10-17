@@ -17,7 +17,8 @@
 //! - `CloudLlm` - OpenAI Responses and Anthropic Messages
 //! - `ScheduledLlm` - the decorator that admits each call through its backend's scheduler
 
-use crate::domain::models::model_ref::ModelRef;
+use crate::application::contracts::settings::LLMSettingsDto;
+use crate::domain::models::model_ref::{CloudProvider, ModelRef};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -663,6 +664,22 @@ pub struct ModelRequirements {
 pub struct ResolvedModel {
     pub model: ModelRef,
     pub origin: ModelOrigin,
+}
+
+/// Why loaded models stop being handed out. Whoever holds one keeps it until
+/// their work ends; the next request loads afresh.
+#[derive(Clone, Debug)]
+pub enum InvalidationCause {
+    /// A downloaded model's row was deleted.
+    ModelDeleted { model_id: String },
+    /// LLM settings were written. Either side is `None` when it could not be
+    /// read, which leaves nothing to compare: every loaded model is stale.
+    SettingsChanged {
+        previous: Option<Box<LLMSettingsDto>>,
+        current: Option<Box<LLMSettingsDto>>,
+    },
+    /// A cloud provider's API key was saved.
+    CredentialsChanged { provider: CloudProvider },
 }
 
 /// A loaded model held for one turn or job. The holder keeps `llm` until the
