@@ -62,8 +62,30 @@ export const Diagrams = Extension.create<DiagramsOptions>({
   },
 });
 
+function languageOf(node: ProseMirrorNode): string | null {
+  return typeof node.attrs.language === 'string' ? node.attrs.language : null;
+}
+
+/**
+ * The code block ProseMirror would draw itself, built synchronously so the
+ * code is in the DOM on the first render. Asking for a new view when the
+ * language changes lets a block that becomes ```mermaid move to the diagram
+ * view.
+ */
+function plainCodeBlock(node: ProseMirrorNode, prefix: string) {
+  const language = languageOf(node);
+  const dom = document.createElement('pre');
+  const contentDOM = dom.appendChild(document.createElement('code'));
+  if (language) contentDOM.className = `${prefix}${language}`;
+  return {
+    dom,
+    contentDOM,
+    update: (next: ProseMirrorNode) => next.type === node.type && languageOf(next) === language,
+  };
+}
+
 function CodeBlockView({ node, editor, extension, decorations }: NodeViewProps) {
-  const language = typeof node.attrs.language === 'string' ? node.attrs.language : null;
+  const language = languageOf(node);
   const prefix = (extension.options as { languageClassPrefix?: string }).languageClassPrefix ?? 'language-';
   const code = <NodeViewContent<'code'> as="code" className={language ? `${prefix}${language}` : undefined} />;
   const streaming = decorations.some((decoration) => (decoration.spec as { streamingBlock?: boolean }).streamingBlock);
@@ -82,11 +104,15 @@ function CodeBlockView({ node, editor, extension, decorations }: NodeViewProps) 
  * The lowlight code block, drawn by a node view that turns a closed ```mermaid
  * fence into a diagram in read-only editors. An editor created editable (the
  * notes editor) keeps ProseMirror's own code block: diagrams are for reading,
- * and a React node view would change how the block edits.
+ * and a React node view would change how the block edits. Other languages get
+ * a plain view: a React view mounts a tick late and costs a React root per
+ * block, which every code block in a long answer would pay.
  */
 export const CodeBlockWithDiagrams = CodeBlockLowlight.extend({
   addNodeView() {
     if (this.editor.options.editable) return null;
-    return ReactNodeViewRenderer(CodeBlockView, { contentDOMElementTag: 'span' });
+    const diagramView = ReactNodeViewRenderer(CodeBlockView, { contentDOMElementTag: 'span' });
+    const prefix = this.options.languageClassPrefix ?? 'language-';
+    return (props) => (languageOf(props.node) === 'mermaid' ? diagramView(props) : plainCodeBlock(props.node, prefix));
   },
 });
