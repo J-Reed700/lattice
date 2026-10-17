@@ -8,8 +8,9 @@
 //! overlap alone settles nothing.
 //!
 //! The judge is an improvement on the lexical verdict, never a precondition
-//! for one. An escalated claim the judge never reached — the budget ran out,
-//! the call failed — keeps its lexical verdict, except one carrying a number,
+//! for one. Every escalated claim is judged; no clock cuts the check short.
+//! One the judge could not settle — the call failed, or its reply held no
+//! verdict — keeps its lexical verdict, except one carrying a number,
 //! date or negation, or copying a passage sentence that carries one it left
 //! out: overlap cannot settle those, so it reads as unverified
 //! rather than borrowing a positive verdict from shared vocabulary. Unverified
@@ -34,7 +35,6 @@ mod lexical;
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};
 
-pub(crate) use self::judge::judge_pace;
 use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;
 
@@ -43,8 +43,6 @@ use lattice_core::application::services::claim_verification::ClaimVerdict;
 /// Why a claim was left unverified, so the UI can say which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnverifiedReason {
-    /// The judge's time budget ran out before it reached the claim.
-    Budget,
     /// The judge was asked and returned nothing usable.
     JudgeFailed,
     /// The cited source has no archived text to check against.
@@ -57,7 +55,6 @@ pub(super) enum UnverifiedReason {
 impl UnverifiedReason {
     pub(super) fn as_str(self) -> &'static str {
         match self {
-            Self::Budget => "budget",
             Self::JudgeFailed => "judge_failed",
             Self::NoText => "no_text",
             Self::LowConfidence => "low_confidence",
@@ -356,16 +353,6 @@ impl GroundingVerifier {
         Self { judge: None }
     }
 
-    /// Size the judge's parts to what its model reads in time, learning the
-    /// pace from each call, if there is a judge.
-    pub(super) fn with_pace(
-        mut self,
-        pace: Arc<lattice_core::application::services::prompt_pace::PromptPace>,
-    ) -> Self {
-        self.judge = self.judge.map(|judge| judge.with_pace(pace));
-        self
-    }
-
     /// Apply the user's verification settings to the judge, if there is one.
     ///
     /// Without this the judge decodes greedily, which is the right default; the
@@ -393,18 +380,13 @@ impl GroundingVerifier {
         // no text is unverified whatever the lexical pass made of it: there
         // was nothing to find the claim in, so "not found" would be false.
         let mut requests = Vec::new();
-        let open_claims = claims
-            .iter()
-            .filter(|claim| lexical::needs_judge(claim))
-            .count();
         for (index, claim) in claims.iter().enumerate() {
             if !lexical::needs_judge(claim) {
                 continue;
             }
-            // Room is what the judge reads in time, shared by the claims
-            // waiting for it, and never past its window; a page longer than
-            // that is read in parts.
-            let room = judge.evidence_room_chars(&claim.claim_text, open_claims);
+            // Room is what the judge's window holds beside the claim and its
+            // answer; a page longer than that is read in parts.
+            let room = judge.evidence_room_chars(&claim.claim_text);
             match evidence_for(claim, sources, room) {
                 Evidence::Found(evidence) => {
                     requests.push((index, claim.claim_text.as_str(), evidence));
@@ -451,10 +433,9 @@ impl GroundingVerifier {
                     assessment.reason = outcome.reason;
                     continue;
                 }
-                ClaimJudgment::OutOfTime => UnverifiedReason::Budget,
                 ClaimJudgment::Unusable | ClaimJudgment::Failed(_) => UnverifiedReason::JudgeFailed,
             };
-            // Unreached: the lexical verdict stands where overlap can speak
+            // Not settled by the judge: the lexical verdict stands where overlap can speak
             // for the claim. Where it cannot — a number, a date, a negation —
             // a match certifies nothing, and a miss is not a finding either.
             if claims

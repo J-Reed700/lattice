@@ -7,8 +7,6 @@ use crate::application::ports::LLMPort;
 use crate::shared::error::Result;
 use crate::shared::text::normalize_whitespace;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use tokio::time::Instant;
 use tracing::warn;
 
 mod batch;
@@ -56,7 +54,6 @@ pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 
 const MAX_QUOTE_CHARS: usize = 400;
 const MAX_REASON_CHARS: usize = 600;
-const MIN_CALL_SLICE: Duration = Duration::from_millis(250);
 /// Instructions for the claim judge.
 ///
 /// The evidence is text the user's own documents and fetched pages produced,
@@ -105,8 +102,6 @@ pub enum ClaimJudgment {
     /// Preserve provider failures so durable callers can defer transient outages
     /// without mistaking them for evidence or malformed model output.
     Failed(crate::shared::error::AppError),
-    /// The budget ran out before or during the call.
-    OutOfTime,
     /// The call failed or the reply held no verdict.
     Unusable,
 }
@@ -156,24 +151,11 @@ impl<'a> ClaimChecker<'a> {
         (self.llm.max_context_tokens()).saturating_sub(prompts + self.max_output_tokens as usize)
     }
 
-    pub async fn check(
-        &self,
-        claim: &str,
-        evidence: &ClaimEvidence,
-        deadline: Instant,
-    ) -> ClaimJudgment {
-        self.check_inner(claim, evidence, Some(deadline), None, None)
-            .await
-    }
-
-    /// Exercise the original quote protocol without a chat deadline in tests.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn check_without_deadline(
-        &self,
-        claim: &str,
-        evidence: &ClaimEvidence,
-    ) -> ClaimJudgment {
-        self.check_inner(claim, evidence, None, None, None).await
+    /// Judge `claim` against `evidence` with the quote protocol. No clock
+    /// bounds the call: the adapter's liveness checks catch a dead server,
+    /// and the caller's cancellation stops a live one.
+    pub async fn check(&self, claim: &str, evidence: &ClaimEvidence) -> ClaimJudgment {
+        self.check_inner(claim, evidence, None, None).await
     }
 
     /// Select evidence by application-owned location instead of asking a model
@@ -232,7 +214,7 @@ impl<'a> ClaimChecker<'a> {
                 .join("\n\n"),
             quote: None,
         };
-        self.check_inner(claim, &evidence, None, Some(passages), context)
+        self.check_inner(claim, &evidence, Some(passages), context)
             .await
     }
 
@@ -240,11 +222,10 @@ impl<'a> ClaimChecker<'a> {
         &self,
         claim: &str,
         evidence: &ClaimEvidence,
-        deadline: Option<Instant>,
         locations: Option<&[String]>,
         context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
-        let reasoned = deadline.is_none() && locations.is_some() && self.policy.strict();
+        let reasoned = locations.is_some() && self.policy.strict();
         let verdict_of = |text: &str| {
             if reasoned {
                 final_verdict(text)
@@ -257,23 +238,7 @@ impl<'a> ClaimChecker<'a> {
         let mut prompt = original_prompt.clone();
         let mut corrected_format = false;
         let (text, logprobs) = loop {
-            let reply = if let Some(deadline) = deadline {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining < MIN_CALL_SLICE {
-                    return ClaimJudgment::OutOfTime;
-                }
-                match tokio::time::timeout(
-                    remaining,
-                    self.request(&prompt, false, locations.is_some()),
-                )
-                .await
-                {
-                    Ok(reply) => reply,
-                    Err(_) => return ClaimJudgment::OutOfTime,
-                }
-            } else {
-                self.request(&prompt, true, locations.is_some()).await
-            };
+            let reply = self.request(&prompt, locations.is_some()).await;
             let (text, logprobs) = match reply {
                 Ok(reply) => reply,
                 Err(e) => {
@@ -460,10 +425,9 @@ impl<'a> ClaimChecker<'a> {
     async fn request(
         &self,
         prompt: &str,
-        no_time_limit: bool,
         located: bool,
     ) -> Result<(String, Option<Vec<(String, f32)>>)> {
-        let reasoned = no_time_limit && located && self.policy.strict();
+        let reasoned = located && self.policy.strict();
         let system = self.system_prompt(located, reasoned);
         self.llm
             .complete(&CompletionRequest {
@@ -479,13 +443,13 @@ impl<'a> ClaimChecker<'a> {
                 ],
                 // Keep the model's reasoning enabled. Durable publication
                 // checks ask for deliberation; chat uses the model default.
-                reasoning_effort: (no_time_limit && self.policy.strict()).then(|| "low".into()),
+                reasoning_effort: self.policy.strict().then(|| "low".into()),
                 sampling: Some(self.sampling),
                 // A durable lesson check must not fail merely because a
                 // reasoning provider needs more than the chat-sized reply
                 // allowance. Its configured provider/context limit still
                 // applies, and incomplete output can never approve a claim.
-                max_output_tokens: Some(if no_time_limit && self.policy.strict() {
+                max_output_tokens: Some(if self.policy.strict() {
                     self.llm
                         .max_context_tokens()
                         .saturating_sub(self.llm.count_tokens(&system))
@@ -495,7 +459,9 @@ impl<'a> ClaimChecker<'a> {
                     self.max_output_tokens
                 }),
                 want_logprobs: !reasoned,
-                no_time_limit,
+                // A slow model is not a failed one: stall detection and the
+                // caller's cancellation end a call that will not finish.
+                no_time_limit: true,
                 // Checking what an answer or a lesson already says: behind
                 // whoever is waiting on the model, ahead of upkeep.
                 priority: InferencePriority::Verification,

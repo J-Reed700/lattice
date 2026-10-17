@@ -1,10 +1,10 @@
 //! The planner's user turn, sized in tokens.
 //!
-//! Two limits apply. The window is hard: a request past it is refused by the
-//! server, so a prompt that cannot fit is never sent. The prompt target is
-//! soft: it is what the model can prefill inside the planner's timeout, and it
-//! shrinks when the planner times out (see `health`). Rows are chosen on the
-//! port's calibrated estimate and the finished prompt is then counted with the
+//! The window is the limit: a request past it is refused by the server, so a
+//! prompt that cannot fit is never sent. The prompt target is the room the
+//! window leaves after the plan's reservation, held lower only when a server
+//! refused a prompt as larger than its real window (see `health`). No clock
+//! sizes it. Rows are chosen on the port's calibrated estimate and the finished prompt is then counted with the
 //! server's own tokenizer where there is one. An estimate is never trusted
 //! with the whole window: the 2026-10-13 baseline sized a catalog on chars/4
 //! and 12 of 16 requests came back as larger than the window.
@@ -52,6 +52,13 @@ const RECOUNTS: usize = 2;
 /// the window is spent on one. An exact count needs no margin.
 fn spendable(room: usize) -> usize {
     room * 4 / 5
+}
+
+/// The prompt, system prompt included, the planner's window holds once the
+/// plan's reservation and the chat template's framing are paid for.
+pub(super) fn window_room(llm: &dyn LLMPort) -> usize {
+    llm.max_context_tokens()
+        .saturating_sub(PLANNER_OUTPUT_TOKENS as usize + TEMPLATE_FRAMING_TOKENS)
 }
 
 /// One catalog row as the planner sees it.
@@ -149,7 +156,7 @@ pub(in super::super) fn history_tokens(target: usize) -> usize {
 /// The newest whole lines of the conversation excerpt that fit its share of
 /// a `target`-token prompt, with a line counting the ones left out. The
 /// excerpt is normally built to that share already; this keeps the prompt
-/// inside the planner's deadline when it was not, without cutting a line.
+/// inside its target when it was not, without cutting a line.
 pub(super) fn recent_history(llm: &dyn LLMPort, history: Option<&str>, target: usize) -> String {
     use lattice_core::application::services::history_share::newest_that_fit;
     let lines: Vec<&str> = history.unwrap_or("").lines().collect();
@@ -272,9 +279,7 @@ pub(super) async fn build(
     catalog: &[CorpusDocument],
     target: usize,
 ) -> Result<PlannerPrompt> {
-    let room = llm
-        .max_context_tokens()
-        .saturating_sub(PLANNER_OUTPUT_TOKENS as usize + TEMPLATE_FRAMING_TOKENS);
+    let room = window_room(llm);
     // What a prompt may measure and still be sent, by how it was measured.
     let window = |exact: bool| if exact { room } else { spendable(room) };
     let limit = target.min(window(llm.counts_tokens_exactly()));

@@ -6,8 +6,11 @@
 //! window and refuses a request that does not fit. A generator states what it
 //! needs (the answer's reservation, its priority and schema); it never does
 //! window arithmetic of its own.
-
-use std::time::Duration;
+//!
+//! No learning call has a wall-clock limit. A slow model is not a failed
+//! one: the adapter's stall detection ends a call whose server has gone
+//! quiet, the answer's output reservation ends a runaway one, and dropping
+//! the future (a cancelled job, a closed window) ends one nobody wants.
 
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
@@ -65,35 +68,19 @@ pub(in crate::features::learning) fn prose(
     request
 }
 
-/// A wall-clock limit on one call, queueing included, and what the learner is
-/// told when it passes.
-pub(in crate::features::learning) struct Deadline {
-    pub after: Duration,
-    pub message: &'static str,
-}
-
-/// Send `request`. A request the model's window cannot hold fails with
-/// `too_large` and is never sent.
+/// Send `request` with no elapsed-time limit. A request the model's window
+/// cannot hold fails with `too_large` and is never sent.
 pub(in crate::features::learning) async fn send(
     llm: &dyn LLMPort,
-    request: GroundedRequest,
+    mut request: GroundedRequest,
     streaming: Option<&Streaming<'_>>,
-    deadline: Option<Deadline>,
     too_large: &str,
 ) -> Result<GroundedOutput> {
-    let call = async {
-        match streaming {
-            Some(streaming) => {
-                grounded_generation::generate_streaming(llm, request, streaming).await
-            }
-            None => grounded_generation::generate(llm, request).await,
-        }
-    };
-    let result = match deadline {
-        Some(deadline) => tokio::time::timeout(deadline.after, call)
-            .await
-            .map_err(|_| AppError::ServiceNotAvailable(deadline.message.into()))?,
-        None => call.await,
+    request.call.time_budget = None;
+    request.call.no_time_limit = true;
+    let result = match streaming {
+        Some(streaming) => grounded_generation::generate_streaming(llm, request, streaming).await,
+        None => grounded_generation::generate(llm, request).await,
     };
     result.map_err(|error| match error {
         GroundedGenerationError::Budget(_) => AppError::InvalidInput(too_large.into()),
@@ -171,7 +158,6 @@ mod tests {
                 "low",
             ),
             None,
-            None,
             "too large",
         )
         .await?;
@@ -186,6 +172,9 @@ mod tests {
         assert_eq!(request.json_schema, Some(schema));
         assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
         assert_eq!(request.max_output_tokens, Some(2000));
+        // No learning call is killed by a clock.
+        assert!(request.no_time_limit);
+        assert_eq!(request.wall_clock_budget(), None);
         Ok(())
     }
 
@@ -201,7 +190,6 @@ mod tests {
                 500,
                 "low",
             ),
-            None,
             None,
             "Choose fewer sources.",
         )

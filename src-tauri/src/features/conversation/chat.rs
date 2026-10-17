@@ -102,6 +102,7 @@ use self::retrieval::{
     assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
     load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
+pub use self::source_snapshots::CapturedSourcesDto;
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
 use self::turn_record::TurnRecorder;

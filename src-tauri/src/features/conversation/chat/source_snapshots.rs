@@ -9,13 +9,13 @@
 use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, ChatStorage, FetchUrlContentOutput,
 };
-use futures::stream::{self, StreamExt};
 use lattice_core::application::contracts::sources::{SourceDto, WebSnapshotDto};
 use std::collections::HashMap;
-use std::time::Duration;
 use tracing::warn;
 
-const CITATION_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+mod capture;
+pub use self::capture::CapturedSourcesDto;
+pub(super) use self::capture::{pending_capture, CitationCapture, UncapturedPage, CAPTURE_KEY};
 
 /// The page as the conversation archived it, or `None` when it never read it.
 pub(super) async fn archived_page(
@@ -147,14 +147,16 @@ pub(super) async fn with_archived_page_text(
 }
 
 /// Attach immutable page evidence to sources that the assistant actually
-/// cited. If a search snippet was cited without a page read, make one bounded
-/// capture attempt now; the answer remains successful if capture fails.
-pub(super) async fn attach_cited_web_snapshots(
-    container: &dyn ChatRuntime,
+/// cited, from what this conversation already archived. A cited search
+/// snippet whose page was never read is returned instead of read here: the
+/// read is a network call, so it runs after the answer is saved
+/// ([`CitationCapture`]).
+pub(super) async fn attach_archived_snapshots(
+    container: &dyn ChatStorage,
     conversation_id: &str,
     response: &str,
     sources: &mut [SourceDto],
-) {
+) -> Vec<UncapturedPage> {
     let cited_ids: std::collections::HashSet<u32> = regex::Regex::new(r"\[(\d+)\]")
         .ok()
         .into_iter()
@@ -180,35 +182,10 @@ pub(super) async fn attach_cited_web_snapshots(
             pending.entry(url.to_string()).or_default().push(index);
         }
     }
-
-    // Concurrent bounded reads keep capture latency close to one read rather
-    // than one timeout per citation. Every distinct cited URL gets an
-    // attempt, while at most four requests are active at once. `read_page`
-    // validates URLs and applies its normal redirect and network policy.
-    let reads = stream::iter(pending.into_iter().map(|(url, indices)| async move {
-        let result = tokio::time::timeout(
-            CITATION_CAPTURE_TIMEOUT,
-            container.page_reader().read_page(&url),
-        )
-        .await;
-        (url, indices, result)
-    }))
-    .buffer_unordered(4)
-    .collect::<Vec<_>>()
-    .await;
-    for (url, indices, result) in reads {
-        let Ok(Ok(read)) = result else {
-            continue;
-        };
-        archive_page_for_url(container, conversation_id, &url, &read).await;
-        if let Some(snapshot) = web_snapshot(container, conversation_id, &url).await {
-            for index in indices {
-                if let Some(source) = sources.get_mut(index) {
-                    source.web_snapshot = Some(snapshot.clone());
-                }
-            }
-        }
-    }
+    pending
+        .into_iter()
+        .map(|(url, sources)| UncapturedPage { url, sources })
+        .collect()
 }
 
 /// Add snapshots to older message metadata on read. This only consults the
@@ -263,6 +240,10 @@ fn snapshot_text(content: &str) -> Option<String> {
     let content = content.trim();
     (!content.is_empty()).then(|| content.to_string())
 }
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod capture_tests;
 
 #[cfg(test)]
 mod tests {

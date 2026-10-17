@@ -19,7 +19,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 
 const MAX_RESPONSE_CHARS: usize = 80_000;
 
@@ -130,10 +130,6 @@ async fn complete_json(
             "medium",
         ),
         None,
-        Some(crate::features::learning::model_call::Deadline {
-            after: Duration::from_secs(120),
-            message: "Practical generation timed out.",
-        }),
         "The practical activity exceeds this model's context window.",
     )
     .await?;

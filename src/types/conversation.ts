@@ -135,7 +135,7 @@ export const ClaimVerdictSchema = z.object({
   method: z.enum(['lexical', 'judge']),
   /** The judge's probability for `verdict`, when its provider reports one. */
   confidence: z.number().min(0).max(1).nullable().optional(),
-  unverifiedReason: z.enum(['budget', 'judge_failed', 'no_text', 'low_confidence']).nullable().optional(),
+  unverifiedReason: z.enum(['judge_failed', 'no_text', 'low_confidence']).nullable().optional(),
 }).strict();
 
 export type ClaimVerdict = z.infer<typeof ClaimVerdictSchema>;

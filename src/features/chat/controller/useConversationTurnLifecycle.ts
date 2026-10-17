@@ -19,8 +19,9 @@ import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { createFrameBatcher } from '@/utils/frameBatcher';
 
 import {
-  applyVerificationPatch, isVerificationPending, markVerificationInterrupted, mergeStep,
-  parseSources, type VerificationPatch, VERIFICATION_WAIT_MS,
+  applyCapturedSources, applyVerificationPatch, type CapturedSourcesPatch, isCapturePending,
+  isVerificationPending, markVerificationInterrupted, mergeStep, parseSources,
+  type VerificationPatch, VERIFICATION_WAIT_MS,
 } from './messageMetadata';
 import { prepareOptimisticMessages, reconcilePersistedFailedMessages } from './optimisticMessages';
 import { fetchMessages, toConversationMessage } from '../api/conversationQueryData';
@@ -179,12 +180,15 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       });
     };
     const streamBatcher = createFrameBatcher(flushStreamContent);
-    // The answer returns before its grounding check finishes; the check
-    // arrives on this same channel afterwards. The listener stays up for it
-    // after the turn settles, and only for it.
+    // The answer returns before its cited pages are captured and before its
+    // grounding check finishes; both arrive on this same channel afterwards.
+    // The listener stays up for them after the turn settles, and only for them.
+    let settled = false;
+    let awaitingCapture = false;
     let awaitingVerification = false;
     let verificationConversationId = requestConversationId;
     let verificationTimer: ReturnType<typeof setTimeout> | undefined;
+    let readyCapture: CapturedSourcesPatch | null = null;
     let readyVerification: VerificationPatch | null = null;
     let disposed = false;
     let unregisterLifecycle: (() => void) | undefined;
@@ -213,7 +217,21 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         // Matched on the request alone: a turn that created its conversation
         // reports the conversation's real id, not the one it was asked for.
         if (payload.requestId !== requestId) return;
-        if (!awaitingVerification && !ownsTurn()) return;
+        if (!awaitingVerification && !awaitingCapture && !ownsTurn()) return;
+        if (payload.status === ChatStreamStatus.Captured && payload.captured) {
+          const patch: CapturedSourcesPatch = {
+            messageId: payload.captured.messageId,
+            sources: payload.captured.sources,
+          };
+          readyCapture = patch;
+          queryClient.setQueryData<ConversationMessage[]>(
+            conversationKeys.messages(payload.conversationId),
+            current => (current ? applyCapturedSources(current, patch) : current)
+          );
+          awaitingCapture = false;
+          if (settled && !awaitingVerification) stopListening();
+          return;
+        }
         if (payload.status === ChatStreamStatus.Verification && payload.verification) {
           const patch: VerificationPatch = {
             messageId: payload.verification.messageId,
@@ -225,7 +243,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
             conversationKeys.messages(payload.conversationId),
             current => (current ? applyVerificationPatch(current, patch) : current)
           );
-          if (awaitingVerification) stopListening();
+          awaitingVerification = false;
+          if (settled && !awaitingCapture) stopListening();
           return;
         }
         if (payload.conversationId !== requestConversationId) return;
@@ -328,17 +347,21 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         unregisterLifecycle?.();
         unregisterLifecycle = lifecycle.register(responseId, cancelLifecycle);
       }
-      // The check may have landed while the response was on its way; the
-      // response itself was read before it did.
+      // The capture and the check may have landed while the response was on
+      // its way; the response itself was read before they did.
       const persistedMessages = raw.messages.map(toConversationMessage);
-      const responseMessages = readyVerification
-        ? applyVerificationPatch(persistedMessages, readyVerification)
-        : persistedMessages;
-      const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
-      awaitingVerification = isVerificationPending(lastAssistant) && !readyVerification;
-      if (lastAssistant && raw.sources?.length && !lastAssistant.sources?.length) {
-        lastAssistant.sources = parseSources(raw.sources);
+      const answered = [...persistedMessages].reverse().find(message => message.role === 'assistant');
+      if (answered && raw.sources?.length && !answered.sources?.length) {
+        answered.sources = parseSources(raw.sources);
       }
+      let responseMessages = readyCapture
+        ? applyCapturedSources(persistedMessages, readyCapture)
+        : persistedMessages;
+      if (readyVerification) responseMessages = applyVerificationPatch(responseMessages, readyVerification);
+      const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
+      settled = true;
+      awaitingCapture = isCapturePending(lastAssistant) && !readyCapture;
+      awaitingVerification = isVerificationPending(lastAssistant) && !readyVerification;
       queryClient.setQueryData(conversationKeys.messages(responseId), responseMessages);
       queryClient.setQueriesData<Conversation[]>({ queryKey: conversationKeys.lists }, current => {
         if (!current) return current;
@@ -382,7 +405,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     } finally {
       streamBatcher.cancel();
       streamBatcher.flush();
-      if (awaitingVerification && unlisten) {
+      if ((awaitingVerification || awaitingCapture) && unlisten) {
         // A check that never reports must not leave the badge on "Checking…"
         // until the conversation is reopened: mark it interrupted and stop.
         const pendingMessages = conversationKeys.messages(verificationConversationId);

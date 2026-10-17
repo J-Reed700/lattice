@@ -324,22 +324,21 @@ async fn an_unreached_copy_that_cut_a_negation_is_not_checked_rather_than_suppor
 
 /// A judge over `llm`, behind a scheduler with `slots` slots: how many
 /// claims run side by side is the backend's decision, not the judge's.
-fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize, budget: Duration) -> ClaimJudge {
+fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize) -> ClaimJudge {
     use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
     let scheduler = Arc::new(InferenceScheduler::new(
         "judge-test",
         BackendCapacity::concurrent(slots),
     ));
     ClaimJudge::new(Arc::new(ScheduledLlm::new(llm, scheduler, 4096)) as Arc<dyn LLMPort>)
-        .with_time_budget(budget)
 }
 
-/// Real sleeps rather than a paused clock. A one-slot backend serves one
-/// 200ms call inside a 300ms budget; the next is cut off when the budget
-/// ends and the last never starts. The judge's old one-call-at-a-time cap
-/// is now the backend's slot count, and the budget still bounds the whole.
-#[tokio::test]
-async fn time_budget_leaves_later_numeric_claims_unverified() {
+/// A slow judge is not a failed one. On a one-slot backend each call takes
+/// two minutes, longer than the whole 90-second budget the judge used to
+/// have, and the three calls run one after another: six minutes of judging.
+/// Every claim is still judged; none is left unverified for want of time.
+#[tokio::test(start_paused = true)]
+async fn a_slow_judge_still_judges_every_claim() {
     let response = "Yields rose by 42 percent in treated plots [1].\n\
                         Frost damage fell by 18 percent in treated plots [1].\n\
                         Harvest weight increased by 7 percent in treated plots [1].";
@@ -348,43 +347,33 @@ async fn time_budget_leaves_later_numeric_claims_unverified() {
     )];
 
     let llm = Arc::new(
-        ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]).with_delay(Duration::from_millis(200)),
+        ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]).with_delay(Duration::from_secs(120)),
     );
     let verifier = GroundingVerifier {
-        judge: Some(scheduled_judge(
-            Arc::clone(&llm),
-            1,
-            Duration::from_millis(300),
-        )),
+        judge: Some(scheduled_judge(Arc::clone(&llm), 1)),
     };
 
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let report = verifier.verify(response, &sources).await;
 
     assert!(
-        started.elapsed() < Duration::from_millis(600),
-        "judging must not outlive its budget"
+        started.elapsed() >= Duration::from_secs(360),
+        "the calls ran in a row"
     );
+    assert_eq!(llm.call_count(), 3);
     assert_eq!(report.claims_evaluated, 3);
-    assert_eq!(report.claims[0].method, VerificationMethod::Judge);
-    // Unreached and carrying a figure: not checked, and said so.
-    for claim in &report.claims[1..] {
-        assert_eq!(claim.method, VerificationMethod::Lexical);
-        assert_eq!(claim.verdict, ClaimVerdict::Unverified);
-        assert_eq!(claim.unverified_reason, Some(UnverifiedReason::Budget));
+    for claim in &report.claims {
+        assert_eq!(claim.method, VerificationMethod::Judge);
+        assert_ne!(claim.verdict, ClaimVerdict::Unverified);
+        assert_eq!(claim.unverified_reason, None);
     }
-    assert_eq!(
-        report.unsupported_count(),
-        1,
-        "only the judged contradiction"
-    );
-    assert_eq!(report.metadata_json()["verdictCounts"]["unverified"], 2);
+    assert_eq!(report.metadata_json()["verdictCounts"]["unverified"], 0);
 }
 
 /// The same three claims and a backend with room for them: judged side by
-/// side, all three fit a budget that serves one call in a row.
+/// side rather than in a row.
 #[tokio::test]
-async fn concurrent_calls_judge_more_claims_inside_the_same_budget() {
+async fn concurrent_calls_judge_claims_side_by_side() {
     let response = "Yields rose by 42 percent in treated plots [1].\n\
                         Frost damage fell by 18 percent in treated plots [1].\n\
                         Harvest weight increased by 7 percent in treated plots [1].";
@@ -397,11 +386,7 @@ async fn concurrent_calls_judge_more_claims_inside_the_same_budget() {
     );
     // Four slots: three for the judge, one kept for the user's next turn.
     let verifier = GroundingVerifier {
-        judge: Some(scheduled_judge(
-            Arc::clone(&llm),
-            4,
-            Duration::from_millis(400),
-        )),
+        judge: Some(scheduled_judge(Arc::clone(&llm), 4)),
     };
 
     let started = std::time::Instant::now();
@@ -577,8 +562,14 @@ fn unverified_claims_count_against_neither_side_of_the_ratio() {
         vec![
             claim(ClaimVerdict::Supported, None),
             claim(ClaimVerdict::Unsupported, None),
-            claim(ClaimVerdict::Unverified, Some(UnverifiedReason::Budget)),
-            claim(ClaimVerdict::Unverified, Some(UnverifiedReason::Budget)),
+            claim(
+                ClaimVerdict::Unverified,
+                Some(UnverifiedReason::JudgeFailed),
+            ),
+            claim(
+                ClaimVerdict::Unverified,
+                Some(UnverifiedReason::JudgeFailed),
+            ),
         ],
         true,
     );

@@ -171,7 +171,6 @@ pub async fn request_learning_tutor_response(
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     let generated = crate::features::learning::practice_generation::tutor(
         llm.as_ref(),
-        container.ai.tutor_pace(),
         &session,
         &request,
         &sources,
@@ -258,14 +257,10 @@ pub async fn reveal_learning_practice_solution(
         .await
         .map_err(ApiError::from)?;
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
-    let generated = crate::features::learning::practice_generation::solution(
-        llm.as_ref(),
-        container.ai.tutor_pace(),
-        &session,
-        &sources,
-    )
-    .await
-    .map_err(ApiError::from)?;
+    let generated =
+        crate::features::learning::practice_generation::solution(llm.as_ref(), &session, &sources)
+            .await
+            .map_err(ApiError::from)?;
     repo.commit_solution(
         &request,
         &payload_hash,

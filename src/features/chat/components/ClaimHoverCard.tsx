@@ -44,8 +44,6 @@ function headline(verdict: ClaimVerdict) {
 function howChecked(verdict: ClaimVerdict): string {
   if (verdict.verdict === 'unverified') {
     switch (verdict.unverifiedReason) {
-      case 'budget':
-        return 'The check ran out of time before reaching this sentence';
       case 'no_text':
         return 'The cited page has no saved text to check against';
       case 'judge_failed':

@@ -158,8 +158,8 @@ pub(super) async fn run_kb_retrieval(
         },
         None,
     );
-    // One turn's use of the planner: the shortlist search runs once, and a
-    // turn that already waited out a planner timeout does not wait again.
+    // One turn's use of the planner: the shortlist search runs once however
+    // many times the turn plans.
     let planner_health = container.planner_health();
     let mut planner_turn = super::corpus_plan::PlannerTurn::with_health(&planner_health);
     let (mut plan, catalog) = match repository.retrieval_catalog(&scope.document_ids).await {
@@ -537,16 +537,12 @@ async fn planned(
     planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> super::corpus_plan::CorpusSearchPlan {
-    if let Some(reason) = planner_turn.unavailable() {
-        info!(%reason, "Corpus planning skipped; using local retrieval plan");
-        return super::corpus_plan::fallback_with_catalog(validated_message, catalog);
-    }
     let history = super::build_hyde_context_window_for_conversation(
         conv_service,
         conversation_id,
         validated_message,
         utility,
-        Some(planner_turn.history_tokens(utility.model_name())),
+        Some(planner_turn.history_tokens(utility)),
     )
     .await;
     shortlist_candidates(
@@ -614,16 +610,12 @@ async fn corrective_pass(
         info!("Corrective retrieval skipped: no utility planner is available");
         return None;
     };
-    if let Some(reason) = planner_turn.unavailable() {
-        info!(%reason, "Corrective retrieval skipped; keeping first-pass evidence");
-        return None;
-    }
     let history = super::build_hyde_context_window_for_conversation(
         turn.conv_service,
         turn.conversation_id,
         validated_message,
         utility.as_ref(),
-        Some(planner_turn.history_tokens(utility.model_name())),
+        Some(planner_turn.history_tokens(utility.as_ref())),
     )
     .await;
     shortlist_candidates(

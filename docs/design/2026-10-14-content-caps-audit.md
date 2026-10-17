@@ -1,6 +1,8 @@
 # Fixed-cap audit: lattice-outline/src-tauri (read-only, 2026-10-14)
 
-> **Status (2026-10-15).** Chat, web, retrieval, memory, summaries, synthesis, compare, explorer and sidecar rows are fixed on branch `fix/no-content-caps` (commits 62737db5, 13422ca2, c735258b, 975ca6a6, after two adversarial reviews). Learning rows (4, 5, 9–14, 23, 32) were fixed on `learning/outline-evidence` (569a76f7, f90f440c) and are on main through #59. Merging the two, the practice tutor and worked solution take their snapshots from the window (#59) within what their model reads before the deadline (this branch). The rule applied: no fixed limit discards content; what does not fit is split, paged by offset or counted as "N more". Resource, time and work bounds that drop nothing from a prompt remain (KV memory for the local context, measured reading speed for calls with deadlines, model calls per summary run, the 20,000-file folder index bound).
+> **Status (2026-10-15).** Chat, web, retrieval, memory, summaries, synthesis, compare, explorer and sidecar rows are fixed on branch `fix/no-content-caps` (commits 62737db5, 13422ca2, c735258b, 975ca6a6, after two adversarial reviews). Learning rows (4, 5, 9–14, 23, 32) were fixed on `learning/outline-evidence` (569a76f7, f90f440c) and are on main through #59. Merging the two, the practice tutor and worked solution take their snapshots from the window (#59). The rule applied: no fixed limit discards content; what does not fit is split, paged by offset or counted as "N more". Resource and work bounds that drop nothing from a prompt remain (KV memory for the local context, model calls per summary run, the 20,000-file folder index bound).
+>
+> **Status (2026-10-16), branch `fix/no-fixed-model-timeouts`.** The fixed per-call time limits in the AI harnesses are gone, and with them the measured-reading-speed sizing they drove (`PromptPace`). The planner, intent classifier, grounding judge and practice tutor now size their prompts from their model's window alone; see [Time limits](#time-limits).
 
 Paths are relative to `/Users/josh/Code/lattice-outline/src-tauri/src/`. Tests are excluded. Every DISCARDS row was checked by reading its call site. A row may group several constants that share one flow.
 
@@ -40,7 +42,7 @@ Classes: **DISCARDS** (arbitrary cap, must go) / **BUDGET** (derived from model 
 | 28 | features/conversation/memory/verify.rs:42 (:363,392); memory/mod.rs:107 + memory/selection.rs:169 | +/-1,500 chars around a memory quote; 1,000 chars per context message | memory extraction and verification calls | Clipped (flagged) | Derive from the extraction or verification call's room. |
 | 29 | features/conversation/repository/knowledge.rs:338 (466); memory_semantic.rs:45,84 | 24 optional cross-chat memories; semantic scan of the newest 2,000 / 20,000 rows; 64 hits | cross-chat memory and history semantic recall | Older items are never scored | Let the assembler budget choose, and scan in pages. |
 | 30 | features/conversation/chat/source_snapshots.rs:23 (:268) | `SNAPSHOT_MAX_CHARS` 64,000 | archived page; *is* a prompt ingredient (pipeline.rs:887, prior_evidence.rs:60), contrary to its doc comment | Latent behind #3; bites once #3 is lifted | Store the whole page (content-addressed). |
-| 31 | features/conversation/chat/retrieval/corpus_plan/health.rs:26; shortlist.rs:28,32; prompt.rs:38,41,47; corpus_plan.rs:94 | Planner prompt <= 2,560 tok (latency-derived ceiling); <= 20 catalog rows; 300-char openings; 8 headings; history <= 512 tok; 600-char summaries | retrieval planner, which decides the opening documents | Documents beyond the shortlist cannot be opened by the planner (search still covers them). | Derive the prompt size from measured prefill rate x `PLANNER_TIMEOUT`; health already adapts it downward. |
+| 31 | features/conversation/chat/retrieval/corpus_plan/health.rs:26; shortlist.rs:28,32; prompt.rs:38,41,47; corpus_plan.rs:94 | Planner prompt <= 2,560 tok (latency-derived ceiling); <= 20 catalog rows; 300-char openings; 8 headings; history <= 512 tok; 600-char summaries | retrieval planner, which decides the opening documents | Documents beyond the shortlist cannot be opened by the planner (search still covers them). | **Fixed 2026-10-16.** No timeout and no pace: the prompt is the room the planner's window leaves after the plan's 384-token reservation (`prompt::window_room`), held lower only by a per-model ceiling learned when the server refuses a prompt as larger than its real window (halved each refusal). History is a fifth of that. |
 | 32 | features/learning/references/web_research.rs:98 | `max_results` 12 per research query | outline/lesson web research breadth | Never fetched (breadth, not truncation) | Page through results while new in-scope sources keep appearing. |
 | 33 | features/references/commands.rs:18 (:92) | Saved passage text 20,000 chars | stored reference, which is week-synthesis input | Silently truncated on save | Store it whole. |
 | 34 | features/corpus_shape/commands.rs:149; clustering.rs:200; labeling.rs:21 (:143) | 5 docs x 500 chars per cluster | cluster labelling call | Dropped (low impact) | Budget from the label call's room. |
@@ -143,6 +145,35 @@ Classes: **DISCARDS** (arbitrary cap, must go) / **BUDGET** (derived from model 
 | features/embedding/use_cases/generate_batch.rs:47; generate_single.rs:38; embedding/input_policy.rs:14; indexing/commands.rs:66-68 | embed length (error); chunk sizing (split) | GUARD |
 | features/indexing/engine/extraction/pdf.rs:29-31; xlsx.rs:12-20; archive_budget.rs:13-17; extraction/mod.rs:61 | extraction limits (error, not silent) | GUARD |
 | features/learning/assessment/assessment_generation.rs:45; repository/knowledge.rs:296 | > 64 slots / > 24 sources / > 1,000 memories, all error | GUARD |
+
+## Time limits
+
+The owner's rule: no hand-picked limits in the AI harnesses. A model call is not killed by a wall-clock number that encodes one machine and one model, and no prompt is sized by what one machine reads before such a number.
+
+**Removed (2026-10-16).**
+
+| Call | Limit removed | What it also sized | Now |
+|---|---|---|---|
+| Corpus planner (`chat/retrieval/corpus_plan`) | 20 s timeout, 2-minute stand-down, per-turn "already timed out" skip | catalog shortlist = measured prefill pace x timeout (2,560-token start, 1,024 floor) | window room after the plan's reservation; refusal halves a per-model ceiling; non-timeout errors fall back to the local plan as before |
+| Turn intent (`chat/intent.rs`) | 15 s timeout | history = pace x timeout (1,024 floor) | history = the window share (`auxiliary_history_room`); errors fall back to the user's flags |
+| Grounding judge (`chat/verification/judge.rs`) | 90 s per turn | evidence part = judge's reading pace x half the budget / open claims | every cited claim is judged; a part is the judge's window less prompts and answer; unsettled claims come only from errors or cancellation |
+| Citation capture (`chat/source_snapshots.rs`) | 10 s per page read | nothing | off the answer's critical path: the answer is saved and returned first, then `CitationCapture` (`chat/source_snapshots/capture.rs`) reads the pages under `read_page`'s own network bounds, patches the message's sources and sends a `captured` event; the grounding check starts after it |
+| Learning material, assessment, practical, practice, study (`learning/*`) | 300 s, 120 s, 180 s | practice tutor snapshot = pace x 120 s | every learning call goes through `model_call::send` with `no_time_limit`; tutor history and snapshots are sized from the window |
+
+`PromptPace`, `PrefillTiming`, `CompletionResponse::prefill`, `ClaimJudgment::OutOfTime`, the chat `UnverifiedReason::Budget` and learning's `model_call::Deadline` were deleted with them.
+
+**A dead server is not the app's problem.** Whether a call will finish cannot be known from outside, and silence does not prove a server is dead: a user-run server with one slot shared with another client queues a request for minutes without sending a byte. So the harness does not try to detect hung servers. A call to a server that never answers waits until one of these ends it:
+
+1. The user's Stop: the turn's cancellation token on the planner and intent requests, job cancellation for learning.
+2. The turn's own deadline (`TurnClock`: 30 min chat, 2 h deep research) for calls inside the tool loop.
+3. App shutdown, for background capture and verification.
+4. `max_output_tokens`, or the provider's output limit, for a generation that never stops.
+
+The adapters' existing silence checks are unchanged by this branch. Each applies only once an answer has started streaming, except the bundled sidecar's 60 s plus one prefill batch before its first frame and Ollama's `stream_timeout`.
+
+Cited-page capture is no longer on the answer's critical path. A page that cannot be read, or a capture cut off by shutdown, leaves its source without a snapshot (the message is marked `capture.interrupted`). That is what the 10 s timeout used to do. A later read of the message still attaches any page the conversation archived. The window stops listening for an answer's capture and check after `VERIFICATION_WAIT_MS` (5 min), and shows a still-pending check as interrupted until the next load. The backend's result is unaffected.
+
+**Out of scope, unchanged.** Compaction (15 min), conversation memory (5 min), handoff (10 min), HyDE rewrite budget, the router's `timeout_ms` setting, the adapter's 10-minute `DEFAULT_COMPLETION_TIME_BUDGET` for calls that do not opt out, lab runtime sandbox limits, process exit grace periods, OCR, backup restore, sidecar readiness, connect timeouts and web fetch settings.
 
 ## Counts (rows above; some rows group several constants)
 

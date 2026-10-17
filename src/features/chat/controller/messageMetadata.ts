@@ -111,12 +111,57 @@ export interface VerificationPatch {
 }
 
 /**
- * How long a turn keeps listening for its answer's background check. The
- * judge's own budget is ninety seconds; loading the utility model and reading
- * the cited pages come on top. Past this the badge stays on "checking" until
- * the next load reads the persisted result.
+ * How long a turn keeps listening for its answer's background work: the cited
+ * pages it captures, then the grounding check. The backend sends both even
+ * when they are interrupted; this only stops a listener whose event went
+ * missing. Past it a still-pending badge is shown as interrupted until the
+ * next load reads the persisted result.
  */
 export const VERIFICATION_WAIT_MS = 5 * 60 * 1000;
+
+/** Cited pages captured after their turn returned. */
+export interface CapturedSourcesPatch {
+  messageId: string;
+  sources: unknown[];
+}
+
+/**
+ * Write captured pages into a message's sources, as the backend persisted
+ * them. A message that carries its sources directly (the turn's own response)
+ * has them replaced too, since those win over the metadata when drawn.
+ */
+export const applyCapturedSources = (
+  messages: ConversationMessage[],
+  patch: CapturedSourcesPatch
+): ConversationMessage[] => messages.map(message => {
+  if (message.id !== patch.messageId) return message;
+  let metadata: Record<string, unknown> = {};
+  if (message.metadata) {
+    try {
+      metadata = JSON.parse(message.metadata) as Record<string, unknown>;
+    } catch {
+      metadata = {};
+    }
+  }
+  metadata.sources = patch.sources;
+  metadata.capture = { pending: false };
+  return {
+    ...message,
+    metadata: JSON.stringify(metadata),
+    ...(message.sources ? { sources: parseSources(patch.sources) } : {}),
+  };
+});
+
+/** Whether a message was persisted with its cited pages still being read. */
+export const isCapturePending = (message: ConversationMessage | undefined): boolean => {
+  if (!message?.metadata) return false;
+  try {
+    const metadata = JSON.parse(message.metadata) as { capture?: { pending?: unknown } };
+    return metadata.capture?.pending === true;
+  } catch {
+    return false;
+  }
+};
 
 /** Write a finished check into a message's metadata, as the backend persisted it. */
 export const applyVerificationPatch = (
