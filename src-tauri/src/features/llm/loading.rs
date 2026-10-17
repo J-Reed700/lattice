@@ -378,24 +378,21 @@ fn llm_provider(provider: CloudProvider) -> LLMProvider {
     }
 }
 
-/// The API key for `provider`: its environment variable, else the keyring.
+/// The API key for `provider`, read as everywhere else: its environment
+/// variable, else the keyring.
 fn cloud_api_key(provider: CloudProvider) -> Result<String> {
-    let (name, label, env_names): (&str, &str, &[&str]) = match provider {
-        CloudProvider::Openai => ("openai", "OpenAI", &["OPENAI_API_KEY"]),
-        CloudProvider::Anthropic => ("anthropic", "Anthropic", &["ANTHROPIC_API_KEY"]),
-        CloudProvider::Google => ("google", "Google", &["GOOGLE_API_KEY", "GEMINI_API_KEY"]),
+    let (name, label) = match provider {
+        CloudProvider::Openai => ("openai", "OpenAI"),
+        CloudProvider::Anthropic => ("anthropic", "Anthropic"),
+        CloudProvider::Google => ("google", "Google"),
     };
-    let from_env = env_names.iter().find_map(|var| std::env::var(var).ok());
-    let key = match from_env {
-        Some(key) => Some(key),
-        None => crate::infrastructure::security::keyring_storage::SecureStorage::new()
-            .get_api_key(name)?,
-    };
-    key.filter(|key| !key.trim().is_empty()).ok_or_else(|| {
-        AppError::InvalidConfig(format!(
-            "No {label} API key is saved. Add it in Settings → Chat."
-        ))
-    })
+    crate::infrastructure::security::keyring_storage::SecureStorage::new()
+        .cloud_api_key(name)?
+        .ok_or_else(|| {
+            AppError::InvalidConfig(format!(
+                "No {label} API key is saved. Add it in Settings → Chat."
+            ))
+        })
 }
 
 #[cfg(test)]
