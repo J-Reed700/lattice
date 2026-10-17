@@ -9,8 +9,8 @@
 use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, ChatStorage, FetchUrlContentOutput,
 };
-use crate::features::qa::dto::{SourceDto, WebSnapshotDto};
 use futures::stream::{self, StreamExt};
+use lattice_core::application::contracts::sources::{SourceDto, WebSnapshotDto};
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::warn;

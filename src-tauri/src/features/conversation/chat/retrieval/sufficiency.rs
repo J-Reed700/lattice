@@ -24,7 +24,7 @@
 
 use std::collections::HashSet;
 
-use crate::features::search::dto::SearchResultDto;
+use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 
 use super::corpus_plan::CorpusSearchPlan;

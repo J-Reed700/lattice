@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
+use crate::features::summaries::entity::DocumentSummary;
 use crate::features::summaries::prompt::{
     self, DocumentPromptInput, SectionPromptInput, SummaryDraft,
 };
@@ -21,6 +21,7 @@ use crate::features::summaries::repository::SummaryRepositoryPort;
 use crate::features::summaries::runtime::SummaryRuntimePort;
 use crate::features::summaries::source::SummarySourcePort;
 use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::summary_search::SummaryLevel;
 use lattice_core::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::application::services::grounded_generation::{

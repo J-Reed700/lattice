@@ -101,7 +101,7 @@ impl SynthesisEntries for StoredPages {
     async fn references_created_since(
         &self,
         _cutoff: &str,
-    ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
+    ) -> Result<Vec<lattice_core::application::contracts::references::PassageReferenceRecord>> {
         unreachable!("only journal pages are read here")
     }
 
@@ -116,7 +116,7 @@ impl SynthesisEntries for StoredPages {
     async fn hydrate_note(
         &self,
         page: StoredJournalPage,
-    ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+    ) -> Result<lattice_core::application::contracts::notes::WorkspaceNoteDto> {
         if page.id.starts_with("unused") {
             return Err(AppError::Database(format!(
                 "{} was hydrated though the synthesis does not use it",
@@ -124,21 +124,23 @@ impl SynthesisEntries for StoredPages {
             )));
         }
         self.hydrated.lock().unwrap().push(page.id.clone());
-        Ok(crate::features::daily_notes::dto::WorkspaceNoteDto {
-            revision: page.revision,
-            id: page.id,
-            title: page.title,
-            journal_id: page.journal_id,
-            content: page.content,
-            linked_document_ids: Vec::new(),
-            linked_conversation_ids: Vec::new(),
-            highlights: Vec::new(),
-            sticky_notes: Vec::new(),
-            conversation_snapshots: Vec::new(),
-            sources: Vec::new(),
-            created_at: page.created_at,
-            updated_at: page.updated_at,
-        })
+        Ok(
+            lattice_core::application::contracts::notes::WorkspaceNoteDto {
+                revision: page.revision,
+                id: page.id,
+                title: page.title,
+                journal_id: page.journal_id,
+                content: page.content,
+                linked_document_ids: Vec::new(),
+                linked_conversation_ids: Vec::new(),
+                highlights: Vec::new(),
+                sticky_notes: Vec::new(),
+                conversation_snapshots: Vec::new(),
+                sources: Vec::new(),
+                created_at: page.created_at,
+                updated_at: page.updated_at,
+            },
+        )
     }
 }
 

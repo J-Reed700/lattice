@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 
 use crate::features::conversation::chat::ports::ChatStorage;
-use crate::features::qa::dto::SourceDto;
-use crate::features::search::dto::SearchResultDto;
+use lattice_core::application::contracts::search::SearchResultDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::shared::text::build_excerpt;
 

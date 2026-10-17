@@ -3,12 +3,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::features::search::dto::{
+use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey};
+use crate::interfaces::di::container::Container;
+use lattice_core::application::contracts::search::{
     CacheStatsDto, EnhancedSearchResponse, SearchOptions, SearchRequestDto, SearchResponseDto,
     SearchResultDto,
 };
-use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey};
-use crate::interfaces::di::container::Container;
 use lattice_core::application::ports::RepositoryPort;
 use lattice_core::domain::entities::Document;
 use lattice_core::shared::error::AppError;

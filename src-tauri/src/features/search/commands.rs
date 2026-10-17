@@ -17,11 +17,11 @@
 //! - Delegate to use cases (business logic)
 //! - Handle caching (performance)
 
-use crate::features::search::dto::{
+use crate::interfaces::di::container::Container;
+use lattice_core::application::contracts::search::{
     EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };
-use crate::interfaces::di::container::Container;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::ApiError;
 use serde::{Deserialize, Serialize};

@@ -29,7 +29,7 @@ impl VectorSearchPort for MockVectorSearch {
         _query_embedding: &[f32],
         _top_k: usize,
         _threshold: f32,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         Ok(Vec::new())
     }
 
@@ -39,7 +39,7 @@ impl VectorSearchPort for MockVectorSearch {
         top_k: usize,
         threshold: f32,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         let mut results = self.search(query_embedding, top_k, threshold)?;
         if let Some(scope) = allowed_document_ids {
             results.retain(|result| scope.contains(&result.doc_id));

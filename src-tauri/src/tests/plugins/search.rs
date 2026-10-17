@@ -14,8 +14,8 @@
 //! - Assert commands return Result, not specific values
 
 use crate::features::search::commands::{hybrid_search_impl, semantic_search_impl};
-use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
 use crate::tests::common::setup_test_container;
+use lattice_core::application::contracts::search::{SearchModeDto, SearchRequestDto};
 use lattice_core::shared::ipc::ApiResult;
 
 /// Test that semantic_search doesn't panic with minimal payload

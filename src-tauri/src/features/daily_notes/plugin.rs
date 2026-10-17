@@ -12,8 +12,8 @@ use crate::features::daily_notes::commands::{
     ListWorkspaceNotesRequestDto, ListWorkspaceNotesResponseDto, QuickCaptureResultDto,
     UpdateDailyNoteContentRequestDto, WorkspaceNoteDto,
 };
-use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},

@@ -144,7 +144,9 @@ impl ChatRetrieval for Container {
             executor: Arc::clone(Container::function_executor(self)),
         })
     }
-    fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait> {
+    fn library_search(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait> {
         Container::hybrid_search_use_case(self)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {
@@ -152,10 +154,10 @@ impl ChatRetrieval for Container {
     }
     async fn summary_search(
         &self,
-    ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
-        Container::summary_search(self)
-            .await
-            .map(|search| search as Arc<dyn crate::features::summaries::search::SummarySearchPort>)
+    ) -> Option<Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>> {
+        Container::summary_search(self).await.map(|search| {
+            search as Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>
+        })
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())

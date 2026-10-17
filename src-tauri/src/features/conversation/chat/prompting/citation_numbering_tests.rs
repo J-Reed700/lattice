@@ -1,5 +1,5 @@
 use super::*;
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use std::collections::HashMap;
 
 fn chunk(id: &str, document_id: &str, title: &str, content: &str) -> SearchResultDto {

@@ -1,12 +1,12 @@
 //! # QA feature
 //!
 //! Question-answering helpers the conversation chat builds on: the model
-//! health checks and chat-starters command the chat surface uses, and the
-//! source DTOs answers cite.
+//! health checks and chat-starters command the chat surface uses. The source
+//! DTOs answers cite live in `lattice_core::application::contracts::sources`.
 //!
 //! ## Public surface
 //!
-//! - `crate::features::qa::dto` — QA DTOs
+//! - `crate::features::qa::dto` — the health check's response DTO
 //! - `crate::features::qa::commands` — Tauri command handlers
 //! - `crate::features::qa::plugin::init()` — Tauri plugin
 //!

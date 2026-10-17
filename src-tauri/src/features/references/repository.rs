@@ -3,26 +3,32 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
+// Temporary: chat's test runtime still names the record at this path.
+pub(crate) use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{FromRow, SqlitePool};
+use sqlx::sqlite::SqliteRow;
+use sqlx::{Row, SqlitePool};
 
 const REFERENCE_COLUMNS: &str = r#"
     id, document_id, chunk_id, file_path, file_name,
     locator, text, title, note, created_at
 "#;
 
-#[derive(Debug, Clone, FromRow)]
-pub struct PassageReferenceRecord {
-    pub id: String,
-    pub document_id: String,
-    pub chunk_id: Option<String>,
-    pub file_path: String,
-    pub file_name: String,
-    pub locator: Option<String>,
-    pub text: String,
-    pub title: Option<String>,
-    pub note: Option<String>,
-    pub created_at: String,
+/// Decodes one `REFERENCE_COLUMNS` row. The record lives in core, which does
+/// not depend on the database driver, so it cannot derive `sqlx::FromRow`.
+fn reference_from_row(row: SqliteRow) -> std::result::Result<PassageReferenceRecord, sqlx::Error> {
+    Ok(PassageReferenceRecord {
+        id: row.try_get("id")?,
+        document_id: row.try_get("document_id")?,
+        chunk_id: row.try_get("chunk_id")?,
+        file_path: row.try_get("file_path")?,
+        file_name: row.try_get("file_name")?,
+        locator: row.try_get("locator")?,
+        text: row.try_get("text")?,
+        title: row.try_get("title")?,
+        note: row.try_get("note")?,
+        created_at: row.try_get("created_at")?,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -64,8 +70,9 @@ impl PassageReferenceRepository {
 
     pub async fn get(&self, id: &str) -> Result<PassageReferenceRecord> {
         let query = format!("SELECT {REFERENCE_COLUMNS} FROM passage_references WHERE id = ?");
-        sqlx::query_as::<_, PassageReferenceRecord>(&query)
+        sqlx::query(&query)
             .bind(id)
+            .try_map(reference_from_row)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
@@ -80,8 +87,9 @@ impl PassageReferenceRepository {
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
              ORDER BY created_at DESC LIMIT ?"
         );
-        sqlx::query_as::<_, PassageReferenceRecord>(&query)
+        sqlx::query(&query)
             .bind(limit)
+            .try_map(reference_from_row)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| {
@@ -97,8 +105,9 @@ impl PassageReferenceRepository {
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
              WHERE created_at >= ? ORDER BY created_at DESC"
         );
-        sqlx::query_as::<_, PassageReferenceRecord>(&query)
+        sqlx::query(&query)
             .bind(cutoff)
+            .try_map(reference_from_row)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| {
