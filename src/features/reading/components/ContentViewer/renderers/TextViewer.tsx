@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
-
+import { useQuery } from '@tanstack/react-query';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-import { readSourceText } from '@/features/reading/hooks/readSourceFile';
+import { sourceTextQueryOptions } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 
 import { PrismSyntaxHighlighter as SyntaxHighlighter } from './prism';
@@ -45,45 +44,13 @@ const getLanguage = (filePath: string): string => {
 
 export function TextViewer({ filePath, content: directContent, title: _title, language: directLanguage }: TextViewerProps) {
   const theme = useEffectiveTheme();
-  const [content, setContent] = useState<string>(directContent || '');
-  const [isLoading, setIsLoading] = useState(Boolean(filePath));
-  const [error, setError] = useState<string | null>(null);
-  const [language, setLanguage] = useState<string>(directLanguage || 'text');
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!filePath) {
-      setContent(directContent ?? '');
-      setLanguage(directLanguage ?? 'text');
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
-
-    async function loadFile() {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const result = await readSourceText(filePath!);
-        if (cancelled) return;
-        if (result.ok) {
-          setContent(result.data);
-          setLanguage(getLanguage(filePath!));
-        } else {
-          setError(result.error || 'Failed to load file');
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    void loadFile();
-    return () => { cancelled = true; };
-  }, [filePath, directContent, directLanguage]);
+  const fileQuery = useQuery({ ...sourceTextQueryOptions(filePath ?? ''), enabled: Boolean(filePath) });
+  const content = filePath ? fileQuery.data ?? '' : directContent ?? '';
+  const language = filePath ? getLanguage(filePath) : directLanguage ?? 'text';
+  const isLoading = Boolean(filePath) && fileQuery.isPending;
+  const error = filePath && fileQuery.isError
+    ? fileQuery.error instanceof Error ? fileQuery.error.message : 'Unknown error'
+    : null;
 
   if (isLoading) {
     return (

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import {
   Bookmark,
@@ -34,6 +35,7 @@ import { fetchDocument, openFilePath } from '@/features/files/hooks/useLibraryDo
 import { useCommandPalette } from '@/features/palette/hooks/useCommandPalette'
 import { selectPaletteGroups, usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore'
 import { quickSearchDocuments } from '@/features/search/hooks/useSearchQuery'
+import { useDebounce } from '@/hooks/useDebounce'
 import { describeFailure } from '@/lib/errorHandling'
 import { getErrorMessage } from '@/lib/errorUtils'
 import { toast } from '@/stores/toastStore'
@@ -49,6 +51,11 @@ import '@/styles/command-palette.css'
  * CommandPalette — ⌘K. Live document search plus every navigation target and
  * creation action the app has, with the same shortcuts the rail shows.
  */
+const NO_RESULTS: SearchResult[] = []
+
+/** Two characters, not all spaces, before the library is searched. */
+const isSearchable = (query: string) => query.length >= 2 && query.trim().length > 0
+
 export function CommandPalette() {
   const navigate = useNavigate()
   const {
@@ -73,62 +80,32 @@ export function CommandPalette() {
     [registeredCommands],
   )
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
-  const [isSearching, setIsSearching] = useState(false)
-  const [searchError, setSearchError] = useState<string | null>(null)
-  const searchTimeoutRef = useRef<number | null>(null)
-  const searchAbortControllerRef = useRef<AbortController | null>(null)
-
-  // Debounced live search with cancellation.
-  useEffect(() => {
-    if (!searchQuery.trim() || searchQuery.length < 2) {
-      setSearchResults([])
-      setIsSearching(false)
-      setSearchError(null)
-      return
-    }
-
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
-    if (searchAbortControllerRef.current) searchAbortControllerRef.current.abort()
-
-    setIsSearching(true)
-    setSearchError(null)
-
-    const abortController = new AbortController()
-    searchAbortControllerRef.current = abortController
-
-    searchTimeoutRef.current = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const result = await quickSearchDocuments(searchQuery)
-          if (abortController.signal.aborted) return
-          if (result.ok) {
-            setSearchResults(result.data)
-          } else {
-            setSearchError(describeFailure(result))
-          }
-          setIsSearching(false)
-        } catch (error) {
-          if (abortController.signal.aborted) return
-          setSearchError(error instanceof Error ? error.message : 'Search failed')
-          setIsSearching(false)
-        }
-      })()
-    }, 300)
-
-    return () => {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
-      if (searchAbortControllerRef.current) searchAbortControllerRef.current.abort()
-    }
-  }, [searchQuery])
+  // Debounced live search; a superseded search's answer is never shown.
+  const debouncedSearchQuery = useDebounce(searchQuery, 300)
+  const searchActive = isSearchable(searchQuery)
+  const quickSearch = useQuery({
+    queryKey: ['search', 'quick', debouncedSearchQuery] as const,
+    queryFn: async () => {
+      const result = await quickSearchDocuments(debouncedSearchQuery)
+      if (!result.ok) throw new Error(describeFailure(result))
+      return result.data
+    },
+    enabled: searchActive && isSearchable(debouncedSearchQuery),
+    // The last answer stays up while the next keystroke is searched, and a
+    // repeated search is asked again: the library may have changed since.
+    placeholderData: keepPreviousData,
+    retry: false,
+    staleTime: 0,
+  })
+  const searchResults = searchActive ? quickSearch.data ?? NO_RESULTS : NO_RESULTS
+  const isSearching = searchActive && (searchQuery !== debouncedSearchQuery || quickSearch.isFetching)
+  const searchError =
+    searchActive && !isSearching && quickSearch.isError
+      ? quickSearch.error instanceof Error ? quickSearch.error.message : 'Search failed'
+      : null
 
   useEffect(() => {
-    if (!isOpen) {
-      setSearchQuery('')
-      setSearchResults([])
-      setIsSearching(false)
-      setSearchError(null)
-    }
+    if (!isOpen) setSearchQuery('')
   }, [isOpen])
 
   const run = useCallback(

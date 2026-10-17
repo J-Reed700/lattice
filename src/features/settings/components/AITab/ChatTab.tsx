@@ -54,12 +54,9 @@ export function ChatTab() {
   const [isSavingOllamaConnection, setIsSavingOllamaConnection] = useState(false);
   const [showOllamaAuth, setShowOllamaAuth] = useState(false);
 
-  const {
-    getActiveModel,
-    getActiveEmbeddingModel,
-    activeModel: activeChatModel,
-    activeEmbeddingModel,
-  } = useDownloadedModels();
+  // The active models come from the downloaded-models query, which model
+  // changes invalidate.
+  const { activeModel: activeChatModel, activeEmbeddingModel } = useDownloadedModels();
 
   useEffect(() => {
     if (!llmSettings) return;
@@ -72,11 +69,6 @@ export function ChatTab() {
       setShowOllamaAuth(true);
     }
   }, [llmSettings]);
-
-  useEffect(() => {
-    void getActiveModel();
-    void getActiveEmbeddingModel();
-  }, [getActiveModel, getActiveEmbeddingModel]);
 
   const provider = llmSettings?.provider ?? "auto";
   const showOllamaSettings = provider === "ollama" || provider === "auto";

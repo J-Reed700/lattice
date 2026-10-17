@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { useVaultImportStore } from '@/features/vault/stores/vaultImportStore';
 import VaultAPI from '@/lib/api';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { toast } from '@/stores/toastStore';
 import { deferred } from '@/tests/deferred';
 
@@ -114,7 +115,7 @@ it('ignores an older reload failure after a newer reload succeeds', async () => 
   const { result } = renderHook(useJournalEntries, { initialProps: initial });
   await act(async () => { await result.current.reload(); });
   await act(async () => { old.resolve({ ok: false, error: 'Old request failed' }); });
-  expect(result.current.entries).toEqual([second]);
+  await waitFor(() => expect(result.current.entries).toEqual([second]));
   expect(result.current.loadError).toBeNull();
 });
 
@@ -153,10 +154,10 @@ it('keeps loaded entries on a refresh failure and clears the error after recover
   await waitFor(() => expect(result.current.entries).toHaveLength(2));
   vi.mocked(VaultAPI.listJournalConversations).mockResolvedValueOnce({ ok: false, error: 'Database busy' }).mockResolvedValueOnce(response([first]));
   await act(async () => { await result.current.reload(); });
-  expect(result.current.loadError).toBe('Database busy');
+  await waitFor(() => expect(result.current.loadError).toBe('Database busy'));
   expect(result.current.entries).toHaveLength(2);
   await act(async () => { await result.current.reload(); });
-  expect(result.current.loadError).toBeNull();
+  await waitFor(() => expect(result.current.loadError).toBeNull());
   expect(result.current.entries).toEqual([first]);
 });
 
@@ -201,3 +202,12 @@ it('normalizes legacy entry and message fields without rendering invalid values'
   expect(result.current.messagesByConversation.legacy[0]).toMatchObject({ id: expect.stringMatching(/^message_/), role: 'assistant', content: '', createdAt: '2026-10-08', metadata: null });
 });
 
+it('reads the entries again when a conversation changes elsewhere', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { result } = renderBareHook(() => useJournalEntries(initial), { wrapper });
+  await waitFor(() => expect(result.current.entries).toHaveLength(2));
+  vi.mocked(VaultAPI.listJournalConversations).mockResolvedValueOnce(response([second]));
+  await act(async () => { await client.invalidateQueries({ queryKey: conversationKeys.all }); });
+  await waitFor(() => expect(result.current.entries).toEqual([second]));
+});
