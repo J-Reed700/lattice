@@ -54,7 +54,6 @@ feature-edge features::file features::indexing 7
 feature-edge features::file features::recent 2
 feature-edge features::health features::llm 1
 feature-edge features::indexing features::embedding 2
-feature-edge features::indexing features::mentions 1
 feature-edge features::indexing features::search 1
 feature-edge features::indexing features::transcription 1
 feature-edge features::initialization features::download 1

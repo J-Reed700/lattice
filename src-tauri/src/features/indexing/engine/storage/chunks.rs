@@ -3,7 +3,7 @@
 use super::checksum::calculate_checksum;
 use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
-use crate::features::mentions::repository::MentionRepository;
+use crate::infrastructure::persistence::repositories::mentions::MentionRepository;
 use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::shared::fs::path::path_to_string;
