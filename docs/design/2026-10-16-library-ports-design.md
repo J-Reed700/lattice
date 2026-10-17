@@ -148,6 +148,16 @@ Move the records and the repository to infrastructure using `try_map` (see Q5), 
 
 The owned `port_bindings.rs:77,86,141,157` gets path changes only.
 
+## PR 4c as built
+
+`WorkspaceNoteRecord`, `NoteTimestampRecord` and `VaultNoteUpsert<'a>` are in `contracts::notes`. The repository moved with `git mv` to `infrastructure/persistence/repositories/workspace_notes.rs`; it keeps the name `DailyNotesRepository`, the SQL and the columns. All 12 `query_as` calls (10 in the repository, 2 in capture) now use `try_map(note_from_row)` or `try_map(timestamp_from_row)`, and so does vault's `rescan_note_page`. `ports::WorkspaceNotesPort` has the four methods; the repository implements it by delegating to its inherent methods.
+
+Feature edges 89 → 82 (vault→daily_notes −4, learning→daily_notes −3; learning keeps one edge, to `hydrate_workspace_note`). Feature re-exports stay 15. `infrastructure-imports-feature` stays 0. Deviations:
+
+- **Capture moved inside daily_notes.** `daily_notes/repository/capture.rs` was an `impl DailyNotesRepository` block. It needs daily_notes DTOs, so it cannot follow the type into infrastructure, and extending an infrastructure type from a feature would hide part of its API there. It is now `daily_notes/capture_store.rs` (`git mv`), with `capture_reference(pool, …)` and `quick_capture(pool, …)` as free functions; `commands.rs` and the tests call them.
+- **Two more `pub(crate)` items.** Capture also decodes rows and updates inside its transaction, so `note_from_row` and `update_in_transaction` are `pub(crate)` next to `NOTE_COLUMNS`, `insert_in_transaction` and `timestamp_from_row`.
+- **Vault builds its port from the pool.** The vault writer and watcher are started from `container.rs` with a `SqlitePool`, so the port cannot be injected without changing that file. `vault/repository.rs::workspace_notes(pool) -> impl WorkspaceNotesPort` is the one place vault names the adapter; the writer, watcher and rescan see only the port's methods.
+
 ## Estimates
 
 | Pair | Δ | Left |

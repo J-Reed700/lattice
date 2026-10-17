@@ -5,13 +5,12 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
-use super::{
-    emit_note_imported, import_one, DailyNotesRepository, RescanLock, WriteSuppressionRegistry,
-};
+use super::{emit_note_imported, import_one, RescanLock, WriteSuppressionRegistry};
 
 /// Catches edits the watcher dropped (sleep/wake, AV interference, etc.).
 /// Idempotent. Frontend invokes on window focus.
@@ -33,7 +32,7 @@ pub async fn rescan_vault(
         });
     }
 
-    let repository = DailyNotesRepository::new(db_pool.clone());
+    let repository = super::super::repository::workspace_notes(&db_pool);
     const DB_PAGE: i64 = 128;
     let _rescan_lock = rescan_lock.0.lock().await;
     let (run_id, total_rows) = super::super::repository::begin_rescan(&db_pool)
