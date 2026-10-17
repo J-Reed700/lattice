@@ -23,6 +23,7 @@ import type {
   LearningLessonDto,
   LearningProgramDto,
   LearningPracticalWorkspaceDto,
+  LearningTangentDto,
   StudyCardDto,
   StudyDeckSummaryDto,
   WorkspaceNoteDto,
@@ -1136,6 +1137,8 @@ export async function installLearningStudioBackend(page: Page) {
         return program;
       },
       list_learning_programs: () => [program.summary],
+      // No journey opens a tangent from a lesson, so every program lists none.
+      list_learning_tangents: (): LearningTangentDto[] => [],
       get_learning_program: () => program,
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {
