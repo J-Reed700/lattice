@@ -15,6 +15,12 @@ impl Container {
         &self.vault_writer
     }
 
+    /// A journal note was written outside daily notes: wake the write-back
+    /// worker so the markdown mirror picks it up without waiting for its tick.
+    pub fn sync_workspace_notes_to_vault(&self) {
+        crate::features::vault::writeback::spawn_sync_workspace_note(&self.vault_writer);
+    }
+
     /// Belt-and-suspenders safety net for the fs watcher.
     /// No-op when vault is disabled or the watch toggle is off.
     pub async fn rescan_vault(&self) -> Result<RescanSummary> {

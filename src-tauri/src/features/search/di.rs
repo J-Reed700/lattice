@@ -7,9 +7,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::features::embedding::candle_service::CandleEmbeddingService;
-use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
-use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
 use crate::features::search::engine::sparse_search::SparseSearchService;
@@ -26,8 +23,6 @@ use lattice_core::application::ports::{
     BM25SearchTrait, ChunkRepositoryPort, DocumentRepository, EmbeddingPort, SearchServiceTrait,
     SparseSearchTrait, TextSearchPort, VectorSearchPort,
 };
-use lattice_core::domain::models::checkpoint::has_loadable_weights;
-use lattice_core::domain::models::downloaded::DownloadedModel;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::background::BackgroundTasks;
@@ -55,31 +50,26 @@ pub struct SearchDi {
     pub document_repo: Arc<dyn DocumentRepository>,
 }
 
-pub async fn build(
-    db_pool: SqlitePool,
-    usearch_index_path: std::path::PathBuf,
-    models_path: std::path::PathBuf,
-    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
-    active_embedding_dimension: Option<usize>,
-    background: Arc<BackgroundTasks>,
-) -> Result<SearchDi> {
-    // Defaults: the historical uncompressed, chunk-first index. The composition
-    // root (`src/interfaces/di/modules.rs`) reads the user's settings and calls
-    // `build_with_compression` directly.
-    build_with_compression(
-        db_pool,
-        usearch_index_path,
-        models_path,
-        model_provider,
-        active_embedding_dimension,
-        VectorIndexCompression::None,
-        EmbeddingStrategy::default(),
-        background,
-    )
-    .await
+/// Opens the active embedding model for the chunk-first backfill. It runs at
+/// most once, off the runtime thread, and only when the index is missing vectors.
+pub type BackfillModelLoader = Box<dyn FnOnce() -> Result<Box<dyn EmbeddingPort>> + Send>;
+
+/// The vector space the index opens for. The composition root resolves it
+/// from the active embedding model and the user's embedding strategy.
+pub struct VectorSpace {
+    /// The identity of the persisted vectors. `None` means there is no usable
+    /// local model: nothing active, a remote model, missing files, or a row
+    /// without a recorded artifact identity.
+    pub identity: Option<String>,
+    /// Late-chunked vectors are pooled from a shared forward pass, so the
+    /// chunk-first backfill must not fill their generation.
+    pub late_chunking: bool,
+    /// Opens the active model for the backfill. Present whenever `identity` is.
+    pub backfill_model: Option<BackfillModelLoader>,
 }
 
-/// `build` with an explicit vector storage configuration and embedding strategy.
+/// Open the vector index for `vector_space` with an explicit storage
+/// configuration, and build the search services over it.
 ///
 /// See [`VectorIndexCompression`] for what the non-default configurations cost
 /// and buy. Turning compression on for an existing vault is safe: the index
@@ -87,27 +77,26 @@ pub async fn build(
 /// index is left untouched on disk and a fresh one is rebuilt from the
 /// f32 vectors SQLite already holds.
 ///
-/// `strategy` is not used to embed anything here — it only names the vector
-/// space. Late-chunked vectors are pooled from a shared forward pass and are
-/// not interchangeable with chunk-first vectors of the same model, so the
-/// strategy joins the artifact digest in the embedding identity that selects
-/// which persisted vectors this index is rebuilt from.
+/// The embedding strategy is not used to embed anything here — it only names
+/// the vector space. Late-chunked vectors are pooled from a shared forward
+/// pass and are not interchangeable with chunk-first vectors of the same
+/// model, so the strategy joins the artifact digest in `vector_space.identity`,
+/// which selects the persisted vectors this index is rebuilt from.
 pub async fn build_with_compression(
     db_pool: SqlitePool,
     usearch_index_path: std::path::PathBuf,
     models_path: std::path::PathBuf,
-    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    embedding: Arc<dyn EmbeddingPort>,
     active_embedding_dimension: Option<usize>,
     compression: VectorIndexCompression,
-    strategy: EmbeddingStrategy,
+    vector_space: VectorSpace,
     background: Arc<BackgroundTasks>,
 ) -> Result<SearchDi> {
-    let repository =
-        crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
-            db_pool.clone(),
-        );
-    let active = repository.get_active_embedding_model().await?;
-    let identity = index_identity(active.as_ref(), strategy);
+    let VectorSpace {
+        identity,
+        late_chunking,
+        backfill_model,
+    } = vector_space;
     // Every vector space has its own index files. A model switch cannot wipe its
     // predecessor — and neither can a compression switch, which reshapes the
     // stored vectors just as completely as a model change does. The compression
@@ -198,25 +187,18 @@ pub async fn build_with_compression(
         // pass, and the index would then mix the two. Late chunking therefore
         // starts from whatever that generation already holds and fills in as
         // documents are indexed.
-        if usearch_index.count() < total as usize && !strategy.is_late_chunking() {
+        if usearch_index.count() < total as usize && !late_chunking {
             // `identity` is only set for a local model with a recorded
-            // artifact identity, so this always matches here.
-            let stored = active.as_ref().and_then(|m| {
-                Some((
-                    m.location().enclosing_dir()?,
-                    m.embedding_artifact_identity()?.clone(),
-                ))
-            });
-            if let Some((dir, artifact)) = stored {
-                let model = tokio::task::spawn_blocking(move || {
-                    CandleEmbeddingService::open(&dir, artifact).map(|s| s.with_strategy(strategy))
-                })
-                .await
-                .map_err(|e| {
-                    AppError::InternalError(format!("Embedding model load task failed: {e}"))
-                })??;
+            // artifact identity, so the loader is always present here.
+            if let Some(open_model) = backfill_model {
+                let model = tokio::task::spawn_blocking(open_model)
+                    .await
+                    .map_err(|e| {
+                        AppError::InternalError(format!("Embedding model load task failed: {e}"))
+                    })??;
                 crate::infrastructure::persistence::repositories::embedding::generation::prepare(
-                    &db_pool, &model,
+                    &db_pool,
+                    model.as_ref(),
                 )
                 .await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
@@ -254,7 +236,7 @@ pub async fn build_with_compression(
     }
 
     if let Some(marker) = reembed_marker.as_deref().filter(|m| m.exists()) {
-        settle_reembed_marker(marker, coverage, strategy.is_late_chunking());
+        settle_reembed_marker(marker, coverage, late_chunking);
     }
 
     tracing::info!(
@@ -292,8 +274,7 @@ pub async fn build_with_compression(
             .join("model.safetensors"),
     )) as Arc<dyn Reranker>;
 
-    let dynamic_embedding =
-        Arc::new(DynamicEmbedding::new(model_provider.clone())) as Arc<dyn EmbeddingPort>;
+    let dynamic_embedding = embedding;
     let chunk_repository = Arc::new(
         crate::infrastructure::persistence::repositories::ChunkRepository::new(db_pool.clone()),
     ) as Arc<dyn ChunkRepositoryPort>;
@@ -327,40 +308,6 @@ pub async fn build_with_compression(
         search_enrichment_service,
         vector_search,
         document_repo,
-    })
-}
-
-/// The vector-space identity of the active embedding model, read from its
-/// row: the recorded artifact identity plus the strategy. `None` means there
-/// is no usable local model — nothing active, a remote model, missing files,
-/// or a row without an identity. Hashes nothing.
-fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy) -> Option<String> {
-    let model = active?;
-    let dir = model.location().enclosing_dir()?;
-    let Some(artifact) = model.embedding_artifact_identity() else {
-        // The repository refuses to activate a local model without an
-        // identity. Startup does not fail over it; the embedding loader
-        // refuses the model and asks the user to activate it again.
-        tracing::error!(
-            model_id = %model.model_id(),
-            "Active embedding model has no recorded artifact identity; treating it as unconfigured"
-        );
-        return None;
-    };
-    // Weights may be safetensors or, for a checkpoint that never
-    // published a conversion, the `pytorch_model.bin` pickle.
-    let files_present = ["config.json", "tokenizer.json"]
-        .iter()
-        .all(|name| dir.join(name).is_file())
-        && has_loadable_weights(&dir);
-    // The document prefix is part of the key the loaded model reports, so it
-    // is resolved here exactly as the loader resolves it.
-    files_present.then(|| {
-        vector_identity(
-            artifact.as_str(),
-            strategy,
-            crate::features::embedding::candle_service::prefixes_for_model_dir(&dir),
-        )
     })
 }
 
@@ -495,136 +442,5 @@ mod reembed_marker_tests {
         let (_dir, path) = marker();
         settle_reembed_marker(&path, None, false);
         assert!(path.exists());
-    }
-}
-
-#[cfg(test)]
-mod index_identity_tests {
-    use super::index_identity;
-    use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
-    use lattice_core::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
-    use lattice_core::domain::models::downloaded::{
-        DownloadedModel, ModelLocation, StoredDownloadedModel,
-    };
-    use lattice_core::domain::models::metadata::ModelType;
-    use lattice_core::domain::value_objects::ArtifactIdentity;
-    use std::path::Path;
-
-    fn recorded() -> ArtifactIdentity {
-        ArtifactIdentity::from_digest(&[3; 32])
-    }
-
-    fn model(location: ModelLocation, identity: Option<ArtifactIdentity>) -> DownloadedModel {
-        DownloadedModel::from_db(StoredDownloadedModel {
-            id: "row-1".into(),
-            model_name: "embedder".into(),
-            model_id: "org/embedder".into(),
-            location,
-            file_size_bytes: 0,
-            model_type: ModelType::TextEmbeddings,
-            architecture: "bert".into(),
-            downloaded_at: chrono::Utc::now(),
-            last_used_at: None,
-            use_count: 0,
-            is_active_for_chat: false,
-            is_active_for_embedding: true,
-            metadata: None,
-            is_active_for_utility: false,
-            embedding_artifact_identity: identity,
-        })
-    }
-
-    fn local(dir: &Path) -> ModelLocation {
-        ModelLocation::LocalDirectory {
-            path: dir.to_path_buf(),
-        }
-    }
-
-    fn model_dir(files: &[&str]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        for name in files {
-            std::fs::write(dir.path().join(name), b"{}").unwrap();
-        }
-        dir
-    }
-
-    const COMPLETE: [&str; 3] = ["config.json", "tokenizer.json", WEIGHTS_SAFETENSORS];
-
-    #[test]
-    fn no_active_model_is_unconfigured() {
-        assert_eq!(index_identity(None, EmbeddingStrategy::ChunkFirst), None);
-    }
-
-    #[test]
-    fn local_model_is_named_by_its_recorded_identity_and_strategy() {
-        let dir = model_dir(&COMPLETE);
-        let active = model(local(dir.path()), Some(recorded()));
-        for strategy in [
-            EmbeddingStrategy::ChunkFirst,
-            EmbeddingStrategy::LateChunking,
-        ] {
-            assert_eq!(
-                index_identity(Some(&active), strategy),
-                Some(strategy_identity(recorded().as_str(), strategy))
-            );
-        }
-    }
-
-    #[test]
-    fn a_prefixed_model_is_named_as_the_loaded_service_names_itself() {
-        use crate::features::embedding::candle_service::CandleEmbeddingService;
-        use lattice_core::application::ports::EmbeddingPort;
-        let root = tempfile::tempdir().unwrap();
-        // Tiny real checkpoint; the directory name selects E5's `passage: `.
-        let dir = root.path().join("multilingual-e5-small");
-        std::fs::create_dir(&dir).unwrap();
-        crate::features::embedding::candle_service::tests::write_tiny_bert(&dir);
-        let active = model(local(&dir), Some(recorded()));
-        for strategy in [
-            EmbeddingStrategy::ChunkFirst,
-            EmbeddingStrategy::LateChunking,
-        ] {
-            let loaded = CandleEmbeddingService::open(&dir, recorded())
-                .unwrap()
-                .with_strategy(strategy);
-            let expected = EmbeddingPort::model_identity(&loaded);
-            assert!(expected.ends_with("+prefix-e5"), "{expected}");
-            assert_eq!(index_identity(Some(&active), strategy), Some(expected));
-        }
-    }
-
-    #[test]
-    fn local_model_without_a_recorded_identity_is_unconfigured() {
-        let dir = model_dir(&COMPLETE);
-        let active = model(local(dir.path()), None);
-        assert_eq!(
-            index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
-            None
-        );
-    }
-
-    #[test]
-    fn remote_model_is_unconfigured() {
-        let active = model(ModelLocation::RemoteOllama, None);
-        assert_eq!(
-            index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
-            None
-        );
-    }
-
-    #[test]
-    fn local_model_with_missing_files_is_unconfigured() {
-        for files in [
-            &["config.json", WEIGHTS_SAFETENSORS][..],
-            &["config.json", "tokenizer.json"][..],
-        ] {
-            let dir = model_dir(files);
-            let active = model(local(dir.path()), Some(recorded()));
-            assert_eq!(
-                index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
-                None,
-                "files present: {files:?}"
-            );
-        }
     }
 }
