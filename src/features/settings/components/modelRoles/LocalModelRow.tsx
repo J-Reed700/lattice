@@ -25,6 +25,7 @@ import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import { modelRefForRow } from '@/utils/chatModelSelection';
 
+import { LearningWindowNotice } from './LearningWindowNotice';
 import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
@@ -190,6 +191,12 @@ export function LocalModelRow({ model }: Props) {
             <div role="status" title={degraded} className="mt-0.5 line-clamp-3 wrap-break-word text-xs text-text-secondary">
               {isReady ? 'Ready' : 'Loaded'} (on CPU: {degraded})
             </div>
+          ) : null}
+          {learningActive ? (
+            <LearningWindowNotice
+              model={modelRefForRow(model, llmSettings)}
+              savedWindow={model.configured_context_length ?? null}
+            />
           ) : null}
         </div>
 

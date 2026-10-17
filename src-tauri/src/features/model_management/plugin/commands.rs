@@ -15,7 +15,8 @@ use crate::features::model_management::commands_extra::{
     get_active_chat_model_impl, get_active_embedding_model_impl, get_models_with_metadata_impl,
     is_model_already_downloaded_impl, set_active_chat_model_impl, set_active_embedding_model_impl,
     set_active_utility_model_impl, warm_up_active_chat_model_impl,
-    warm_up_active_utility_model_impl, warm_up_learning_model_impl, LoadedModelDto,
+    warm_up_active_utility_model_impl, warm_up_learning_model_impl, LearningWindowShortfallDto,
+    LoadedModelDto,
 };
 use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl, download_model_impl,
@@ -319,6 +320,23 @@ pub async fn list_loaded_models(
             degraded: loaded.degraded,
         })
         .collect())
+}
+
+/// The last learning work refused because the Learning model's window was
+/// too small, while that model has not covered the window since.
+#[tauri::command]
+#[specta::specta]
+pub async fn last_learning_window_shortfall(
+    container: State<'_, Container>,
+) -> Result<Option<LearningWindowShortfallDto>, ApiError> {
+    Ok(container
+        .learning_shortfall()
+        .map(|shortfall| LearningWindowShortfallDto {
+            model: shortfall.model,
+            needed_tokens: shortfall.needed,
+            window_tokens: shortfall.window,
+            window_is_saved: shortfall.window_is_saved,
+        }))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

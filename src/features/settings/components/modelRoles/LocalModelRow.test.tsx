@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
-import type { LoadedModelDto } from '@/lib/bindings';
+import type { LearningWindowShortfallDto, LoadedModelDto } from '@/lib/bindings';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
@@ -18,6 +18,7 @@ const hooks = vi.hoisted(() => ({
   warmUpLearningModel: vi.fn(),
   deleteDownloadedModel: vi.fn(),
   loaded: [] as LoadedModelDto[],
+  shortfall: null as LearningWindowShortfallDto | null,
 }));
 
 vi.mock('./ModelRolesContext', () => ({
@@ -26,6 +27,11 @@ vi.mock('./ModelRolesContext', () => ({
 
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => hooks,
+}));
+
+vi.mock('@/features/model/hooks/useLearningWindowShortfall', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/model/hooks/useLearningWindowShortfall')>()),
+  useLearningWindowShortfall: () => hooks.shortfall,
 }));
 
 vi.mock('@/features/model/hooks/useLoadedModels', async (importOriginal) => ({
@@ -71,6 +77,7 @@ describe('LocalModelRow load status', () => {
     useModelWarmupStore.getState().reset();
     roles.llmSettings = undefined;
     hooks.loaded = [];
+    hooks.shortfall = null;
   });
 
   it("shows the backend's reason when the model failed to load for a role it holds", () => {
@@ -169,5 +176,26 @@ describe('LocalModelRow load status', () => {
     expect(await screen.findByText(
       'Remove Qwen3 4B and its files? This cannot be undone. This is your Learning model. Lessons will stop until you choose another.'
     )).toBeInTheDocument();
+  });
+
+  it('says under the Learning model what the last refused learning work needed, until its window covers it', () => {
+    const settings = makeAppSettings().llm;
+    settings.learningModel = { kind: 'local', model_id: 'qwen3-4b' };
+    roles.llmSettings = settings;
+    hooks.shortfall = {
+      model: { kind: 'local', model_id: 'qwen3-4b' }, needed_tokens: 20_000, window_tokens: 8_704, window_is_saved: true,
+    };
+
+    const { rerender } = renderRow({ ...utilityModel(), configured_context_length: 8_704 });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Learning work needs a context window of 20,000 tokens; this model has 8,704.'
+    );
+
+    rerender(
+      <TooltipProvider>
+        <LocalModelRow model={{ ...utilityModel(), configured_context_length: 32_768 }} />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

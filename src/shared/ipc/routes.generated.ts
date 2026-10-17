@@ -210,6 +210,7 @@ export const COMMAND_PLUGINS = {
   interrupt_learning_assessment_form: 'learning',
   is_favorite: 'favorites',
   is_model_already_downloaded: 'model',
+  last_learning_window_shortfall: 'model',
   list_all_documents: 'file',
   list_available_functions: 'functions',
   list_clusters: 'corpus-shape',

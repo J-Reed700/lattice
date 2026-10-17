@@ -223,6 +223,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::model_management::plugin::commands::warm_up_active_utility_model,
             lattice::features::model_management::plugin::commands::warm_up_learning_model,
             lattice::features::model_management::plugin::commands::list_loaded_models,
+            lattice::features::model_management::plugin::commands::last_learning_window_shortfall,
             // Catalog/discovery commands
             lattice::features::model_management::commands::detect_system_capabilities,
             lattice::features::model_management::commands::get_compatible_models,

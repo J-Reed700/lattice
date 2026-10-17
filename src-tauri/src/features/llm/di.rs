@@ -1,7 +1,7 @@
 //! LLM / model-management feature dependency injection.
 
 use crate::features::llm::engine::system::BackendDevices;
-use crate::features::llm::instances::{LoadedInstance, SidecarBudget};
+use crate::features::llm::instances::{LearningShortfall, LoadedInstance, SidecarBudget};
 use crate::features::llm::loading::ModelLoader;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::sync::Arc;
@@ -258,6 +258,12 @@ impl Container {
     /// Every model loaded now, with who holds it.
     pub(crate) fn loaded_models(&self) -> Vec<LoadedInstance> {
         self.llm_instances.snapshot()
+    }
+
+    /// The last learning work refused because the Learning model's window
+    /// was too small, while that model has not covered the window since.
+    pub(crate) fn learning_shortfall(&self) -> Option<LearningShortfall> {
+        self.llm_instances.learning_shortfall()
     }
 
     /// Load the Learning model ahead of the first learning job, reporting

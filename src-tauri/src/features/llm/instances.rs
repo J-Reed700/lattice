@@ -177,6 +177,21 @@ pub(crate) struct LoadedInstance {
     pub(crate) degraded: Option<String>,
 }
 
+/// Learning work refused because the Learning model's window was smaller
+/// than it needed, kept until that model serves learning work with a window
+/// that covers it, so Settings → Models can say so beside the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LearningShortfall {
+    pub(crate) model: ModelRef,
+    /// The window the work needed, in tokens.
+    pub(crate) needed: u32,
+    /// The window the model had, in tokens.
+    pub(crate) window: u32,
+    /// Whether that window was the one saved for the model in Settings →
+    /// Models, rather than what Auto or the model's server gave it.
+    pub(crate) window_is_saved: bool,
+}
+
 /// What [`LlmInstances::acquire`] loads, and for whom.
 pub(crate) struct Acquire<'a> {
     pub(crate) key: ModelKey,
@@ -216,6 +231,9 @@ pub(crate) struct LlmInstances {
     /// The Settings default chat model most recently handed out, so work that
     /// only reads "the loaded chat model" finds it without loading one.
     last_default: Mutex<Option<ModelKey>>,
+    /// The last learning work refused for a window too small, until the
+    /// model it named covers that window.
+    learning_shortfall: Mutex<Option<LearningShortfall>>,
 }
 
 impl LlmInstances {
@@ -223,6 +241,7 @@ impl LlmInstances {
         Self {
             pool: InstancePool::new(),
             last_default: Mutex::new(None),
+            learning_shortfall: Mutex::new(None),
         }
     }
 
@@ -290,6 +309,38 @@ impl LlmInstances {
             .last_default
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(key.clone());
+    }
+
+    /// Remember that learning work was refused for a window too small.
+    pub(crate) fn record_learning_shortfall(&self, shortfall: LearningShortfall) {
+        *self
+            .learning_shortfall
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(shortfall);
+    }
+
+    /// `model` served learning work with a window of `window` tokens: a
+    /// shortfall it now covers is over.
+    pub(crate) fn learning_window_served(&self, model: &ModelRef, window: u32) {
+        let mut shortfall = self
+            .learning_shortfall
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if shortfall
+            .as_ref()
+            .is_some_and(|short| short.model == *model && window >= short.needed)
+        {
+            *shortfall = None;
+        }
+    }
+
+    /// The last learning work refused for a window too small, while the
+    /// model it named has not covered that window since.
+    pub(crate) fn learning_shortfall(&self) -> Option<LearningShortfall> {
+        self.learning_shortfall
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Stop handing out the models `cause` makes stale; whoever holds one

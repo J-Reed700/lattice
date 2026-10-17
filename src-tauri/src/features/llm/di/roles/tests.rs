@@ -272,6 +272,18 @@ async fn work_that_needs_a_larger_window_than_the_model_has_is_refused() {
         (1, 0),
         "the model stays loaded for work it can do; the refused job holds nothing"
     );
+    assert_eq!(
+        models.instances.learning_shortfall(),
+        Some(LearningShortfall {
+            model: ModelRef::LlamaCpp {
+                model: "test-model".into()
+            },
+            needed: 20_480,
+            window: 8_192,
+            window_is_saved: false,
+        }),
+        "Settings → Models can say what the refused work needed"
+    );
 }
 
 fn remote_utility_row() -> DownloadedModel {

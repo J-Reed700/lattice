@@ -704,3 +704,28 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
     assert_eq!(refusal::tokens(1_048_576), "1,048,576");
     assert_eq!(refusal::tokens(999), "999");
 }
+
+#[test]
+fn a_learning_shortfall_lasts_until_its_model_serves_a_window_that_covers_it() {
+    let instances = LlmInstances::new();
+    let model = local_key("Ornith-1.5-9B").model;
+    let other = local_key("Qwen3.5-27B").model;
+    let shortfall = LearningShortfall {
+        model: model.clone(),
+        needed: 20_480,
+        window: 8_704,
+        window_is_saved: true,
+    };
+    instances.record_learning_shortfall(shortfall.clone());
+
+    instances.learning_window_served(&model, 16_384);
+    instances.learning_window_served(&other, 32_768);
+    assert_eq!(
+        instances.learning_shortfall(),
+        Some(shortfall),
+        "a window still too small, or another model, leaves it standing"
+    );
+
+    instances.learning_window_served(&model, 20_480);
+    assert_eq!(instances.learning_shortfall(), None);
+}

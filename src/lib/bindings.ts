@@ -1200,6 +1200,18 @@ async listLoadedModels() : Promise<Result<LoadedModelDto[], ApiError>> {
 }
 },
 /**
+ * The last learning work refused because the Learning model's window was
+ * too small, while that model has not covered the window since.
+ */
+async lastLearningWindowShortfall() : Promise<Result<LearningWindowShortfallDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|last_learning_window_shortfall") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Detect system hardware capabilities.
  *
  * Returns comprehensive system information:
@@ -6900,6 +6912,25 @@ export type LearningSourceWorkspaceDto = { programId: string; sources: LearningS
 export type LearningTangentDto = { conversationId: string; programId: string; programTitle: string; spaceId: string; moduleId: string; moduleTitle: string; lessonId: string; lessonTitle: string; sectionIndex: number | null; sectionTitle: string | null; selectedText: string; title: string; createdAt: number; updatedAt: string; messageCount: number; contextMessageCount: number }
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
 export type LearningTutorRequestKind = "hint" | "question" | "critique"
+/**
+ * The last learning work refused because the Learning model's window was
+ * too small, while that model has not covered the window since. Settings →
+ * Models shows it beside the model that holds the Learning role.
+ */
+export type LearningWindowShortfallDto = { model: ModelRef;
+/**
+ * The window the refused work needed, in tokens.
+ */
+needed_tokens: number;
+/**
+ * The window the model had, in tokens.
+ */
+window_tokens: number;
+/**
+ * Whether that window was the one saved for the model in Settings →
+ * Models, rather than what Auto or the model's server gave it.
+ */
+window_is_saved: boolean }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).

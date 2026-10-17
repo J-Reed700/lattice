@@ -14,6 +14,8 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { LLAMACPP_SERVER_MODEL_ID, modelRefForOption, sameModelRef } from '@/utils/chatModelSelection';
 
+import { LearningWindowNotice } from './LearningWindowNotice';
+
 const TOGGLE_CLASS =
   'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
 const ON_CLASS = 'border-accent/25 bg-accent-muted font-medium text-accent';
@@ -75,6 +77,7 @@ export function LlamaCppMetaRow() {
             Auto tries local models first. Select Chat to always use this connection.
           </p>
         ) : null}
+        {isLearning ? <LearningWindowNotice model={servedRef} savedWindow={null} /> : null}
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">

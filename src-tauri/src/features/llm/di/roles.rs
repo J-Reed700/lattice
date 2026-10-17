@@ -25,7 +25,7 @@ use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::llm::instances::refusal::{self, Window};
 use crate::features::llm::instances::{
-    Acquire, Acquired, GpuBudget, Holder, LlmInstances, ModelKey, Tuning,
+    Acquire, Acquired, GpuBudget, Holder, LearningShortfall, LlmInstances, ModelKey, Tuning,
 };
 use crate::features::llm::loading::{launch_profile_for, ModelLoader};
 
@@ -472,11 +472,13 @@ impl RoleModels {
                     .budget
                     .auto_window(&local.path, key.launch.unwrap_or_default())
                     .await;
-                return Err(refusal::refused(
+                return Err(self.short_window(
                     role,
-                    Some(model),
-                    "window_too_small",
-                    refusal::window_too_small(role, &local.name, floor, Window::Set(set), auto),
+                    model,
+                    &local.name,
+                    floor,
+                    Window::Set(set),
+                    auto,
                 ));
             }
         }
@@ -522,12 +524,7 @@ impl RoleModels {
                 Some(_) => Window::Running(window),
                 None => Window::Reported(window),
             };
-            return Err(refusal::refused(
-                role,
-                Some(model),
-                "window_too_small",
-                refusal::window_too_small(role, &acquired.loaded.name, floor, window, None),
-            ));
+            return Err(self.short_window(role, model, &acquired.loaded.name, floor, window, None));
         }
         if want.requirements.tools == ToolSupport::Required && !llm.supports_tool_calling() {
             return Err(refusal::refused(
@@ -537,7 +534,42 @@ impl RoleModels {
                 refusal::no_tools(role, &acquired.loaded.name),
             ));
         }
+        if role == ModelRole::Learning {
+            self.instances.learning_window_served(model, window);
+        }
         Ok((key, acquired))
+    }
+
+    /// The refusal for `model`, whose `window` is below the work's `floor`.
+    /// A Learning refusal is remembered, so Settings → Models can say so
+    /// beside the model until it covers the window.
+    fn short_window(
+        &self,
+        role: ModelRole,
+        model: &ModelRef,
+        name: &str,
+        floor: u32,
+        window: Window,
+        auto: Option<u32>,
+    ) -> AppError {
+        if role == ModelRole::Learning {
+            let (tokens, window_is_saved) = match window {
+                Window::Set(tokens) => (tokens, true),
+                Window::Running(tokens) | Window::Reported(tokens) => (tokens, false),
+            };
+            self.instances.record_learning_shortfall(LearningShortfall {
+                model: model.clone(),
+                needed: floor,
+                window: tokens,
+                window_is_saved,
+            });
+        }
+        refusal::refused(
+            role,
+            Some(model),
+            "window_too_small",
+            refusal::window_too_small(role, name, floor, window, auto),
+        )
     }
 }
 

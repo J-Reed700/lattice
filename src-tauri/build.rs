@@ -95,6 +95,7 @@ fn main() {
                     "warm_up_active_utility_model",
                     "warm_up_learning_model",
                     "list_loaded_models",
+                    "last_learning_window_shortfall",
                     "get_active_chat_model",
                     "get_active_embedding_model",
                     "get_active_models",

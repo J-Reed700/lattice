@@ -78,6 +78,14 @@ export const modelApi = {
     apiCall<Wire.LoadedModelDto[]>('list_loaded_models'),
 
   /**
+   * The last learning work refused because the Learning model's window was
+   * too small, while that model has not covered the window since; null when
+   * there is none.
+   */
+  lastLearningWindowShortfall: async (): Promise<ApiResult<Wire.LearningWindowShortfallDto | null>> =>
+    apiCall<Wire.LearningWindowShortfallDto | null>('last_learning_window_shortfall'),
+
+  /**
    * Gets the currently active chat model.
    * Returns null if no model is set as active.
    *

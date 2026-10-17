@@ -17,9 +17,10 @@ import { Network } from 'lucide-react';
 
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 
+import { LearningWindowNotice } from './LearningWindowNotice';
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
-import { ROLES } from './roleConfig';
+import { isLearningModel, ROLES } from './roleConfig';
 
 const OLLAMA_SERVER_MODEL_ID = '__ollama_server__';
 
@@ -91,6 +92,9 @@ export function OllamaMetaRow() {
             </button>
           </div>
         )}
+        {isLearningModel(ollamaRow, settings?.llm) ? (
+          <LearningWindowNotice model={settings?.llm.learningModel ?? null} savedWindow={null} />
+        ) : null}
       </div>
 
       {/* Outside the lg-only meta line: on a narrow window the missing-tag

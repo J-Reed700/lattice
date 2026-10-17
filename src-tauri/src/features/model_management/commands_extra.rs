@@ -97,6 +97,21 @@ pub struct LoadedModelDto {
     pub degraded: Option<String>,
 }
 
+/// The last learning work refused because the Learning model's window was
+/// too small, while that model has not covered the window since. Settings →
+/// Models shows it beside the model that holds the Learning role.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct LearningWindowShortfallDto {
+    pub model: ModelRef,
+    /// The window the refused work needed, in tokens.
+    pub needed_tokens: u32,
+    /// The window the model had, in tokens.
+    pub window_tokens: u32,
+    /// Whether that window was the one saved for the model in Settings →
+    /// Models, rather than what Auto or the model's server gave it.
+    pub window_is_saved: bool,
+}
+
 /// What describing a downloaded model reads besides its row: its file's
 /// header, and the context window saved for it in Settings.
 pub struct ModelFacts {
