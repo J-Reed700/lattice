@@ -448,7 +448,8 @@ v1 refuses up front with the numbers and the fix. Rationale kept for the later c
 | Provider changed in Settings | irrelevant to an override (the ref names its provider); Default follows Settings | — | — |
 | Not enough memory | §5.4 evict idle, else refuse naming sizes and pinners | the §5.4 message | use the resident model, wait, or stop those turns |
 | GPU fault → CPU fallback | §5.4: runs, says so on every surface | "· on CPU" + reason | none needed; slow but honest |
-| GGUF incompatible with the bundled engine | `UnloadableArtifacts` remembers (`loading.rs:25-110`) → `ModelLoadFailed` with llama-server's tail | "Ornith-1.5-9B can't be loaded by Lattice's local engine: `<tail>`." | "Use default"; not retried until the file changes |
+| GGUF incompatible with the bundled engine (architecture, quant type or tensor layout the loader rejects) | the classifier yields `AttemptFailure::Unsupported` → `LLMError::ModelUnsupported`; only this is remembered by `UnloadableArtifacts` (`loading.rs` ~302) | "Ornith-1.5-9B can't be loaded: `<reason>`" | "Use default"; not retried until the file changes |
+| Server fails to start for a transient reason (readiness timeout, jetsam, allocation failure) | `ModelLoadFailed`, **not** remembered (review fix M1, `558181fc`) | "Ornith-1.5-9B did not start: `<error>`" | The next request retries the load |
 | Bundled binary unusable | `SidecarBinaryUnusable` → `ServiceNotAvailable` (`loading.rs:16-23`) | install message, as today | reinstall |
 | Model changed while a turn streams | §7.4 | streaming keeps A; composer shows B | — |
 | Learning model unset | `InvalidConfig` (§6.3) | "No Learning model is set…" + Settings banner | "Use <chat model>" button / choose a row |
