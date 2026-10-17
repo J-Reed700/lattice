@@ -9,5 +9,7 @@ pub mod references;
 pub mod search;
 pub mod settings;
 pub mod sources;
+pub mod system_stats;
+pub mod tags;
 pub mod tools;
 pub mod web;

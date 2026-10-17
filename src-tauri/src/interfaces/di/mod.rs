@@ -61,13 +61,9 @@ use crate::features::embedding::mock_repository::MockEmbeddingRepository;
 #[cfg(test)]
 use crate::features::embedding::mocks::MockEmbeddingService;
 #[cfg(test)]
-use crate::features::embedding::EmbeddingServiceTrait;
-#[cfg(test)]
 use crate::features::mentions::mocks::MockMentionRepository;
 #[cfg(test)]
 use crate::features::search::mocks::MockSearchService;
-#[cfg(test)]
-use crate::features::search::SearchServiceTrait;
 #[cfg(test)]
 use crate::features::tags::mocks::MockTagRepository;
 #[cfg(test)]
@@ -78,6 +74,10 @@ use crate::infrastructure::persistence::repositories::mocks::{
 };
 #[cfg(test)]
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
+#[cfg(test)]
+use lattice_core::application::ports::EmbeddingPort;
+#[cfg(test)]
+use lattice_core::application::ports::SearchServiceTrait;
 #[cfg(test)]
 use lattice_core::application::ports::{
     ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
@@ -215,8 +215,8 @@ impl MockAppContainer {
     // Service accessors
 
     /// Get embedding service as trait object
-    pub fn embedding_service(&self) -> Arc<dyn EmbeddingServiceTrait> {
-        Arc::clone(&self.embedding_service) as Arc<dyn EmbeddingServiceTrait>
+    pub fn embedding_service(&self) -> Arc<dyn EmbeddingPort> {
+        Arc::clone(&self.embedding_service) as Arc<dyn EmbeddingPort>
     }
 
     /// Get embedding service as concrete type (for test configuration)

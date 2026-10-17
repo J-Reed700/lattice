@@ -1,4 +1,4 @@
-//! `EmbeddingPort` and `EmbeddingServiceTrait` for the Candle service.
+//! `EmbeddingPort` for the Candle service.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -7,7 +7,6 @@ use async_trait::async_trait;
 
 use crate::features::embedding::late_chunking::vector_identity;
 use crate::features::embedding::sparse_head::MAX_QUERY_TERMS;
-use crate::features::embedding::EmbeddingServiceTrait;
 use lattice_core::application::ports::embedding_port::sparse_not_supported;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::value_objects::SparseEmbedding;
@@ -153,69 +152,5 @@ impl EmbeddingPort for CandleEmbeddingService {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
-    }
-}
-
-#[async_trait]
-impl EmbeddingServiceTrait for CandleEmbeddingService {
-    fn model_identity(&self) -> String {
-        <Self as EmbeddingPort>::model_identity(self)
-    }
-    fn split_text(
-        &self,
-        text: &str,
-        prefix: &str,
-    ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>> {
-        <Self as EmbeddingPort>::split_text(self, text, prefix)
-    }
-
-    async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
-        <Self as EmbeddingPort>::embed_query(self, text).await
-    }
-
-    async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
-        <Self as EmbeddingPort>::embed_single(self, text).await
-    }
-
-    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        <Self as EmbeddingPort>::embed_batch(self, texts).await
-    }
-
-    async fn embed_contextualized_chunks(
-        &self,
-        chunks: &[lattice_core::domain::value_objects::ContextualizedChunk],
-    ) -> Result<Vec<Vec<f32>>> {
-        self.embed_contextualized_chunks(chunks).await
-    }
-
-    fn uses_late_chunking(&self) -> bool {
-        self.strategy.is_late_chunking()
-    }
-
-    async fn embed_span_chunks(
-        &self,
-        span_text: &str,
-        chunk_ranges: &[Range<usize>],
-    ) -> Result<Vec<Vec<f32>>> {
-        self.embed_span(span_text, chunk_ranges).await
-    }
-
-    fn supports_sparse(&self) -> bool {
-        <Self as EmbeddingPort>::supports_sparse(self)
-    }
-
-    async fn embed_sparse_batch(&self, texts: &[String]) -> Result<Vec<SparseEmbedding>> {
-        <Self as EmbeddingPort>::embed_sparse_batch(self, texts).await
-    }
-
-    async fn embed_batch_with_sparse(
-        &self,
-        texts: &[String],
-    ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
-        CandleEmbeddingService::embed_batch_with_sparse(self, texts).await
-    }
-
-    async fn embed_sparse_query(&self, text: &str) -> Result<SparseEmbedding> {
-        <Self as EmbeddingPort>::embed_sparse_query(self, text).await
     }
 }

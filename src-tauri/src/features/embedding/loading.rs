@@ -4,30 +4,14 @@ use crate::features::download::downloaded_model_repository::DownloadedModelRepos
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
 use crate::infrastructure::security::SecurityContext;
-use async_trait::async_trait;
-use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::application::ports::{EmbeddingIndexBinding, EmbeddingPort};
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
-
-/// The search index a loaded model binds before it is published. Search
-/// implements it, so loading never names the index it fills.
-#[async_trait]
-pub(crate) trait EmbeddingIndexBinding: Send + Sync {
-    /// Bind the vector space of `model`, or fail when the index already holds
-    /// a different one.
-    async fn bind_first(
-        &self,
-        pool: &sqlx::SqlitePool,
-        model: &dyn EmbeddingPort,
-        late_chunking: bool,
-    ) -> Result<()>;
-}
 
 pub(crate) struct EmbeddingLoader {
     pub downloaded_models: Arc<DownloadedModelRepository>,
     pub security: Arc<SecurityContext>,
     pub index: Arc<dyn EmbeddingIndexBinding>,
-    pub pool: sqlx::SqlitePool,
     /// How chunk vectors are produced, straight from the user's settings.
     ///
     /// The strategy is part of the vector space, not a detail of inference:
@@ -142,7 +126,7 @@ impl EmbeddingLoader {
         match loaded {
             Ok(service) => {
                 self.index
-                    .bind_first(&self.pool, &service, self.strategy.is_late_chunking())
+                    .bind_first(&service, self.strategy.is_late_chunking())
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "Failed to initialize embedding search index");

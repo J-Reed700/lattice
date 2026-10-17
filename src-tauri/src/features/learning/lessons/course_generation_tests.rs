@@ -1632,11 +1632,9 @@ async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_
 #[tokio::test]
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and LATTICE_OUTLINE_REQUEST"]
 async fn live_outline_generation_and_save() -> Result<()> {
-    use crate::features::{
-        llm::llama_cpp::LlamaCppLlm,
-        web::{services::web::WebService, WebServiceTrait},
-    };
+    use crate::features::{llm::llama_cpp::LlamaCppLlm, web::services::web::WebService};
     use lattice_core::application::contracts::settings::LLMSettingsDto;
+    use lattice_core::application::ports::WebServiceTrait;
     let settings_path = std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap();
     let request_path = std::env::var("LATTICE_OUTLINE_REQUEST").unwrap();
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(settings_path)?)?;

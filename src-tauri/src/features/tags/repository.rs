@@ -13,9 +13,9 @@
 //!
 //! - DB models are now internal and NOT exported
 
-use crate::features::tags::entity::Tag as TagEntity;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::TagName;
 use sqlx::{Row, SqlitePool};

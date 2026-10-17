@@ -4,10 +4,10 @@
 //! [`WebIngestionServiceBuilder`] used by dependency-injection code.
 
 use super::WebIngestionService;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::WebArchiveServiceTrait;
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
@@ -63,8 +63,8 @@ impl Default for WebIngestionConfig {
 pub struct WebIngestionServiceBuilder {
     article_extractor: Option<Arc<dyn ArticleExtractorServiceTrait>>,
     web_archive: Option<Arc<dyn WebArchiveServiceTrait>>,
-    embedding_service: Option<Arc<dyn EmbeddingServiceTrait>>,
-    index_storage: Option<Arc<dyn IndexStorageTrait>>,
+    embedding_service: Option<Arc<dyn EmbeddingPort>>,
+    index_storage: Option<Arc<dyn IngestedDocumentStorePort>>,
     tokenizer: Option<Arc<Tokenizer>>,
     vector_search: Option<Arc<dyn lattice_core::application::ports::VectorSearchPort>>,
     query_cache: Option<Arc<dyn lattice_core::application::ports::SearchResultCachePort>>,
@@ -95,12 +95,12 @@ impl WebIngestionServiceBuilder {
         self
     }
 
-    pub fn embedding_service(mut self, value: Arc<dyn EmbeddingServiceTrait>) -> Self {
+    pub fn embedding_service(mut self, value: Arc<dyn EmbeddingPort>) -> Self {
         self.embedding_service = Some(value);
         self
     }
 
-    pub fn index_storage(mut self, value: Arc<dyn IndexStorageTrait>) -> Self {
+    pub fn index_storage(mut self, value: Arc<dyn IngestedDocumentStorePort>) -> Self {
         self.index_storage = Some(value);
         self
     }

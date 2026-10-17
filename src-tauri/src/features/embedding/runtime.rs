@@ -147,12 +147,11 @@ mod tests {
 
     #[tokio::test]
     async fn dynamic_consumers_follow_provider_and_preserve_degraded_errors() {
-        use crate::features::embedding::service::{DynamicEmbedding, DynamicEmbeddingService};
-        use crate::features::embedding::EmbeddingServiceTrait;
+        use crate::features::embedding::service::DynamicEmbedding;
 
         let runtime = Arc::new(EmbeddingRuntime::new());
         let port = DynamicEmbedding::new(runtime.clone());
-        let service = DynamicEmbeddingService::new(runtime.clone());
+        let service = DynamicEmbedding::new(runtime.clone());
         assert!(matches!(
             port.embed_single("text").await,
             Err(AppError::AiModelsNotInstalled(_))

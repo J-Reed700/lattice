@@ -13,9 +13,9 @@ use crate::features::file::use_cases::{
     OpenFileByIdUseCase, OpenFileUseCase, ReadFileBytesUseCase, ReadFileContentUseCase,
     ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };
-use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::security::FileAccessConfig;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::TagServiceTrait;
 use lattice_core::application::ports::{
     ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
     FileSystemPort,

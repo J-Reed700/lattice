@@ -13,10 +13,11 @@ use crate::features::learning::{
     repository::LearningRepository,
     service,
 };
-use crate::features::web::{mocks::MockWebService, traits::WebServiceTrait};
+use crate::features::web::mocks::MockWebService;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;

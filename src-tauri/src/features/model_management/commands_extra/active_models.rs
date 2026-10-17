@@ -223,7 +223,11 @@ pub async fn set_active_embedding_model_impl(
     })
     .await
     .map_err(|e| AppError::InternalError(format!("Embedding model load task failed: {}", e)))??;
-    crate::features::embedding::generation::prepare(container.db_pool(), &model).await?;
+    crate::infrastructure::persistence::repositories::embedding::generation::prepare(
+        container.db_pool(),
+        &model,
+    )
+    .await?;
 
     match use_case
         .activate(&validated_model_id, Some(&identity))

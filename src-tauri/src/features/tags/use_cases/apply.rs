@@ -1,7 +1,7 @@
 //! Apply Tags Use Case
 
 use crate::features::tags::dto::{ApplyTagsRequestDto, ApplyTagsResponseDto, TagDto};
-use crate::features::tags::TagServiceTrait;
+use lattice_core::application::ports::TagServiceTrait;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 

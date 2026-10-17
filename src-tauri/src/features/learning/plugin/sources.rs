@@ -216,7 +216,8 @@ pub async fn refresh_learning_source(
                 text: article.content,
                 truncated: article.content_truncated,
                 extraction_version:
-                    crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
+                    lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION
+                        .into(),
             },
         )
     }

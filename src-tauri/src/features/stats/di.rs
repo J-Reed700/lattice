@@ -10,13 +10,13 @@ use crate::features::stats::corpus_shape_repository::{
 use crate::features::stats::database_stats::DatabaseStatsAdapter;
 use crate::features::stats::use_cases::get_corpus_shape::GetCorpusShapeUseCase;
 use crate::features::stats::use_cases::get_system_stats::GetSystemStatsUseCase;
-use crate::features::tags::entity::Tag as TagEntity;
 use crate::features::tags::repository::TagRepository;
 use crate::infrastructure::persistence::repositories::{
     ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{DatabaseStatsPort, RepositoryPort};
+use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::domain::entities::{Chunk, Document as DocumentEntity};
 
 #[derive(Clone)]

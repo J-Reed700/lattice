@@ -5,13 +5,14 @@ use lattice_core::shared::error::{AppError, Result};
 /// Refuse a vault folder that cannot be resolved, created or written to.
 /// `configured` is the `vault_path` setting, empty for the default folder.
 pub async fn check_vault_root(configured: &str) -> Result<()> {
-    let root = super::writeback::resolve_vault_root(configured).ok_or_else(|| {
-        AppError::InvalidInput(
-            "Vault root could not be resolved (no home directory available). \
+    let root =
+        lattice_core::shared::fs::roots::resolve_vault_root(configured).ok_or_else(|| {
+            AppError::InvalidInput(
+                "Vault root could not be resolved (no home directory available). \
              Pick an explicit folder in Vault settings."
-                .to_string(),
-        )
-    })?;
+                    .to_string(),
+            )
+        })?;
     probe_vault_writable(&root).await
 }
 

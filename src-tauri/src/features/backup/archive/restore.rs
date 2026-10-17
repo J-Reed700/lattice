@@ -445,7 +445,7 @@ impl ArchiveRestorer {
             .await
             .map_err(|e| ArchiveError::Other(format!("could not read settings: {e}")))?;
         let Some(target) =
-            crate::features::vault::writeback::resolve_vault_root(&settings.vault.vault_path)
+            lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
         else {
             warn!("no vault path could be resolved; leaving the restored vault unplaced");
             return Ok(None);

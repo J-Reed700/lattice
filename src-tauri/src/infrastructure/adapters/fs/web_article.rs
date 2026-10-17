@@ -63,7 +63,7 @@ impl WebArticleDetector {
     ///
     /// ```rust
     /// use std::path::Path;
-    /// use lattice::features::web::article_detector::WebArticleDetector;
+    /// use lattice::infrastructure::adapters::fs::web_article::WebArticleDetector;
     ///
     /// let article_path = Path::new("web-archives/my-article/article.md");
     /// if WebArticleDetector::is_web_article(article_path) {
@@ -93,7 +93,7 @@ impl WebArticleDetector {
     ///
     /// ```rust
     /// use std::path::Path;
-    /// use lattice::features::web::article_detector::WebArticleDetector;
+    /// use lattice::infrastructure::adapters::fs::web_article::WebArticleDetector;
     ///
     /// let article_path = Path::new("web-archives/my-article/article.md");
     /// if let Some(html_path) = WebArticleDetector::get_html_path(article_path) {
@@ -126,7 +126,7 @@ impl WebArticleDetector {
     ///
     /// ```rust
     /// use std::path::Path;
-    /// use lattice::features::web::article_detector::WebArticleDetector;
+    /// use lattice::infrastructure::adapters::fs::web_article::WebArticleDetector;
     ///
     /// # async fn example() -> Result<(), lattice_core::shared::error::error::AppError> {
     /// let article_path = Path::new("web-archives/my-article/article.md");

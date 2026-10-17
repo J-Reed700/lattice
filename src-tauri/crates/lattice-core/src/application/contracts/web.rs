@@ -5,6 +5,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// The version stamped on every reference text the web reader extracts for a
+/// learning collection. Bump it when extraction changes what a stored
+/// reference would contain.
+pub const REFERENCE_TEXT_EXTRACTION_VERSION: &str = "web_reference_markdown_v2";
+
 /// Input for web_search function.
 ///
 /// Searches the web using DuckDuckGo when information isn't in the lattice.

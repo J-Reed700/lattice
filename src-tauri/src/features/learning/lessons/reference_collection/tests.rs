@@ -331,7 +331,7 @@ fn library_chunks_are_located_in_order_and_a_missing_chunk_rejects_the_snapshot(
 #[tokio::test]
 #[ignore = "Downloads the public Rust Book through the production safe web reader"]
 async fn live_rust_book_is_captured_beyond_chat_limit() -> Result<()> {
-    use crate::features::web::traits::WebServiceTrait;
+    use lattice_core::application::ports::WebServiceTrait;
     let dir = tempfile::tempdir().unwrap();
     let web = crate::features::web::services::web::WebService::new(dir.path())?;
     let page = web

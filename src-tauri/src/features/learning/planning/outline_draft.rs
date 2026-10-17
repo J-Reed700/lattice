@@ -4,7 +4,7 @@ use crate::features::learning::outline_references::ReferencePlan;
 use crate::features::learning::{
     dto::*, outline_progress::OutlineProgress, repository::LearningRepository,
 };
-use crate::features::web::traits::WebServiceTrait;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},

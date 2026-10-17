@@ -7,8 +7,8 @@
 //! - Just the core business data and logic
 //! - Rich behavior for tag management
 
+use crate::shared::types::{TagId, TagName};
 use chrono::{DateTime, Utc};
-use lattice_core::shared::types::{TagId, TagName};
 use serde::{Deserialize, Serialize};
 
 /// Tag entity for categorizing and organizing documents.

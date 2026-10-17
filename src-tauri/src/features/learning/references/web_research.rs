@@ -2,9 +2,9 @@
 //! lesson research. Search snippets never become evidence: only a complete
 //! capture of a page, validated for full text, is returned.
 use crate::features::learning::source_library::CapturedLearningSource;
-use crate::features::web::traits::WebServiceTrait;
 use lattice_core::application::contracts::web::{WebSearchInput, WebSearchResult};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -161,8 +161,8 @@ pub(in crate::features::learning) async fn capture(
         resolved_url: Some(article.url),
         text: article.content,
         truncated: article.content_truncated,
-        extraction_version: crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION
-            .into(),
+        extraction_version:
+            lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
     };
     if crate::features::learning::sources::validate_capture(&captured).is_err() {
         return Ok(None);

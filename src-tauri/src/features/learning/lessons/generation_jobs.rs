@@ -61,7 +61,7 @@ pub(in crate::features::learning) struct LessonGenerationWorker {
     pub load_llm: ModelLoader,
     pub load_library: LibraryLoader,
     pub refresh_sources: SourceRefresh,
-    pub research_web: Option<Arc<dyn crate::features::web::WebServiceTrait>>,
+    pub research_web: Option<Arc<dyn lattice_core::application::ports::WebServiceTrait>>,
 }
 
 #[async_trait::async_trait]

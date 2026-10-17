@@ -17,8 +17,7 @@
 //! file-access config, and the data-dir-derived paths).
 
 use crate::features::embedding::runtime::EmbeddingRuntime;
-use crate::features::embedding::service::DynamicEmbeddingService;
-use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::embedding::service::DynamicEmbedding as DynamicEmbeddingService;
 use crate::features::function_calling::executor::{FunctionExecutor, FunctionExecutorServices};
 use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools,
@@ -27,6 +26,7 @@ use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryT
 use crate::features::llm::instances::LlmInstances;
 use crate::features::web::services::web::WebService;
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
+use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
 use lattice_core::application::ports::SettingsSideEffectsPort;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;

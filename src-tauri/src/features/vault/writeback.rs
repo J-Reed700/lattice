@@ -9,8 +9,8 @@ use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 
-use crate::features::settings::use_cases::GetSettingsUseCase;
 use lattice_core::application::ports::NoteIndexSink;
+use lattice_core::application::ports::SettingsReaderPort;
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
@@ -118,7 +118,7 @@ impl VaultWriterHandle {
 }
 
 pub fn start_vault_writer(
-    settings_uc: Arc<GetSettingsUseCase>,
+    settings_uc: Arc<impl SettingsReaderPort + 'static>,
     suppression: super::watcher::WriteSuppressionRegistry,
     pool: SqlitePool,
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
@@ -130,7 +130,7 @@ pub fn start_vault_writer(
     let lifetime = Arc::new(WriterLifetime(cancel.clone()));
     background.spawn(run_worker(
         wake.clone(),
-        settings_uc,
+        settings_uc as Arc<dyn SettingsReaderPort>,
         app_handle.clone(),
         note_index_sink.clone(),
         suppression,
@@ -147,7 +147,7 @@ pub fn start_vault_writer(
 
 async fn run_worker(
     wake: Arc<Notify>,
-    settings_uc: Arc<GetSettingsUseCase>,
+    settings_uc: Arc<dyn SettingsReaderPort>,
     app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
     note_index_sink: Arc<std::sync::RwLock<Option<Arc<dyn NoteIndexSink>>>>,
     suppression: super::watcher::WriteSuppressionRegistry,
@@ -162,7 +162,7 @@ async fn run_worker(
         if cancel.is_cancelled() {
             break;
         }
-        let settings = match settings_uc.execute().await {
+        let settings = match settings_uc.current_settings().await {
             Ok(settings) => settings,
             Err(error) => {
                 tracing::warn!(%error, "Vault writer could not load settings");
@@ -171,7 +171,9 @@ async fn run_worker(
             }
         };
         if settings.vault.enabled {
-            if let Some(root) = resolve_vault_root(&settings.vault.vault_path) {
+            if let Some(root) =
+                lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
+            {
                 match super::repository::pending(&pool).await {
                     Ok(writes) => {
                         let more = writes.len() == 64;
@@ -403,12 +405,11 @@ async fn apply_note_index_action(
 }
 
 /// Resolve vault path; empty string falls back to `<home>/Lattice`.
+///
+/// Delegates to [`lattice_core::shared::fs::roots::resolve_vault_root`]. Kept
+/// at this path for the settings side effects, which name it here.
 pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
-    let trimmed = configured.trim();
-    if !trimmed.is_empty() {
-        return Some(PathBuf::from(trimmed));
-    }
-    dirs::home_dir().map(|h| h.join("Lattice"))
+    lattice_core::shared::fs::roots::resolve_vault_root(configured)
 }
 
 fn build_frontmatter(
@@ -540,28 +541,6 @@ mod tests {
     fn empty_tags_render_as_empty_array() {
         let fm = build_frontmatter("id", "title", "now", "now", &[]);
         assert!(fm.contains("tags: []"));
-    }
-
-    #[test]
-    fn resolve_vault_root_uses_configured_when_present() {
-        let root = resolve_vault_root("/explicit/vault").unwrap();
-        assert_eq!(root, PathBuf::from("/explicit/vault"));
-    }
-
-    #[test]
-    fn resolve_vault_root_falls_back_to_default_on_empty_string() {
-        let root = resolve_vault_root("");
-        if let Some(p) = root {
-            assert!(p.ends_with("Lattice"));
-        }
-    }
-
-    #[test]
-    fn resolve_vault_root_treats_whitespace_as_empty() {
-        let root = resolve_vault_root("   ");
-        if let Some(p) = root {
-            assert!(p.ends_with("Lattice"));
-        }
     }
 
     #[tokio::test]

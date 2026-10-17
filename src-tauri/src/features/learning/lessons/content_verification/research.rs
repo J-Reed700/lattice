@@ -2,10 +2,10 @@
 //! when no saved reference covers a lesson topic before it is written.
 use super::*;
 use crate::features::learning::references::web_research;
-use crate::features::web::WebServiceTrait;
 #[cfg(test)]
 use lattice_core::application::contracts::web::WebSearchInput;
 use lattice_core::application::contracts::web::WebSearchResult;
+use lattice_core::application::ports::WebServiceTrait;
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use web_research::within_search_scope;

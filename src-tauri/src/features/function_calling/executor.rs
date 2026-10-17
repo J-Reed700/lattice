@@ -38,19 +38,16 @@ mod web_tools;
 #[cfg(test)]
 mod tests;
 
-use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::features::search::use_cases::HybridSearchUseCase;
-use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
-use crate::features::tags::TagServiceTrait;
-use crate::features::web::WebServiceTrait;
 use async_trait::async_trait;
 use jsonschema::JSONSchema;
 use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
+use lattice_core::application::ports::library_search::LibrarySearchTrait;
 use lattice_core::application::ports::{
-    ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
-    RecentDocumentsRepositoryPort,
+    BM25SearchTrait, ChunkRepositoryPort, DocumentRepository, EmbeddingPort,
+    FavoritesRepositoryPort, FileStoragePort, RecentDocumentsRepositoryPort, SearchServiceTrait,
+    TagServiceTrait, WebServiceTrait,
 };
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
@@ -76,7 +73,7 @@ pub struct FunctionExecutor {
     registry: Arc<dyn FunctionRegistryTrait>,
 
     /// Embedding service for semantic search
-    embedding_service: Arc<dyn EmbeddingServiceTrait>,
+    embedding_service: Arc<dyn EmbeddingPort>,
 
     /// Search service for semantic/vector search
     search_service: Arc<dyn SearchServiceTrait>,
@@ -85,7 +82,7 @@ pub struct FunctionExecutor {
     bm25_service: Arc<dyn BM25SearchTrait>,
 
     /// The library search orchestrator chat runs, for hybrid searches
-    hybrid_search: Arc<HybridSearchUseCase>,
+    hybrid_search: Arc<dyn LibrarySearchTrait>,
 
     /// Document repository for document operations (DDD ports)
     document_repository: Arc<dyn DocumentRepository>,
@@ -118,10 +115,10 @@ pub struct FunctionExecutor {
 /// The registry, services and repositories the built-in tools run against.
 pub struct FunctionExecutorServices {
     pub registry: Arc<dyn FunctionRegistryTrait>,
-    pub embedding_service: Arc<dyn EmbeddingServiceTrait>,
+    pub embedding_service: Arc<dyn EmbeddingPort>,
     pub search_service: Arc<dyn SearchServiceTrait>,
     pub bm25_service: Arc<dyn BM25SearchTrait>,
-    pub hybrid_search: Arc<HybridSearchUseCase>,
+    pub hybrid_search: Arc<dyn LibrarySearchTrait>,
     pub document_repository: Arc<dyn DocumentRepository>,
     pub chunk_repository: Arc<dyn ChunkRepositoryPort>,
     pub tag_service: Arc<dyn TagServiceTrait>,

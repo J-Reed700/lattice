@@ -13,7 +13,6 @@ use sqlx::SqlitePool;
 
 use crate::features::tags::service::TagService;
 use crate::features::tags::service_impl::TagServiceImpl;
-use crate::features::tags::trait_def::TagServiceTrait;
 use crate::features::tags::use_cases::{
     ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
     GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
@@ -21,6 +20,7 @@ use crate::features::tags::use_cases::{
 };
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::LoadedChatModelPort;
+use lattice_core::application::ports::TagServiceTrait;
 
 #[derive(Clone)]
 pub struct TagsDi {

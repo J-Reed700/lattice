@@ -6,7 +6,7 @@
 //!
 //! ## Public surface
 //!
-//! - `crate::features::tags::entity::Tag` — domain entity
+//! - `lattice_core::domain::entities::Tag` — domain entity
 //! - `crate::features::tags::dto` — DTOs (TagDto, CreateTagRequestDto, …)
 //! - `crate::features::tags::mapper::TagMapper` — application mapper
 //! - `crate::features::tags::persistence_mapper::{TagMapper, TagModel}` —
@@ -17,7 +17,8 @@
 //! - `crate::features::tags::repository::TagRepository`
 //! - `crate::features::tags::service::TagService` — DocumentLockGuard helper
 //! - `crate::features::tags::service_impl::TagServiceImpl`
-//! - `crate::features::tags::{TagServiceTrait, TagRepositoryTrait}` — traits
+//! - `crate::features::tags::TagRepositoryTrait` — repository trait
+//!   (`TagServiceTrait` and `DocumentLockGuard` live in `lattice_core::application::ports`)
 //! - `crate::features::tags::{MockTagService, MockTagRepository}` — test mocks
 //! - `crate::features::tags::commands` — Tauri command handlers
 //! - `crate::features::tags::plugin::init()` — Tauri plugin
@@ -25,7 +26,6 @@
 pub mod commands;
 pub mod di;
 pub mod dto;
-pub mod entity;
 pub mod generator;
 pub mod mapper;
 pub mod persistence_mapper;
@@ -39,4 +39,4 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
-pub use trait_def::{TagRepositoryTrait, TagServiceTrait};
+pub use trait_def::TagRepositoryTrait;

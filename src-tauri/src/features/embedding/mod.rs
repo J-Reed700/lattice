@@ -9,7 +9,6 @@
 //! ## Public surface
 //!
 //! - `crate::features::embedding::dto` — embedding DTOs
-//! - `crate::features::embedding::entity` — `Embedding` domain entity
 //! - `crate::features::embedding::use_cases` — embedding use cases
 //! - `crate::features::embedding::onnx_service` — OnnxEmbeddingService
 //! - `crate::features::embedding::remote_service` — RemoteEmbeddingService
@@ -32,7 +31,6 @@ pub mod commands;
 pub mod compatibility;
 pub mod di;
 pub mod dto;
-pub mod entity;
 pub mod generator;
 pub mod input_policy;
 pub mod late_chunking;
@@ -56,5 +54,3 @@ pub mod mocks;
 pub mod mock_repository;
 
 pub use trait_def::EmbeddingServiceTrait;
-
-pub mod generation;

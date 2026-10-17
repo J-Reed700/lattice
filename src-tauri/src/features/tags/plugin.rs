@@ -4,9 +4,10 @@
 
 use crate::features::tags::commands as tag_commands_full;
 use crate::features::tags::dto::{
-    ApplyTagsRequestDto, GenerateTagsRequestDto, RemoveTagRequestDto, TagDto, TagWithCountDto,
+    ApplyTagsRequestDto, GenerateTagsRequestDto, RemoveTagRequestDto, TagDto,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::tags::TagWithCountDto;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},

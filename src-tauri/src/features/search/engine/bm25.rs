@@ -1,50 +1,14 @@
 use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
-use crate::features::search::BM25SearchTrait;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
 use async_trait::async_trait;
+use lattice_core::application::contracts::search::engine::BM25Result;
+use lattice_core::application::ports::BM25SearchTrait;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 use tracing::warn;
-
-#[derive(Debug, Clone)]
-pub struct BM25Result {
-    pub chunk_id: String,
-    pub document_id: String,
-    pub score: f32,
-    pub filename: Option<String>,
-    pub mime_type: Option<String>,
-    pub size_bytes: Option<i64>,
-    pub created_at: Option<String>,
-    pub content: Option<String>,
-}
-
-impl From<BM25Result> for crate::features::search::engine::service::SearchResult {
-    fn from(result: BM25Result) -> Self {
-        Self {
-            id: result.chunk_id.clone(),
-            score: result.score,
-            index: 0, // BM25 doesn't use index
-            filename: result.filename.clone(),
-            mime_type: result.mime_type.clone(),
-            size_bytes: result.size_bytes,
-            created_at: result.created_at.clone(),
-            content: result.content.clone(),
-            file_id: Some(result.document_id.clone()),
-            file_path: None,
-            file_name: result.filename,
-            file_extension: None,
-            file_category: None,
-            is_indexed: None,
-            document_id: Some(result.document_id),
-            snippet: None,
-            chunk_index: None,
-            updated_at: None,
-        }
-    }
-}
 
 /// Ranked lexical retrieval over the chunk FTS5 indexes.
 ///

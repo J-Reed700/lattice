@@ -43,7 +43,6 @@ use lattice::features::conversation::chat::retrieval::{
     assess_retrieval_sufficiency, RetrievalSufficiency,
 };
 use lattice::features::embedding::candle_service::CandleEmbeddingService;
-use lattice::features::embedding::input_policy::load_tokenizer;
 use lattice::features::indexing::engine::chunker::{
     context_prefix, ChunkerConfig, SemanticChunker,
 };
@@ -57,15 +56,15 @@ use lattice::features::search::engine::vector_search::{
     USearchVectorIndex, VectorIndexCompression,
 };
 use lattice::features::search::use_cases::HybridSearchUseCase;
-use lattice::features::search::SparseSearchTrait;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
+use lattice::infrastructure::ml::tokenizer::load_tokenizer;
 use lattice::infrastructure::persistence::repositories::ChunkRepository;
 use lattice_core::application::contracts::search::{
     BranchKind, RerankOptions, SearchModeDto, SearchRequestDto,
 };
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::{
-    ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,
+    ChunkSparseTerms, EmbeddingPort, SparseSearchTrait, SparseTermStorePort, VectorSearchPort,
 };
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use sqlx::sqlite::SqlitePoolOptions;

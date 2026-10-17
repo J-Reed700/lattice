@@ -1,7 +1,7 @@
 //! Search by Tag Use Case
 
 use crate::features::tags::dto::{SearchByTagRequestDto, SearchByTagResponseDto};
-use crate::features::tags::TagServiceTrait;
+use lattice_core::application::ports::TagServiceTrait;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 

@@ -3,15 +3,15 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::features::web::traits::web::{
-    WebIngestionResult, WebIngestionServiceTrait, WebServiceTrait,
-};
+use crate::features::web::traits::web::{WebIngestionResult, WebIngestionServiceTrait};
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };
+#[cfg(test)]
+use lattice_core::application::ports::WebServiceTrait;
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 #[cfg(test)]

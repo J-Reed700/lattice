@@ -162,7 +162,11 @@ pub async fn open_or_rebuild_streaming<F, Fut>(
 ) -> Result<StartupPath>
 where
     F: FnMut(String) -> Fut,
-    Fut: std::future::Future<Output = Result<crate::features::embedding::generation::RestorePage>>,
+    Fut: std::future::Future<
+        Output = Result<
+            crate::infrastructure::persistence::repositories::embedding::generation::RestorePage,
+        >,
+    >,
 {
     let started = Instant::now();
     let stamp = read_source_stamp(pool, identity, dimension).await?;

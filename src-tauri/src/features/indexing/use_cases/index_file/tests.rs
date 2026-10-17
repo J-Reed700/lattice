@@ -1,12 +1,12 @@
 //! Tests for preparing, committing and publishing a single imported file.
 
 use super::*;
-use crate::features::embedding::entity::Embedding;
 use async_trait::async_trait;
 use lattice_core::application::ports::ImportedBlob;
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{ContentAddressedStoragePort, EmbeddingRepositoryPort};
 use lattice_core::domain::entities::Document;
+use lattice_core::domain::entities::Embedding;
 use std::path::Path;
 
 /// Library that indexes files where they already are: every source path
