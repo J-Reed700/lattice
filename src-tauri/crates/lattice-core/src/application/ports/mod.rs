@@ -107,6 +107,7 @@ pub mod model_file_inspector;
 pub mod model_storage;
 pub mod note_index_sink;
 pub mod ocr_port;
+pub mod query_interpreter;
 pub mod recent_documents_port;
 pub mod repository_port;
 pub mod search_engines;

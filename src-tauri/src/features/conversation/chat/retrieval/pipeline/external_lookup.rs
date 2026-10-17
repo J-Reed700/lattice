@@ -31,9 +31,10 @@ impl ExternalLookup<'_> {
         let search_web = self.web_planned && allow_lookup;
         // HyDE and web-query rewriting run on the utility LLM (small, fast,
         // local) when set, not the chat LLM. See utility_llm resolution above.
-        let hyde_service =
-            crate::features::search::hyde::HyDEService::new(Arc::clone(self.utility_llm))
-                .with_cancellation(self.cancellation.turn_token(self.request_id));
+        let hyde_service = self.container.query_interpreter(
+            Arc::clone(self.utility_llm),
+            self.cancellation.turn_token(self.request_id),
+        );
         let hyde_context = if interpret || search_web {
             let conversation = build_hyde_context_window_for_conversation(
                 self.conv_service,
@@ -65,7 +66,7 @@ impl ExternalLookup<'_> {
                 // it finished — on a single-slot local model, behind it.
                 if search_wiki {
                     return hyde_service
-                        .interpret_query_with_context(
+                        .interpret_with_context(
                             self.validated_message,
                             hyde_context.as_deref(),
                         )
@@ -76,7 +77,7 @@ impl ExternalLookup<'_> {
                         .ok();
                 }
                 hyde_service
-                    .classify_query_with_context(self.validated_message, hyde_context.as_deref())
+                    .classify_with_context(self.validated_message, hyde_context.as_deref())
                     .await
                     .inspect_err(|error| {
                         tracing::warn!(%error, "Query classification failed; using the base interpretation")
@@ -92,7 +93,7 @@ impl ExternalLookup<'_> {
                 }
                 Some(
                     hyde_service
-                        .generate_web_search_query_with_context(
+                        .web_search_query_with_context(
                             self.validated_message,
                             hyde_context.as_deref(),
                         )
@@ -131,7 +132,7 @@ impl ExternalLookup<'_> {
                 let count = (self.tuning.deep_research_depth.clamp(1, 4) as usize - 1)
                     * self.tuning.deep_research_branch_queries.clamp(1, 4) as usize;
                 hyde_service
-                    .generate_research_followups_with_context(
+                    .research_followups_with_context(
                         root,
                         self.validated_message,
                         hyde_context.as_deref(),

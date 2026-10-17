@@ -183,6 +183,14 @@ impl ChatRetrieval for Container {
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())
     }
+
+    fn query_interpreter(
+        &self,
+        llm: Arc<dyn LLMPort>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Arc<dyn lattice_core::application::ports::query_interpreter::QueryInterpreter> {
+        Arc::new(crate::features::search::hyde::HyDEService::new(llm).with_cancellation(cancel))
+    }
 }
 
 #[async_trait]
