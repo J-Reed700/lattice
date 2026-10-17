@@ -282,7 +282,7 @@ pub fn empty_hybrid_search() -> Arc<crate::features::search::use_cases::HybridSe
         crate::features::search::use_cases::HybridSearchUseCase::new(
             Arc::new(lattice_core::application::ports::MockEmbeddingPort::new_degraded()),
             Arc::new(
-                crate::features::search::engine::vector_search::USearchVectorIndex::new(4, None)
+                crate::infrastructure::vector_index::USearchVectorIndex::new(4, None)
                     .expect("an in-memory vector index"),
             ),
             Arc::new(EmptyTextSearch),

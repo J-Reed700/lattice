@@ -52,13 +52,11 @@ use lattice::features::search::engine::sparse_search::{
     SparseSearchService, SqliteSparseTermStore,
 };
 use lattice::features::search::engine::text_search::SqliteTextSearch;
-use lattice::features::search::engine::vector_search::{
-    USearchVectorIndex, VectorIndexCompression,
-};
 use lattice::features::search::use_cases::HybridSearchUseCase;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
 use lattice::infrastructure::ml::tokenizer::load_tokenizer;
 use lattice::infrastructure::persistence::repositories::ChunkRepository;
+use lattice::infrastructure::vector_index::{USearchVectorIndex, VectorIndexCompression};
 use lattice_core::application::contracts::search::{
     BranchKind, RerankOptions, SearchModeDto, SearchRequestDto,
 };

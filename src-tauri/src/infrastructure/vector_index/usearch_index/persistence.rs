@@ -2,7 +2,7 @@
 use super::{
     temp_path_for, write_file_atomically, DirtyState, KeyState, USearchVectorIndex, VectorMeta,
 };
-use crate::features::search::engine::vector_search::compression::VectorIndexCompression;
+use crate::infrastructure::vector_index::compression::VectorIndexCompression;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -95,7 +95,7 @@ impl USearchVectorIndex {
     /// leaves the previous snapshot intact rather than a half-written graph
     /// USearch would refuse to load. The manifest that vouches for this
     /// snapshot is written by the caller afterwards — see
-    /// [`super::super::manifest`] — because only it knows what SQLite looked like.
+    /// the search feature's vector index manifest — because only it knows what SQLite looked like.
     pub fn save_to_disk(&self) -> Result<()> {
         self.save_snapshot().map(|_| ())
     }
@@ -110,7 +110,7 @@ impl USearchVectorIndex {
             // The graph and keymap are separate files. Invalidate the old
             // manifest before replacing either, so an interrupted save cannot
             // leave it certifying a mixture of snapshots with equal counts.
-            let manifest = super::super::manifest::manifest_path_for(path);
+            let manifest = super::super::index_config::manifest_path_for(path);
             match std::fs::remove_file(&manifest) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

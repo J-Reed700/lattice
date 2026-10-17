@@ -618,10 +618,10 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
 #[tokio::test]
 async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_document() {
     use crate::features::search::engine::text_search::SqliteTextSearch;
-    use crate::features::search::engine::vector_search::USearchVectorIndex;
     use crate::features::search::use_cases::HybridSearchUseCase;
     use crate::infrastructure::persistence::repositories::ChunkRepository;
     use crate::infrastructure::persistence::repositories::DocumentRepository as SqliteDocuments;
+    use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::contracts::tools::SemanticSearchOutput;
 
     let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();

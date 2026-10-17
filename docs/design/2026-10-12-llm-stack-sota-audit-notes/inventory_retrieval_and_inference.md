@@ -44,14 +44,14 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
   - Query embedding LRU cache of 256 entries (`:165`).
 - **Late chunking** is implemented (`embedding/late_chunking.rs:29-41`; `candle_service.rs:595-770`) but the default strategy is `ChunkFirst` (`application/contracts/settings.rs:164-172`).
 - **Matryoshka / quantization**: the default *settings* value is `vector_index_compression = Truncated, dims 256, quantization I8` (`settings.rs:1002-1013`). It is honoured only for models listed as Matryoshka-capable, which today means only `qwen3-embedding-0.6b` (`curated.rs:433`, `:439-442`; gate in `interfaces/di/modules.rs:386-420`).
-  - So a Qwen3 vault's HNSW index stores 256-d int8 vectors, with rescoring against the full-precision vectors (`search/engine/vector_search/rescore_store.rs`; `RESCORE_ORDER_MARGIN 0.05`, `usearch_index.rs:1019`).
+  - So a Qwen3 vault's HNSW index stores 256-d int8 vectors, with rescoring against the full-precision vectors (`infrastructure/vector_index/rescore_store.rs`; `RESCORE_ORDER_MARGIN 0.05`, `usearch_index.rs:1019`).
   - No multi-vector/ColBERT.
 - **Storage**: f32 vectors live in SQLite. The ANN index is USearch 2.23 (`Cargo.toml:97`), one generation per identity × compression, with a persisted manifest (`search/engine/vector_search/manifest.rs`, `persistence.rs`).
 - **Learned sparse**: a BGE-M3 sparse head exists (`embedding/sparse_head.rs`) and `SparseSearchService` is wired, but `SPARSE_BRANCH_ENABLED = false` (`search/di.rs:34-39`, `:290-308`).
 
 ## 3. Index & first-pass retrieval
 
-- **HNSW (USearch)**: cosine metric, `M (connectivity) = 32`, `ef_construction = 256`, `ef_search = 256`, all fixed constants (`search/engine/vector_search/usearch_index.rs:57-59`, `:289-293`). Scalar kind F32 or I8 (`:259-262`).
+- **HNSW (USearch)**: cosine metric, `M (connectivity) = 32`, `ef_construction = 256`, `ef_search = 256`, all fixed constants (`infrastructure/vector_index/usearch_index.rs:57-59`, `:289-293`). Scalar kind F32 or I8 (`:259-262`).
 - **Exact-scan fallback**:
   - Brute force when the index holds ≤ `EXACT_SEARCH_MAX_VECTORS = 20_000` vectors, or when the scoped eligible set is ≤ 20k (`:65`, `:432-443`).
   - Scoped candidate cap `MAX_SCOPED_CANDIDATES = 8_192` (`:67`).

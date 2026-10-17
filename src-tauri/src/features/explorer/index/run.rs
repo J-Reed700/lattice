@@ -15,7 +15,7 @@
 use super::dto::FolderIndexStatusDto;
 use super::store::{Counts, FolderStore};
 use crate::features::explorer::scope::Scope;
-use crate::features::search::engine::vector_search::USearchVectorIndex;
+use crate::infrastructure::vector_index::USearchVectorIndex;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::Result;
 use parking_lot::Mutex;

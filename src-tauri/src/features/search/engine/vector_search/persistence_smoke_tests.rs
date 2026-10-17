@@ -4,8 +4,8 @@ use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::indexing::use_cases::embedding_input::{
     embed_prepared_chunks, prepare_structured_with_spans,
 };
-use crate::features::search::engine::vector_search::{VectorIndexCompression, VectorQuantization};
 use crate::infrastructure::persistence::repositories::embedding::generation;
+use crate::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
 use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::entities::document::Document;

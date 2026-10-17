@@ -15,13 +15,12 @@ use crate::features::search::engine::reranker::{LazyReranker, Reranker};
 use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
 use crate::features::search::engine::vector_search::persistence::open_or_rebuild_streaming;
-use crate::features::search::engine::vector_search::{
-    IndexPersistence, USearchVectorIndex, VectorIndexCompression,
-};
+use crate::features::search::engine::vector_search::IndexPersistence;
 use crate::features::search::enrichment_service::SearchEnrichmentService;
 use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
+use crate::infrastructure::vector_index::{USearchVectorIndex, VectorIndexCompression};
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{
     BM25SearchTrait, ChunkRepositoryPort, DocumentRepository, EmbeddingPort, SearchServiceTrait,
@@ -133,9 +132,7 @@ pub async fn build_with_compression(
     // persisted index dimension — that way we keep an existing index intact
     // until a model load actually proves its dimension.
     let dimension = active_embedding_dimension
-        .or_else(|| {
-            crate::features::search::engine::vector_search::read_dimension(&usearch_index_path)
-        })
+        .or_else(|| crate::infrastructure::vector_index::read_dimension(&usearch_index_path))
         .unwrap_or(DEFAULT_EMBEDDING_DIM);
 
     // Compare the persisted vector layout against the requested one. If the
@@ -146,7 +143,7 @@ pub async fn build_with_compression(
     let open_path = usearch_index_path.clone();
     let open_compression = compression.clone();
     let usearch_index = tokio::task::spawn_blocking(move || {
-        let _check = crate::features::search::engine::vector_search::ensure_index_layout_match(
+        let _check = crate::infrastructure::vector_index::ensure_index_layout_match(
             &open_path,
             dimension,
             &open_compression,

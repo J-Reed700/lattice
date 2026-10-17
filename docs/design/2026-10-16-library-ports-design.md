@@ -127,6 +127,15 @@ Feature edges 147 → 93 (−54, as estimated). Feature re-exports 17 → 15. `i
 - **Step 11.** Vault's own callers and the three `resolve_vault_root` tests moved to core as well. The delegating fn in `vault/writeback.rs` remains only for `settings_side_effects.rs`.
 - **`RemoteEmbeddingService`.** Deleting it also deletes `EmbeddingServiceTrait` (`trait_def.rs`), because it was the trait's last implementor. Until then, the trait stays alive only for it, so the deletion reviews on its own.
 
+## PR 4b as built
+
+The USearch adapter now lives in `src-tauri/src/infrastructure/vector_index/`: `usearch_index{.rs,/*}` (with the `SearchServiceTrait` and `VectorSearchPort` impls in `usearch_index/ports.rs`), `compression.rs`, `rescore_store.rs`, `dimension_metadata.rs`, `vector_ops.rs` and `vector_ops_test.rs`, all moved with `git mv`. `features/search/engine/vector_search/` keeps `manifest`, `persistence` and `runtime_index`, and no longer re-exports any adapter type; every caller imports from `crate::infrastructure::vector_index` (the retrieval eval from `lattice::infrastructure::vector_index`).
+
+Feature edges 93 → 89 (explorer→search −3, summaries→search −1). Feature re-exports stay 15. `infrastructure-imports-feature` stays 0. Deviations:
+
+- **`manifest_path_for` moved with `IndexConfig`.** The index invalidates the manifest before every save (`usearch_index/persistence.rs`) and `wipe_index_files` deletes it (`dimension_metadata.rs`), so both need the path. Both now sit in a new `vector_index/index_config.rs`; the manifest itself stays in search and imports them.
+- **`write_file_atomically` is `pub(crate)`** (was `pub(super)`), because `manifest::write_manifest` now reaches it across modules.
+
 ## PR 4c: notes
 
 Move the records and the repository to infrastructure using `try_map` (see Q5), and add `ports::WorkspaceNotesPort` with these methods:

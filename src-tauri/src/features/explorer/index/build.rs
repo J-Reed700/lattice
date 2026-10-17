@@ -8,7 +8,7 @@ use super::manager::{relative_below, root_string, too_large_message, FolderIndex
 use super::run::{Indexer, Outcome, StatusCell};
 use super::store::{self, Counts, FolderStore, TooLarge};
 use crate::features::explorer::scope::Scope;
-use crate::features::search::engine::vector_search::USearchVectorIndex;
+use crate::infrastructure::vector_index::USearchVectorIndex;
 use async_trait::async_trait;
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
