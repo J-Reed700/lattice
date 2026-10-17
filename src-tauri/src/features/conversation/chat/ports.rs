@@ -8,9 +8,9 @@ use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotD
 pub(crate) use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, ToolDefinition,
 };
-pub(crate) use crate::features::settings::dto::SettingsDto;
 use async_trait::async_trait;
 use lattice_core::application::contracts::search::{CorpusDocument, CorpusPassage};
+pub(crate) use lattice_core::application::contracts::settings::SettingsDto;
 pub(crate) use lattice_core::application::contracts::web::FetchUrlContentOutput;
 use lattice_core::application::ports::conversation_memory::{
     ConversationMemoryPort, ConversationMemoryReadPort,

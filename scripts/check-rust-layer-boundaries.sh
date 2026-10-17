@@ -3,7 +3,9 @@
 #
 # Ratcheted rules compare against scripts/rust-architecture-check/baseline.txt.
 # `--write-baseline` rewrites that file and the Tauri command-orphan baseline
-# from the current tree, so one command regenerates both.
+# from the current tree, so one command regenerates both. Feature edges allowed
+# outright are in scripts/rust-architecture-check/feature-graph.txt.
+# `--list <rule> [subject]` prints every site of a rule, baselined or not.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status=0

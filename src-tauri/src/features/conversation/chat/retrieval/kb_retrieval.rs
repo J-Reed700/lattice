@@ -10,8 +10,8 @@ use crate::features::conversation::chat::turn_record::TurnStepKind;
 use crate::features::conversation::chat::ChatTurn;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::use_cases::RerankOptions;
-use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 use lattice_core::domain::qa::hyde::QueryType;
 
 pub(super) async fn run_kb_retrieval(

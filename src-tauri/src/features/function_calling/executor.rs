@@ -43,11 +43,11 @@ use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::search::use_cases::HybridSearchUseCase;
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
-use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::WebServiceTrait;
 use async_trait::async_trait;
 use jsonschema::JSONSchema;
+use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
     RecentDocumentsRepositoryPort,

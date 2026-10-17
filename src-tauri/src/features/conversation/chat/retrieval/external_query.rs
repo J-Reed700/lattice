@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
-use crate::features::settings::dto::RetrievalTuningSettingsDto;
+use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 use lattice_core::shared::text::safe_truncate;
 
 use super::{

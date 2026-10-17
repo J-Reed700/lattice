@@ -455,7 +455,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 /// the function executor.
 pub fn register_custom_query_tools(
     registry: &dyn FunctionRegistryTrait,
-    custom_tools: &[crate::features::settings::dto::CustomToolSettingsDto],
+    custom_tools: &[lattice_core::application::contracts::settings::CustomToolSettingsDto],
 ) -> Result<()> {
     use serde_json::json;
 
@@ -576,7 +576,7 @@ mod tests {
     fn test_register_custom_query_tools() {
         let registry = FunctionRegistry::new();
         let tools = vec![
-            crate::features::settings::dto::CustomToolSettingsDto {
+            lattice_core::application::contracts::settings::CustomToolSettingsDto {
                 enabled: true,
                 name: "pubmed_search".to_string(),
                 description: "Search PubMed".to_string(),
@@ -585,7 +585,7 @@ mod tests {
                 max_results_param: Some("limit".to_string()),
                 default_max_results: 5,
             },
-            crate::features::settings::dto::CustomToolSettingsDto {
+            lattice_core::application::contracts::settings::CustomToolSettingsDto {
                 enabled: false,
                 name: "disabled_tool".to_string(),
                 description: "Disabled".to_string(),

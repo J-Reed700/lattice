@@ -9,9 +9,9 @@ use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
 };
 #[cfg(test)]
-use crate::features::settings::dto::CustomToolSettingsDto;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 #[cfg(test)]

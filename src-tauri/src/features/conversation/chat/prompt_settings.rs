@@ -1,5 +1,5 @@
 use super::prompting::enforce_numeric_citation_format;
-pub(super) use crate::features::settings::dto::LLMPromptSettingsDto;
+pub(super) use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
 
 pub(super) fn normalize_prompt_settings(
     mut prompt_settings: LLMPromptSettingsDto,
