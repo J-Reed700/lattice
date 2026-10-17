@@ -359,10 +359,17 @@ impl ModelLoader {
         .await
         .map_err(|e| {
             tracing::warn!(endpoint, model, error = %e, "Failed to connect to Ollama");
-            AppError::ServiceNotAvailable(format!(
+            let message = format!(
                 "Can't reach Ollama at {endpoint} for {model}: {e}. Make sure Ollama is running \
                  (ollama serve) and the model is pulled (ollama pull {model})."
-            ))
+            );
+            // A refused or unreachable server is an outage: work waiting on
+            // it is deferred, not ended as a repeated failure.
+            match e {
+                LLMError::Network(_) => AppError::Network(message),
+                LLMError::InvalidConfig(_) => AppError::InvalidConfig(message),
+                _ => AppError::ServiceNotAvailable(message),
+            }
         })
     }
 }

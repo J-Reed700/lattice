@@ -147,19 +147,33 @@ impl OllamaClient {
     /// URL: a llama.cpp server answers the base URL with its web UI and would
     /// otherwise pass as Ollama, only to 404 on the first generation call.
     pub async fn health_check(&self) -> bool {
+        self.reach().await.is_ok()
+    }
+
+    /// [`Self::health_check`] with the reason it failed: a server that cannot
+    /// be connected to, refused or unreachable, is [`AppError::Network`], an
+    /// outage; one that answers without the Ollama API is not.
+    pub async fn reach(&self) -> Result<()> {
         let url = format!("{}/api/tags", self.base_url);
         debug!("Performing Ollama health check at {}", url);
-        match self.client.get(&url).timeout(self.timeout).send().await {
-            Ok(response) if response.status() == StatusCode::OK => true,
-            Ok(response) => {
-                warn!(status = %response.status(), "Ollama health check failed");
-                false
-            }
-            Err(error) => {
+        let response = self
+            .client
+            .get(&url)
+            .timeout(self.timeout)
+            .send()
+            .await
+            .map_err(|error| {
                 warn!(error = %error, "Ollama health check failed");
-                false
-            }
+                network_error(error)
+            })?;
+        let status = response.status();
+        if status == StatusCode::OK {
+            return Ok(());
         }
+        warn!(%status, "Ollama health check failed");
+        Err(AppError::ServiceNotAvailable(format!(
+            "the server answered the Ollama model list with HTTP {status}"
+        )))
     }
 
     /// The `/api/chat` body for a typed request.
