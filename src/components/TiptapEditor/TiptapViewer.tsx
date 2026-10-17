@@ -3,9 +3,12 @@ import { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { Markdown } from 'tiptap-markdown';
 
+import { hasUnclosedFence } from '@/utils/assistantMarkdown';
+
 import { createExtensions } from './extensions';
 import { CitationMarks, citationMarksKey } from './extensions/citationMarks';
 import { ClaimMarks, claimMarksKey, type ClaimMark } from './extensions/claimMarks';
+import { Diagrams, diagramsKey } from './extensions/codeBlockView';
 import { CodeRefMarks, codeRefMarksKey } from './extensions/codeRefMarks';
 import { getMarkdownFromEditor } from './markdownStorage';
 
@@ -23,6 +26,10 @@ export interface TiptapViewerProps {
   showEvidence?: boolean;
   /** Draw `path:line` inline code as line-reference chips (Explorer conversations). */
   codeRefs?: boolean;
+  /** The text is still arriving. A fence it has not closed yet is not drawn as a diagram. */
+  streaming?: boolean;
+  /** Draw ```mermaid fences as diagrams (default on). Read when the viewer is created. */
+  diagrams?: boolean;
 }
 
 const NO_CLAIMS: readonly ClaimMark[] = [];
@@ -40,6 +47,8 @@ export function TiptapViewer({
   claims,
   showEvidence = true,
   codeRefs = false,
+  streaming = false,
+  diagrams = true,
 }: TiptapViewerProps) {
   // Read through a ref so sources that arrive after the text still light up.
   const citationNumbersRef = useRef<readonly number[]>(citationNumbers ?? []);
@@ -47,10 +56,13 @@ export function TiptapViewer({
   const citationSignature = `${showEvidence ? 'visible' : 'hidden'}:${(citationNumbers ?? []).join(',')}`;
   const claimsRef = useRef<readonly ClaimMark[]>(showEvidence ? claims ?? NO_CLAIMS : NO_CLAIMS);
   const codeRefsRef = useRef(codeRefs);
+  const suspendLastBlock = streaming && hasUnclosedFence(content);
+  const suspendLastBlockRef = useRef(suspendLastBlock);
 
   const editor = useEditor({
     extensions: [
-      ...createExtensions({ onWikilinkClick }),
+      ...createExtensions({ onWikilinkClick, diagrams }),
+      Diagrams.configure({ suspendLastBlock: () => suspendLastBlockRef.current }),
       CitationMarks.configure({
         isCitation: (number) => citationNumbersRef.current.includes(number),
         isVisible: () => evidenceVisibleRef.current,
@@ -71,6 +83,15 @@ export function TiptapViewer({
       },
     },
   });
+
+  // Before the content effect below: a chunk that opens a fence must arrive
+  // already marked unfinished, or its partial source would start a drawing.
+  useEffect(() => {
+    if (suspendLastBlockRef.current === suspendLastBlock) return;
+    suspendLastBlockRef.current = suspendLastBlock;
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dispatch(editor.state.tr.setMeta(diagramsKey, suspendLastBlock));
+  }, [editor, suspendLastBlock]);
 
   useEffect(() => {
     // useEditor can replace an instance after this render captured it. Its

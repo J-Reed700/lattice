@@ -247,6 +247,114 @@
   font-size: inherit;
 }
 
+/* A ```mermaid fence drawn as a diagram (extensions/codeBlockView.tsx).
+   The figure takes the code block's frame; its <pre> is the Source view, and
+   the code shown under a drawing error, so it drops its own frame. */
+.tiptap-viewer .diagram-figure {
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: var(--radius-md);
+  padding: 0.75em 1.25em 1em;
+  margin: 1.25em 0;
+}
+
+.tiptap-viewer .diagram-figure > pre {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.tiptap-viewer .diagram-header {
+  display: flex;
+  align-items: center;
+  gap: 0.9em;
+  margin-bottom: 0.6em;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: hsl(var(--text-tertiary));
+}
+
+.tiptap-viewer .diagram-label {
+  margin-right: auto;
+}
+
+.tiptap-viewer .diagram-header button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: hsl(var(--text-tertiary));
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.tiptap-viewer .diagram-header button:hover,
+.tiptap-viewer .diagram-header button[aria-pressed='true'] {
+  color: hsl(var(--text-secondary));
+}
+
+.tiptap-viewer .diagram-header button:focus-visible,
+.tiptap-viewer .diagram-svg:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The frame scrolls sideways, never the page. */
+.tiptap-viewer .diagram-scroll {
+  overflow-x: auto;
+}
+
+/* The drawing is a button: a click enlarges it. It is drawn at its natural
+   width (--diagram-width, from the SVG) when the column has room, shrinks
+   with the column down to 85% of that so labels stay legible, and below
+   that the frame scrolls. Without a stated width it fills the column. */
+.tiptap-viewer .diagram-svg {
+  display: block;
+  width: 100%;
+  min-width: calc(var(--diagram-width) * 0.85);
+  max-width: var(--diagram-width);
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+/* The button sets the size; the SVG keeps its aspect ratio inside it. */
+.tiptap-viewer .diagram-svg svg {
+  display: block;
+  width: 100%;
+  max-width: none !important; /* beats Mermaid's inline natural-width cap */
+  height: auto;
+}
+
+.tiptap-viewer .diagram-error {
+  margin: 0.6em 0 0;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: hsl(var(--text-secondary));
+}
+
+/* Enlarged in the lightbox (portalled, so not under .tiptap-viewer): as wide
+   as the window allows, as tall as the dialog leaves room for. */
+.media-lightbox-diagram {
+  width: 100%;
+}
+
+.media-lightbox-diagram svg {
+  display: block;
+  width: 100%;
+  max-width: none !important; /* beats Mermaid's inline natural-width cap */
+  height: auto;
+  max-height: calc(90vh - 5rem);
+  margin: 0 auto;
+}
+
 /* ------------------------------------------------------------------ *
  * 6. Syntax highlighting (lowlight / highlight.js classes)
  *    Monochrome plus the product accent.
