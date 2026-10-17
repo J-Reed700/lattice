@@ -26,7 +26,12 @@ where
             "No local model available. Download and activate a model in Settings → Model Catalog.".to_string(),
         )),
         LLMProvider::Ollama => ollama().await,
-        LLMProvider::Llamacpp | LLMProvider::Openai | LLMProvider::Anthropic => Err(AppError::InvalidConfig("Explicit providers must be resolved by their native adapter".into())),
+        LLMProvider::Llamacpp
+        | LLMProvider::Openai
+        | LLMProvider::Anthropic
+        | LLMProvider::Google => Err(AppError::InvalidConfig(
+            "Explicit providers must be resolved by their native adapter".into(),
+        )),
         LLMProvider::Auto => {
             let local_error = match local().await {
                 Ok(Some(model)) => return Ok(model),

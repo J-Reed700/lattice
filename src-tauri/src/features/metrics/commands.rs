@@ -2,7 +2,7 @@
 //!
 //! Thin command controllers for collecting and reporting application metrics following
 //! DDD pattern. Provides comprehensive telemetry data for monitoring application health,
-//! performance, and usage patterns with rate limiting to prevent resource exhaustion.
+//! performance, and usage patterns.
 //!
 //! # Commands (1 total)
 //!
@@ -30,14 +30,13 @@
 
 use crate::features::metrics::dto::MetricsSnapshotDto;
 use crate::interfaces::di::Container;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use tauri::State;
 
 /// Retrieves comprehensive snapshot of all application metrics
 ///
 /// Returns a complete snapshot of application metrics including performance counters,
-/// usage statistics, health indicators, and resource utilization. Rate limited to
-/// prevent resource exhaustion from excessive metrics collection.
+/// usage statistics, health indicators, and resource utilization.
 ///
 /// # Arguments
 ///
@@ -46,12 +45,10 @@ use tauri::State;
 /// # Returns
 ///
 /// * `Ok(MetricsSnapshotDto)` - Complete metrics snapshot with all telemetry data
-/// * `Err(AppError::RateLimitExceeded)` - Too many metrics requests
 /// * `Err(AppError)` - Metrics collection failed
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Rate limit exceeded (prevents DoS)
 /// * `AppError::Other` - Metrics collection or aggregation failed
 ///
 /// # Example
@@ -144,12 +141,6 @@ use tauri::State;
 /// - Database size
 /// - Cache size
 ///
-/// # Security
-///
-/// **Rate Limiting (CWE-770)**: Limits metrics collection to prevent DoS
-/// - Max rate configurable (default: 60 requests/minute)
-/// - Shared rate limit with health checks
-///
 /// # Use Cases
 ///
 /// - **Monitoring Dashboard**: Display real-time application metrics
@@ -163,25 +154,12 @@ use tauri::State;
 /// - **Collection Time**: ~10-50ms (depends on metric count)
 /// - **Aggregation**: Combines data from multiple sources
 /// - **Non-Intrusive**: Metric collection has minimal overhead
-/// - **Rate Limited**: Prevents excessive load
 ///
 /// # Architecture
 ///
 /// Thin controller delegating to `GetMetricsUseCase` (DDD pattern)
 pub async fn get_metrics(container: State<'_, Container>) -> Result<MetricsSnapshotDto> {
-    // 1. Rate limiting (CWE-770 mitigation)
-    container
-        .security_context()
-        .rate_limiters()
-        .health_check
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    // 2. Get use case from container
     let use_case = container.get_metrics_use_case();
-
-    // 3. Execute use case
     let metrics = use_case.execute().await?;
 
     Ok(metrics)

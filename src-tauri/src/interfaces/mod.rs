@@ -13,7 +13,7 @@
 //!
 //! The Interfaces layer:
 //! 1. Receives external requests (Tauri commands, file system events)
-//! 2. Applies cross-cutting concerns (rate limiting, validation)
+//! 2. Applies input validation
 //! 3. Delegates to Application Use Cases
 //! 4. Maps responses back to external format
 //!
@@ -27,16 +27,13 @@
 //!     container: State<'_, Container>,
 //!     input: RequestDto,
 //! ) -> Result<ResponseDto> {
-//!     // 1. Rate limiting
-//!     container.security_context().rate_limiters.operation.check()?;
-//!
-//!     // 2. Input validation
+//!     // 1. Input validation
 //!     container.security_context().input_validator.validate(&input)?;
 //!
-//!     // 3. Get use case
+//!     // 2. Get use case
 //!     let use_case = container.my_use_case();
 //!
-//!     // 4. Execute
+//!     // 3. Execute
 //!     let response = use_case.execute(input).await?;
 //!
 //!     Ok(response)

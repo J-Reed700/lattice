@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use super::*;
-use crate::features::transcription::engine::transcript::{
+use lattice_core::application::services::transcript::{
     format_timestamp, group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
 };
 
@@ -183,7 +183,7 @@ impl TranscriptionPort for DirectWhisperPort {
 #[test]
 #[ignore = "needs a downloaded whisper model; set LATTICE_WHISPER_E2E_DIR + LATTICE_WHISPER_E2E_AUDIO"]
 fn ingest_path_produces_timestamped_sections() {
-    use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
+    use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
     use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
     use lattice_core::application::ports::content_extraction_port::ContentExtractionPort;
 

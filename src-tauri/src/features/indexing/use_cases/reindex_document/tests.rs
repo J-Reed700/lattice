@@ -29,7 +29,7 @@ impl VectorSearchPort for MockVectorSearch {
         _query_embedding: &[f32],
         _top_k: usize,
         _threshold: f32,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         Ok(Vec::new())
     }
 
@@ -39,7 +39,7 @@ impl VectorSearchPort for MockVectorSearch {
         top_k: usize,
         threshold: f32,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         let mut results = self.search(query_embedding, top_k, threshold)?;
         if let Some(scope) = allowed_document_ids {
             results.retain(|result| scope.contains(&result.doc_id));
@@ -315,14 +315,6 @@ impl lattice_core::application::ports::UnitOfWork for MockUnitOfWork {
         Ok(Box::new(MockUowEmbeddingRepo))
     }
 
-    fn search_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::domain::repositories::SearchRepository + Send + '_>> {
-        Err(AppError::InvalidState(
-            "Search repository not used in test".to_string(),
-        ))
-    }
-
     fn system_repository(
         &self,
     ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>> {
@@ -496,7 +488,9 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
     let stale_keys: Vec<String> = aggregate
         .chunks()
         .iter()
-        .map(|c| crate::features::embedding::encoding::vector_key(&c.id().to_string()))
+        .map(|c| {
+            lattice_core::shared::persistence::embedding_encoding::vector_key(&c.id().to_string())
+        })
         .collect();
     assert!(!stale_keys.is_empty(), "fixture must start with chunks");
 

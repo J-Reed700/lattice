@@ -1,10 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 
 import { PageHeader, SidebarTabs } from '@/components/ui';
-import { ContentViewer } from '@/features/reading/components/ContentViewer';
+import { openDocumentFile, openFilePath } from '@/features/files/hooks/useLibraryDocumentActions';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import { fromSearchResult, type ResolvedReaderTarget } from '@/features/reading/model/sourceAdapter';
 import { useSearchQuery } from '@/features/search/hooks/useSearchQuery';
 import { useDebounce } from '@/hooks/useDebounce';
-import VaultAPI from '@/lib/api';
 import type { SearchResult } from '@/types';
 
 import { SearchEmptyState } from './SearchEmptyState';
@@ -32,7 +33,7 @@ const SEARCH_MODES: ReadonlyArray<{ id: SearchMode; label: string }> = [
 export function SearchInterface() {
   const [query, setQuery] = useState('');
   const [searchMode, setSearchMode] = useState<SearchMode>('hybrid');
-  const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<ResolvedReaderTarget | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
 
   // Debounce query to avoid excessive API calls
@@ -147,21 +148,44 @@ export function SearchInterface() {
   const handleResultOpen = useCallback(async (result: SearchResult) => {
     setOpenError(null);
 
-    const targetId = result.documentId || result.id;
+    const target = fromSearchResult(result);
+    if (!target.source.documentId && !target.source.filePath) {
+      setOpenError('Result has no document identifier');
+      return;
+    }
+
+    if (/^https?:\/\//i.test(target.source.filePath)) {
+      setPreviewTarget(target);
+      return;
+    }
+
+    const targetId = result.documentId || result.id || target.source.documentId;
     if (targetId) {
-      const byId = await VaultAPI.openFileById(targetId);
+      const byId = await openDocumentFile(targetId);
       if (byId.ok) {
         if (byId.data.action === 'render_internal') {
-          setViewerFilePath(byId.data.contentPath);
+          setPreviewTarget({
+            ...target,
+            source: {
+              ...target.source,
+              filePath: byId.data.contentPath,
+            },
+          });
         }
         return;
       }
 
       if (typeof result.path === 'string' && result.path.length > 0) {
-        const byPath = await VaultAPI.openFile(result.path);
+        const byPath = await openFilePath(result.path);
         if (byPath.ok) {
           if (byPath.data.action === 'render_internal') {
-            setViewerFilePath(byPath.data.contentPath);
+            setPreviewTarget({
+              ...target,
+              source: {
+                ...target.source,
+                filePath: byPath.data.contentPath,
+              },
+            });
           }
           return;
         }
@@ -221,7 +245,12 @@ export function SearchInterface() {
         </div>
       </div>
 
-      <ContentViewer filePath={viewerFilePath} onClose={() => setViewerFilePath(null)} />
+      <FilePreviewModal
+        isOpen={previewTarget !== null}
+        onClose={() => setPreviewTarget(null)}
+        source={previewTarget?.source ?? null}
+        initialLocator={previewTarget?.locator ?? null}
+      />
     </main>
   );
 }

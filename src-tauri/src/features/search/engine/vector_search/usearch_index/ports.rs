@@ -1,9 +1,9 @@
 //! The index as a `VectorSearchPort` and a `SearchServiceTrait`.
 use super::{USearchVectorIndex, MAX_SCOPED_CANDIDATES};
-use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::engine::service::SearchResult;
 use crate::features::search::SearchServiceTrait;
 use async_trait::async_trait;
+use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::VectorSearchPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -22,7 +22,7 @@ impl VectorSearchPort for USearchVectorIndex {
         query_embedding: &[f32],
         top_k: usize,
         threshold: f32,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         self.search_scoped(query_embedding, top_k, threshold, None)
     }
 
@@ -32,7 +32,7 @@ impl VectorSearchPort for USearchVectorIndex {
         top_k: usize,
         threshold: f32,
         allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         if query_embedding.len() != self.dimension {
             return Err(AppError::InvalidInput(format!(
                 "Query embedding dimension mismatch: expected {}, got {}",
@@ -141,7 +141,7 @@ impl VectorSearchPort for USearchVectorIndex {
                     continue;
                 }
 
-                results.push(SearchResultPortDto {
+                results.push(SearchResultRecord {
                     doc_id: doc_id.to_string(),
                     chunk_id: chunk_id.to_string(),
                     score: similarity,

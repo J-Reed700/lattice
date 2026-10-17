@@ -52,3 +52,24 @@ export function useConversationsStore<T>(
     Object.is
   );
 }
+
+const NOOP_SUBSCRIBE = () => () => {};
+const GET_NULL = () => null;
+
+export function useOptionalConversationsStore(): ConversationsState | null;
+export function useOptionalConversationsStore<T>(selector: (_state: ConversationsState) => T): T | null;
+export function useOptionalConversationsStore<T>(
+  selector?: (_state: ConversationsState) => T
+): ConversationsState | T | null {
+  const store = useContext(ConversationsContext);
+  const subscribe = store ? store.subscribe : NOOP_SUBSCRIBE;
+  const getSnapshot = store ? store.getState : GET_NULL;
+  return useSyncExternalStoreWithSelector(
+    subscribe,
+    getSnapshot,
+    getSnapshot,
+    (state) => (state && selector ? selector(state) : state),
+    Object.is
+  );
+}
+

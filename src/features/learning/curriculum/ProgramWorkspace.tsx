@@ -25,6 +25,7 @@ import { RecallEvolutionPanel } from '@/features/learning/recall/RecallEvolution
 import { SourceLine } from '@/features/learning/sources/SourceLine';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
+import { ProgramTangents, ProgramTangentsTrigger } from '@/features/learning/tangents/ProgramTangents';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -39,9 +40,10 @@ const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPane
 type Tab = StudyTab;
 type NotebookDraft = { title: string; content: string };
 
-export function ProgramWorkspace({ program, destination, outlineGeneration, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, preparePending, prepareError, onComplete, completePending, completeError, formFor, setAnswer, onSubmitAttempt, submitPending, submitError }: {
+export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, preparePending, prepareError, onComplete, completePending, completeError, formFor, setAnswer, onSubmitAttempt, submitPending, submitError }: {
   destination?: StudyDestination;
   outlineGeneration?: OutlineOperation;
+  initialTangentId?: string | null;
   program: LearningProgramDto; onBack: () => void; onAccept: (title: string) => void; acceptPending: boolean; acceptError?: string;
   /** Opens another course, e.g. the copy an import just created. */
   onOpenProgram: (programId: string) => void;
@@ -91,12 +93,13 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
       setLessonId(destination.lessonId ?? targetModule.lessons[0]?.id ?? '');
     }
     if (destination.formId) setRequestedFormId(destination.formId);
-    setTab(next);
+    const resolvedTab = next === 'study' ? 'lessons' : next;
+    setTab(resolvedTab);
     setMoreOpen(false);
-    if (next === 'canvas') setCanvasOpened(true);
-    if (next === 'practical') setPracticalOpened(true);
-    if (next === 'workbench') setWrittenOpened(true);
-    if (['workbench', 'practical', 'quick-checks', 'assess-evidence'].includes(next)) setLastPracticeTab(next);
+    if (resolvedTab === 'canvas') setCanvasOpened(true);
+    if (resolvedTab === 'practical') setPracticalOpened(true);
+    if (resolvedTab === 'workbench') setWrittenOpened(true);
+    if (['workbench', 'practical', 'quick-checks', 'assess-evidence'].includes(resolvedTab)) setLastPracticeTab(resolvedTab);
   }, [destination, program.modules]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
@@ -195,9 +198,25 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
     move();
   };
 
-  return <div className="mx-auto max-w-[1500px] pb-12">
-    <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</button><div className="mb-2 flex w-full flex-wrap items-center gap-2 sm:w-auto"><CitationVisibilityToggle />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}</div></div>
-    {showCitations && <OutlineEvidenceStatus report={outlineEvidence} />}
+  const effectiveTangentId = initialTangentId ?? destination?.tangentId ?? null;
+
+  return (
+    <ProgramTangents
+      program={program}
+      currentModuleId={currentModule?.id ?? null}
+      currentLessonId={currentLesson?.id ?? null}
+      initialTangentId={effectiveTangentId}
+      onSelectLesson={(mId, lId) => {
+        void afterNotebookSave(() => {
+          setModuleId(mId);
+          setLessonId(lId);
+          activateTab('lessons');
+        });
+      }}
+    >
+      <div className="mx-auto max-w-[1500px] pb-12">
+        <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</button><div className="mb-2 flex w-full flex-wrap items-center gap-2 sm:w-auto"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}</div></div>
+        {showCitations && <OutlineEvidenceStatus report={outlineEvidence} />}
     <header className="relative overflow-hidden rounded-2xl border border-[#d7c9b8] bg-[#eee8df] px-4 py-3 sm:px-6 dark:border-white/10 dark:bg-[#28251f]"><div className="relative flex flex-wrap items-center justify-between gap-x-6 gap-y-2"><div className="min-w-0 flex-1 basis-full sm:basis-0"><div className="flex items-center gap-2 text-xs font-medium text-accent"><Layers3 size={15} /> {program.summary.status === 'draft' ? 'Draft outline' : 'Active program'} <span className="text-text-muted">· Revision {program.summary.revision}</span></div>{program.summary.status === 'draft' ? <><h1 className="sr-only">{title || 'Untitled program'}</h1><label className="sr-only" htmlFor="program-title">Program title</label><input id="program-title" aria-label="Program title" value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full max-w-2xl border-b border-accent/35 bg-transparent font-serif text-2xl leading-tight text-text-primary outline-hidden focus:border-accent" /></> : <h1 className="mt-1 line-clamp-2 wrap-break-word font-serif text-2xl leading-tight text-text-primary sm:text-[1.75rem]">{program.summary.title}</h1>}<p className="mt-1 line-clamp-1 max-w-3xl text-sm leading-5 text-text-secondary">{program.summary.goal}</p></div><div className="w-full shrink-0 sm:w-[150px]"><div className="flex items-center justify-between gap-2 text-xs"><span className="text-text-secondary">Lessons complete</span><span className="shrink-0 whitespace-nowrap font-semibold tabular-nums text-text-primary">{completedCount}<span className="font-normal text-text-muted"> / {allLessons.length}</span></span></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${allLessons.length ? completedCount / allLessons.length * 100 : 0}%` }} /></div></div></div>
       {program.summary.status === 'draft' && <div className="relative mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-black/10 pt-2 dark:border-white/10"><p className="text-sm text-text-secondary">{outlineBlocked ? 'Resolve the outline findings before accepting this course.' : 'Accept to prepare lessons individually and track progress.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-rose-700">{acceptError}</span>}<button type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="min-h-11 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50">{acceptPending ? 'Saving…' : 'Accept program'}</button></div></div>}
     </header>
@@ -259,5 +278,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
       <section className="rounded-xl border border-border bg-background p-4"><h3 className="text-sm font-medium text-text-primary">Source materials</h3><p className="mt-1 text-sm leading-5 text-text-secondary">{program.sources.length ? `${program.sources.length} original ${program.sources.length === 1 ? 'source snapshot' : 'source snapshots'} grounding this program.` : 'No source snapshots are attached.'}</p>{program.summary.status === 'active' && <button type="button" disabled={savingBeforeMove} onClick={() => selectTab('sources')} className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline disabled:opacity-50">Open source library <ArrowRight size={15} className="ml-1" /></button>}{program.sources.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm text-text-muted">Original outline excerpts</summary><SourceLine ids={program.sources.map((item) => item.id)} sources={program.sources} /></details>}</section>
       <section className="rounded-xl border border-border bg-background p-4"><h3 className="text-sm font-medium text-text-primary">Course authorship</h3><p className="mt-2 text-sm leading-5 text-text-secondary">Generated with {program.modelName || 'the selected model'}{program.sources.length ? ' using your chosen sources' : ' from general knowledge'}. The outline is saved before review. Corrections are rechecked and unresolved findings remain available for repair. Lesson material receives its own review and source checks. Lesson answer keys are model-authored and shown after submission.</p></section></div></details>
     </div>
-  </div>;
+  </div>
+  </ProgramTangents>
+  );
 }

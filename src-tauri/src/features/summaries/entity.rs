@@ -2,34 +2,7 @@
 
 use chrono::{DateTime, Utc};
 
-/// Which slice of a document a summary describes.
-///
-/// Stored as the literal strings the migration's CHECK constraint allows, so a
-/// typo is a database error rather than a silently unreadable row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SummaryLevel {
-    /// The document as a whole.
-    Document,
-    /// One top-level section of the document.
-    Section,
-}
-
-impl SummaryLevel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Document => "document",
-            Self::Section => "section",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "document" => Some(Self::Document),
-            "section" => Some(Self::Section),
-            _ => None,
-        }
-    }
-}
+use lattice_core::application::ports::summary_search::SummaryLevel;
 
 /// One generated summary, as persisted and as embedded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,15 +50,4 @@ impl DocumentSummary {
 /// Vector-index key for a summary id. See [`DocumentSummary::vector_id`].
 pub fn vector_id(summary_id: &str) -> String {
     format!("summary_{summary_id}")
-}
-
-/// A summary matched by similarity search.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SummaryHit {
-    pub document_id: String,
-    pub summary_id: String,
-    pub level: SummaryLevel,
-    pub section: Option<String>,
-    pub summary_text: String,
-    pub score: f32,
 }

@@ -158,7 +158,7 @@ describe('Learning Studio Sources workspace', () => {
     expect(mocks.addText.mock.calls[1][0]).toEqual(firstRequest);
   });
 
-  it('adds a web page with an explicit policy and safely shows only canonical external links', async () => {
+  it('adds a web page with an explicit policy and offers opening in the reader', async () => {
     const user = userEvent.setup();
     mocks.addWeb.mockResolvedValue(ok(workspace));
     renderSources({ programId: 'program-1', sources: [] });
@@ -168,9 +168,9 @@ describe('Learning Studio Sources workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Save source' }));
     await waitFor(() => expect(mocks.addWeb).toHaveBeenCalledTimes(1));
     expect(mocks.addWeb.mock.calls[0][0]).toMatchObject({ url: 'https://example.org/article', freshnessPolicy: 'before_use' });
-    const external = await screen.findByRole('link', { name: 'Open reference' });
-    expect(external).toHaveAttribute('href', 'https://archive.example/field');
-    expect(external).toHaveAttribute('target', '_blank');
+    const openReaderButtons = await screen.findAllByRole('button', { name: /Open in reader/i });
+    expect(openReaderButtons.length).toBeGreaterThan(0);
+    expect(openReaderButtons[0]).toBeVisible();
   });
 
   it('refreshes the source workspace and program citation cache after a source write', async () => {

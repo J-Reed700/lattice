@@ -382,6 +382,163 @@
 }
 
 /* ------------------------------------------------------------------ *
+ * 8.1 Callout Alerts (GitHub-style [!NOTE], [!TIP], [!IMPORTANT], etc.)
+ * ------------------------------------------------------------------ */
+
+.tiptap-editor blockquote.callout-alert,
+.tiptap-viewer blockquote.callout-alert {
+  border-left-width: 3.5px;
+  border-left-style: solid;
+  border-radius: var(--radius-md);
+  padding: 0.85em 1.1em 0.85em 1.15em;
+  margin: 1.25em 0;
+  font-style: normal;
+  background-color: hsl(var(--surface));
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.tiptap-editor blockquote.callout-alert *,
+.tiptap-viewer blockquote.callout-alert * {
+  font-style: normal;
+}
+
+.tiptap-editor blockquote.callout-alert .callout-header,
+.tiptap-viewer blockquote.callout-alert .callout-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 0.4em;
+  user-select: none;
+}
+
+.tiptap-editor blockquote.callout-alert .callout-icon,
+.tiptap-viewer blockquote.callout-alert .callout-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tiptap-editor blockquote.callout-alert .callout-title,
+.tiptap-viewer blockquote.callout-alert .callout-title {
+  letter-spacing: -0.01em;
+}
+
+.tiptap-editor blockquote.callout-alert p,
+.tiptap-viewer blockquote.callout-alert p {
+  color: hsl(var(--text-secondary));
+  margin: 0.45em 0;
+  line-height: 1.6;
+}
+
+.tiptap-editor blockquote.callout-alert p:first-of-type,
+.tiptap-viewer blockquote.callout-alert p:first-of-type {
+  margin-top: 0;
+}
+
+.tiptap-editor blockquote.callout-alert p:last-child,
+.tiptap-viewer blockquote.callout-alert p:last-child {
+  margin-bottom: 0;
+}
+
+.tiptap-editor blockquote.callout-alert .callout-marker-hidden,
+.tiptap-viewer blockquote.callout-alert .callout-marker-hidden {
+  display: none !important;
+}
+
+.tiptap-editor blockquote.callout-alert .callout-lead-empty,
+.tiptap-viewer blockquote.callout-alert .callout-lead-empty {
+  display: none !important;
+}
+
+/* Callout Variants */
+
+/* NOTE: Sky / Blue */
+.tiptap-editor blockquote.callout-note,
+.tiptap-viewer blockquote.callout-note {
+  border-left-color: #0284c7;
+  background-color: rgb(2 132 199 / 0.05);
+}
+.tiptap-editor blockquote.callout-note .callout-header,
+.tiptap-viewer blockquote.callout-note .callout-header {
+  color: #0284c7;
+}
+.dark .tiptap-editor blockquote.callout-note,
+.dark .tiptap-viewer blockquote.callout-note,
+[data-theme="dark"] .tiptap-editor blockquote.callout-note,
+[data-theme="dark"] .tiptap-viewer blockquote.callout-note {
+  border-left-color: #38bdf8;
+  background-color: rgb(56 189 248 / 0.07);
+}
+.dark .tiptap-editor blockquote.callout-note .callout-header,
+.dark .tiptap-viewer blockquote.callout-note .callout-header,
+[data-theme="dark"] .tiptap-editor blockquote.callout-note .callout-header,
+[data-theme="dark"] .tiptap-viewer blockquote.callout-note .callout-header {
+  color: #38bdf8;
+}
+
+/* TIP: Emerald / Success */
+.tiptap-editor blockquote.callout-tip,
+.tiptap-viewer blockquote.callout-tip {
+  border-left-color: hsl(var(--success));
+  background-color: hsl(var(--success-muted) / 0.45);
+}
+.tiptap-editor blockquote.callout-tip .callout-header,
+.tiptap-viewer blockquote.callout-tip .callout-header {
+  color: hsl(var(--success-fg));
+}
+
+/* IMPORTANT: Violet / Purple */
+.tiptap-editor blockquote.callout-important,
+.tiptap-viewer blockquote.callout-important {
+  border-left-color: #7c3aed;
+  background-color: rgb(124 58 237 / 0.05);
+}
+.tiptap-editor blockquote.callout-important .callout-header,
+.tiptap-viewer blockquote.callout-important .callout-header {
+  color: #7c3aed;
+}
+.dark .tiptap-editor blockquote.callout-important,
+.dark .tiptap-viewer blockquote.callout-important,
+[data-theme="dark"] .tiptap-editor blockquote.callout-important,
+[data-theme="dark"] .tiptap-viewer blockquote.callout-important {
+  border-left-color: #a78bfa;
+  background-color: rgb(167 139 250 / 0.08);
+}
+.dark .tiptap-editor blockquote.callout-important .callout-header,
+.dark .tiptap-viewer blockquote.callout-important .callout-header,
+[data-theme="dark"] .tiptap-editor blockquote.callout-important .callout-header,
+[data-theme="dark"] .tiptap-viewer blockquote.callout-important .callout-header {
+  color: #a78bfa;
+}
+
+/* WARNING: Amber / Warning */
+.tiptap-editor blockquote.callout-warning,
+.tiptap-viewer blockquote.callout-warning {
+  border-left-color: hsl(var(--warning));
+  background-color: hsl(var(--warning-muted) / 0.45);
+}
+.tiptap-editor blockquote.callout-warning .callout-header,
+.tiptap-viewer blockquote.callout-warning .callout-header {
+  color: hsl(var(--warning-fg));
+}
+
+/* CAUTION: Danger / Rose */
+.tiptap-editor blockquote.callout-caution,
+.tiptap-viewer blockquote.callout-caution {
+  border-left-color: hsl(var(--danger));
+  background-color: hsl(var(--danger-muted) / 0.45);
+}
+.tiptap-editor blockquote.callout-caution .callout-header,
+.tiptap-viewer blockquote.callout-caution .callout-header {
+  color: hsl(var(--danger-fg));
+}
+
+/* ------------------------------------------------------------------ *
  * 9. Lists
  * ------------------------------------------------------------------ */
 

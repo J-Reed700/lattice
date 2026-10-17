@@ -227,7 +227,11 @@ impl DeleteDocumentUseCase {
         // shared with the writers and the startup rebuild.
         let embedding_keys: Vec<String> = chunks
             .iter()
-            .map(|chunk| crate::features::embedding::encoding::vector_key(&chunk.id().to_string()))
+            .map(|chunk| {
+                lattice_core::shared::persistence::embedding_encoding::vector_key(
+                    &chunk.id().to_string(),
+                )
+            })
             .collect();
         let vector_search = Arc::clone(&self.vector_search);
         tokio::task::spawn_blocking(move || vector_search.remove_embeddings(&embedding_keys))
@@ -309,11 +313,11 @@ impl DeleteDocumentUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::search::dto::SearchResultPortDto;
     use crate::features::web::mocks::MockWebArchiveService;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
     use crate::infrastructure::storage::ContentAddressedStorage;
+    use lattice_core::application::contracts::search::SearchResultRecord;
     use lattice_core::application::contracts::web::CleanArticle;
     use parking_lot::Mutex;
     use sqlx::sqlite::SqlitePoolOptions;
@@ -334,7 +338,7 @@ mod tests {
             _query_embedding: &[f32],
             _top_k: usize,
             _threshold: f32,
-        ) -> Result<Vec<SearchResultPortDto>> {
+        ) -> Result<Vec<SearchResultRecord>> {
             Ok(Vec::new())
         }
 
@@ -344,7 +348,7 @@ mod tests {
             _top_k: usize,
             _threshold: f32,
             _allowed_document_ids: Option<&HashSet<String>>,
-        ) -> Result<Vec<SearchResultPortDto>> {
+        ) -> Result<Vec<SearchResultRecord>> {
             Ok(Vec::new())
         }
 

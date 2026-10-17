@@ -16,8 +16,8 @@ use tracing::{info, warn};
 
 use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::trait_def::ConversationServiceTrait;
-use crate::features::qa::dto::SourceDto;
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::OptionalLlmLoader;
 use lattice_core::application::ports::LLMPort;
 #[cfg(test)]

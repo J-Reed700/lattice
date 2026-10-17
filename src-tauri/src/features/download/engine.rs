@@ -221,7 +221,10 @@ impl DownloadEngine for HttpDownloadEngine {
         );
 
         if let Some(total_bytes) = expected_total_bytes {
-            Self::check_disk_space(&options.destination, total_bytes)?;
+            let remaining_bytes = total_bytes.saturating_sub(options.resume_from.unwrap_or(0));
+            if remaining_bytes > 0 {
+                Self::check_disk_space(&options.destination, remaining_bytes)?;
+            }
         }
 
         self.download_with_retry(

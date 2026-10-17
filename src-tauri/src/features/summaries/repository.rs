@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
-use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
+use crate::features::summaries::entity::DocumentSummary;
+use lattice_core::application::ports::summary_search::SummaryLevel;
 use lattice_core::shared::error::{AppError, Result};
 
 /// Port for persisting and reading document/section summaries.

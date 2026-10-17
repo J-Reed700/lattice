@@ -5,9 +5,9 @@ import { listen } from '@tauri-apps/api/event';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useSidebarBookmarksQuery } from '@/features/chat/components/sidebar/workspaceQueries';
 import { ConversationsProvider } from '@/features/chat/controller/ConversationsProvider';
 import { MAX_OBSERVED_CONVERSATIONS, MAX_OBSERVED_MEMBERSHIPS } from '@/features/chat/controller/useConversationsController';
+import { useSidebarBookmarksQuery } from '@/features/chat/hooks/workspaceQueries';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';

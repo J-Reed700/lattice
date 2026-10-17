@@ -10,6 +10,9 @@
 //! continue it). Deepening rounds continue only while the last round settled
 //! at least one claim as supported or contradicted. Each page's check has its
 //! own receipt.
+//!
+//! Progress counts each claim once. A deeper page's check adds no check; it
+//! moves its claim out of the unresolved count when the page supports it.
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
 use std::collections::BTreeMap;
@@ -17,6 +20,15 @@ use std::collections::BTreeMap;
 const BATCH_SIZE: usize = 8;
 const PROVISIONAL_BATCH_POLICY: &str =
     lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY;
+
+/// What a finished comparison reports to lesson progress.
+#[derive(Clone, Copy)]
+enum Check {
+    /// The claim's first check in this pass.
+    First,
+    /// An unsupported claim's check against a deeper evidence page.
+    Deeper,
+}
 
 struct PendingClaim {
     ordinal: usize,
@@ -277,17 +289,22 @@ async fn individual(llm: &dyn LLMPort, pending: PendingClaim) -> Result<CheckedC
     finish(pending, judgment).await
 }
 
-fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim) {
+fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim, check: Check) {
     // Individual fallbacks and smaller groups can take minutes. Report each
     // finished comparison immediately, even while its siblings are pending.
-    crate::features::learning::lesson_progress::checked(
-        result.3,
-        result.2.verdict != ClaimVerdict::Supported,
-    );
+    let supported = result.2.verdict == ClaimVerdict::Supported;
+    match check {
+        Check::First => crate::features::learning::lesson_progress::checked(result.3, !supported),
+        Check::Deeper => crate::features::learning::lesson_progress::rechecked(supported),
+    }
     results.push(result);
 }
 
-async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<CheckedClaim>> {
+async fn group(
+    llm: &dyn LLMPort,
+    pending: Vec<PendingClaim>,
+    check: Check,
+) -> Result<Vec<CheckedClaim>> {
     let mut results = Vec::new();
     let checker = ClaimChecker::new(
         llm,
@@ -303,7 +320,7 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
         let targets: Vec<_> = pending.iter().map(target).collect();
         if pending.len() == 1 {
             for item in pending {
-                completed(&mut results, individual(llm, item).await?);
+                completed(&mut results, individual(llm, item).await?, check);
             }
             continue;
         }
@@ -413,11 +430,11 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
             } else {
                 // Save completed siblings before a malformed response needs a
                 // slower individual recheck. An outage must not discard them.
-                completed(&mut results, finish(item, judgment).await?);
+                completed(&mut results, finish(item, judgment).await?, check);
             }
         }
         for item in unresolved {
-            completed(&mut results, individual(llm, item).await?);
+            completed(&mut results, individual(llm, item).await?, check);
         }
     }
     Ok(results)
@@ -508,7 +525,7 @@ pub(super) async fn check_with_citations(
                     if final_decision {
                         decided.insert(result.0);
                     }
-                    completed(&mut results, result);
+                    completed(&mut results, result, Check::First);
                 }
                 PreparedClaim::Pending(item) => pending.push(item),
             }
@@ -535,7 +552,7 @@ pub(super) async fn check_with_citations(
     // a time rather than compete large prompt prefills on the same model.
     let mut groups = futures::stream::iter(pending)
         .chunks(BATCH_SIZE)
-        .map(|pending| group(llm, pending))
+        .map(|pending| group(llm, pending, Check::First))
         .buffer_unordered(1);
     while let Some(batch) = groups.next().await {
         results.extend(batch?);
@@ -658,6 +675,18 @@ async fn deepen(
             shown.extend(page);
             walks.insert(ordinal, Walk { shown, ..walk });
         }
+        if !pending.is_empty() || !outcomes.is_empty() {
+            crate::features::learning::lesson_progress::deeper_page(
+                round + 1,
+                pending.len() + outcomes.len(),
+            );
+            // A saved check of this page is finished as soon as it is restored.
+            for (_, finding) in &outcomes {
+                crate::features::learning::lesson_progress::rechecked(
+                    finding.verdict == ClaimVerdict::Supported,
+                );
+            }
+        }
         if !pending.is_empty() {
             crate::features::learning::lesson_progress::stage(format!(
                 "Checking {} unsupported claims against their next page of evidence (page {})",
@@ -666,7 +695,7 @@ async fn deepen(
             ));
             let mut batches = futures::stream::iter(pending)
                 .chunks(BATCH_SIZE)
-                .map(|pending| group(llm, pending))
+                .map(|pending| group(llm, pending, Check::Deeper))
                 .buffer_unordered(1);
             while let Some(batch) = batches.next().await {
                 outcomes.extend(
@@ -701,5 +730,6 @@ async fn deepen(
             break;
         }
     }
+    crate::features::learning::lesson_progress::deeper_done();
     Ok(())
 }

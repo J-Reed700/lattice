@@ -7,7 +7,7 @@ import {
   JOURNAL_SPACE_DEFAULT_ICON,
   type SpaceKind,
 } from '@/features/chat/components/sidebar/sidebarUtils';
-import { useCreateJournalMutation, useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
+import { useCreateJournalMutation, useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import type { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
 import { uniqueName } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';

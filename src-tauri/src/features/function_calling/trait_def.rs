@@ -5,8 +5,8 @@
 use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
 };
-use crate::features::settings::dto::CustomToolSettingsDto;
 use async_trait::async_trait;
+use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 use lattice_core::shared::error::Result;
 use std::collections::HashMap;
 
@@ -20,6 +20,21 @@ pub trait FunctionRegistryTrait: Send + Sync {
     /// # Errors
     /// Returns error if tool name already exists or tool is invalid
     fn register(&self, tool: ToolDefinition) -> Result<()>;
+
+    /// Unregister a function/tool by name
+    ///
+    /// # Arguments
+    /// * `name` - Tool name to remove
+    ///
+    /// # Returns
+    /// True if the tool was present and removed, false otherwise
+    fn unregister(&self, name: &str) -> bool;
+
+    /// Record a function call for usage statistics
+    ///
+    /// # Arguments
+    /// * `function_name` - Name of function that was called
+    fn record_call(&self, function_name: &str);
 
     /// Get a tool definition by name
     ///

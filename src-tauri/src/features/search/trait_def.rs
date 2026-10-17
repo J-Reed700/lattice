@@ -2,12 +2,16 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::service::SearchResult;
-use crate::features::search::use_cases::{
-    HybridSearchUseCase, QueryBranches, RankedBranch, RerankOptions, Reranked,
-};
+use crate::features::search::enrichment_service::DocumentMetadata;
+use crate::features::search::use_cases::HybridSearchUseCase;
 use async_trait::async_trait;
+use lattice_core::application::contracts::search::{
+    QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
+    SearchResultDto,
+};
+// Temporary: chat's test runtime still names the trait at this path.
+pub(crate) use lattice_core::application::ports::library_search::LibrarySearchTrait;
 use lattice_core::shared::error::Result;
 
 #[async_trait]
@@ -213,39 +217,7 @@ pub trait SparseSearchTrait: Send + Sync {
         top_k: usize,
         space_id: Option<&str>,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>>;
-}
-
-/// The library search a caller outside this feature drives: one scoped query,
-/// its separate branches and their fusion, and the cross-encoder stage.
-///
-/// Implemented by [`HybridSearchUseCase`], so every caller ranks the library
-/// the way the search command does.
-#[async_trait]
-pub trait LibrarySearchTrait: Send + Sync {
-    /// One query under an optional hard scope; see
-    /// [`HybridSearchUseCase::execute_scoped`].
-    async fn execute_scoped(
-        &self,
-        request: SearchRequestDto,
-        space_id: Option<&str>,
-        allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<SearchResponseDto>;
-
-    /// Every branch for `query`, unfused.
-    async fn search_branches(
-        &self,
-        query: &str,
-        space_id: Option<&str>,
-        allowed_document_ids: Option<&std::collections::HashSet<String>>,
-        limit: usize,
-        vector_weight: f32,
-        bm25_weight: f32,
-    ) -> QueryBranches;
-
-    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto>;
-
-    async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked;
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>>;
 }
 
 #[async_trait]
@@ -287,4 +259,45 @@ impl LibrarySearchTrait for HybridSearchUseCase {
     async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {
         HybridSearchUseCase::rerank(self, response, options).await
     }
+}
+
+/// Trait for enriching search results with document metadata
+#[async_trait]
+pub trait SearchEnrichmentServiceTrait: Send + Sync {
+    /// Enrich search results with document metadata
+    ///
+    /// Given chunk IDs from search results, fetches associated metadata including
+    /// document titles, file paths, creation dates, and content snippets.
+    ///
+    /// # Performance
+    /// - Processes chunks in batches of 900 (SQLite parameter limit is 999)
+    /// - Uses parallel batch processing with concurrency=4
+    /// - Expected speedup: 3-4x over sequential processing
+    ///
+    /// # Arguments
+    /// * `chunk_ids` - Slice of chunk IDs to enrich (can be any size)
+    ///
+    /// # Returns
+    /// HashMap mapping chunk ID to DocumentMetadata containing:
+    /// - snippet: Content preview (max 200 chars)
+    /// - metadata: Hash map with filename, file_type, file_size, created_at, updated_at
+    ///
+    /// # Errors
+    /// - `AppError::Database` if database query fails
+    ///
+    /// # Example
+    /// ```rust
+    /// let chunk_ids: Vec<String> = search_results.iter().map(|r| r.id.clone()).collect();
+    /// let enriched = service.enrich_results(&chunk_ids).await?;
+    ///
+    /// for result in search_results {
+    ///     if let Some(metadata) = enriched.get(&result.id) {
+    ///         println!("Snippet: {}", metadata.snippet);
+    ///     }
+    /// }
+    /// ```
+    async fn enrich_results(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, DocumentMetadata>>;
 }

@@ -1,7 +1,9 @@
 //! Turning vector and hybrid hits into result DTOs with document metadata.
 
-use crate::features::search::dto::{SearchModeDto, SearchRequestDto, SearchResultDto};
-use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
+use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
+use lattice_core::application::contracts::search::{
+    SearchModeDto, SearchRequestDto, SearchResultDto,
+};
 use lattice_core::shared::error::AppError;
 
 pub(super) async fn enrich_vector_results(

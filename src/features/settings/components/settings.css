@@ -45,24 +45,33 @@
   justify-content: flex-start;
 }
 
+/* A miniature of the app (sidebar + page). The System card stacks the light and
+   dark miniatures and clips the dark one to the right half, so the split is a
+   clean vertical line over identical layouts. */
 .theme-preview {
-  display: flex;
+  position: relative;
+  display: block;
   height: 5.5rem;
   overflow: hidden;
   border: 1px solid hsl(30 18% 18% / 0.12);
   border-radius: 5px;
-  background: hsl(40 26% 96.5%);
+  isolation: isolate;
 }
+.theme-preview-scene { position: absolute; inset: 0; display: flex; background: hsl(40 26% 96.5%); }
 .theme-preview-sidebar { width: 27%; padding: 0.6rem 0.3rem; background: hsl(38 18% 90%); }
-.theme-preview-page { flex: 1; padding: 0.75rem 0.6rem; }
-.theme-preview span span { display: block; height: 4px; margin-bottom: 7px; border-radius: 2px; background: hsl(30 8% 26% / 0.2); }
+.theme-preview-page { flex: 1; min-width: 0; padding: 0.75rem 0.6rem; }
+.theme-preview-sidebar span, .theme-preview-page span { display: block; height: 4px; margin-bottom: 7px; border-radius: 2px; background: hsl(30 8% 26% / 0.2); }
 .theme-preview-page span:first-child { width: 55%; height: 6px; margin-bottom: 12px; background: hsl(12 52% 40%); }
 .theme-preview-page span:last-child { width: 75%; }
-.theme-preview[data-preview='dark'] { background: hsl(30 5% 13%); }
-.theme-preview[data-preview='dark'] .theme-preview-sidebar { background: hsl(30 6% 7.5%); }
-.theme-preview[data-preview='dark'] span span { background: hsl(36 18% 91% / 0.22); }
-.theme-preview[data-preview='dark'] .theme-preview-page span:first-child { background: hsl(22 58% 72%); }
-.theme-preview[data-preview='system'] { background: linear-gradient(120deg, hsl(40 26% 96.5%) 50%, hsl(30 5% 13%) 50%); }
+.theme-preview-scene[data-scene='dark'] { background: hsl(30 5% 13%); }
+.theme-preview-scene[data-scene='dark'] .theme-preview-sidebar { background: hsl(30 6% 7.5%); }
+.theme-preview-scene[data-scene='dark'] span span { background: hsl(36 18% 91% / 0.22); }
+.theme-preview-scene[data-scene='dark'] .theme-preview-page span:first-child { background: hsl(22 58% 72%); }
+/* Each half is clipped to its side (the light one 1px past the seam, under the
+   dark) so neither scene's antialiased edge bleeds around the other. */
+.theme-preview[data-preview='system'] .theme-preview-scene[data-scene='light'] { clip-path: inset(0 calc(50% - 1px) 0 0); }
+.theme-preview[data-preview='system'] .theme-preview-scene[data-scene='dark'] { clip-path: inset(0 0 0 50%); }
+.dark .theme-preview { border-color: hsl(36 18% 91% / 0.12); }
 
 @container settings-content (max-width: 42rem) {
   .downloaded-model-actions { width: 100%; padding-left: 3rem; }

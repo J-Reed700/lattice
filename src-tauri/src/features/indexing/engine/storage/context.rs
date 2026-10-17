@@ -205,11 +205,13 @@ async fn insert_chunks_and_embeddings(
             IndexingError::InvalidData(format!("Embedding index {} out of bounds", idx))
         })?;
 
-        let embedding_bytes = crate::features::embedding::encoding::encode_embedding(embedding);
+        let embedding_bytes =
+            lattice_core::shared::persistence::embedding_encoding::encode_embedding(embedding);
 
         // Canonical key so delete/rebuild/insert all agree — see
-        // `embedding::encoding::vector_key`.
-        let embedding_id = crate::features::embedding::encoding::vector_key(&chunk_id);
+        // `embedding_encoding::vector_key`.
+        let embedding_id =
+            lattice_core::shared::persistence::embedding_encoding::vector_key(&chunk_id);
         let dimension = embedding.len() as i32;
 
         sqlx::query!(
@@ -466,8 +468,9 @@ mod tests {
             .await
             .expect("read embedding");
 
-        let decoded = crate::features::embedding::encoding::decode_embedding(&blob)
-            .expect("embedding must decode");
+        let decoded =
+            lattice_core::shared::persistence::embedding_encoding::decode_embedding(&blob)
+                .expect("embedding must decode");
         assert_eq!(decoded, vec![0.5, 0.6, 0.7, 0.8]);
     }
 }

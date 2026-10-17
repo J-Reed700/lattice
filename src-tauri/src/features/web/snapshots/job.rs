@@ -153,10 +153,62 @@ impl JobHandler for WebPageSnapshotJob {
                 Ok(outcome)
             }
             Err(CaptureError::Cancelled) => Ok(JobOutcome::Stopped),
-            // The runtime defers an outage and redelivers after the backoff;
-            // the row stays pending.
-            Err(error) if error.is_transient() => Err(AppError::Network(error.to_string())),
-            Err(error) => self.fail(&id, error.code(), &error.to_string()).await,
+            Err(error) => {
+                if let Ok(Some((title, text))) = self
+                    .shared
+                    .repository
+                    .find_reader_archive(
+                        &row.conversation_id,
+                        &row.normalized_url,
+                        &row.requested_url,
+                    )
+                    .await
+                {
+                    let captured_at = chrono::Utc::now();
+                    let archival_title = title.or_else(|| row.title.clone());
+                    if let Some(html) =
+                        crate::features::web::services::snapshot::synthesize_archival_html(
+                            &row.requested_url,
+                            archival_title.as_deref(),
+                            &text,
+                            &row.id,
+                            captured_at,
+                        )
+                    {
+                        let page = crate::features::web::traits::page_snapshot::CapturedPage {
+                            requested_url: row.requested_url.clone(),
+                            final_url: row
+                                .final_url
+                                .clone()
+                                .unwrap_or_else(|| row.requested_url.clone()),
+                            title: archival_title,
+                            html,
+                            favicon: None,
+                            method:
+                                crate::features::web::traits::page_snapshot::CaptureMethod::Http,
+                            resources:
+                                crate::features::web::traits::page_snapshot::ResourceReport::default(
+                                ),
+                            partial: true,
+                            partial_reasons: vec!["offline_archive".to_string()],
+                            captured_at,
+                        };
+                        let _ = context.progress(95, "Saving archival copy", None).await;
+                        let outcome = self.commit(&id, page).await?;
+                        if matches!(outcome, JobOutcome::Completed { .. }) {
+                            let _ = context.progress(100, "Captured", None).await;
+                        }
+                        return Ok(outcome);
+                    }
+                }
+                // The runtime defers an outage and redelivers after the backoff;
+                // the row stays pending.
+                if error.is_transient() {
+                    Err(AppError::Network(error.to_string()))
+                } else {
+                    self.fail(&id, error.code(), &error.to_string()).await
+                }
+            }
         }
     }
 }

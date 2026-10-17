@@ -65,41 +65,7 @@ const isBackendSource = (source) =>
 // the rule arrived. Do not add to this list: move the file's backend calls
 // into a query or mutation hook, then delete its entry.
 const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
-  'src/features/chat/components/ChatView.tsx',
-  'src/features/chat/components/ConversationLinkedDocumentsPanel.tsx',
-  'src/features/chat/components/ConversationSpotlight.tsx',
-  'src/features/chat/components/KnowledgePanel.tsx',
-  'src/features/chat/components/sidebar/workspaceQueries.ts',
-  'src/features/chat/components/tangents/ConversationTangents.tsx',
-  'src/features/chat/components/tangents/TangentPanel.tsx',
-  'src/features/dashboard/components/Dashboard.tsx',
-  'src/features/explorer/components/ExplorerFileView.tsx',
-  'src/features/explorer/components/ExplorerSearch.tsx',
-  'src/features/explorer/components/ExplorerTree.tsx',
-  'src/features/files/components/Ingest/BatchFileImport.tsx',
-  'src/features/files/components/Ingest/LibraryFilePicker.tsx',
-  'src/features/files/components/IngestHub/IngestHub.tsx',
-  'src/features/journal/components/EntryFromConversation.tsx',
-  'src/features/model/components/FirstRun/FirstRunGate.tsx',
-  'src/features/model/components/FirstRun/ModelSetupModal.tsx',
-  'src/features/palette/components/CommandPalette/CommandPalette.tsx',
-  'src/features/reading/components/ContentViewer/ContentViewer.tsx',
-  'src/features/reading/components/ContentViewer/renderers/DocxViewer.tsx',
-  'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',
-  'src/features/reading/components/ContentViewer/renderers/PDFViewerImpl.tsx',
-  'src/features/reading/components/ContentViewer/renderers/TextViewer.tsx',
-  'src/features/reading/components/JournalCapturePreview.tsx',
-  'src/features/reading/components/SourceReaderBody.tsx',
-  'src/features/search/components/SearchInterface/SearchInterface.tsx',
-  'src/features/settings/components/AITab/ChatTab.tsx',
-  'src/features/settings/components/AITab/LlamaCppConnection.tsx',
-  'src/features/settings/components/AITab/ModelsTab.tsx',
-  'src/features/settings/components/AITab/ToolsTab.tsx',
-  'src/features/settings/components/IndexingTab.tsx',
-  'src/features/settings/components/ModelCatalog/ModelVariantPicker.tsx',
-  'src/features/settings/components/ModelCatalog/startModelDownload.ts',
   'src/features/settings/components/modelRoles/LocalModelRow.tsx',
-  'src/features/settings/components/Settings.tsx',
 ], (text) => valueImportSources(text).some(isBackendSource));
 
 // View files that imported a Tauri plugin or convertFileSrc when the rule
@@ -107,7 +73,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
 // helper, then delete the file's entry.
 const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
   'src/features/explorer/components/ExplorerPage.tsx',
-  'src/features/files/components/FileBrowser/FileBrowser.tsx',
   'src/features/files/components/Ingest/ImportHistory.tsx',
   'src/features/journal/components/JournalPickerMenu.tsx',
   'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',
@@ -518,7 +483,7 @@ export default [
   },
 
   // Sidebar surfaces compose query-backed workflows; transport access belongs
-  // in workspaceQueries.ts so sibling views share cache invalidation.
+  // in chat/hooks/workspaceQueries.ts so sibling views share cache invalidation.
   {
     files: ['src/features/chat/components/ConversationSidebar.tsx', 'src/features/chat/components/sidebar/**/*.tsx'],
     ignores: ['**/__tests__/**', '**/*.test.tsx'],

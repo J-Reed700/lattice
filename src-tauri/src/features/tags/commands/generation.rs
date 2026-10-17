@@ -22,11 +22,10 @@ use lattice_core::shared::error::{AppError, Result};
 /// # Returns
 ///
 /// * `Ok(GenerateTagsResponseDto)` - Generated tags with confidence scores
-/// * `Err(AppError)` - If rate limited, LLM unavailable, or generation fails
+/// * `Err(AppError)` - If the LLM is unavailable or generation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many LLM tag generation requests (strict rate limit)
 /// * `AppError::NotFound` - Document ID does not exist
 /// * `AppError::Other` - LLM unavailable, generation failed, or document not indexed
 ///
@@ -76,11 +75,6 @@ use lattice_core::shared::error::{AppError, Result};
 /// });
 /// ```
 ///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Strict rate limiting on LLM calls (expensive operations)
-/// - **Resource Protection**: LLM operations are costly - rate limiter prevents abuse
-///
 /// # LLM Tag Generation Process
 ///
 /// 1. **Content Retrieval**: Fetch document content from index
@@ -104,29 +98,20 @@ use lattice_core::shared::error::{AppError, Result};
 /// - **Actionable**: Useful for search and organization
 /// - **Confidence-Scored**: Higher confidence = more relevant
 ///
-/// # Rate Limiting Details
-///
-/// LLM tag generation has **stricter rate limits** than other operations:
-/// - Limits: Lower request rate (LLM operations are expensive)
-/// - Purpose: Prevent resource exhaustion and cost overruns
-/// - Workaround: For bulk tagging, use `auto_tag_all_documents_ddd` (batched + throttled)
-///
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies strict LLM rate limiting
-/// 2. Delegates to `GenerateTagsUseCase` (LLM prompting, tag extraction)
+/// 1. Delegates to `GenerateTagsUseCase` (LLM prompting, tag extraction)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check (strict LLM limits)
-/// 2. Execute GenerateTagsUseCase:
+/// 1. Execute GenerateTagsUseCase:
 ///    - Fetch document content
 ///    - Build LLM prompt
 ///    - Call LLM API
 ///    - Parse and validate tags
 ///    - Score confidence
-/// 3. Return generated tags with metadata
+/// 2. Return generated tags with metadata
 ///
 /// # Performance
 ///
@@ -146,15 +131,6 @@ pub async fn generate_tags_impl(
     container: &Container,
     request: GenerateTagsRequestDto,
 ) -> Result<GenerateTagsResponseDto> {
-    // SECURITY: Rate limit LLM tag generation to prevent resource exhaustion (CWE-770)
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_tags
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     container.get_or_load_llm().await?;
 
     let use_case = container.generate_tags_use_case();
@@ -184,11 +160,10 @@ pub async fn generate_tags_ddd(
 /// # Returns
 ///
 /// * `Ok(AutoTagResponseDto)` - Statistics (tagged count, skipped, errors)
-/// * `Err(AppError)` - If rate limited, validation fails, or operation fails
+/// * `Err(AppError)` - If validation or the operation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many bulk tagging requests (strict LLM rate limit)
 /// * `AppError::InvalidInput` - Batch size exceeds hard limit (max 100 documents)
 /// * `AppError::Other` - LLM unavailable or bulk operation failed
 ///
@@ -230,7 +205,6 @@ pub async fn generate_tags_ddd(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Strict LLM rate limiting prevents resource exhaustion
 /// - **Hard Batch Limit (CWE-770)**: Maximum 100 documents per batch (DoS prevention)
 /// - **Input Validation**: Batch size validated before processing
 ///
@@ -251,8 +225,6 @@ pub async fn generate_tags_ddd(
 ///     await invoke('auto_tag_all_documents_ddd', {
 ///       request: { maxDocuments: batch.length }
 ///     });
-///     // Wait between batches to respect rate limits
-///     await new Promise(resolve => setTimeout(resolve, 60000));
 ///   }
 /// }
 /// ```
@@ -260,7 +232,6 @@ pub async fn generate_tags_ddd(
 /// # Processing Behavior
 ///
 /// - **Batch Processing**: Documents processed in configurable batches
-/// - **Throttling**: Automatic delays between LLM calls to respect rate limits
 /// - **Error Handling**: Individual document failures don't stop batch processing
 /// - **Progress**: Returns statistics for monitoring
 /// - **Filtering**: Can filter to only untagged documents (`onlyUntagged: true`)
@@ -283,22 +254,20 @@ pub async fn generate_tags_ddd(
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies strict LLM rate limiting
-/// 2. Validates batch size (hard limit enforcement)
-/// 3. Delegates to `AutoTagDocumentsUseCase` (batch processing, throttling, error handling)
+/// 1. Validates batch size (hard limit enforcement)
+/// 2. Delegates to `AutoTagDocumentsUseCase` (batch processing, throttling, error handling)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check (strict LLM limits)
-/// 2. Validate batch size (<= 100 documents)
-/// 3. Execute AutoTagDocumentsUseCase:
+/// 1. Validate batch size (<= 100 documents)
+/// 2. Execute AutoTagDocumentsUseCase:
 ///    - Find candidate documents (untagged or all)
 ///    - For each document in batch:
 ///      - Generate tags via LLM
 ///      - Apply tags to document
 ///      - Handle errors gracefully
 ///      - Throttle between documents
-/// 4. Return statistics
+/// 3. Return statistics
 ///
 /// # Use Cases
 ///
@@ -318,15 +287,6 @@ pub async fn auto_tag_all_documents_ddd(
     container: State<'_, Container>,
     request: AutoTagRequestDto,
 ) -> Result<AutoTagResponseDto> {
-    // SECURITY: Rate limit to prevent DoS attacks (CWE-770)
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_tags
-        .check_rate_limit("global")
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     // SECURITY: Enforce hard limit
     const MAX_AUTO_TAG_DOCUMENTS: usize = 100;
     if request.max_documents > MAX_AUTO_TAG_DOCUMENTS {

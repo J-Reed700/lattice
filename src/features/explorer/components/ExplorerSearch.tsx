@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 
+import { useExplorerSearchQuery } from '@/features/explorer/api/queries';
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
-import { VaultAPI } from '@/lib/api';
 
 const MIN_QUERY = 2;
 const DEBOUNCE_MS = 250;
@@ -27,16 +26,7 @@ export function ExplorerSearch({ root, onActiveChange }: { root: string; onActiv
   const active = query.length >= MIN_QUERY;
   useEffect(() => onActiveChange(active), [active, onActiveChange]);
 
-  const results = useQuery({
-    queryKey: ['explorer', 'search', root, query],
-    queryFn: async () => {
-      const result = await VaultAPI.explorerSearch(root, query, { maxResults: 200 });
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    enabled: active,
-    staleTime: 5_000,
-  });
+  const results = useExplorerSearchQuery(root, query, active);
 
   return (
     <>

@@ -18,53 +18,39 @@
 # Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
 # then split it by responsibility.
 #
+# A feature edge that is one feature built on a lower-level one may instead be
+# allowed in scripts/rust-architecture-check/feature-graph.txt, one
+# `allow features::<a> features::<b>  # <reason>` line each. Its references
+# leave feature-edge but still count toward feature-cycle. To see every site
+# of a rule, baselined or not:
+#
+#     bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]
+#
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
-#   feature-edge <features::a> <features::b>              references from one feature into another
+#   feature-edge <features::a> <features::b>              references from one feature into another,
+#                                                         except edges in feature-graph.txt
 #   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
 #                                                         its strongly connected component
+#   feature-reexport <file> <lattice_core|features::b>    a `use` in a feature, visible outside it,
+#                                                         that re-exports core or another feature;
+#                                                         callers should import from the source
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
-#                                                         DI, desktop, setup and interfaces files
+#                                                         DI, desktop, bootstrap and interfaces files
+#   composition-root-import <file> bootstrap              the composition root named outside itself
+#                                                         and the entry points main.rs, lib.rs, bin/*
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
 #   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
 
-infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::indexing 1
-infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::transcription 3
-infrastructure-imports-feature infrastructure/adapters/system_info.rs features::llm 2
-infrastructure-imports-feature infrastructure/persistence/repositories/mocks.rs features::embedding 4
-infrastructure-imports-feature infrastructure/persistence/repositories/mocks.rs features::mentions 1
-infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::embedding 1
-infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::model_management 1
-infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::search 1
-infrastructure-imports-feature infrastructure/services/startup_reconciliation.rs features::download 2
-infrastructure-imports-feature infrastructure/services/traits/context.rs features::search 1
-infrastructure-imports-feature infrastructure/setup/app.rs features::download 8
-infrastructure-imports-feature infrastructure/setup/app.rs features::embedding 1
-infrastructure-imports-feature infrastructure/setup/app.rs features::settings 2
-infrastructure-imports-feature infrastructure/setup/app.rs features::summaries 1
-infrastructure-imports-feature infrastructure/setup/degraded_mocks.rs features::web 2
-infrastructure-imports-feature infrastructure/setup/shutdown.rs features::llm 1
-
-feature-edge features::backup features::settings 2
 feature-edge features::backup features::vault 2
-feature-edge features::batch features::indexing 4
-feature-edge features::batch features::web 2
-feature-edge features::compare features::search 1
-feature-edge features::conversation features::daily_notes 1
-feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
 feature-edge features::conversation features::function_calling 34
 feature-edge features::conversation features::llm 2
-feature-edge features::conversation features::qa 17
-feature-edge features::conversation features::references 1
-feature-edge features::conversation features::search 30
-feature-edge features::conversation features::settings 16
-feature-edge features::conversation features::summaries 4
+feature-edge features::conversation features::search 1
 feature-edge features::conversation features::web 2
 feature-edge features::corpus_shape features::embedding 1
-feature-edge features::daily_notes features::qa 6
 feature-edge features::embedding features::download 2
 feature-edge features::explorer features::function_calling 4
 feature-edge features::explorer features::search 3
@@ -73,26 +59,25 @@ feature-edge features::file features::recent 2
 feature-edge features::file features::tags 2
 feature-edge features::file features::web 2
 feature-edge features::function_calling features::embedding 1
-feature-edge features::function_calling features::search 6
-feature-edge features::function_calling features::settings 4
+feature-edge features::function_calling features::search 4
 feature-edge features::function_calling features::tags 1
 feature-edge features::function_calling features::web 1
 feature-edge features::health features::llm 1
-feature-edge features::indexing features::embedding 14
+feature-edge features::indexing features::embedding 6
 feature-edge features::indexing features::mentions 1
 feature-edge features::indexing features::search 1
 feature-edge features::indexing features::transcription 1
 feature-edge features::initialization features::download 1
-feature-edge features::learning features::daily_notes 5
+feature-edge features::learning features::daily_notes 4
 feature-edge features::learning features::vault 1
 feature-edge features::learning features::web 13
 feature-edge features::llm features::download 9
 feature-edge features::llm features::embedding 2
-feature-edge features::llm features::model_management 22
+feature-edge features::llm features::model_management 2
 feature-edge features::model_management features::download 21
 feature-edge features::model_management features::embedding 5
 feature-edge features::search features::download 1
-feature-edge features::search features::embedding 13
+feature-edge features::search features::embedding 12
 feature-edge features::settings features::llm 2
 feature-edge features::stats features::health 1
 feature-edge features::stats features::tags 3
@@ -102,3 +87,21 @@ feature-edge features::vault features::daily_notes 4
 feature-edge features::vault features::settings 2
 feature-edge features::web features::embedding 4
 feature-edge features::web features::indexing 7
+
+feature-reexport features/conversation/chat.rs features::explorer 1
+feature-reexport features/conversation/chat/dto.rs features::explorer 1
+feature-reexport features/conversation/chat/ports.rs features::function_calling 3
+feature-reexport features/conversation/chat/ports.rs lattice_core 2
+feature-reexport features/daily_notes/dto.rs lattice_core 1
+feature-reexport features/embedding/compatibility.rs lattice_core 1
+feature-reexport features/embedding/entity.rs lattice_core 1
+feature-reexport features/favorites/dto.rs lattice_core 1
+feature-reexport features/file/commands.rs lattice_core 2
+feature-reexport features/indexing/outcome.rs lattice_core 1
+feature-reexport features/llm/engine/models.rs lattice_core 1
+feature-reexport features/model_management/domain.rs lattice_core 1
+feature-reexport features/recent/dto.rs lattice_core 1
+feature-reexport features/references/repository.rs lattice_core 1
+feature-reexport features/search/trait_def.rs lattice_core 1
+feature-reexport features/settings/dto/mod.rs lattice_core 1
+feature-reexport features/summaries/search.rs lattice_core 1

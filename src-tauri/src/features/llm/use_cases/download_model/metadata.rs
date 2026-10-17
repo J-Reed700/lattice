@@ -168,7 +168,7 @@ impl DownloadModelUseCase {
     pub(super) async fn resolve_model_metadata(
         &self,
         model_id: &str,
-    ) -> Result<crate::features::model_management::domain::ModelMetadata, AppError> {
+    ) -> Result<lattice_core::domain::models::selection::ModelMetadata, AppError> {
         // 1) Curated model IDs are still supported for backward compatibility.
         if let Some(curated) = get_all_curated_models()
             .into_iter()
@@ -193,17 +193,17 @@ impl DownloadModelUseCase {
             };
             let mut resolved = match metadata {
                 Some(meta) => meta.to_domain_model()?,
-                None => crate::features::model_management::domain::ModelMetadata {
+                None => lattice_core::domain::models::selection::ModelMetadata {
                     id: model_id.to_string(),
                     name: Self::infer_model_name_from_repo(&repo_id),
-                    category: crate::features::model_management::domain::ModelCategory::LLM,
+                    category: lattice_core::domain::models::selection::ModelCategory::LLM,
                     description: format!("Hugging Face model: {}", repo_id),
                     size_gb: 0.0,
                     minimum_ram_gb: 4.0,
                     recommended_ram_gb: 8.0,
                     context_length: 4096,
                     performance_tier:
-                        crate::features::model_management::domain::PerformanceTier::Balanced,
+                        lattice_core::domain::models::selection::PerformanceTier::Balanced,
                     supported_quantizations: vec![],
                     capabilities: vec!["chat".into()],
                     download_url: Some(format!("https://huggingface.co/{}", repo_id)),
@@ -234,7 +234,7 @@ impl DownloadModelUseCase {
             // Candle path; .onnx is the legacy ORT path (will be removed once
             // all consumers have migrated).
             if resolved.category
-                == crate::features::model_management::domain::ModelCategory::Embedding
+                == lattice_core::domain::models::selection::ModelCategory::Embedding
             {
                 // For gated repos, fetch the user's HF token so HEAD probes
                 // (e.g., 1_Pooling/config.json) don't 401 silently and skip

@@ -282,6 +282,16 @@ impl SidecarRegistry {
     }
 }
 
+/// Shutdown's sidecar sweep: kills every child in the app's registry and
+/// returns how many, or `None` when no registry is managed.
+///
+/// The composition root hands this to shutdown as its `SidecarSweep`, so the
+/// shutdown path never has to name this feature.
+pub fn kill_registered_sidecars(app: &AppHandle) -> Option<usize> {
+    app.try_state::<SidecarRegistry>()
+        .map(|registry| registry.kill_all())
+}
+
 impl Default for SidecarRegistry {
     fn default() -> Self {
         Self::new()

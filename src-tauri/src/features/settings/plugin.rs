@@ -601,18 +601,11 @@ pub async fn set_cloud_api_key(
     provider: String,
     key: String,
 ) -> Result<(), ApiError> {
-    if !matches!(provider.as_str(), "openai" | "anthropic") || key.trim().is_empty() {
+    if !matches!(provider.as_str(), "openai" | "anthropic" | "google") || key.trim().is_empty() {
         return Err(ApiError::from(AppError::InvalidInput(
             "Choose a cloud provider and enter its API key".into(),
         )));
     }
-    container
-        .security_context()
-        .rate_limiters()
-        .credentials
-        .check_rate_limit("credentials")
-        .await
-        .map_err(|e| ApiError::from(AppError::RateLimitExceeded(e.to_string())))?;
     container
         .set_api_key_use_case()
         .execute(provider, key)

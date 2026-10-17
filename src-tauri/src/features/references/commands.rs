@@ -7,8 +7,9 @@
 use super::dto::{
     CreatePassageReferenceRequestDto, PassageReferenceDto, UpdatePassageReferenceRequestDto,
 };
-use super::repository::{PassageReferenceRecord, PassageReferenceRepository};
+use super::repository::PassageReferenceRepository;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use uuid::Uuid;

@@ -8,8 +8,8 @@
 //!
 //! Also provides utility functions for metadata enrichment.
 
-use crate::features::search::dto::{
-    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
+use lattice_core::application::contracts::search::{
+    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultRecord,
 };
 use lattice_core::domain::entities::search_result::SearchResult;
 use lattice_core::domain::value_objects::search_mode::SearchMode;
@@ -152,7 +152,7 @@ impl SearchMapper {
     ///
     /// Domain SearchResult entity. If score validation fails, returns result with
     /// score clamped to 0.0.
-    pub fn port_dto_to_domain(port_dto: SearchResultPortDto) -> SearchResult {
+    pub fn port_dto_to_domain(port_dto: SearchResultRecord) -> SearchResult {
         // Clamp invalid scores to 0.0 rather than panicking
         let score = if port_dto.score.is_nan() || port_dto.score.is_infinite() {
             0.0
@@ -179,7 +179,7 @@ impl SearchMapper {
     /// # Returns
     ///
     /// Vector of domain SearchResult entities
-    pub fn port_dtos_to_domain(port_dtos: Vec<SearchResultPortDto>) -> Vec<SearchResult> {
+    pub fn port_dtos_to_domain(port_dtos: Vec<SearchResultRecord>) -> Vec<SearchResult> {
         port_dtos
             .into_iter()
             .map(Self::port_dto_to_domain)
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_port_dto_to_domain() {
-        let port_dto = SearchResultPortDto {
+        let port_dto = SearchResultRecord {
             doc_id: "doc-123".to_string(),
             chunk_id: "chunk-456".to_string(),
             score: 0.92,
@@ -410,13 +410,13 @@ mod tests {
     #[test]
     fn test_port_dtos_to_domain() {
         let port_dtos = vec![
-            SearchResultPortDto {
+            SearchResultRecord {
                 doc_id: "doc-1".to_string(),
                 chunk_id: "chunk-1".to_string(),
                 score: 0.95,
                 content: "Content 1".to_string(),
             },
-            SearchResultPortDto {
+            SearchResultRecord {
                 doc_id: "doc-2".to_string(),
                 chunk_id: "chunk-2".to_string(),
                 score: 0.85,

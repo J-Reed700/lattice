@@ -8,6 +8,7 @@ pub mod file_type_detector;
 pub mod grounded_generation;
 pub mod history_share;
 pub mod model_selection;
+pub mod transcript;
 
 pub use context_window_builder::ContextWindowBuilder;
 pub use file_type_detector::FileType;

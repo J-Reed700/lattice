@@ -12,7 +12,7 @@ import {
   type SourcedPassage,
 } from '@/features/reading/model/sourcedPassages';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
-import type { SourceWithMetadata } from '@/types/conversation';
+import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
 
 
@@ -46,6 +46,8 @@ export interface WebArticleViewProps {
   actions?: ReactNode;
   /** The passage in view, so "Open URL" can point the browser at it too. */
   onActivePassageChange?: (_text: string | null) => void;
+  /** Where in the file to land. Used by non-chat surfaces to locate search/reference passages. */
+  initialLocator?: PassageLocator | null;
 }
 
 /** The sentences of an answer that cite one source, and any quoted evidence. */
@@ -208,6 +210,7 @@ export function WebArticleView({
   occurrence = null,
   actions,
   onActivePassageChange,
+  initialLocator,
 }: WebArticleViewProps) {
   const snapshot = source.webSnapshot;
   const hasSnapshotText = Boolean(snapshot?.text.trim());
@@ -215,8 +218,26 @@ export function WebArticleView({
   const pageText = hasSnapshotText && snapshot ? snapshot.text : savedExcerpt;
   const { sentences, quotes, focus } = useCitedSentences(ownerKey, source.citationId, occurrence, citationContent);
 
+  const locatorTarget = useMemo(() => {
+    if (sentences.length > 0) return '';
+    return (
+      initialLocator?.text?.trim() ||
+      (hasSnapshotText && savedExcerpt && savedExcerpt !== pageText ? savedExcerpt : '')
+    );
+  }, [sentences.length, initialLocator?.text, hasSnapshotText, savedExcerpt, pageText]);
+
+  const effectiveSentences = useMemo(() => sentences.length > 0 ? sentences : locatorTarget ? [locatorTarget] : [], [sentences, locatorTarget]);
+
   const passages = useMemo<SourcedPassage[]>(() => {
     if (!pageText) return [];
+    if (sentences.length === 0) {
+      if (!locatorTarget) return [];
+      const quoteSpan = findQuoteSpan(pageText, locatorTarget);
+      if (quoteSpan) {
+        return [{ ...quoteSpan, sentenceIndex: 0, score: 1 }];
+      }
+      return findSourcedPassages(pageText, [locatorTarget]);
+    }
     // A quote the judge took off this page is where the answer came from, as
     // exactly as anything here can say; merging lets it win the span it shares
     // with a weaker lexical match.
@@ -225,7 +246,7 @@ export function WebArticleView({
       return span ? [{ ...span, sentenceIndex: quote.sentenceIndex, score: 1 }] : [];
     });
     return mergePassages([...quoted, ...findSourcedPassages(pageText, sentences)], pageText);
-  }, [pageText, sentences, quotes]);
+  }, [pageText, sentences, quotes, locatorTarget]);
 
   /**
    * The passage to open on: the clicked sentence's, or the first.
@@ -315,7 +336,7 @@ export function WebArticleView({
               ? 'source-reader-passage is-lit'
               : 'source-reader-passage'
           }
-          title={`Matches: ${sentences[passage.sentenceIndex] ?? ''}`}
+          title={`Matches: ${effectiveSentences[passage.sentenceIndex] ?? ''}`}
         >
           {pageText.slice(start, end)}
         </mark>

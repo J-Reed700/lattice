@@ -4,7 +4,7 @@ use crate::features::function_calling::{
     domain::FunctionResult,
     dto::{GetDocumentOutput, SemanticSearchOutput},
 };
-use crate::features::qa::dto::SourceDto;
+use lattice_core::application::contracts::sources::SourceDto;
 
 #[derive(Default)]
 pub(super) struct DocumentProgress(HashMap<String, HashSet<String>>);

@@ -67,12 +67,6 @@ pub struct WebPageDto {
 /// the model actually read, and asking the site again could return something
 /// else. A page nobody has read yet costs one validated fetch.
 ///
-/// Deliberately not rate limited, unlike the ingest and preview commands: this
-/// is one page per click, most of them free, and the shared web-ingest limiter
-/// allows five a minute — a user reading through a turn's citations would hit
-/// it in seconds. The fetch underneath is still SSRF-validated and paced per
-/// site.
-///
 /// # Arguments
 ///
 /// * `url` - Web URL to read (http/https only)
@@ -119,7 +113,6 @@ pub async fn read_web_page(
 /// # Returns
 ///
 /// * `Ok(UrlPreview)` - Rich metadata including title, description, images
-/// * `Err(AppError::RateLimitExceeded)` - Too many preview requests
 /// * `Err(AppError)` - Preview failed (network, parsing errors)
 ///
 /// # Example
@@ -185,7 +178,6 @@ pub async fn read_web_page(
 ///
 /// # Security
 ///
-/// **Rate Limiting (CWE-770)**: Web capture operations rate limited
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -202,23 +194,12 @@ pub async fn read_web_page(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `GetUrlPreviewUseCase` with rate limiting
+/// Thin controller delegating to `GetUrlPreviewUseCase`
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn fetch_url_preview(
     url: String,
     container: State<'_, Container>,
 ) -> Result<UrlPreview, AppError> {
-    // Rate limiting
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .web_ingest
-        .check_rate_limit("web_capture")
-        .await
-    {
-        return Err(AppError::RateLimitExceeded(e.to_string()));
-    }
-
     let preview_use_case = container.get_url_preview_use_case();
 
     let preview = match preview_use_case
@@ -263,7 +244,6 @@ pub async fn fetch_url_preview(
 /// # Returns
 ///
 /// * `Ok(CleanArticle)` - Extracted article with clean content and metadata
-/// * `Err(AppError::RateLimitExceeded)` - Too many extraction requests
 /// * `Err(AppError)` - Extraction failed (network, parsing, not an article)
 ///
 /// # Example
@@ -340,7 +320,6 @@ pub async fn fetch_url_preview(
 ///
 /// # Security
 ///
-/// **Rate Limiting (CWE-770)**: Web ingest operations rate limited
 /// **SSRF Prevention**: URL validation in service layer
 ///
 /// # Performance
@@ -364,23 +343,12 @@ pub async fn fetch_url_preview(
 ///
 /// # Architecture
 ///
-/// Thin controller delegating to `ArticleExtractorService` with rate limiting
+/// Thin controller delegating to `ArticleExtractorService`
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn extract_article(
     url: String,
     container: State<'_, Container>,
 ) -> Result<CleanArticle, AppError> {
-    // Rate limiting
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .web_ingest
-        .check_rate_limit("extract_article")
-        .await
-    {
-        return Err(AppError::RateLimitExceeded(e.to_string()));
-    }
-
     let article_extractor = container.article_extractor_service();
 
     let article = match article_extractor.extract_article_from_url(&url).await {

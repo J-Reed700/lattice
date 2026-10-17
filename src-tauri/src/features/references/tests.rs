@@ -12,7 +12,8 @@ use sqlx::SqlitePool;
 
 use super::commands::build_create_record;
 use super::dto::CreatePassageReferenceRequestDto;
-use super::repository::{PassageReferenceRecord, PassageReferenceRepository};
+use super::repository::PassageReferenceRepository;
+use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::AppError;
 
 async fn fresh_repository() -> PassageReferenceRepository {

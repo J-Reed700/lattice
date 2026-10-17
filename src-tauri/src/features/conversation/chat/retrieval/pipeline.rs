@@ -50,7 +50,7 @@ pub(super) async fn run_retrieval_pipeline(
             validated_message.to_string(),
             QueryType::Question,
         ),
-        search_response: crate::features::search::dto::SearchResponseDto {
+        search_response: lattice_core::application::contracts::search::SearchResponseDto {
             results: vec![],
             total: 0,
             query_time_ms: 0,

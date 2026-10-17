@@ -1,5 +1,5 @@
-use crate::features::search::dto::SearchResultDto;
-use crate::features::settings::dto::LLMPromptSettingsDto;
+use lattice_core::application::contracts::search::SearchResultDto;
+use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
 
 use super::SearchFlags;
 

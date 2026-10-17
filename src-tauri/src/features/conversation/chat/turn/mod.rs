@@ -59,14 +59,12 @@ pub(super) struct TurnRequest {
 /// # Errors
 ///
 /// * `AppError::NoActiveModel` - No chat model is active
-/// * `AppError::RateLimitExceeded` - Too many requests (10/min)
 /// * `AppError::InvalidInput` - Empty or invalid message, or a message the
 ///   model's window cannot hold
 /// * `AppError::Database` - Database operation failed
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: 10 requests per minute
 /// - **Input Validation**: Message length and content validation
 pub(super) async fn run_turn(
     container: &dyn ChatRuntime,

@@ -106,7 +106,7 @@ export function DownloadRow({ storeKey, download, actions, nested = false }: Dow
     : download.model_name || basename(download.destination);
 
   const canPause = state === 'Downloading' || state === 'Pending';
-  const canResume = state === 'Paused';
+  const canResume = state === 'Paused' || (state === 'Failed' && download.bytes_downloaded > 0);
   const canCancel = state === 'Downloading' || state === 'Pending' || state === 'Paused';
   const canRetry = state === 'Failed' || state === 'Cancelled';
   const canRemove = state === 'Completed' || state === 'Failed' || state === 'Cancelled';

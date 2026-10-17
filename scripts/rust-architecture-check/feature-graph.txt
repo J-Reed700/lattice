@@ -1,0 +1,17 @@
+# Feature graph allowlist, read by scripts/rust-architecture-check.
+#
+# Each line allows one feature edge that is one feature built on a lower-level
+# one, where a port would add indirection without decoupling anything:
+#
+#     allow features::<a> features::<b>  # <reason>
+#
+# The reason is required. References along an allowed edge are left out of
+# the feature-edge ratchet but still count toward feature-cycle, and the
+# allowed edges must not form a cycle themselves. An allowed edge with no
+# references left fails as STALE: delete its line. Every other edge is
+# ratcheted in baseline.txt and is meant to reach zero; adding a line here is
+# a design decision for review, not a way to get a change through.
+
+allow features::batch features::indexing  # batch import drives indexing's IndexFileUseCase once per queued file
+allow features::batch features::web  # batch import drives web's IngestWebUrlUseCase once per queued URL
+allow features::compare features::search  # compare's ScopedLibrarySearch port has one adapter over search's hybrid use case

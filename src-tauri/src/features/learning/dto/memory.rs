@@ -1,7 +1,7 @@
 //! Lesson notes, card drafts and the learner's memory state.
 use super::*;
-use crate::features::daily_notes::commands::WorkspaceNoteDto;
 use crate::features::learning::recall::study_dto::StudyDeckDto;
+use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

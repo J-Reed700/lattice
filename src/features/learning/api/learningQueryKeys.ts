@@ -17,3 +17,6 @@ export const learningRecallKey = (programId: string) => ['learning-recall-v2', p
 export const learningPracticeWorkspaceKey = (programId: string) => ['learning-practice-workspace', programId] as const;
 export const learningPracticalWorkspaceKey = (programId: string) => ['learning-practical-workspace', programId] as const;
 export const learningAssessmentWorkspaceKey = (programId: string) => ['learning-assessment-workspace', programId] as const;
+export const learningTangentsKey = (programId?: string | null) =>
+  ['learning-tangents', programId ?? 'all'] as const;
+

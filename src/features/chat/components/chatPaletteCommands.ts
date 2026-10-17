@@ -13,6 +13,7 @@ export interface ChatPaletteCommandInputs {
   activeConversationId: string | null;
   activeModelLabel: string | null;
   canRegenerate: boolean;
+  canSwitchModel?: boolean;
   downloadedModels: ReturnType<typeof useDownloadedModels>['downloadedModels'];
   forkConversation: ConversationsState['forkConversation'];
   chooseFiles: () => Promise<unknown>;
@@ -33,6 +34,7 @@ export function chatPaletteCommands({
   activeConversationId,
   activeModelLabel,
   canRegenerate,
+  canSwitchModel,
   downloadedModels,
   forkConversation,
   chooseFiles,
@@ -116,7 +118,11 @@ export function chatPaletteCommands({
       // when that label is on screen. No verb that does nothing.
       enabled:
         Boolean(activeModelLabel) &&
-        downloadedModels.some((model) => model.model_type === 'language_model'),
+        (canSwitchModel !== undefined
+          ? canSwitchModel
+          : downloadedModels.some(
+              (model) => model.model_type === 'language_model' || model.model_type === 'chat'
+            ) || Boolean(activeModelLabel)),
       run: () => {
         modelLabelRef.current?.click();
       },

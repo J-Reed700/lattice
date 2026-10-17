@@ -331,6 +331,80 @@ async fn a_busy_affine_slot_falls_back_to_the_lowest_free_one() {
 }
 
 #[tokio::test]
+async fn unkeyed_utility_calls_reuse_one_slot_and_preserve_conversation_prefixes() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(4, 100_000),
+    ));
+
+    // Turn 1: Intent classifier (unkeyed) runs before the chat turn.
+    let intent_1 = scheduler
+        .admit(ask(InferencePriority::Interactive, 10), None)
+        .await
+        .unwrap();
+    let utility_slot = intent_1.slot().unwrap();
+    drop(intent_1);
+
+    // Turn 1: Chat turn picks a fresh slot rather than overwriting utility_slot
+    // or colliding with subsequent utility calls.
+    let chat_1 = scheduler
+        .admit(keyed("conversation-a"), None)
+        .await
+        .unwrap();
+    let chat_slot = chat_1.slot().unwrap();
+    assert_ne!(chat_slot, utility_slot);
+    drop(chat_1);
+
+    // Turn 2: Intent classifier + HyDE (both unkeyed) reuse utility_slot,
+    // leaving chat_slot's KV prefix intact.
+    let intent_2 = scheduler
+        .admit(ask(InferencePriority::Interactive, 10), None)
+        .await
+        .unwrap();
+    assert_eq!(intent_2.slot(), Some(utility_slot));
+    drop(intent_2);
+
+    let hyde_2 = scheduler
+        .admit(ask(InferencePriority::Interactive, 10), None)
+        .await
+        .unwrap();
+    assert_eq!(hyde_2.slot(), Some(utility_slot));
+    drop(hyde_2);
+
+    // Turn 2: Chat turn returns to its preserved slot.
+    let chat_2 = scheduler
+        .admit(keyed("conversation-a"), None)
+        .await
+        .unwrap();
+    assert_eq!(chat_2.slot(), Some(chat_slot));
+}
+
+#[tokio::test]
+async fn full_slots_evict_the_least_recently_used_conversation() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(2, 100_000),
+    ));
+
+    let a = scheduler.admit(keyed("conv-a"), None).await.unwrap();
+    let a_slot = a.slot().unwrap();
+    drop(a);
+
+    let b = scheduler.admit(keyed("conv-b"), None).await.unwrap();
+    let b_slot = b.slot().unwrap();
+    drop(b);
+
+    // Touch conv-a again so conv-b becomes the least-recently-used slot.
+    let a_again = scheduler.admit(keyed("conv-a"), None).await.unwrap();
+    assert_eq!(a_again.slot(), Some(a_slot));
+    drop(a_again);
+
+    // A third conversation must evict conv-b (LRU), not conv-a (slot 0).
+    let c = scheduler.admit(keyed("conv-c"), None).await.unwrap();
+    assert_eq!(c.slot(), Some(b_slot));
+}
+
+#[tokio::test]
 async fn backends_without_slots_send_no_slot() {
     let scheduler = Arc::new(InferenceScheduler::new(
         "test",

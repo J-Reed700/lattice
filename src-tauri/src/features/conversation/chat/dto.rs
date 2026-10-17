@@ -4,7 +4,7 @@ use super::{
     VerificationReadyDto,
 };
 pub(crate) use crate::features::explorer::dto::ExplorerFocusDto;
-pub(super) use crate::features::qa::dto::SourceDto;
+pub(super) use lattice_core::application::contracts::sources::SourceDto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 

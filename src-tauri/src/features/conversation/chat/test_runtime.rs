@@ -232,13 +232,7 @@ impl ChatPolicy for FakeRuntime {
         _summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
     ) {
     }
-    async fn check_read_rate_limit(&self, _name: &str) -> Result<()> {
-        Ok(())
-    }
-    async fn check_delete_rate_limit(&self, _name: &str) -> Result<()> {
-        Ok(())
-    }
-    async fn delete_conversation_unmetered(&self, _conversation_id: &str) -> Result<()> {
+    async fn delete_conversation(&self, _conversation_id: &str) -> Result<()> {
         unreachable!("{UNUSED}")
     }
 }

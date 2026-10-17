@@ -12,8 +12,6 @@ pub mod hybrid_search;
 pub mod library_passages;
 pub mod semantic_search;
 
-pub use hybrid_search::{
-    BranchKind, HybridSearchUseCase, QueryBranches, RankedBranch, RerankOptions, Reranked,
-};
+pub use hybrid_search::HybridSearchUseCase;
 pub use library_passages::LibraryPassages;
 pub use semantic_search::SemanticSearchUseCase;

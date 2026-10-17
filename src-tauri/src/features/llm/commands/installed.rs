@@ -234,8 +234,7 @@ pub async fn get_model_path(
 ///
 /// Permanently removes a model file from local storage, including all associated
 /// metadata and tokenizer data. This operation cannot be undone - the model will
-/// need to be re-downloaded to use it again. Protected by rate limiting to prevent
-/// accidental mass deletion.
+/// need to be re-downloaded to use it again.
 ///
 /// # Arguments
 ///
@@ -245,11 +244,10 @@ pub async fn get_model_path(
 /// # Returns
 ///
 /// * `Ok(DeleteModelResponseDto)` - Deletion confirmation with freed space
-/// * `Err(AppError)` - If rate limited, model not found, or deletion fails
+/// * `Err(AppError)` - If the model is not found or deletion fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many deletion requests (CWE-770 mitigation)
 /// * `AppError::InvalidInput` - Model ID invalid or not in catalog
 /// * `AppError::NotFound` - Model not downloaded (nothing to delete)
 /// * `AppError::Other` - Filesystem error or insufficient permissions
@@ -276,9 +274,7 @@ pub async fn get_model_path(
 ///   console.log(`Freed ${(result.freedSpaceBytes / 1024 / 1024 / 1024).toFixed(2)} GB`);
 ///   console.log(`Deleted files: ${result.deletedFiles.join(', ')}`);
 /// } catch (error) {
-///   if (error.message.includes('RateLimitExceeded')) {
-///     console.error('Too many deletion requests, please wait');
-///   } else if (error.message.includes('NotFound')) {
+///   if (error.message.includes('NotFound')) {
 ///     console.error('Model not downloaded, nothing to delete');
 ///   } else {
 ///     console.error('Failed to delete model:', error);
@@ -289,11 +285,10 @@ pub async fn get_model_path(
 /// # Deletion Process
 ///
 /// **Workflow**:
-/// 1. **Rate Limit Check**: Prevents mass deletion abuse (CWE-770)
-/// 2. **Model Validation**: Verify model ID exists in catalog
-/// 3. **Download Check**: Confirm model is actually downloaded
-/// 4. **File Deletion**: Remove model files and metadata
-/// 5. **Cache Invalidation**: Clear any cached model references
+/// 1. **Model Validation**: Verify model ID exists in catalog
+/// 2. **Download Check**: Confirm model is actually downloaded
+/// 3. **File Deletion**: Remove model files and metadata
+/// 4. **Cache Invalidation**: Clear any cached model references
 ///
 /// **Files Deleted**:
 /// - Primary model file (e.g., `model.gguf`)
@@ -309,7 +304,6 @@ pub async fn get_model_path(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Max 10 deletions per hour to prevent abuse
 /// - **Path Validation**: Only deletes files in safe model directory (CWE-22)
 /// - **Confirmation Required**: Frontend should confirm before calling
 ///
@@ -342,17 +336,14 @@ pub async fn get_model_path(
 ///
 /// # Architecture
 ///
-/// Thin controller with cross-cutting concerns:
-/// 1. **Rate Limiting**: Applied before execution
-/// 2. **Use Case Execution**: DeleteModelUseCase handles business logic
+/// Thin controller delegating to `DeleteModelUseCase`.
 ///
 /// # Command Flow
 ///
-/// 1. Check rate limit (prevent abuse)
-/// 2. Get use case from container
-/// 3. Create request DTO with model ID
-/// 4. Execute deletion (validate, check existence, delete files)
-/// 5. Return DeleteModelResponseDto with freed space
+/// 1. Get use case from container
+/// 2. Create request DTO with model ID
+/// 3. Execute deletion (validate, check existence, delete files)
+/// 4. Return DeleteModelResponseDto with freed space
 ///
 /// # Warning
 ///
@@ -363,15 +354,6 @@ pub async fn delete_model(
     model_id: String,
     container: State<'_, Container>,
 ) -> Result<DeleteModelResponseDto, AppError> {
-    // Rate limiting (resource-intensive operation)
-    container
-        .security_context()
-        .rate_limiters()
-        .indexing
-        .check_rate_limit(&model_id)
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
     let use_case = container.delete_model_use_case();
     let request = DeleteModelRequestDto {
         model_id: model_id.clone(),

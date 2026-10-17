@@ -2,6 +2,9 @@
 //! decode it, pass 1, fetch the subresources, pass 2, assemble the page.
 //! The whole capture runs under one deadline and stops on cancellation.
 
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+
 use async_trait::async_trait;
 use chrono::Utc;
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
@@ -28,11 +31,15 @@ const META_SNIFF_BYTES: usize = 1024;
 /// Captures over plain HTTP through the guarded public web client.
 pub(super) struct HttpPageCapture {
     client: Client,
+    browser: OnceLock<Arc<crate::features::web::services::browser_reader::BrowserReader>>,
 }
 
 impl HttpPageCapture {
     pub(super) fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            browser: OnceLock::new(),
+        }
     }
 }
 
@@ -51,12 +58,20 @@ impl PageCapturePort for HttpPageCapture {
             result = self.run(request, progress, deadline) => result,
         }
     }
+
+    fn attach_browser(
+        &self,
+        browser: Arc<crate::features::web::services::browser_reader::BrowserReader>,
+    ) {
+        let _ = self.browser.set(browser);
+    }
 }
 
 /// The decoded document and where it ended up after redirects.
 struct Document {
     html: String,
     final_url: Url,
+    status: u16,
 }
 
 impl HttpPageCapture {
@@ -68,10 +83,83 @@ impl HttpPageCapture {
     ) -> Result<CapturedPage, CaptureError> {
         let url = fetchable_url(&request.url).map_err(|e| CaptureError::Refused(e.to_string()))?;
         let profile = stealth::random_profile();
-        let document = tokio::time::timeout_at(deadline, self.fetch_document(&url, profile))
-            .await
-            .map_err(|_| CaptureError::Timeout)??;
-        let Document { html, final_url } = document;
+        let doc_result =
+            match tokio::time::timeout_at(deadline, self.fetch_document(&url, profile)).await {
+                Ok(res) => res,
+                Err(_) => Err(CaptureError::Timeout),
+            };
+
+        let should_try_browser = match &doc_result {
+            Ok(doc) => needs_browser_escalation(doc),
+            Err(
+                CaptureError::Blocked { .. } | CaptureError::Timeout | CaptureError::Network(_),
+            ) => true,
+            Err(_) => false,
+        };
+
+        let (html, final_url, method, dom_title) = if should_try_browser {
+            if let Some(browser) = self.browser.get() {
+                report(&progress, 0, 0, "Rendering in browser…");
+                let now = Instant::now();
+                let remaining = if deadline > now {
+                    deadline - now
+                } else {
+                    Duration::from_secs(0)
+                };
+                let remaining = remaining
+                    .max(Duration::from_secs(5))
+                    .min(crate::features::web::services::browser_reader::DEFAULT_READ_TIMEOUT);
+                let dom_outcome = browser.read_dom(url.as_str(), remaining).await;
+                match dom_outcome {
+                    Ok(dom_page) => {
+                        if let Ok(final_url) = Url::parse(&dom_page.final_url) {
+                            (
+                                dom_page.html,
+                                final_url,
+                                CaptureMethod::Browser,
+                                dom_page.title,
+                            )
+                        } else {
+                            match doc_result {
+                                Ok(doc) => {
+                                    if doc.html.trim().is_empty() {
+                                        return Err(CaptureError::Blocked { status: doc.status });
+                                    }
+                                    (doc.html, doc.final_url, CaptureMethod::Http, None)
+                                }
+                                Err(err) => return Err(err),
+                            }
+                        }
+                    }
+                    Err(_) => match doc_result {
+                        Ok(doc) => {
+                            if doc.html.trim().is_empty() {
+                                return Err(CaptureError::Blocked { status: doc.status });
+                            }
+                            (doc.html, doc.final_url, CaptureMethod::Http, None)
+                        }
+                        Err(err) => return Err(err),
+                    },
+                }
+            } else {
+                match doc_result {
+                    Ok(doc) => {
+                        if doc.status == 202 && needs_browser_escalation(&doc) {
+                            return Err(CaptureError::Blocked { status: 202 });
+                        }
+                        if doc.html.trim().is_empty() {
+                            return Err(CaptureError::Blocked { status: doc.status });
+                        }
+                        (doc.html, doc.final_url, CaptureMethod::Http, None)
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        } else {
+            let doc = doc_result?;
+            (doc.html, doc.final_url, CaptureMethod::Http, None)
+        };
+
         let collected = {
             let (html, final_url) = (html.clone(), final_url.clone());
             blocking(move || collect(&html, &final_url)).await?
@@ -112,13 +200,14 @@ impl HttpPageCapture {
         partial_reasons.extend(sanitized.partial_reasons);
         partial_reasons.sort();
         partial_reasons.dedup();
+        let title = dom_title.or(collected.title);
         Ok(CapturedPage {
             requested_url: request.url,
             final_url: final_url.to_string(),
-            title: collected.title,
+            title,
             html: sanitized.html,
             favicon,
-            method: CaptureMethod::Http,
+            method,
             resources: total,
             partial: !partial_reasons.is_empty(),
             partial_reasons,
@@ -136,14 +225,32 @@ impl HttpPageCapture {
         validate_url_resolved(url.as_str())
             .await
             .map_err(|e| CaptureError::Refused(e.to_string()))?;
-        let response = self
+        let mut response = self
             .client
             .get(url.clone())
             .headers(stealth::browser_headers(profile, None))
             .send()
             .await
             .map_err(send_error)?;
-        check_status(response.status().as_u16())?;
+        if response.status().as_u16() == 429 {
+            let delay_secs = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(2)
+                .min(5);
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            response = self
+                .client
+                .get(url.clone())
+                .headers(stealth::browser_headers(profile, None))
+                .send()
+                .await
+                .map_err(send_error)?;
+        }
+        let status = response.status().as_u16();
+        check_status(status)?;
         let declared = content_type(&response);
         let mime = mime_essence(declared.as_deref());
         if mime != "text/html" && mime != "application/xhtml+xml" {
@@ -164,8 +271,104 @@ impl HttpPageCapture {
         Ok(Document {
             html: decode_document(&body, declared.as_deref()),
             final_url,
+            status,
         })
     }
+}
+
+fn strip_tags_and_scripts(html: &str) -> String {
+    // ASCII lowercasing keeps every byte offset, so `html`'s char offsets
+    // index `lower` at the same boundaries.
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut in_tag = false;
+    let mut in_script = false;
+    let mut in_style = false;
+    for (i, ch) in html.char_indices() {
+        let opens =
+            |marker: &str| ch == '<' && lower.get(i..).is_some_and(|rest| rest.starts_with(marker));
+        if in_script {
+            if opens("</script") {
+                in_script = false;
+                in_tag = true;
+            }
+            continue;
+        }
+        if in_style {
+            if opens("</style") {
+                in_style = false;
+                in_tag = true;
+            }
+            continue;
+        }
+        if ch == '<' {
+            if opens("<script") {
+                in_script = true;
+            } else if opens("<style") {
+                in_style = true;
+            }
+            in_tag = true;
+            continue;
+        }
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn needs_browser_escalation(doc: &Document) -> bool {
+    if doc.html.trim().is_empty() {
+        return true;
+    }
+    let vis_len = {
+        let text = strip_tags_and_scripts(&doc.html);
+        text.split_whitespace()
+            .map(|w| w.len() + 1)
+            .sum::<usize>()
+            .saturating_sub(1)
+    };
+    if doc.status == 202 && vis_len < 400 {
+        return true;
+    }
+    let lower_html = doc.html.to_ascii_lowercase();
+    let challenge_markers = [
+        "just a moment",
+        "attention required",
+        "checking your browser",
+        "verify you are human",
+        "cf-browser-verification",
+        "id=\"challenge-running\"",
+        "id='challenge-running'",
+        "name=\"cf-turnstile-response\"",
+        "name='cf-turnstile-response'",
+    ];
+    let has_challenge_marker = challenge_markers
+        .iter()
+        .any(|marker| lower_html.contains(marker));
+    if has_challenge_marker && vis_len < 1200 {
+        return true;
+    }
+
+    let spa_roots = [
+        "id=\"__next\"",
+        "id='__next'",
+        "id=\"root\"",
+        "id='root'",
+        "id=\"app\"",
+        "id='app'",
+        "data-reactroot",
+    ];
+    let has_spa_root = spa_roots.iter().any(|root| lower_html.contains(root));
+    if has_spa_root && lower_html.contains("<script") && vis_len < 80 {
+        return true;
+    }
+
+    false
 }
 
 /// 403, 429 and 503 are `Blocked` (a browser may pass); other non-2xx is refused.

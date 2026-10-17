@@ -1,7 +1,12 @@
 use super::*;
 use crate::features::conversation::chat::ports::ChatRetrieval;
 
-pub(super) const CORE_TOOL_NAMES: [&str; 3] = ["semantic_search", "get_document", "list_documents"];
+pub(super) const CORE_TOOL_NAMES: [&str; 4] = [
+    "semantic_search",
+    "get_document",
+    "list_documents",
+    "list_attachments",
+];
 pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 4] = [
     "web_search",
     "fetch_url_content",
@@ -28,11 +33,11 @@ pub(super) fn build_optional_tool_allowlist(
 /// Whether a tool stays offered once retrieval has grounded the turn.
 ///
 /// Initial retrieval is a candidate set, not proof that it can answer the
-/// question. Scoped document reads and searches stay for recovery, and — when
-/// the turn carries web pages — the ability to open one of them: retrieval
-/// reads the top pages itself but cites more than it reads, and without this
-/// the model can see a link that plainly holds the answer and have no way to
-/// follow it.
+/// question. Scoped document reads, attachment listing, and searches stay for
+/// recovery, and — when the turn carries web pages — the ability to open one of
+/// them: retrieval reads the top pages itself but cites more than it reads, and
+/// without this the model can see a link that plainly holds the answer and have
+/// no way to follow it.
 ///
 /// Deep research also keeps the searches the turn allows. Its first round is
 /// where it starts, and the prompt asks the model to search again for what
@@ -44,8 +49,10 @@ pub(super) fn kept_with_grounded_context(
     can_open_pages: bool,
     deep_research: bool,
 ) -> bool {
-    matches!(tool_name, "semantic_search" | "get_document")
-        || (tool_name == "fetch_url_content" && can_open_pages)
+    matches!(
+        tool_name,
+        "semantic_search" | "get_document" | "list_attachments"
+    ) || (tool_name == "fetch_url_content" && can_open_pages)
         || (deep_research && matches!(tool_name, "web_search" | "wiki_search" | "wiki_summary"))
 }
 

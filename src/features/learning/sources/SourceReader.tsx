@@ -1,25 +1,38 @@
 import { useMemo, useState } from 'react';
 
-import { AlignLeft, BookOpenText } from 'lucide-react';
+import { AlignLeft, BookOpen, BookOpenText, Globe } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { formatSourceForReader } from '@/features/learning/sources/sourceReaderFormat';
+import { WebPageSnapshotView } from '@/features/reading/snapshot';
+import { isHttpUrl } from '@/utils/sourcePreview';
 
 export function SourceReader({
   fullText,
   extractionVersion,
   wordCount,
+  url,
+  title: _title,
+  acquiredAt: _acquiredAt,
+  truncated: _truncated,
+  onOpenInReader,
 }: {
   fullText: string;
   extractionVersion: string;
   wordCount: number;
+  url?: string | null;
+  title?: string;
+  acquiredAt?: number | null;
+  truncated?: boolean;
+  onOpenInReader?: () => void;
 }) {
-  const [view, setView] = useState<'reader' | 'exact'>('reader');
+  const [view, setView] = useState<'reader' | 'page' | 'exact'>('reader');
   const formatted = useMemo(
     () => formatSourceForReader(fullText, extractionVersion),
     [extractionVersion, fullText],
   );
   const readingMinutes = Math.max(1, Math.ceil(wordCount / 225));
+  const isWeb = Boolean(url && isHttpUrl(url));
 
   return (
     <section className="mt-4 overflow-hidden rounded-2xl border border-border bg-background" aria-label="Saved source reader">
@@ -30,27 +43,50 @@ export function SourceReader({
             {wordCount.toLocaleString()} words · about {readingMinutes} min
           </p>
         </div>
-        <div className="flex rounded-full border border-border bg-background p-1" role="group" aria-label="Source reading view">
-          <button
-            type="button"
-            aria-pressed={view === 'reader'}
-            onClick={() => setView('reader')}
-            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium transition ${view === 'reader' ? 'bg-accent text-accent-fg shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
-          >
-            <BookOpenText size={12} /> Reader
-          </button>
-          <button
-            type="button"
-            aria-pressed={view === 'exact'}
-            onClick={() => setView('exact')}
-            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium transition ${view === 'exact' ? 'bg-accent text-accent-fg shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
-          >
-            <AlignLeft size={12} /> Exact capture
-          </button>
+        <div className="flex items-center gap-2">
+          {onOpenInReader && (
+            <button
+              type="button"
+              onClick={onOpenInReader}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-[10px] font-medium text-text-secondary hover:text-text-primary transition"
+            >
+              <BookOpen size={12} /> Open in reader
+            </button>
+          )}
+          <div className="flex rounded-full border border-border bg-background p-1" role="group" aria-label="Source reading view">
+            <button
+              type="button"
+              aria-pressed={view === 'reader'}
+              onClick={() => setView('reader')}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium transition ${view === 'reader' ? 'bg-accent text-accent-fg shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              <BookOpenText size={12} /> Reader
+            </button>
+            {isWeb && (
+              <button
+                type="button"
+                aria-pressed={view === 'page'}
+                onClick={() => setView('page')}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium transition ${view === 'page' ? 'bg-accent text-accent-fg shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+              >
+                <Globe size={12} /> Page
+              </button>
+            )}
+            <button
+              type="button"
+              aria-pressed={view === 'exact'}
+              onClick={() => setView('exact')}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium transition ${view === 'exact' ? 'bg-accent text-accent-fg shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              <AlignLeft size={12} /> Exact capture
+            </button>
+          </div>
         </div>
       </header>
-      <div className="max-h-[68vh] min-h-60 overflow-auto px-5 py-7 sm:px-8 sm:py-10">
-        {view === 'reader' ? (
+      <div className={view === 'page' ? 'h-[65vh] min-h-[420px] p-2' : 'max-h-[68vh] min-h-60 overflow-auto px-5 py-7 sm:px-8 sm:py-10'}>
+        {view === 'page' && isWeb && url ? (
+          <WebPageSnapshotView conversationId="" url={url} onShowReader={() => setView('reader')} autoCapture />
+        ) : view === 'reader' ? (
           <article className="source-reader-prose mx-auto max-w-[76ch] font-serif text-[15px] leading-7 text-text-primary sm:text-base">
             <TiptapViewer content={formatted} />
           </article>

@@ -267,7 +267,7 @@ impl lattice_core::application::ports::TextSearchPort for EmptyTextSearch {
         &self,
         _query: &str,
         _top_k: usize,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         Ok(Vec::new())
     }
     async fn index_document(&self, _id: &str, _content: &str) -> Result<()> {
@@ -302,6 +302,11 @@ pub fn empty_hybrid_search() -> Arc<crate::features::search::use_cases::HybridSe
         ),
     )
 }
+
+#[cfg(test)]
+mod enrichment;
+#[cfg(test)]
+pub use enrichment::MockSearchEnrichmentService;
 
 #[cfg(test)]
 mod tests;

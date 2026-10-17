@@ -3,7 +3,8 @@
 //! concurrent chat, outline generation, or other jobs.
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
-    LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
+    LearningDeeperEvidence, LearningGenerationActivity, LearningGenerationPhase,
+    LearningGenerationStep,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
@@ -165,6 +166,7 @@ pub(in crate::features::learning) fn lesson(title: &str) {
             state.activity.checks_reused = 0;
             state.activity.checks_unresolved = 0;
             state.activity.model_checks_total = None;
+            state.activity.deeper_evidence = None;
             state.activity.verification_pass = 0;
         }
         state.activity.lesson_title = Some(title.into());
@@ -192,6 +194,7 @@ pub(in crate::features::learning) fn begin_checks(total: usize) {
         activity.checks_reused = 0;
         activity.checks_unresolved = 0;
         activity.model_checks_total = None;
+        activity.deeper_evidence = None;
     });
 }
 
@@ -206,6 +209,7 @@ pub(in crate::features::learning) fn plan_model_checks(total: usize) {
     });
 }
 
+/// A claim's first check in this pass finished.
 pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -213,6 +217,60 @@ pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
         state.activity.checks_reused += u32::from(reused);
         state.activity.checks_unresolved += u32::from(unresolved);
     });
+}
+
+/// Unsupported claims of this pass start their check against evidence `page`.
+pub(in crate::features::learning) fn deeper_page(page: usize, claims: usize) {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .deeper_evidence = Some(LearningDeeperEvidence {
+            page: page as u32,
+            claims: claims as u32,
+            checked: 0,
+        });
+    });
+}
+
+/// An unsupported claim's check against the current deeper page finished.
+/// The claim was counted when first checked; support moves it out of the
+/// unresolved count, and any other verdict leaves it there.
+pub(in crate::features::learning) fn rechecked(supported: bool) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        let activity = &mut state.activity;
+        if let Some(deeper) = &mut activity.deeper_evidence {
+            deeper.checked += 1;
+        }
+        if supported {
+            activity.checks_unresolved = activity.checks_unresolved.saturating_sub(1);
+        }
+    });
+}
+
+/// No unsupported claim of this pass has another evidence page to check.
+pub(in crate::features::learning) fn deeper_done() {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .deeper_evidence = None;
+    });
+}
+
+/// Runs `future` with fresh progress and returns the activity it left.
+#[cfg(test)]
+pub(in crate::features::learning) async fn observed<T>(
+    future: impl std::future::Future<Output = T>,
+) -> (T, LearningGenerationActivity) {
+    let progress = Progress::default();
+    let value = CURRENT.scope(progress.clone(), future).await;
+    (value, progress.snapshot().2)
 }
 
 impl Progress {
@@ -356,6 +414,52 @@ mod tests {
                         .collect::<Vec<_>>(),
                     [Phase::Evidence, Phase::Research, Phase::Evidence]
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_deeper_page_moves_claims_between_counts_without_adding_checks() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                begin_checks(4);
+                checked(true, false);
+                checked(false, true);
+                checked(false, true);
+                checked(false, true);
+                deeper_page(2, 3);
+                rechecked(true);
+                rechecked(false);
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.checks_completed, activity.checks_unresolved),
+                    (4, 2),
+                    "A re-check is not a new check; support resolves the claim"
+                );
+                assert_eq!(
+                    activity.deeper_evidence,
+                    Some(LearningDeeperEvidence {
+                        page: 2,
+                        claims: 3,
+                        checked: 2
+                    })
+                );
+                rechecked(false);
+                deeper_page(3, 2);
+                rechecked(false);
+                rechecked(false);
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.checks_completed, activity.checks_unresolved),
+                    (4, 2),
+                    "A claim still unsupported on another page counts once"
+                );
+                deeper_done();
+                assert_eq!(progress.snapshot().2.deeper_evidence, None);
+                deeper_page(2, 1);
+                begin_checks(4);
+                assert_eq!(progress.snapshot().2.deeper_evidence, None);
             })
             .await;
     }

@@ -9,9 +9,9 @@ use crate::features::function_calling::domain::{
     FunctionCall, FunctionResult, RegistryStats, ToolDefinition,
 };
 #[cfg(test)]
-use crate::features::settings::dto::CustomToolSettingsDto;
-#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
+use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 #[cfg(test)]
@@ -67,6 +67,21 @@ impl FunctionRegistryTrait for MockFunctionRegistry {
         stats.total_functions = tools.len();
 
         Ok(())
+    }
+
+    fn unregister(&self, name: &str) -> bool {
+        let mut tools = self.tools.write().unwrap();
+        let removed = tools.remove(name).is_some();
+        if removed {
+            let mut stats = self.stats.write().unwrap();
+            stats.total_functions = tools.len();
+        }
+        removed
+    }
+
+    fn record_call(&self, function_name: &str) {
+        let mut stats = self.stats.write().unwrap();
+        stats.record_call(function_name);
     }
 
     fn get_tool(&self, name: &str) -> Option<ToolDefinition> {

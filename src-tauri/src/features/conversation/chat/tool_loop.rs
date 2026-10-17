@@ -12,8 +12,8 @@ mod scoped_document_tools;
 mod tool_sources;
 
 use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::qa::dto::SourceDto;
-use crate::features::settings::dto::ToolOutputSettingsDto;
+use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{CompletionInput, ThinkingMode};
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::{AppError, Result};

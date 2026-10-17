@@ -122,6 +122,9 @@ impl ChatTools for RegisteredTools {
     async fn execute(&self, call: FunctionCall) -> Result<FunctionResult> {
         self.executor.execute(call).await
     }
+    fn record_call(&self, name: &str) {
+        self.registry.record_call(name);
+    }
 }
 
 #[async_trait]
@@ -141,7 +144,9 @@ impl ChatRetrieval for Container {
             executor: Arc::clone(Container::function_executor(self)),
         })
     }
-    fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait> {
+    fn library_search(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait> {
         Container::hybrid_search_use_case(self)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {
@@ -149,10 +154,10 @@ impl ChatRetrieval for Container {
     }
     async fn summary_search(
         &self,
-    ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
-        Container::summary_search(self)
-            .await
-            .map(|search| search as Arc<dyn crate::features::summaries::search::SummarySearchPort>)
+    ) -> Option<Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>> {
+        Container::summary_search(self).await.map(|search| {
+            search as Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>
+        })
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())
@@ -165,14 +170,6 @@ impl ChatPolicy for Container {
         self.get_settings_use_case().execute().await
     }
     async fn validate_message(&self, message: &str) -> Result<String> {
-        self.security_context()
-            .rate_limiters()
-            .qa
-            .check_rate_limit(message)
-            .await
-            .map_err(|error| {
-                lattice_core::shared::error::AppError::RateLimitExceeded(error.to_string())
-            })?;
         self.security_context()
             .input_validator()
             .validate_chat_message(message)
@@ -201,27 +198,7 @@ impl ChatPolicy for Container {
             summary_refold,
         );
     }
-    async fn check_read_rate_limit(&self, name: &str) -> Result<()> {
-        self.security_context()
-            .rate_limiters()
-            .search
-            .check_rate_limit(name)
-            .await
-            .map_err(|e| {
-                lattice_core::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
-            })
-    }
-    async fn check_delete_rate_limit(&self, name: &str) -> Result<()> {
-        self.security_context()
-            .rate_limiters()
-            .llm_question
-            .check_rate_limit(name)
-            .await
-            .map_err(|e| {
-                lattice_core::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
-            })
-    }
-    async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()> {
+    async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
         // A turn already generating for this conversation should not continue
         // producing work after the user deletes it. Vector indexing is a
         // separate detached task; its final write checks the source rows

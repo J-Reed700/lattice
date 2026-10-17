@@ -6,8 +6,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::SparseSearchTrait;
+use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::value_objects::SparseEmbedding;
 use lattice_core::shared::error::Result;
@@ -37,7 +37,7 @@ impl SparseSearchService {
         top_k: usize,
         space_id: Option<&str>,
         allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         if query.is_empty() || top_k == 0 {
             return Ok(Vec::new());
         }
@@ -116,7 +116,7 @@ impl SparseSearchTrait for SparseSearchService {
         top_k: usize,
         space_id: Option<&str>,
         allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
+    ) -> Result<Vec<SearchResultRecord>> {
         if query.trim().is_empty() || top_k == 0 {
             return Ok(Vec::new());
         }
@@ -138,7 +138,7 @@ impl SparseSearchTrait for SparseSearchService {
 /// RRF only reads rank, so this changes no ordering; it keeps the `score`
 /// field on the DTO comparable with the other branches for anything that
 /// inspects it (debug logs, the UI's per-branch score columns).
-fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultPortDto> {
+fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultRecord> {
     use sqlx::Row;
 
     let mut raw = Vec::with_capacity(rows.len());
@@ -157,7 +157,7 @@ fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultPortDt
         raw.push((chunk_id, document_id, content, score));
     }
     raw.into_iter()
-        .map(|(chunk_id, doc_id, content, score)| SearchResultPortDto {
+        .map(|(chunk_id, doc_id, content, score)| SearchResultRecord {
             doc_id,
             chunk_id,
             content,

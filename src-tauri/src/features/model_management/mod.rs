@@ -11,7 +11,6 @@
 //! - `crate::features::model_management::use_cases`
 //! - `crate::features::model_management::commands` (basic)
 //! - `crate::features::model_management::commands_extra` (extended)
-//! - `crate::features::model_management::repository_tx` (tx-wrapper)
 //! - `crate::features::model_management::huggingface_adapter` —
 //!   ModelCatalogPort impl backed by HuggingFace
 //! - `crate::features::model_management::cache_adapter` —
@@ -29,5 +28,4 @@ pub mod domain;
 pub mod huggingface_adapter;
 pub mod model_manager;
 pub mod plugin;
-pub mod repository_tx;
 pub mod use_cases;

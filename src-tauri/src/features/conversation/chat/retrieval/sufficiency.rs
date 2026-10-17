@@ -24,8 +24,8 @@
 
 use std::collections::HashSet;
 
-use crate::features::search::dto::SearchResultDto;
-use crate::features::settings::dto::RetrievalTuningSettingsDto;
+use lattice_core::application::contracts::search::SearchResultDto;
+use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 
 use super::corpus_plan::CorpusSearchPlan;
 use super::{select_informative_terms, tokenize_keyword_terms, tokenize_overlap_terms};

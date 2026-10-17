@@ -9,7 +9,7 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { X } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
-import { VaultAPI } from '@/lib/api';
+import { probeCustomTool } from '@/features/settings/hooks/connectionProbes';
 import { toast } from '@/stores/toastStore';
 import type { CustomToolSettings as ApiCustomToolSettings } from '@/types/api/settings';
 
@@ -217,7 +217,7 @@ export function ToolsTab() {
     const key = `${normalized.name || 'custom_tool'}_${index}`;
     setActiveToolTestKey(key);
     const query = toolTestQuery.trim().length > 0 ? toolTestQuery.trim() : 'test';
-    const result = await VaultAPI.testCustomTool({
+    const result = await probeCustomTool({
       endpoint: normalized.endpoint,
       queryParam: normalized.queryParam,
       maxResultsParam: normalized.maxResultsParam,

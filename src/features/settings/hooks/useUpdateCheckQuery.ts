@@ -22,8 +22,7 @@ export function useVersionInfoQuery() {
 
 /**
  * A mutation, not a query. Checking for updates is a user-initiated network
- * call with a rate limit behind it; it must never fire on mount, on focus, or
- * on an interval.
+ * call; it must never fire on mount, on focus, or on an interval.
  */
 export function useCheckForUpdatesMutation() {
   return useMutation<UpdateInfo, Error, void>({

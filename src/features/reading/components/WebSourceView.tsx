@@ -4,7 +4,7 @@ import { Download, ExternalLink, Loader2 } from 'lucide-react';
 
 import { WebArticleView } from '@/features/reading/components/WebArticleView';
 import { ReaderPageToggle, WebPageSnapshotView, type useWebPageMode } from '@/features/reading/snapshot';
-import type { SourceWithMetadata } from '@/types/conversation';
+import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
 interface WebSourceViewProps {
   source: SourceWithMetadata;
@@ -25,6 +25,7 @@ interface WebSourceViewProps {
   snapshotConversationId: string | null;
   snapshotUrl: string | null;
   webPageMode: ReturnType<typeof useWebPageMode>;
+  initialLocator?: PassageLocator | null;
 }
 
 /**
@@ -48,6 +49,7 @@ export const WebSourceView = ({
   snapshotConversationId,
   snapshotUrl,
   webPageMode,
+  initialLocator,
 }: WebSourceViewProps) => {
   const reader = (
     <WebArticleView
@@ -57,6 +59,7 @@ export const WebSourceView = ({
       citationContent={citationContent}
       occurrence={occurrence}
       onActivePassageChange={onActivePassageChange}
+      initialLocator={initialLocator}
       actions={
         url && !compact ? (
           <div className="inline-flex shrink-0 items-center gap-2">
@@ -89,7 +92,7 @@ export const WebSourceView = ({
       }
     />
   );
-  if (!snapshotConversationId || !snapshotUrl) return reader;
+  if (!snapshotUrl) return reader;
   // Until the lookup answers, the default (Page if a frozen copy exists) is unknown.
   if (webPageMode.isResolving) return <div aria-busy="true" className="h-full" />;
   const toggle = (
@@ -102,11 +105,12 @@ export const WebSourceView = ({
   if (webPageMode.mode === 'page') {
     return (
       <WebPageSnapshotView
-        conversationId={snapshotConversationId}
+        conversationId={snapshotConversationId ?? ''}
         url={snapshotUrl}
         compact={compact}
         toggle={toggle}
         onShowReader={() => webPageMode.setMode('reader')}
+        autoCapture
       />
     );
   }

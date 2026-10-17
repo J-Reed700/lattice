@@ -54,6 +54,18 @@ struct Decoder {
     open_blocks: BTreeSet<u64>,
     input_json: BTreeMap<u64, String>,
     reasoning_part: Option<(String, u64)>,
+    google_tool_calls: BTreeMap<u64, GoogleToolCallDraft>,
+    google_text: String,
+    google_reasoning: String,
+    google_finish_reason: Option<String>,
+    google_usage: Option<Value>,
+}
+
+#[derive(Default)]
+struct GoogleToolCallDraft {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 fn invalid(detail: &str) -> AppError {
@@ -76,6 +88,11 @@ impl Decoder {
             open_blocks: BTreeSet::new(),
             input_json: BTreeMap::new(),
             reasoning_part: None,
+            google_tool_calls: BTreeMap::new(),
+            google_text: String::new(),
+            google_reasoning: String::new(),
+            google_finish_reason: None,
+            google_usage: None,
         }
     }
 
@@ -172,8 +189,64 @@ impl Decoder {
                 }
                 _ => {}
             }
+        } else if self.provider == LLMProvider::Google {
+            self.google(&event, on_text, on_reasoning)?;
         } else {
             self.anthropic(&event, kind, on_text, on_reasoning)?;
+        }
+        Ok(())
+    }
+
+    fn google(
+        &mut self,
+        event: &Value,
+        on_text: Callback<'_>,
+        on_reasoning: Callback<'_>,
+    ) -> Result<()> {
+        if let Some(usage) = field(event, "usage").as_object() {
+            self.google_usage = Some(Value::Object(usage.clone()));
+        }
+        let choices = match field(event, "choices").as_array() {
+            Some(choices) => choices,
+            None => return Ok(()),
+        };
+        for choice in choices {
+            if let Some(reason) = field(choice, "finish_reason").as_str() {
+                self.google_finish_reason = Some(reason.to_string());
+            }
+            let delta = field(choice, "delta");
+            if !delta.is_object() {
+                continue;
+            }
+            if let Some(text) = field(delta, "content").as_str().filter(|t| !t.is_empty()) {
+                self.google_text.push_str(text);
+                on_text(text.to_owned())?;
+            }
+            if let Some(reasoning) = field(delta, "reasoning_content")
+                .as_str()
+                .or_else(|| field(delta, "reasoning").as_str())
+                .or_else(|| field(delta, "thought").as_str())
+                .filter(|t| !t.is_empty())
+            {
+                self.google_reasoning.push_str(reasoning);
+                self.reasoning((String::new(), 0), reasoning, on_reasoning)?;
+            }
+            if let Some(tool_calls) = field(delta, "tool_calls").as_array() {
+                for call in tool_calls {
+                    let index = field(call, "index").as_u64().unwrap_or(0);
+                    let draft = self.google_tool_calls.entry(index).or_default();
+                    if let Some(id) = field(call, "id").as_str() {
+                        draft.id.push_str(id);
+                    }
+                    let function = field(call, "function");
+                    if let Some(name) = field(function, "name").as_str() {
+                        draft.name.push_str(name);
+                    }
+                    if let Some(args) = field(function, "arguments").as_str() {
+                        draft.arguments.push_str(args);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -347,6 +420,58 @@ impl Decoder {
             let remaining = std::mem::take(&mut self.buffer);
             self.line(&remaining, on_text, on_reasoning)?;
             self.dispatch(on_text, on_reasoning)?;
+        }
+        if self.provider == LLMProvider::Google
+            && self.completed.is_none()
+            && (self.google_finish_reason.is_some()
+                || !self.google_text.is_empty()
+                || !self.google_tool_calls.is_empty())
+        {
+            let mut tool_calls_json = Vec::new();
+            for (_idx, draft) in std::mem::take(&mut self.google_tool_calls) {
+                tool_calls_json.push(json!({
+                    "id": draft.id,
+                    "type": "function",
+                    "function": {
+                        "name": draft.name,
+                        "arguments": draft.arguments,
+                    }
+                }));
+            }
+            let mut message = json!({
+                "role": "assistant",
+                "content": self.google_text,
+            });
+            if !self.google_reasoning.is_empty() {
+                set_field(
+                    &mut message,
+                    "reasoning_content",
+                    json!(self.google_reasoning),
+                )?;
+            }
+            if !tool_calls_json.is_empty() {
+                set_field(&mut message, "tool_calls", json!(tool_calls_json))?;
+            }
+            let finish_reason = self.google_finish_reason.unwrap_or_else(|| {
+                if !tool_calls_json.is_empty() {
+                    "tool_calls".to_string()
+                } else {
+                    "stop".to_string()
+                }
+            });
+            let completed = json!({
+                "choices": [
+                    {
+                        "message": message,
+                        "finish_reason": finish_reason,
+                    }
+                ],
+                "usage": self.google_usage.unwrap_or(json!({
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                }))
+            });
+            self.completed = Some(completed);
         }
         let response = self
             .completed
@@ -566,5 +691,41 @@ mod tests {
                 &|_| Ok(())
             )
             .is_err());
+    }
+
+    #[test]
+    fn google_stream_preserves_tool_arguments_reasoning_and_usage() {
+        let events = frames(&[
+            json!({"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Step 1"}}],"usage":null}),
+            json!({"choices":[{"index":0,"delta":{"content":"Answer"}}],"usage":null}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-g1","type":"function","function":{"name":"search","arguments":""}}]}}],"usage":null}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\""}}]}}],"usage":null}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"rust\"}"}}]}}],"usage":null}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":8}}),
+        ]);
+        let text = Mutex::new(String::new());
+        let reasoning = Mutex::new(String::new());
+        let on_text = |delta: String| {
+            text.lock().unwrap().push_str(&delta);
+            Ok(())
+        };
+        let on_reasoning = |delta: String| {
+            reasoning.lock().unwrap().push_str(&delta);
+            Ok(())
+        };
+        let mut decoder = Decoder::new(LLMProvider::Google);
+        for byte in events.chunks(3) {
+            decoder.push(byte, &on_text, &on_reasoning).unwrap();
+        }
+        let response = decoder.finish(&on_text, &on_reasoning).unwrap();
+        assert_eq!(*text.lock().unwrap(), "Answer");
+        assert_eq!(*reasoning.lock().unwrap(), "Step 1");
+        assert_eq!(response.text, "Answer");
+        assert_eq!(response.reasoning.as_deref(), Some("Step 1"));
+        assert_eq!(response.finish_reason, "tool_calls");
+        assert_eq!((response.input_tokens, response.output_tokens), (12, 8));
+        assert!(
+            matches!(&response.tool_calls[0], CompletionInput::ToolCall { id, name, arguments } if id == "call-g1" && name == "search" && arguments["query"] == "rust")
+        );
     }
 }

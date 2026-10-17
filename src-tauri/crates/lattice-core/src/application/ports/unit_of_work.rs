@@ -5,7 +5,7 @@ use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
-use crate::domain::repositories::{SearchRepository, SystemRepository};
+use crate::domain::repositories::SystemRepository;
 
 #[async_trait]
 pub trait ModelRepositoryPort: Send + Sync {
@@ -50,8 +50,6 @@ pub trait UnitOfWork: Send + Sync {
     fn document_repository(&self) -> Result<Box<dyn DocumentRepositoryPort + Send + '_>>;
 
     fn embedding_repository(&self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + '_>>;
-
-    fn search_repository(&self) -> Result<Box<dyn SearchRepository + Send + '_>>;
 
     fn system_repository(&self) -> Result<Box<dyn SystemRepository + Send + '_>>;
 

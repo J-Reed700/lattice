@@ -2,16 +2,16 @@
  * Models — where model files live, extra folders to scan, and the catalog.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowDownToLine, Boxes, FolderPlus, X } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection } from '@/components/ui';
+import { useModelDownloadPath } from '@/features/model/hooks/useModelDownloadPath';
 import { useModelCatalogStore } from '@/features/model/stores/modelCatalogStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
-import { VaultAPI } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 
 import { ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS } from './shared';
@@ -23,32 +23,13 @@ import { ModelCatalogBrowser } from '../ModelCatalog';
 export function ModelsTab() {
   const { llmSettings, saveLlmUpdates } = useLlmSettings();
 
-  const [modelDownloadPath, setModelDownloadPath] = useState('');
-  const [isLoadingModelDownloadPath, setIsLoadingModelDownloadPath] = useState(true);
+  const { modelDownloadPath, isLoadingModelDownloadPath, loadModelDownloadPath } = useModelDownloadPath();
   const [isModelCatalogExpanded, setIsModelCatalogExpanded] = useState(true);
   const [isAddingExternalDirectory, setIsAddingExternalDirectory] = useState(false);
   const selectedCatalogModel = useModelCatalogStore((state) => state.selectedModel);
   const catalogSectionRef = useRef<HTMLDivElement | null>(null);
 
   const externalModelDirectories = llmSettings?.externalModelDirectories ?? [];
-
-  const loadModelDownloadPath = useCallback(async () => {
-    setIsLoadingModelDownloadPath(true);
-    try {
-      const result = await VaultAPI.getModelDownloadPath();
-      setModelDownloadPath(result.ok ? result.data : '');
-    } catch {
-      // The command can be missing on older builds. Fall through to the
-      // error copy instead of leaving the row stuck on "Loading…".
-      setModelDownloadPath('');
-    } finally {
-      setIsLoadingModelDownloadPath(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadModelDownloadPath();
-  }, [loadModelDownloadPath]);
 
   useEffect(() => {
     if (selectedCatalogModel && catalogSectionRef.current) {

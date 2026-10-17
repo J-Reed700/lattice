@@ -7,13 +7,13 @@ use super::imports::{BatchImports, FileImport, FILE_IMPORT};
 use super::items::{BatchItems, ItemState};
 use super::url_job::UrlImporter;
 use crate::features::embedding::repository::EmbeddingRepository;
+use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use crate::infrastructure::{
-    adapters::content_extraction_adapter::ContentExtractionAdapter,
     file_system::SecureFileStorage,
     persistence::{
         database::{initialize_database, DatabaseConnection},
@@ -617,7 +617,7 @@ impl lattice_core::application::ports::VectorSearchPort for PublicationProbe {
         vector: &[f32],
         count: usize,
         threshold: f32,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         lattice_core::application::ports::VectorSearchPort::search(
             &self.index,
             vector,
@@ -631,7 +631,7 @@ impl lattice_core::application::ports::VectorSearchPort for PublicationProbe {
         count: usize,
         threshold: f32,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+    ) -> Result<Vec<lattice_core::application::contracts::search::SearchResultRecord>> {
         lattice_core::application::ports::VectorSearchPort::search_scoped(
             &self.index,
             vector,

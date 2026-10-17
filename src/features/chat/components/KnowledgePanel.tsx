@@ -1,8 +1,6 @@
 import { useState } from 'react';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-
-import { VaultAPI } from '@/lib/api';
+import { useConversationKnowledgeQuery, useManageKnowledgeMutation } from '@/features/chat/hooks/useConversationKnowledge';
 import type { KnowledgeItemDto, KnowledgeRequestDto } from '@/lib/bindings';
 
 const requestFor = (conversationId: string, action: string): KnowledgeRequestDto => ({
@@ -14,7 +12,6 @@ const buttonClass = 'rounded-md border border-[hsl(var(--border-default))] px-2 
 
 /** Shared facts retain their source conversation. Editing creates user evidence. */
 export function KnowledgePanel({ conversationId, onOpenConversation }: { conversationId: string; onOpenConversation?: (id: string) => void }) {
-  const queryClient = useQueryClient();
   const [offset, setOffset] = useState(0);
   const [text, setText] = useState('');
   const [scope, setScope] = useState('conversation');
@@ -22,29 +19,11 @@ export function KnowledgePanel({ conversationId, onOpenConversation }: { convers
   const [editing, setEditing] = useState<KnowledgeItemDto | null>(null);
   const [from, setFrom] = useState('');
   const [until, setUntil] = useState('');
-  const query = useQuery({
-    queryKey: ['conversationKnowledge', conversationId, offset],
-    queryFn: async () => {
-      const result = await VaultAPI.manageKnowledge({ ...requestFor(conversationId, 'list'), offset });
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    refetchInterval: 5000,
-  });
-  const mutation = useMutation({
-    mutationFn: async (request: KnowledgeRequestDto) => {
-      const result = await VaultAPI.manageKnowledge(request);
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    onSuccess: async (_data, request) => {
-      if (request.action === 'remember' || request.action === 'correct') {
-        setText(''); setEditing(null); setFrom(''); setUntil('');
-      }
-      await queryClient.invalidateQueries({ queryKey: ['conversationKnowledge'] });
-      await queryClient.invalidateQueries({ queryKey: ['conversationMemory'] });
-      await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-    },
+  const query = useConversationKnowledgeQuery(conversationId, offset);
+  const mutation = useManageKnowledgeMutation((request) => {
+    if (request.action === 'remember' || request.action === 'correct') {
+      setText(''); setEditing(null); setFrom(''); setUntil('');
+    }
   });
   const act = (item: KnowledgeItemDto, action: string, extras: Partial<KnowledgeRequestDto> = {}) =>
     mutation.mutate({ ...requestFor(conversationId, action), itemId: item.id, ...extras });

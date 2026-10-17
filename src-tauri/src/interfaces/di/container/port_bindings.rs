@@ -58,7 +58,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         &self,
         cutoff: &str,
     ) -> lattice_core::shared::error::Result<
-        Vec<crate::features::references::repository::PassageReferenceRecord>,
+        Vec<lattice_core::application::contracts::references::PassageReferenceRecord>,
     > {
         crate::features::references::repository::PassageReferenceRepository::new(
             self.db_pool().clone(),
@@ -120,8 +120,9 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
     async fn hydrate_note(
         &self,
         page: crate::features::conversation::chat::ports::StoredJournalPage,
-    ) -> lattice_core::shared::error::Result<crate::features::daily_notes::dto::WorkspaceNoteDto>
-    {
+    ) -> lattice_core::shared::error::Result<
+        lattice_core::application::contracts::notes::WorkspaceNoteDto,
+    > {
         let crate::features::conversation::chat::ports::StoredJournalPage {
             revision,
             id,
@@ -216,16 +217,8 @@ impl crate::features::daily_notes::ports::NoteProjection for Container {
 /// here, where both may be named.
 #[async_trait::async_trait]
 impl crate::features::explorer::folders::FolderThreads for Container {
-    async fn check_delete_limit(&self) -> Result<()> {
-        crate::features::conversation::chat::ports::ChatPolicy::check_delete_rate_limit(
-            self,
-            "delete_conversation",
-        )
-        .await
-    }
-
     async fn delete_thread(&self, conversation_id: &str) -> Result<()> {
-        crate::features::conversation::chat::ports::ChatPolicy::delete_conversation_unmetered(
+        crate::features::conversation::chat::ports::ChatPolicy::delete_conversation(
             self,
             conversation_id,
         )

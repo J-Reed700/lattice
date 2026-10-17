@@ -10,7 +10,7 @@
 //! - **Context Window Management**: one budget from the context assembler for
 //!   the prompt's every pool and the generation reservation
 //! - **Auto-titling**: Generates conversation titles from first message
-//! - **Security**: Rate limiting, input validation
+//! - **Security**: Input validation
 //!
 //! # Usage
 //!
@@ -34,7 +34,7 @@ use self::intent::{IntentClassifier, TurnIntent};
 use self::router::{RouterAction, RouterInput, RouterService};
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::dto::CreateConversationRequestDto;
-use crate::features::settings::dto::{CustomToolSettingsDto, RouterSettingsDto};
+use lattice_core::application::contracts::settings::{CustomToolSettingsDto, RouterSettingsDto};
 use lattice_core::application::services::conversation_context::build_conversation_context;
 use lattice_core::domain::qa::hyde::QueryType;
 use lattice_core::shared::error::{AppError, Result};

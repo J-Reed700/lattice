@@ -398,6 +398,8 @@
     "learning:allow-review-study-card",
     "learning:allow-update-study-card",
     "learning:allow-delete-study-deck",
+    "learning:allow-create-learning-tangent",
+    "learning:allow-list-learning-tangents",
     "compare:allow-compare-documents",
     "corpus-shape:allow-cluster-vault-run",
     "corpus-shape:allow-list-clusters"

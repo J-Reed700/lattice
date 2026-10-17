@@ -6,12 +6,10 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
-use crate::features::search::{
-    trait_def::LibrarySearchTrait,
-    use_cases::{BranchKind, RankedBranch},
+use lattice_core::application::contracts::search::{
+    BranchKind, CorpusDocument, RankedBranch, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
-use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::ports::library_search::LibrarySearchTrait;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{select_informative_terms, tokenize_keyword_terms};

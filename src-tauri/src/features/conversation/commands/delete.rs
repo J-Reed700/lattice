@@ -19,11 +19,10 @@ use tauri::State;
 /// # Returns
 ///
 /// * `Ok(())` - Conversation successfully deleted
-/// * `Err(AppError)` - If rate limited, conversation not found, or deletion fails
+/// * `Err(AppError)` - If conversation not found or deletion fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many deletion requests (rate limited)
 /// * `AppError::NotFound` - Conversation ID not found
 /// * `AppError::Other` - Database deletion failed
 ///
@@ -46,10 +45,6 @@ use tauri::State;
 ///
 /// console.log(conversation === null); // true
 /// ```
-///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents mass deletion attacks
 ///
 /// # Cascade Deletion
 ///
@@ -96,15 +91,7 @@ use tauri::State;
 ///
 /// # DDD Architecture
 ///
-/// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `ConversationService.delete_conversation()`
-///
-/// # Command Flow
-///
-/// 1. Rate limiting check
-/// 2. Execute ConversationService.delete_conversation() (cascade delete)
-/// 3. Return success
+/// This command is a **thin controller** that delegates to `ChatPolicy::delete_conversation`.
 ///
 /// # Side Effects
 ///
@@ -117,14 +104,7 @@ pub async fn delete_conversation_impl(
     runtime: &dyn ChatRuntime,
     conversation_id: String,
 ) -> Result<()> {
-    // 1. Rate limiting
-    runtime
-        .check_delete_rate_limit("delete_conversation")
-        .await?;
-    // 2. Stop its turn, take its attachments and remove it
-    runtime
-        .delete_conversation_unmetered(&conversation_id)
-        .await
+    runtime.delete_conversation(&conversation_id).await
 }
 
 /// Tauri command wrapper

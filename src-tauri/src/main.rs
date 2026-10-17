@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // Import from the library crate
+use lattice::bootstrap;
 use lattice::infrastructure::setup;
 
 #[cfg(feature = "desktop-e2e")]
@@ -57,12 +58,15 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // every spawned sidecar is included in the shutdown sweep. The
             // orphan scan cleans up sidecars left by a previous crash.
             app.manage(lattice::features::llm::engine::sidecar_manager::SidecarRegistry::new());
+            app.manage(bootstrap::SidecarSweep(
+                lattice::features::llm::engine::sidecar_manager::kill_registered_sidecars,
+            ));
             lattice::features::llm::engine::sidecar_manager::reap_orphan_sidecars();
 
             // Plugins require the managed container. A failed initialization
             // shows its dialog and exits the process from inside this call;
             // an `Err` returned from this hook would abort the app instead.
-            setup::initialize_app(app);
+            bootstrap::initialize_app(app);
 
             // The container is now available to each domain plugin.
             for plugin in lattice::plugins::init_plugins() {
@@ -80,7 +84,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                     if setup::renderer_shutdown::defer(app_handle) {
                         api.prevent_exit();
                     } else {
-                        setup::graceful_shutdown(app_handle);
+                        bootstrap::graceful_shutdown(app_handle);
                         setup::renderer_shutdown::finish_native_termination(app_handle);
                     }
                 }
@@ -109,7 +113,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                     });
                     if !user_windows_left {
                         tracing::info!("Last window destroyed on macOS; triggering app shutdown");
-                        setup::graceful_shutdown(app_handle);
+                        bootstrap::graceful_shutdown(app_handle);
                         app_handle.exit(0);
                     }
                 }

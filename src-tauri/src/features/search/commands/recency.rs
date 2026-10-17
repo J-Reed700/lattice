@@ -1,8 +1,10 @@
 //! Recency-weighted search and the boost it applies to results.
 
-use crate::features::search::dto::{RecencySearchOptions, SearchRequestDto, SearchResultDto};
 use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
 use crate::interfaces::di::container::Container;
+use lattice_core::application::contracts::search::{
+    RecencySearchOptions, SearchRequestDto, SearchResultDto,
+};
 use lattice_core::shared::error::AppError;
 
 use super::enrichment::enrich_hybrid_results;
@@ -59,13 +61,6 @@ pub async fn search_with_recency_impl(
     container: &Container,
     options: RecencySearchOptions,
 ) -> Result<Vec<SearchResultDto>, AppError> {
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
-
     container
         .security_context()
         .input_validator()

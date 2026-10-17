@@ -22,6 +22,8 @@ mod css;
 mod resources;
 mod sanitize;
 
+pub use sanitize::synthesize_archival_html;
+
 #[cfg(test)]
 mod tests;
 

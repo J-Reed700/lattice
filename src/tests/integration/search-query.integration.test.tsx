@@ -9,9 +9,10 @@ import type { ApiResult, SearchResult } from '@/types';
 import { deferred } from '../deferred';
 
 vi.mock('@/lib/api', () => ({ default: { searchHybrid: vi.fn(), openFileById: vi.fn(), openFile: vi.fn() } }));
-// PDF canvas rendering has separate renderer and browser tests. Keep search,
-// debounce, QueryClient, query keys, grouping and result actions real here.
-vi.mock('@/features/reading/components/ContentViewer', () => ({ ContentViewer: ({ filePath }: { filePath: string }) => <div aria-label="Opened file">{filePath}</div> }));
+vi.mock('@/features/reading/components/FilePreviewModal', () => ({
+  FilePreviewModal: ({ isOpen, source }: { isOpen: boolean; source: { filePath: string } | null }) =>
+    isOpen && source ? <div aria-label="Opened file">{source.filePath}</div> : null,
+}));
 
 let client: QueryClient;
 beforeEach(() => {

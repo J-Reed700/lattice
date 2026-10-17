@@ -16,8 +16,8 @@ mod preferences;
 mod retrieval;
 
 pub use generation::{
-    presence_penalty_problem, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
-    DEFAULT_MTP_DRAFT_N_MAX, MAX_MTP_DRAFT_N_MAX,
+    presence_penalty_problem, LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto,
+    ThinkingOverrideDto, DEFAULT_MTP_DRAFT_N_MAX, MAX_MTP_DRAFT_N_MAX,
 };
 
 pub use llm::{

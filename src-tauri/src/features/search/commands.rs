@@ -13,16 +13,15 @@
 //! ## Architecture
 //!
 //! Commands are thin controllers that:
-//! - Apply rate limiting (CWE-770 mitigation)
 //! - Validate inputs (security)
 //! - Delegate to use cases (business logic)
 //! - Handle caching (performance)
 
-use crate::features::search::dto::{
+use crate::interfaces::di::container::Container;
+use lattice_core::application::contracts::search::{
     EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };
-use crate::interfaces::di::container::Container;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::ApiError;
 use serde::{Deserialize, Serialize};
@@ -53,11 +52,10 @@ pub use searches::{
 /// # Returns
 ///
 /// * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
-/// * `Err(ApiError)` - If rate limited, validation fails, or search execution fails
+/// * `Err(ApiError)` - If validation fails or search execution fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
 /// * `AppError::InvalidInput` - Query validation failed (empty, too long, malicious content)
 /// * `AppError::Other` - Embedding generation or search execution failed
 ///
@@ -90,7 +88,6 @@ pub use searches::{
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks via excessive searches
 /// - **Input Validation**: Sanitizes query to prevent injection attacks
 /// - **Access Tracking**: Records document access asynchronously for usage analytics
 ///
@@ -109,15 +106,14 @@ pub use searches::{
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check (prevent DoS)
-/// 2. Input validation (sanitize query)
-/// 3. Generate cache key from query + options
-/// 4. **Cache lookup** - if hit, return cached results immediately
-/// 5. Embed query using embedding service
-/// 6. Execute search based on mode (vector/keyword/hybrid)
-/// 7. Enrich results with document metadata and snippets
-/// 8. Store results in cache for future requests
-/// 9. Track document access asynchronously
+/// 1. Input validation (sanitize query)
+/// 2. Generate cache key from query + options
+/// 3. **Cache lookup** - if hit, return cached results immediately
+/// 4. Embed query using embedding service
+/// 5. Execute search based on mode (vector/keyword/hybrid)
+/// 6. Enrich results with document metadata and snippets
+/// 7. Store results in cache for future requests
+/// 8. Track document access asynchronously
 #[tauri::command]
 #[specta::specta]
 pub async fn search_documents(
@@ -144,7 +140,7 @@ pub async fn search_documents(
 /// # Returns
 ///
 /// * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
-/// * `Err(ApiError)` - If rate limited, validation fails, or search fails
+/// * `Err(ApiError)` - If validation fails or search fails
 ///
 /// # Example
 ///
@@ -164,7 +160,6 @@ pub async fn search_documents(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query
 ///
 /// # Performance
@@ -237,11 +232,10 @@ pub async fn hybrid_search(
 /// # Returns
 ///
 /// * `Ok(Vec<SearchResultDto>)` - Similar documents ranked by semantic similarity
-/// * `Err(AppError)` - If rate limited, chunk not found, or search fails
+/// * `Err(AppError)` - If chunk not found or search fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
 /// * `AppError::NotFound` - Chunk ID not found in database
 /// * `AppError::Other` - Embedding or search execution failed
 ///
@@ -262,10 +256,6 @@ pub async fn hybrid_search(
 /// });
 /// ```
 ///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
-///
 /// # Algorithm
 ///
 /// 1. Retrieve source chunk content from database
@@ -284,15 +274,14 @@ pub async fn hybrid_search(
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Fetch chunk content using enrichment service
-/// 3. Error if chunk not found
-/// 4. Embed chunk content
-/// 5. Vector similarity search (limit + 1 to account for self-match)
-/// 6. Filter out source chunk
-/// 7. Take top `limit` results
-/// 8. Enrich with metadata
-/// 9. Return similar documents
+/// 1. Fetch chunk content using enrichment service
+/// 2. Error if chunk not found
+/// 3. Embed chunk content
+/// 4. Vector similarity search (limit + 1 to account for self-match)
+/// 5. Filter out source chunk
+/// 6. Take top `limit` results
+/// 7. Enrich with metadata
+/// 8. Return similar documents
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(chunk_id = %chunk_id))]
@@ -301,13 +290,6 @@ pub async fn find_similar(
     chunk_id: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
-
     let limit = limit.unwrap_or(10);
 
     let enrichment_service = container.search_enrichment_service();
@@ -354,11 +336,10 @@ pub async fn find_similar(
 /// # Returns
 ///
 /// * `Ok(Vec<SearchResultDto>)` - Search results ranked with recency boost
-/// * `Err(AppError)` - If rate limited, validation fails, or execution fails
+/// * `Err(AppError)` - If validation fails or execution fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
 /// * `AppError::InvalidInput` - Query validation failed, invalid recency weight, or negative max_age_days
 /// * `AppError::Other` - Embedding or search execution failed
 ///
@@ -392,7 +373,6 @@ pub async fn find_similar(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
 ///
 /// # Recency Scoring
@@ -423,15 +403,14 @@ pub async fn find_similar(
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation (query, recency_weight, max_age_days)
-/// 3. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
-/// 4. Validate recency_weight ∈ [0, 1]
-/// 5. Validate max_age_days > 0
-/// 6. Run the library search orchestrator
-/// 7. Enrich results with metadata
-/// 8. Boost recently updated documents
-/// 9. Return time-boosted results
+/// 1. Input validation (query, recency_weight, max_age_days)
+/// 2. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
+/// 3. Validate recency_weight ∈ [0, 1]
+/// 4. Validate max_age_days > 0
+/// 5. Run the library search orchestrator
+/// 6. Enrich results with metadata
+/// 7. Boost recently updated documents
+/// 8. Return time-boosted results
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(query = %options.query))]
@@ -546,7 +525,6 @@ pub async fn find_similar_documents(
 ///
 /// ## Security
 ///
-/// - Rate limiting applied once for the batch
 /// - Each query validated individually
 ///
 /// ## Example
@@ -570,14 +548,6 @@ pub async fn batch_search(
     limit: Option<usize>,
     search_mode: Option<String>,
 ) -> Result<Vec<Vec<SearchResultDto>>, AppError> {
-    // Rate limit check for batch operation
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("batch_search")
-        .await?;
-
     for query in &queries {
         container
             .security_context()

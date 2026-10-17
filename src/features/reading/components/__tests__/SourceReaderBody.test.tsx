@@ -8,15 +8,20 @@ import type { SourceWithMetadata } from '@/types/conversation';
 
 
 const mocks = vi.hoisted(() => ({
-  getFilePathById: vi.fn(),
+  resolveSourcePath: vi.fn(),
   readFileContent: vi.fn(),
   getWebPageSnapshot: vi.fn(),
   activeConversationId: null as string | null,
 }));
 
 vi.mock('@/lib/api', () => ({
-  default: { getFilePathById: mocks.getFilePathById },
   VaultAPI: { readFileContent: mocks.readFileContent },
+}));
+vi.mock('@/features/reading/hooks/sourceFileActions', () => ({
+  resolveSourcePath: mocks.resolveSourcePath,
+  openSourceDocument: vi.fn(),
+  openSourcePath: vi.fn(),
+  revealSourcePath: vi.fn(),
 }));
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
@@ -35,7 +40,16 @@ vi.mock('@/features/reading', () => ({
   useTextSelection: () => null,
 }));
 vi.mock('@/features/reading/components/ContentViewer/renderers/HTMLViewer', () => ({ HTMLViewer: () => null }));
-vi.mock('@/features/reading/components/WebArticleView', () => ({ WebArticleView: () => null }));
+vi.mock('@/features/reading/components/ContentViewer/renderers/DocxViewer', () => ({
+  DocxViewer: ({ filePath, title }: { filePath: string; title?: string }) => (
+    <div data-testid="docx-viewer" data-path={filePath}>{title}</div>
+  ),
+}));
+vi.mock('@/features/reading/components/WebArticleView', () => ({
+  WebArticleView: ({ source }: { source: SourceWithMetadata }) => (
+    <div data-testid="web-article" data-text={source.webSnapshot?.text ?? ''}>{source.fileName}</div>
+  ),
+}));
 vi.mock('@/features/reading/snapshot/api', () => ({
   getWebPageSnapshot: mocks.getWebPageSnapshot,
   captureWebPageSnapshot: vi.fn(),
@@ -92,7 +106,7 @@ beforeEach(() => {
   mocks.activeConversationId = null;
   mocks.getWebPageSnapshot.mockResolvedValue(null);
   useWebPageSnapshotStore.setState({ mode: null });
-  mocks.getFilePathById.mockImplementation(async (documentId: string) => ({
+  mocks.resolveSourcePath.mockImplementation(async (documentId: string) => ({
     ok: true,
     data: documentId.startsWith('223e') ? '/vault/current/second.txt' : '/vault/current/notes.txt',
   }));
@@ -104,7 +118,7 @@ describe('SourceReaderBody local citations', () => {
     renderBody(source());
 
     expect(await screen.findByText('Full file at its current path')).toBeTruthy();
-    expect(mocks.getFilePathById).toHaveBeenCalledWith(DOCUMENT_ID);
+    expect(mocks.resolveSourcePath).toHaveBeenCalledWith(DOCUMENT_ID);
     expect(mocks.readFileContent).toHaveBeenCalledWith('/vault/current/notes.txt');
   });
 
@@ -163,11 +177,11 @@ describe('SourceReaderBody local citations', () => {
 
   it('ignores a late path lookup from the previous citation after switching sources', async () => {
     let finishFirstLookup!: (value: { ok: true; data: string }) => void;
-    mocks.getFilePathById
+    mocks.resolveSourcePath
       .mockImplementationOnce(() => new Promise((resolve) => { finishFirstLookup = resolve; }))
       .mockResolvedValueOnce({ ok: true, data: '/vault/current/second.txt' });
     const view = renderBody(source({ fileName: 'first.txt' }));
-    await waitFor(() => expect(mocks.getFilePathById).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.resolveSourcePath).toHaveBeenCalledTimes(1));
 
     view.rerender(
       <QueryClientProvider client={new QueryClient()}>
@@ -220,13 +234,14 @@ describe('SourceReaderBody minimize affordance', () => {
 });
 
 describe('SourceReaderBody Reader | Page toggle', () => {
-  const webSource = () =>
+  const webSource = (overrides: Partial<SourceWithMetadata> = {}) =>
     source({
       documentId: 'web:https%3A%2F%2Fexample.com%2Fstory',
       fileName: 'Example story',
       filePath: 'https://example.com/story',
       mimeType: 'text/html',
       category: 'web',
+      ...overrides,
     });
 
   it('shows the toggle for a web citation, on Reader when there is no frozen copy', async () => {
@@ -260,5 +275,49 @@ describe('SourceReaderBody Reader | Page toggle', () => {
 
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(mocks.getWebPageSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('renders DocxViewer and does not read binary docx as utf-8 text', async () => {
+    renderBody(source({
+      documentId: undefined,
+      fileName: 'document.docx',
+      filePath: '/vault/document.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    }));
+
+    const docx = await screen.findByTestId('docx-viewer');
+    expect(docx).toBeTruthy();
+    expect(docx.getAttribute('data-path')).toBe('/vault/document.docx');
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('queries snapshot with source.conversationId even without active conversation in store', async () => {
+    mocks.activeConversationId = null;
+    renderBody(webSource({ conversationId: 'persisted-conv-99' }));
+
+    await screen.findByRole('tab', { name: 'Reader' });
+    expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('persisted-conv-99', 'https://example.com/story');
+  });
+
+  it('enriches web source with readerText from snapshot when webSnapshot text is missing', async () => {
+    mocks.activeConversationId = 'conv-1';
+    mocks.getWebPageSnapshot.mockResolvedValue({
+      id: 'snap-1',
+      status: 'pending',
+      readerText: 'Full immutable captured text from web source repository',
+    });
+
+    renderBody(source({
+      documentId: 'web:https%3A%2F%2Fexample.com%2Fstory',
+      fileName: 'Example story',
+      filePath: 'https://example.com/story',
+      mimeType: 'text/html',
+      category: 'web',
+      content: 'Short excerpt',
+      excerpt: 'Short excerpt',
+    }));
+
+    const article = await screen.findByTestId('web-article');
+    expect(article.getAttribute('data-text')).toBe('Full immutable captured text from web source repository');
   });
 });

@@ -48,7 +48,6 @@ use lattice::features::indexing::engine::chunker::{
     context_prefix, ChunkerConfig, SemanticChunker,
 };
 use lattice::features::indexing::engine::metadata_extractor::extract_metadata;
-use lattice::features::search::dto::{SearchModeDto, SearchRequestDto};
 use lattice::features::search::engine::reranker::Reranker;
 use lattice::features::search::engine::sparse_search::{
     SparseSearchService, SqliteSparseTermStore,
@@ -57,10 +56,13 @@ use lattice::features::search::engine::text_search::SqliteTextSearch;
 use lattice::features::search::engine::vector_search::{
     USearchVectorIndex, VectorIndexCompression,
 };
-use lattice::features::search::use_cases::{BranchKind, HybridSearchUseCase, RerankOptions};
+use lattice::features::search::use_cases::HybridSearchUseCase;
 use lattice::features::search::SparseSearchTrait;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
 use lattice::infrastructure::persistence::repositories::ChunkRepository;
+use lattice_core::application::contracts::search::{
+    BranchKind, RerankOptions, SearchModeDto, SearchRequestDto,
+};
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::{
     ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,

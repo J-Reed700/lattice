@@ -2,8 +2,8 @@
 //! No model, external endpoint, or application library is required.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use lattice::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use lattice::features::indexing::engine::extraction::ContentExtractor;
-use lattice::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
 use lattice_core::application::ports::content_extraction_port::ContentExtractionPort;
 use lattice_core::shared::error::AppError;
 use std::path::Path;

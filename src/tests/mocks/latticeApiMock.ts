@@ -410,6 +410,29 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: { modelReady: false } }),
 
+    // Learning Tangents
+    createLearningTangent: vi
+      .fn()
+      .mockImplementation(async (request) => ({
+        conversationId: 'mock-tangent-conv-id',
+        programId: request.programId,
+        programTitle: 'Mock Program',
+        spaceId: 'mock-space-id',
+        moduleId: request.moduleId,
+        moduleTitle: 'Mock Module',
+        lessonId: request.lessonId,
+        lessonTitle: 'Mock Lesson',
+        sectionIndex: request.sectionIndex ?? null,
+        sectionTitle: request.sectionTitle ?? null,
+        selectedText: request.selectedText,
+        title: request.sectionTitle ?? 'Mock Tangent',
+        createdAt: Date.now(),
+        updatedAt: new Date().toISOString(),
+        messageCount: 1,
+        contextMessageCount: 1,
+      })),
+    listLearningTangents: vi.fn().mockResolvedValue([]),
+
     __reset: vi.fn(() => {
       Object.values(api).forEach((value) => {
         const maybeMock = value as { mockReset?: () => void };

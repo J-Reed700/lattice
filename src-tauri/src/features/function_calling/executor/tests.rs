@@ -737,3 +737,59 @@ fn test_build_document_evidence_groups_by_document() {
     assert_eq!(grouped[1].document_id, "doc-b");
     assert_eq!(grouped[1].match_count, 1);
 }
+
+#[tokio::test]
+async fn test_executor_records_calls_and_syncs_custom_tools() {
+    use lattice_core::application::ports::DocumentRepository;
+
+    let registry: Arc<dyn FunctionRegistryTrait> = Arc::new(
+        crate::features::function_calling::registry::init_function_registry()
+            .expect("the shipped registry builds"),
+    );
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: Arc::clone(&registry),
+        embedding_service: Arc::new(MockEmbeddingService::default()),
+        search_service: Arc::new(MockSearchService::new()),
+        bm25_service: Arc::new(MockBM25Search::new()),
+        hybrid_search: empty_hybrid_search(),
+        document_repository: Arc::new(DddMockDocRepo::new()) as Arc<dyn DocumentRepository>,
+        chunk_repository: Arc::new(MockChunkRepository::new()),
+        tag_service: Arc::new(MockTagService::new()),
+        favorites_repository: Arc::new(MockFavoritesRepository::new()),
+        recent_documents_repository: Arc::new(MockRecentDocumentsRepository::new()),
+        file_storage: Arc::new(MockFileStoragePort),
+        web_service: Arc::new(MockWebService::new()),
+    });
+
+    let call = FunctionCall::new(
+        "call_stats",
+        "list_documents",
+        serde_json::json!({"filter_mode": "all", "limit": 5}),
+    );
+    let result = executor
+        .execute(call)
+        .await
+        .expect("execution should succeed");
+    assert!(result.success);
+    assert_eq!(registry.stats().call_counts.get("list_documents"), Some(&1));
+
+    let custom_tool = CustomToolSettingsDto {
+        enabled: true,
+        name: "runtime_custom_search".to_string(),
+        description: "Runtime custom search tool".to_string(),
+        endpoint: "https://example.org/search".to_string(),
+        query_param: "q".to_string(),
+        max_results_param: Some("limit".to_string()),
+        default_max_results: 5,
+    };
+    let mut map = HashMap::new();
+    map.insert(custom_tool.name.clone(), custom_tool);
+    executor.set_custom_tools(map);
+
+    assert!(registry.get_tool("runtime_custom_search").is_some());
+
+    // Removing the custom tool at runtime unregisters it from the registry while preserving built-ins.
+    executor.set_custom_tools(HashMap::new());
+    assert!(registry.get_tool("runtime_custom_search").is_none());
+    assert!(registry.get_tool("semantic_search").is_some());
+}

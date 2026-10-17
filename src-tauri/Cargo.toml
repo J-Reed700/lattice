@@ -163,7 +163,7 @@ wasmtime-wasi = { version = "=48.0.6", default-features = false, features = ["p1
 lopdf = { version = "0.44", default-features = false }
 docx-rs = "0.4"
 encoding_rs = "0.8"
-zip = "0.6"
+zip = "7.4"
 unicode-segmentation = "1.10"
 urlencoding = { workspace = true }  # URL decoding for path validation (CWE-22)
 dirs = { workspace = true }
@@ -328,6 +328,20 @@ split-debuginfo = "unpacked"
 # 1.1 GB Qwen checkpoint take ~45 seconds to verify in `tauri dev`, while the
 # same work is hardware-speed in release builds.
 [profile.dev.package.sha2]
+opt-level = 3
+
+# Local embedding, reranking, and BPE tokenization run on every chat turn.
+# Unoptimized tensor kernels and tokenizer loops run 10-50x slower in `tauri dev`.
+[profile.dev.package.candle-core]
+opt-level = 3
+
+[profile.dev.package.candle-nn]
+opt-level = 3
+
+[profile.dev.package.candle-transformers]
+opt-level = 3
+
+[profile.dev.package.tokenizers]
 opt-level = 3
 
 [profile.release]

@@ -88,6 +88,14 @@ pub struct BrowserPage {
     pub text: String,
 }
 
+/// A rendered DOM page with its complete HTML document.
+#[derive(Debug, Clone)]
+pub struct BrowserDomPage {
+    pub final_url: String,
+    pub title: Option<String>,
+    pub html: String,
+}
+
 /// What the page's script posts back. It carries text only: the page writes
 /// it, so anything it says about *where* it is could be a lie. A page that
 /// claimed another URL here would have its text cached under that URL and
@@ -224,6 +232,25 @@ impl BrowserReader {
     /// its check within `timeout`, or the window cannot be created. The caller
     /// decides what a failure means; nothing is cached here.
     pub async fn read(&self, url: &str, timeout: Duration) -> Result<BrowserPage> {
+        self.read_with_mode(url, timeout, false).await
+    }
+
+    /// Load `url` in a hidden browser window and return its rendered DOM HTML.
+    pub async fn read_dom(&self, url: &str, timeout: Duration) -> Result<BrowserDomPage> {
+        let page = self.read_with_mode(url, timeout, true).await?;
+        Ok(BrowserDomPage {
+            final_url: page.final_url,
+            title: page.title,
+            html: page.text,
+        })
+    }
+
+    async fn read_with_mode(
+        &self,
+        url: &str,
+        timeout: Duration,
+        dom_mode: bool,
+    ) -> Result<BrowserPage> {
         let app = &self.app;
         let target =
             Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("not a URL: {e}")))?;
@@ -301,7 +328,11 @@ impl BrowserReader {
                     () = part_arrived.notified() => {}
                 }
                 let elapsed = started.elapsed();
-                let script = check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT);
+                let script = if dom_mode {
+                    dom_check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT)
+                } else {
+                    check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT)
+                };
                 if let Err(error) = window.eval(script) {
                     debug!(%error, "Page reader could not run its check");
                 }
@@ -352,6 +383,7 @@ impl BrowserReader {
             url,
             final_url = page.final_url.as_str(),
             chars = page.text.len(),
+            dom_mode,
             "Page read through the browser"
         );
         Ok(page)
@@ -503,6 +535,120 @@ const CHECK_SCRIPT: &str = r#"
   const page = blocks([document]);
   const parts = article.length > 0 && size(article) * 3 >= size(page) ? article : page;
   report(false, parts.join('\n\n'));
+})();
+"#;
+
+fn dom_check_script(give_up_on_check: bool, settle_now: bool) -> String {
+    DOM_CHECK_SCRIPT
+        .replace(
+            "__GIVE_UP__",
+            if give_up_on_check { "true" } else { "false" },
+        )
+        .replace("__SETTLE_NOW__", if settle_now { "true" } else { "false" })
+        .replace("__PART__", &PART_CHARS.to_string())
+}
+
+const DOM_CHECK_SCRIPT: &str = r#"
+(() => {
+  if (!/^https?:$/.test(location.protocol) || document.readyState === 'loading') return;
+  const state = window.latticePageReaderState = window.latticePageReaderState || { last: -1, steady: 0, parts: null, next: 0, id: '' };
+
+  const PART = __PART__;
+  const send = () => {
+    const index = state.next;
+    state.next = (index + 1) % state.parts.length;
+    const payload = JSON.stringify({
+      title: state.title, blocked: state.blocked, part: index, parts: state.parts.length, text: state.parts[index],
+      snapshot: state.id
+    });
+    location.href = 'https://lattice-page-reader.invalid/#' + encodeURIComponent(payload);
+  };
+  if (state.parts) { send(); return; }
+  const report = (blocked, text) => {
+    const parts = [];
+    let start = 0;
+    do {
+      let end = Math.min(start + PART, text.length);
+      if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
+      parts.push(text.slice(start, end));
+      start = end;
+    } while (start < text.length);
+    state.parts = parts; state.title = document.title || ''; state.blocked = blocked; state.next = 0;
+    state.id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    send();
+  };
+
+  const challenged =
+    /just a moment|attention required|checking your browser|verify(ing)? you are human|one more step/i
+      .test(document.title) ||
+    !!document.querySelector(
+      '#challenge-form, #challenge-running, #cf-challenge-running, .cf-browser-verification, #cf-please-wait, [name="cf-turnstile-response"]'
+    );
+  if (challenged) {
+    state.last = -1; state.steady = 0;
+    if (__GIVE_UP__) report(true, '');
+    return;
+  }
+
+  const length = (document.body && document.body.textContent || '').length;
+  state.steady = length > 0 && length === state.last ? state.steady + 1 : 0;
+  state.last = length;
+  if (state.steady < 2 && !__SETTLE_NOW__) return;
+
+  try {
+    for (const sheet of Array.from(document.styleSheets || [])) {
+      try {
+        if (sheet.ownerNode && sheet.ownerNode.tagName === 'STYLE' && !sheet.ownerNode.textContent.trim()) {
+          const rules = Array.from(sheet.cssRules || []).map((r) => r.cssText).join('\n');
+          if (rules.trim()) {
+            sheet.ownerNode.textContent = rules;
+            sheet.ownerNode.setAttribute('data-lattice-cssom', '1');
+          }
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  try {
+    if (document.adoptedStyleSheets && document.adoptedStyleSheets.length > 0) {
+      for (const sheet of document.adoptedStyleSheets) {
+        try {
+          const rules = Array.from(sheet.cssRules || []).map((r) => r.cssText).join('\n');
+          if (rules.trim()) {
+            const el = document.createElement('style');
+            el.setAttribute('data-lattice-cssom', '1');
+            el.textContent = rules;
+            (document.head || document.documentElement).appendChild(el);
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+
+  try {
+    for (const img of Array.from(document.querySelectorAll('img'))) {
+      const src = img.getAttribute('src') || '';
+      const isPlaceholder = src.length < 1024 && src.startsWith('data:');
+      const isEmpty = !src.trim();
+      const currentSrc = img.currentSrc || '';
+      if ((isEmpty || isPlaceholder) && /^https?:\/\//i.test(currentSrc)) {
+        img.setAttribute('src', currentSrc);
+      }
+    }
+  } catch (e) {}
+
+  try {
+    for (const el of Array.from(document.querySelectorAll('#__next > div, body > div'))) {
+      const style = el.getAttribute('style') || '';
+      if (/visibility\s*:\s*hidden/i.test(style)) {
+        el.style.visibility = '';
+        const updated = el.getAttribute('style') || '';
+        if (!updated.trim()) el.removeAttribute('style');
+      }
+    }
+  } catch (e) {}
+
+  report(false, '<!doctype html>\n' + (document.documentElement ? document.documentElement.outerHTML : ''));
 })();
 "#;
 

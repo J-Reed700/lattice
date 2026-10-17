@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/Skeleton';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
+import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
 import { useToastStore } from '@/stores/toastStore';
 import type { ModelRecommendation } from '@/types/modelCatalog';
@@ -21,7 +22,6 @@ import type { ModelRecommendation } from '@/types/modelCatalog';
 import { CATALOG_TEXT_BUTTON_CLASS } from './catalogUtils';
 import { ModelCatalogResults } from './ModelCatalogResults';
 import { ModelRow } from './ModelRow';
-import { startModelDownload } from './startModelDownload';
 
 import type { CatalogResultsNavigation } from './ModelCatalogResults';
 

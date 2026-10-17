@@ -5,7 +5,7 @@ use crate::features::function_calling::dto::{
     AttachmentItem, DocumentResult, ListAttachmentsOutput, SearchMode, SemanticSearchInput,
     SemanticSearchOutput,
 };
-use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
+use lattice_core::application::contracts::search::{SearchModeDto, SearchRequestDto};
 use lattice_core::shared::error::{AppError, Result};
 
 /// Tools that can reach the user's own documents, and therefore may only run
@@ -53,6 +53,7 @@ pub(super) async fn execute(
         // Answered here rather than in the executor because this is the only
         // layer that knows which conversation is asking — and the answer is
         // meaningless without that.
+        container.tools().record_call(&call.name);
         return list_attachments(container, conversation_id, &allowed).await;
     }
     if call.name == "list_documents" {
@@ -73,6 +74,7 @@ pub(super) async fn execute(
         return container.tools().execute(call).await;
     }
     let input: SemanticSearchInput = serde_json::from_value(call.arguments.clone())?;
+    container.tools().record_call(&call.name);
     // A page of at most 50; `offset` reaches the pages after it.
     let limit = input.offset.saturating_add(input.limit.clamp(1, 50));
     let (hits, query_time_ms) = match input.search_mode {

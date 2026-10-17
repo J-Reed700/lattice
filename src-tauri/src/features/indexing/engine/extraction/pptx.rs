@@ -194,7 +194,7 @@ mod tests {
         let path = dir.path().join("deck.pptx");
         let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
         for (name, body) in parts {
-            zip.start_file(*name, zip::write::FileOptions::default())
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
                 .unwrap();
             zip.write_all(body.as_bytes()).unwrap();
         }
