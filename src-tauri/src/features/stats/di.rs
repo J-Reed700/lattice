@@ -10,7 +10,6 @@ use crate::features::stats::corpus_shape_repository::{
 use crate::features::stats::database_stats::DatabaseStatsAdapter;
 use crate::features::stats::use_cases::get_corpus_shape::GetCorpusShapeUseCase;
 use crate::features::stats::use_cases::get_system_stats::GetSystemStatsUseCase;
-use crate::features::tags::repository::TagRepository;
 use crate::infrastructure::persistence::repositories::{
     ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
@@ -25,13 +24,12 @@ pub struct StatsDi {
     pub get_corpus_shape_use_case: Arc<GetCorpusShapeUseCase>,
 }
 
-pub fn build(db_pool: SqlitePool) -> StatsDi {
+/// `tag_repo` is the tags feature's store; stats only counts its rows.
+pub fn build(db_pool: SqlitePool, tag_repo: Arc<dyn RepositoryPort<TagEntity>>) -> StatsDi {
     let document_repo = Arc::new(DocumentRepositoryImpl::new(db_pool.clone()))
         as Arc<dyn RepositoryPort<DocumentEntity>>;
     let chunk_repo =
         Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn RepositoryPort<Chunk>>;
-    let tag_repo =
-        Arc::new(TagRepository::new(db_pool.clone())) as Arc<dyn RepositoryPort<TagEntity>>;
     let corpus_shape_repo = Arc::new(SqliteCorpusShapeRepository::new(db_pool.clone()))
         as Arc<dyn CorpusShapeRepositoryPort>;
     let database_stats = Arc::new(DatabaseStatsAdapter::new(db_pool)) as Arc<dyn DatabaseStatsPort>;

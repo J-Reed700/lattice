@@ -19,6 +19,17 @@ async fn get_note_by_id(
     hydrate_workspace_note(repository, container, repository.get(note_id).await?).await
 }
 
+/// Daily notes' registrar surface on `Container`.
+impl Container {
+    /// One journal page as the UI shows it, with the web citations its linked
+    /// conversations archived. A feature that keeps notes in the journal reads
+    /// them back through this.
+    pub async fn workspace_note(&self, note_id: &str) -> Result<WorkspaceNoteDto> {
+        let repository = DailyNotesRepository::new(self.db_pool().clone());
+        get_note_by_id(self, &repository, note_id).await
+    }
+}
+
 pub async fn list_workspace_notes_impl(
     container: &Container,
     journal_id: Option<&str>,

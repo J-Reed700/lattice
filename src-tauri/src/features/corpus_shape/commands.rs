@@ -116,15 +116,7 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
         }
     };
 
-    // Embedding repository is constructed directly from the pool — the
-    // Container doesn't expose a port-shaped accessor for it today and the
-    // underlying SQLite impl is stateless.
-    let embedding_repo: Arc<dyn lattice_core::application::ports::EmbeddingRepositoryPort> =
-        Arc::new(
-            crate::features::embedding::repository::EmbeddingRepository::new(
-                container.db_pool().clone(),
-            ),
-        );
+    let embedding_repo = container.embedding_repository();
 
     // Container exposes the trait-object form as `Arc<dyn DocumentRepository>`
     // (= RepositoryPort<Document> + DocumentRepositoryPort). Trait upcasting

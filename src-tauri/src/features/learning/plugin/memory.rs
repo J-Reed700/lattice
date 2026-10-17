@@ -6,18 +6,9 @@ pub(super) async fn learning_memory(
 ) -> lattice_core::shared::error::Result<LearningMemoryDto> {
     let repo = LearningRepository::new(container.db_pool().clone());
     let state = repo.memory_state(program_id).await?;
-    let notes_repo = crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(
-        container.db_pool().clone(),
-    );
     let mut lesson_notes = Vec::with_capacity(state.lesson_notes.len());
     for (lesson_id, note_id) in state.lesson_notes {
-        let row = notes_repo.get(&note_id).await?;
-        let note = crate::features::daily_notes::commands::hydrate_workspace_note(
-            &notes_repo,
-            container,
-            row,
-        )
-        .await?;
+        let note = container.workspace_note(&note_id).await?;
         lesson_notes.push(LearningLessonNoteDto { lesson_id, note });
     }
     let now = chrono::Utc::now().timestamp_millis();
@@ -95,7 +86,7 @@ pub async fn ensure_learning_lesson_note(
         .await
         .map_err(ApiError::from)?;
     if created {
-        crate::features::vault::writeback::spawn_sync_workspace_note(container.vault_writer());
+        container.sync_workspace_notes_to_vault();
     }
     let _ = note_id;
     learning_memory(&container, &request.program_id)
