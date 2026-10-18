@@ -1,16 +1,103 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
 use super::general_knowledge::Resolution;
+use super::provenance_gate::FindingTrust;
 use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
-    dto::LearningLessonDto,
+    dto::{
+        LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto, LearningTrustLevel,
+        LearningTrustReasonDto,
+    },
     lesson_evidence::{
         LearningClaimEvidenceDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
         LearningLessonEvidenceDto, SavedEvidenceVersion,
     },
 };
+use lattice_core::domain::provenance::{Decision, Reason, TrustLevel};
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
+
+fn level(level: TrustLevel) -> LearningTrustLevel {
+    match level {
+        TrustLevel::Primary => LearningTrustLevel::Primary,
+        TrustLevel::Authoritative => LearningTrustLevel::Authoritative,
+        TrustLevel::Established => LearningTrustLevel::Established,
+        TrustLevel::Community => LearningTrustLevel::Community,
+        TrustLevel::Unknown => LearningTrustLevel::Unknown,
+        TrustLevel::Distrusted => LearningTrustLevel::Distrusted,
+    }
+}
+
+fn reasons(reasons: &[Reason]) -> Vec<LearningTrustReasonDto> {
+    reasons
+        .iter()
+        .map(|reason| LearningTrustReasonDto {
+            code: serde_json::to_value(reason.code)
+                .ok()
+                .and_then(|code| code.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            text: reason.text.clone(),
+        })
+        .collect()
+}
+
+/// The level of `source_version_id` for the claim's subject, when it
+/// supports the claim.
+fn passage_trust(trust: &FindingTrust, source_version_id: &str) -> Option<LearningSourceTrustDto> {
+    trust
+        .supports
+        .iter()
+        .find(|support| support.source_version_id == source_version_id)
+        .map(|support| LearningSourceTrustDto {
+            source_version_id: source_version_id.to_owned(),
+            level: level(support.trust.level),
+            subject: trust
+                .profile
+                .subject
+                .as_ref()
+                .map(|subject| subject.name.clone()),
+            reasons: reasons(&support.trust.reasons),
+            override_scope: None,
+        })
+}
+
+fn wire<T: serde::Serialize>(value: &T, field: &str) -> Option<String> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.get(field).and_then(|v| v.as_str()).map(str::to_owned))
+}
+
+/// Whether the claim's support met the bar for its kind (§18.9).
+fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
+    let (sufficient, bar, label, decided) = match &trust.decision {
+        Decision::Sufficient { label, reasons, .. } => (
+            true,
+            None,
+            label.as_ref().and_then(|label| wire(label, "label")),
+            reasons,
+        ),
+        Decision::Insufficient { bar, reasons, .. } => (
+            false,
+            serde_json::to_value(bar)
+                .ok()
+                .and_then(|bar| bar.as_str().map(str::to_owned)),
+            None,
+            reasons,
+        ),
+    };
+    LearningSufficiencyDto {
+        claim_kind: trust.profile.kind.as_str().to_owned(),
+        subject: trust
+            .profile
+            .subject
+            .as_ref()
+            .map(|subject| subject.name.clone()),
+        sufficient,
+        bar,
+        label,
+        reasons: reasons(decided),
+    }
+}
 
 fn unavailable() -> AppError {
     AppError::InvalidState("Saved lesson evidence is unavailable: its report or source bindings do not match this lesson.".into())
@@ -94,6 +181,10 @@ impl LessonVerificationReport {
                             start_byte: passage.start_byte,
                             end_byte: passage.end_byte,
                             retrieval_kind: passage.retrieval_kind.clone(),
+                            trust: finding
+                                .trust
+                                .as_ref()
+                                .and_then(|trust| passage_trust(trust, &passage.source_id)),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -135,6 +226,7 @@ impl LessonVerificationReport {
                     passages,
                     resolution,
                     note,
+                    sufficiency: finding.trust.as_ref().map(sufficiency),
                 })
             })
             .collect::<Result<Vec<_>>>()?;

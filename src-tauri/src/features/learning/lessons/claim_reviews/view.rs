@@ -276,6 +276,8 @@ fn evidence_passage(
             start_byte,
             end_byte,
             retrieval_kind: retrieval_kind.into(),
+            // The review card's support levels are track P6's.
+            trust: None,
         },
         added_by: facts.map(|facts| facts.added_by),
     }

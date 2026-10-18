@@ -162,3 +162,24 @@ pub struct LearningTrustChangeDto {
     pub scope: LearningTrustOverrideScopeDto,
     pub source_version_ids: Vec<String>,
 }
+
+/// Whether a verified claim's support met the bar for its kind (§6, §18.9):
+/// the claim's kind and subject, the bar, the label it is shown with when
+/// its support is below primary, and the rules that decided.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningSufficiencyDto {
+    /// `specification`, `measurement`, `version_bound`, `definition`,
+    /// `practice`, `opinion`, `historical` or `general`.
+    pub claim_kind: String,
+    pub subject: Option<String>,
+    pub sufficient: bool,
+    /// The bar an insufficient support failed (`primary`, `origin`,
+    /// `authoritative`, `established`, `attributed`, `any`).
+    pub bar: Option<String>,
+    /// How a sufficient claim is shown when its support is below primary
+    /// (`practice`, `attributed`, `community_consensus`, `reported_by`,
+    /// `secondary`, `mirror`).
+    pub label: Option<String>,
+    pub reasons: Vec<LearningTrustReasonDto>,
+}
