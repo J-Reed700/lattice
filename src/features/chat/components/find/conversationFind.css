@@ -1,0 +1,12 @@
+/* Find-in-conversation matches inside rendered messages (ConversationFind). */
+:root { --find-current: 28 100% 52% / 0.55; }
+[data-theme="dark"] { --find-current: 30 95% 55% / 0.45; }
+
+::highlight(conversation-find) {
+  background-color: hsl(var(--highlight));
+}
+
+/* The occurrence Enter moved to: stronger and warmer than the rest, like a browser's current match. */
+::highlight(conversation-find-current) {
+  background-color: hsl(var(--find-current));
+}

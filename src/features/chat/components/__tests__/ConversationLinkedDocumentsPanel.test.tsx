@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationLinkedDocumentsPanel } from '@/features/chat/components/ConversationLinkedDocumentsPanel';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 
 const storeState = vi.hoisted(() => ({
   current: {} as Record<string, unknown>,
@@ -134,5 +135,78 @@ describe('ConversationLinkedDocumentsPanel — attachments', () => {
     expect(screen.getByText(/Scope:/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add to library' })).not.toBeInTheDocument();
     expect(screen.queryByText(/Attached to this chat/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ConversationLinkedDocumentsPanel — opening sources', () => {
+  beforeEach(() => {
+    useChatReaderStore.getState().close();
+  });
+
+  it('opens a linked document in the chat reader pane', async () => {
+    storeState.current = {
+      ...emptyStore(),
+      linkedDocumentsByConversationId: new Map([
+        [
+          'conv-1',
+          [
+            {
+              documentId: 'doc-1',
+              fileName: 'Greens growing list.txt',
+              filePath: '/library/greens.txt',
+              fileType: 'txt',
+              category: 'Text',
+              indexedAt: new Date().toISOString(),
+              attachedToConversation: false,
+              lastReferencedAt: new Date().toISOString(),
+              referenceCount: 1,
+            },
+          ],
+        ],
+      ]),
+    };
+
+    render(<ConversationLinkedDocumentsPanel conversationId="conv-1" />);
+    await userEvent.click(screen.getByRole('button', { name: /Sources in this conversation/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    const session = useChatReaderStore.getState().session;
+    expect(session).not.toBeNull();
+    expect(session?.ownerKey).toBe('linked-doc:conv-1');
+    expect(session?.citations[0].documentId).toBe('doc-1');
+    expect(session?.citations[0].fileName).toBe('Greens growing list.txt');
+  });
+
+  it('opens a cited web source in the chat reader pane', async () => {
+    storeState.current = {
+      ...emptyStore(),
+      webSourcesByConversationId: new Map([
+        [
+          'conv-1',
+          [
+            {
+              id: 'ws-1',
+              conversationId: 'conv-1',
+              url: 'https://example.com/guide',
+              title: 'Guide to Greens',
+              excerpt: 'An excerpt about greens.',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        ],
+      ]),
+    };
+
+    render(<ConversationLinkedDocumentsPanel conversationId="conv-1" />);
+    await userEvent.click(screen.getByRole('button', { name: /Sources in this conversation/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open URL' }));
+
+    const session = useChatReaderStore.getState().session;
+    expect(session).not.toBeNull();
+    expect(session?.ownerKey).toBe('web-source:conv-1');
+    expect(session?.citations[0].filePath).toBe('https://example.com/guide');
+    expect(session?.citations[0].fileName).toBe('Guide to Greens');
   });
 });

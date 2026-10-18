@@ -58,10 +58,7 @@ pub(super) async fn generate_answer(
                 max_output_tokens,
                 input_budget,
                 time_budget: generation_time_budget(flags),
-                max_tool_rounds: tool_loop::max_tool_rounds(
-                    flags.deep_research_mode,
-                    turn.explorer.is_some(),
-                ),
+                max_tool_rounds: None,
                 research,
             },
             &turn.settings.llm.tool_output,

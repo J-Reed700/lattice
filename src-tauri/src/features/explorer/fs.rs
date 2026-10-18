@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 /// Files over this are not opened as text: the viewer and the model get the
 /// size and a `too_large` flag instead.
-pub const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+pub const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// A NUL byte in this prefix marks a file as binary, as git decides it.
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
@@ -40,8 +40,8 @@ pub struct WalkBounds {
 impl Default for WalkBounds {
     fn default() -> Self {
         Self {
-            max_files: 20_000,
-            time_budget: Duration::from_secs(2),
+            max_files: 500_000,
+            time_budget: Duration::from_secs(30),
         }
     }
 }

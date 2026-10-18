@@ -94,6 +94,8 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
         CTX_CHECKPOINTS.to_string(),
         "--checkpoint-min-step".to_string(),
         CHECKPOINT_MIN_STEP.to_string(),
+        "--cache-reuse".to_string(),
+        "256".to_string(),
     ];
     if let Some(n_max) = config.mtp_draft() {
         // MTP drafting supports one slot only, so the server gives up its
@@ -105,6 +107,19 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
             "draft-mtp".to_string(),
             "--spec-draft-n-max".to_string(),
             n_max.to_string(),
+        ]);
+    } else if let Some(slots) = config.parallel_slots.filter(|&s| s > 0) {
+        args.extend(["-np".to_string(), slots.to_string()]);
+    }
+    if let Some(seed) = config.seed {
+        args.extend(["-s".to_string(), seed.to_string()]);
+    }
+    if config.kv_cache_quantization {
+        args.extend([
+            "-ctk".to_string(),
+            "q8_0".to_string(),
+            "-ctv".to_string(),
+            "q8_0".to_string(),
         ]);
     }
     args

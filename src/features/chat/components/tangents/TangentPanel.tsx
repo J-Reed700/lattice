@@ -4,12 +4,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, MessageSquarePlus, Square, Trash2 } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
-import { fetchBookmarks, fetchConversationDetail, fetchMessages, unwrap } from '@/features/chat/api/conversationQueryData';
+import { fetchBookmarks, fetchConversationDetail, fetchMessages } from '@/features/chat/api/conversationQueryData';
+import { ConversationFind } from '@/features/chat/components/find/ConversationFind';
 import { Message } from '@/features/chat/components/Message';
 import { deriveMessageMetadata } from '@/features/chat/controller/messageMetadata';
 import { reconcilePersistedFailedMessages } from '@/features/chat/controller/optimisticMessages';
+import { useTangentActions } from '@/features/chat/hooks/useTangentActions';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
-import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
@@ -29,11 +30,11 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
   const base = useConversationsStore();
   const queryClient = useQueryClient();
   const [input, setInput] = useState(() => drafts.get(id) ?? '');
-  const [mutating, setMutating] = useState(false);
+  const { finish: finishTangent, mutating } = useTangentActions(drafts);
   const submitting = useRef(false);
-  const mutationPending = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const scopeRef = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const messagesQuery = useQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id) });
   const detailQuery = useQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id) });
@@ -107,34 +108,15 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
   };
 
   const finish = async (action: 'promote' | 'delete') => {
-    if (mutationPending.current || isSending) return;
-    if (action === 'delete' && !window.confirm('Delete this tangent and its messages?')) return;
-    mutationPending.current = true;
-    setMutating(true);
-    try {
-      if (action === 'promote') {
-        const conversation = unwrap(await VaultAPI.promoteConversationTangent(id));
-        queryClient.setQueryData(conversationKeys.detail(id), conversation);
-        await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
-        toast.success('Tangent is now a conversation', { action: { label: 'Open conversation', onClick: () => { void base.selectConversation(id); } } });
-      } else {
-        // The shared delete action also cancels listeners and evicts caches.
-        if (!await base.deleteConversation(id)) throw new Error(conversationUiStore.getState().error ?? 'Please try again.');
-      }
-      queryClient.setQueryData<ConversationTangentDto[]>(conversationKeys.tangents(tangent.parentConversationId), current => current?.filter(item => item.conversationId !== id));
-      drafts.delete(id);
-      onPromoted();
-    } catch (error) {
-      toast.error(action === 'promote' ? "Couldn't make this a conversation" : "Couldn't delete the tangent", { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      mutationPending.current = false;
-      setMutating(false);
-    }
+    if (!isSending && await finishTangent(tangent, action)) onPromoted();
   };
 
-  return <>
+  return <div ref={scopeRef} className="flex min-h-0 flex-1 flex-col">
     <div className="shrink-0 border-b border-border-subtle p-4">
-      <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-text-muted">Starting point</p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">Starting point</p>
+        <ConversationFind messages={messages} scopeRef={scopeRef} />
+      </div>
       <blockquote className="max-h-32 overflow-y-auto whitespace-pre-wrap wrap-break-word border-l-2 border-accent pl-3 font-serif text-sm leading-relaxed text-text-secondary">{tangent.selectedText}</blockquote>
       <div className="mt-3 flex items-center justify-between gap-2">
         <button type="button" onClick={() => void finish('promote')} disabled={isSending || mutating}
@@ -174,5 +156,5 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
         )}
       </div>
     </form>
-  </>;
+  </div>;
 }

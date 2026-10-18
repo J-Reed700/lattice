@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { fetchConversationList } from '@/features/chat/api/conversationQueryData';
-import { bindThreadToFolder, useExplorerFolderMutations, useExplorerFoldersQuery } from '@/features/explorer/api/queries';
+import { bindThreadToFolder, fetchFolderThreads, useExplorerFolderMutations, useExplorerFoldersQuery } from '@/features/explorer/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
@@ -14,7 +13,10 @@ import type { Conversation } from '@/types/conversation';
 const threadsKey = (root: string) => [...conversationKeys.lists, 'explorer', root] as const;
 
 export interface ExplorerThreads {
+  /** The folder's threads that are not archived, newest first. */
   threads: Conversation[];
+  /** Archived threads: still openable, never landed on. */
+  archived: Conversation[];
   activeId: string | null;
   /** True while the thread for this folder is being found or made. */
   preparing: boolean;
@@ -34,7 +36,8 @@ function threadTitle(rootName: string): string {
  * The conversations bound to a folder, and which of them the chat shows.
  *
  * Entering a folder opens the thread last used there (kept on the folder's
- * row), else its most recent one, else a new one. The chat column only ever shows a thread of the
+ * row), else its most recent one, else a new one; an archived thread is never
+ * landed on, only opened by hand. The chat column only ever shows a thread of the
  * current folder: the send path reads the folder's focus, and a Chat
  * conversation must not receive it.
  */
@@ -66,17 +69,16 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
 
   const threadsQuery = useQuery({
     queryKey: threadsKey(root ?? ''),
-    queryFn: async () => {
-      const all = await fetchConversationList({ spaceId: null, filterMode: 'all', searchQuery: '' });
-      return all
-        .filter((conversation) => conversation.explorerRoot === root)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    },
+    queryFn: () => fetchFolderThreads(root ?? ''),
     enabled: Boolean(root),
     staleTime: 15_000,
   });
-  const threads = useMemo(() => threadsQuery.data ?? [], [threadsQuery.data]);
-  const activeIsThread = threads.some((thread) => thread.id === activeConversationId);
+  const allThreads = useMemo(() => threadsQuery.data ?? [], [threadsQuery.data]);
+  const threads = useMemo(() => allThreads.filter((thread) => !thread.isArchived), [allThreads]);
+  const archived = useMemo(() => allThreads.filter((thread) => thread.isArchived), [allThreads]);
+  // An archived thread opened from the list stays open; archiving or deleting
+  // the open thread clears it, and the effect below lands on the next one.
+  const activeIsThread = allThreads.some((thread) => thread.id === activeConversationId);
 
   const create = useCallback(async () => {
     if (!root || creatingForRef.current === root) return;
@@ -125,6 +127,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
 
   return {
     threads,
+    archived,
     activeId: activeIsThread ? activeConversationId : null,
     preparing: Boolean(root) && (threadsQuery.isPending || creating || (!activeIsThread && !error && !threadsQuery.isError)),
     error: error ?? (threadsQuery.isError ? threadsQuery.error.message : null),

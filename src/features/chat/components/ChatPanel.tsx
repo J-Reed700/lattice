@@ -10,6 +10,7 @@ import { Composer } from '@/features/chat/components/composer/Composer';
 import { ConversationLinkedDocumentsPanel } from '@/features/chat/components/ConversationLinkedDocumentsPanel';
 import { ConversationMemoryPanel } from '@/features/chat/components/ConversationMemoryPanel';
 import { ConversationNavigator } from '@/features/chat/components/ConversationNavigator';
+import { ConversationFind } from '@/features/chat/components/find/ConversationFind';
 import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresNotice';
 import { Message } from '@/features/chat/components/Message';
 import { NoConversationOpen } from '@/features/chat/components/NoConversationOpen';
@@ -30,7 +31,11 @@ import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
-import { resolveChatModel } from '@/utils/chatModelSelection';
+import {
+  buildChatModelOptions,
+  resolveActiveChatOption,
+  resolveChatModel,
+} from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
 interface ChatPanelProps {
@@ -130,8 +135,20 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   const chatWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
 
   const llmSettings = settings?.llm;
+  const activeChatOption = useMemo(
+    () => resolveActiveChatOption(llmSettings, downloadedModels),
+    [llmSettings, downloadedModels]
+  );
+  const chatModelOptions = useMemo(
+    () => buildChatModelOptions(llmSettings, downloadedModels),
+    [llmSettings, downloadedModels]
+  );
   const resolvedModel = resolveChatModel(llmSettings, activeModel?.model_id ?? null);
-  const activeModelLabel = resolvedModel && (downloadedModels.find(model => model.model_id === resolvedModel)?.model_name || resolvedModel);
+  const activeModelLabel =
+    activeChatOption?.triggerLabel ??
+    (resolvedModel &&
+      (downloadedModels.find((model) => model.model_id === resolvedModel)?.model_name ||
+        resolvedModel));
   const hasChatModel = activeModelLabel !== null;
   const isChatUnavailable = isChatWarming || !hasChatModel;
 
@@ -197,6 +214,7 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
         activeConversationId,
         activeModelLabel,
         canRegenerate,
+        canSwitchModel: chatModelOptions.length > 0,
         downloadedModels,
         forkConversation,
         chooseFiles,
@@ -215,6 +233,7 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
       activeConversationId,
       activeModelLabel,
       canRegenerate,
+      chatModelOptions.length,
       downloadedModels,
       forkConversation,
       chooseFiles,
@@ -240,7 +259,8 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   }
 
   return (
-    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={composer.toolPreferences} unavailable={isChatUnavailable}>
+    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={composer.toolPreferences} unavailable={isChatUnavailable}
+      toolbar={<ConversationFind messages={messages} scopeRef={panelRef} />}>
     <div
       ref={panelRef}
       data-thread={messages.length > 0 || undefined}
@@ -374,8 +394,9 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
         chips={composerChips}
         space={showSpacePicker ? { id: conversationSpaceId, name: conversationSpaceName, onChange: handleChangeSpace } : null}
         model={{
-          id: activeModel?.model_id ?? null,
-          label: activeModelLabel,
+          id: activeChatOption?.id ?? activeModel?.model_id ?? null,
+          label: activeModelLabel ?? (chatModelOptions.length > 0 ? 'Choose model' : null),
+          backend: activeChatOption?.backend ?? null,
           onSelect: handleSwitchActiveModel,
           triggerRef: modelLabelRef,
         }}

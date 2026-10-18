@@ -106,6 +106,7 @@ describe('Learning Studio program workflow', () => {
   afterEach(() => activityClient.removeQueries({ queryKey: STUDY_ACTIVITY_KEY }));
   beforeEach(() => {
     vi.resetAllMocks();
+    localStorage.clear();
     mocks.documents.mockReturnValue([{ id: 'document-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 12 } satisfies DocumentMetadata]);
     mocks.memory.mockResolvedValue(ok({ programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }));
     mocks.flush.mockResolvedValue(true);
@@ -387,6 +388,61 @@ describe('Learning Studio program workflow', () => {
     expect(lessonSelect).toBeDisabled();
     resolveFlush(true);
     await waitFor(() => expect(lessonSelect).toHaveValue('lesson-2'));
+  });
+
+  it('reopens a course at the module, lesson and section last shown', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.selectOptions(screen.getByLabelText('Module'), 'module-2');
+    await waitFor(() => expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-3'));
+    await user.selectOptions(screen.getByLabelText('Lesson context'), 'lesson-4');
+    await waitFor(() => expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-4'));
+    await user.click(screen.getByRole('tab', { name: 'Practice' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Written practice' })).toHaveAttribute('aria-selected', 'true'));
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    expect(await screen.findByLabelText('Module')).toHaveValue('module-2');
+    expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-4');
+    expect(screen.getByRole('tab', { name: 'Written practice' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('returns to the course left open when coming back to Studio, and to the list after leaving it', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    const first = show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.selectOptions(screen.getByLabelText('Module'), 'module-2');
+    await waitFor(() => expect(screen.getByLabelText('Module')).toHaveValue('module-2'));
+    first.unmount();
+    const second = show();
+    expect(await screen.findByRole('heading', { level: 1, name: 'A thoughtful course' })).toBeVisible();
+    expect(screen.getByLabelText('Module')).toHaveValue('module-2');
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    expect(await screen.findByRole('button', { name: /A thoughtful course/ })).toBeVisible();
+    second.unmount();
+    show();
+    expect(await screen.findByRole('button', { name: /A thoughtful course/ })).toBeVisible();
+    expect(screen.queryByLabelText('Module')).not.toBeInTheDocument();
+  });
+
+  it('opens the program list when the course left open no longer exists', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    mocks.list.mockResolvedValueOnce(ok([summary(active)])).mockResolvedValue(ok([]));
+    mocks.get.mockResolvedValue(ok(active));
+    const first = show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await screen.findByRole('heading', { level: 1, name: 'A thoughtful course' });
+    first.unmount();
+    show();
+    expect(await screen.findByRole('heading', { name: 'Start with a question you care about.' })).toBeVisible();
+    expect(screen.queryByText('This program could not be opened')).not.toBeInTheDocument();
   });
 
   it('resets retained editors and quiz answers after a same-program import', async () => {

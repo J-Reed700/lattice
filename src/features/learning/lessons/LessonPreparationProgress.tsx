@@ -47,6 +47,12 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   const supported = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved) : 0;
   const restoringChecks = active && activity?.phase === 'evidence' && activity.modelChecksTotal == null;
   const currentChecks = active && !queued && activity?.phase === 'evidence';
+  // After every claim's first check, unsupported claims are checked against
+  // further evidence pages. Those checks move claims between counts.
+  const deeper = (currentChecks && activity?.deeperEvidence) || null;
+  const bar = deeper
+    ? { label: `Unsupported claims checked against evidence page ${deeper.page}`, value: deeper.checked, max: deeper.claims, text: `${deeper.checked} of ${deeper.claims} checked on evidence page ${deeper.page}` }
+    : hasChecks ? { label: 'Claim checks this pass', value: activity.checksCompleted, max: activity.checksTotal, text: `${activity.checksCompleted} of ${activity.checksTotal} checked` } : null;
   const showCurrentStep = active && !queued && Boolean(activity);
   return <section aria-label="Lesson preparation progress" className="my-4 overflow-hidden rounded-2xl border border-accent/30 bg-accent/5">
     <div className="border-b border-accent/15 p-5">
@@ -90,16 +96,16 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
       {hasChecks && <div className="rounded-xl border border-border bg-background/70 p-4">
         <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{activity.phase === 'evidence' ? 'Claim checks this pass' : 'Last verification pass'} · Pass {activity.verificationPass}</span><span className="tabular-nums text-text-secondary">{restoringChecks ? `${activity.checksTotal} lesson claims` : `${activity.checksCompleted} / ${activity.checksTotal} checked`}</span></div>
         {restoringChecks ? <p className="mt-3 text-sm leading-6 text-text-secondary" role="status">Looking for saved checks to reuse. The number needing model review will appear once all saved results have been compared with the current evidence.</p> : <>
-          {activity.modelChecksTotal != null && currentChecks && <p className="mt-3 text-sm leading-6 text-text-secondary">{activity.checksReused} saved checks reused. {remaining === 0 ? 'Checking finished. Preparing the next step.' : `${remaining} of ${activity.modelChecksTotal} model checks remaining in this pass.`}</p>}
-          {currentChecks && <div role="progressbar" aria-label="Claim checks this pass" aria-valuenow={activity.checksCompleted} aria-valuemin={0} aria-valuemax={activity.checksTotal} aria-valuetext={`${activity.checksCompleted} of ${activity.checksTotal} checked; ${activity.checksUnresolved} need attention; ${activity.checksReused} saved checks reused`} className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, activity.checksCompleted / activity.checksTotal * 100)}%` }} /></div>}
+          {activity.modelChecksTotal != null && currentChecks && <p className="mt-3 text-sm leading-6 text-text-secondary">{activity.checksReused} saved checks reused. {deeper ? `Every claim has had its first check. Checking ${deeper.claims} unsupported claims against evidence page ${deeper.page}; ${deeper.claims - deeper.checked} left.` : remaining === 0 ? 'Checking finished. Preparing the next step.' : `${remaining} of ${activity.modelChecksTotal} model checks remaining in this pass.`}</p>}
+          {currentChecks && bar && <div role="progressbar" aria-label={bar.label} aria-valuenow={bar.value} aria-valuemin={0} aria-valuemax={bar.max} aria-valuetext={`${bar.text}; ${activity.checksUnresolved} need attention; ${activity.checksReused} saved checks reused`} className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, bar.value / bar.max * 100)}%` }} /></div>}
         </>}
         <dl className={`mt-3 grid grid-cols-2 gap-3 text-xs ${currentChecks ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
           <div><dt className="text-text-muted">Supported</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{supported}</dd></div>
           <div><dt className="text-text-muted">{currentChecks ? 'Need attention' : 'Needed attention in this pass'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksUnresolved}</dd></div>
-          {currentChecks && <div><dt className="text-text-muted">Still to check</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : remaining}</dd></div>}
+          {currentChecks && <div><dt className="text-text-muted">{deeper ? `Left on evidence page ${deeper.page}` : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : deeper ? deeper.claims - deeper.checked : remaining}</dd></div>}
           <div><dt className="text-text-muted">Saved checks reused</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksReused}</dd></div>
         </dl>
-        <p className="mt-3 text-xs leading-5 text-text-muted">Checked means reviewed, not necessarily passed. Claims needing attention lead to research or repair. Completed checks keep their saved evidence. New references reopen checks only when new evidence is retrieved for that claim; changed content or sources also need review. Unchanged comparisons are reused.</p>
+        <p className="mt-3 text-xs leading-5 text-text-muted">Checked means reviewed, not necessarily passed. Claims needing attention lead to research or repair. Completed checks keep their saved evidence. New references reopen checks only when new evidence is retrieved for that claim; changed content or sources also need review. Unchanged comparisons are reused. Unsupported claims are checked again against further pages of their evidence, and move to Supported when a later page supports them.</p>
       </div>}
       {!active && !paused && <p role="alert" className="rounded-xl bg-rose-500/10 p-4 text-sm leading-6 text-rose-700">{job?.error || error || 'Preparation stopped. Your draft and completed checkpoints remain saved.'}</p>}
       <div className="rounded-xl border border-accent/20 p-4 text-xs leading-5 text-text-secondary">

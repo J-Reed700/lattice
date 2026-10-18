@@ -45,19 +45,11 @@ export async function startModelDownload({
 
   const result = await VaultAPI.downloadModel(metadata.id);
   if (!result.ok) {
-    if (result.error.includes('Rate limit')) {
-      addToast({
-        type: 'warning',
-        title: 'Too many downloads at once',
-        message: 'Wait a moment, then try again.',
-      });
-    } else {
-      addToast({
-        type: 'error',
-        title: "Couldn't start the download",
-        message: result.error,
-      });
-    }
+    addToast({
+      type: 'error',
+      title: "Couldn't start the download",
+      message: result.error,
+    });
     return { alreadyDownloaded: false };
   }
 

@@ -9,6 +9,8 @@ export interface ConversationUiState {
   searchQuery: string;
   activeConversationId: string | null;
   requestedTangent: { parentId: string; tangentId: string } | null;
+  /** Open the tangent list on the tangents of one reply (its "N tangents" marker). */
+  requestedTangentReply: { parentId: string; messageId: string } | null;
   inFlightGenerations: Map<string, string>;
   optimisticMessages: Map<string, OptimisticMessage>;
   /**
@@ -42,6 +44,7 @@ export const useConversationUiStore = create<ConversationUiState>(() => ({
   searchQuery: '',
   activeConversationId: null,
   requestedTangent: null,
+  requestedTangentReply: null,
   inFlightGenerations: new Map(),
   optimisticMessages: new Map(),
   liveRetrieval: new Map(),

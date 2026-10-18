@@ -50,6 +50,19 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to list tangents: {e}")))
     }
 
+    /// The passage a side thread was opened on; `None` for any other
+    /// conversation, a promoted tangent included.
+    pub async fn tangent_selection(&self, id: &str) -> Result<Option<String>> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT tangent_selection FROM conversations WHERE id = ? AND tangent_parent_id IS NOT NULL",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(Option::flatten)
+        .map_err(|e| AppError::Database(format!("Failed to read tangent selection: {e}")))
+    }
+
     /// Promotion keeps the same id and transcript, including the fork context.
     /// Repeating it is harmless; an ordinary conversation remains ordinary.
     pub async fn promote_tangent(&self, id: &str) -> Result<()> {

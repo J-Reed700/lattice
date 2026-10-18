@@ -88,6 +88,16 @@ export const getTimeBucket = (updatedAt: Date, now: Date): TimeBucketKey => {
   return 'older';
 };
 
+/** The same buckets, with anything older than 30 days filed by month. */
+export const getRecencyGroup = (updatedAt: Date, now: Date): { key: string; label: string } => {
+  const bucket = getTimeBucket(updatedAt, now);
+  if (bucket !== 'older') return { key: bucket, label: TIME_BUCKET_LABELS[bucket] };
+  return {
+    key: `${updatedAt.getFullYear()}-${`${updatedAt.getMonth() + 1}`.padStart(2, '0')}`,
+    label: updatedAt.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+  };
+};
+
 export const SPACES_MODAL_LAYER_CLASSES = {
   root: 'z-200',
   backdrop: 'z-210',

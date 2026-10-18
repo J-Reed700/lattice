@@ -1,4 +1,4 @@
-//! The rate-limited Hub HTTP client that implements `ModelCatalogPort`.
+//! The Hub HTTP client that implements `ModelCatalogPort`.
 use super::*;
 
 /// Hugging Face Model Hub adapter.
@@ -6,8 +6,6 @@ use super::*;
 /// Implements `ModelCatalogPort` by querying the Hugging Face API.
 pub struct HuggingFaceAdapter {
     client: Client,
-    pub(super) last_request: Arc<Mutex<Option<Instant>>>,
-    min_request_interval: Duration,
 }
 
 impl HuggingFaceAdapter {
@@ -15,18 +13,13 @@ impl HuggingFaceAdapter {
     ///
     /// # Configuration
     /// - HTTP client with 10s timeout
-    /// - Rate limiting: 500ms between requests
     pub fn new() -> Self {
         let client = reqwest_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| Client::new());
 
-        Self {
-            client,
-            last_request: Arc::new(Mutex::new(None)),
-            min_request_interval: Duration::from_millis(500),
-        }
+        Self { client }
     }
 
     pub(super) fn search_url(query: &str, limit: usize) -> String {
@@ -45,36 +38,6 @@ impl HuggingFaceAdapter {
         }
     }
 
-    /// Enforce rate limiting.
-    ///
-    /// Sleeps if necessary to maintain minimum interval between requests.
-    pub(super) async fn enforce_rate_limit(&self) {
-        // Scoped locking: compute delay while holding lock, then release before await
-        let delay_needed = {
-            let mut guard = self.last_request.lock();
-
-            if let Some(last_time) = *guard {
-                let elapsed = last_time.elapsed();
-                if elapsed < self.min_request_interval {
-                    Some(self.min_request_interval - elapsed)
-                } else {
-                    *guard = Some(Instant::now());
-                    None
-                }
-            } else {
-                *guard = Some(Instant::now());
-                None
-            }
-        }; // Guard dropped here
-
-        // Safe: no guard held across await point
-        if let Some(delay) = delay_needed {
-            tokio::time::sleep(delay).await;
-            // Update timestamp after sleep
-            *self.last_request.lock() = Some(Instant::now());
-        }
-    }
-
     /// Search Hugging Face models via API.
     ///
     /// # Arguments
@@ -88,8 +51,6 @@ impl HuggingFaceAdapter {
         query: &str,
         limit: usize,
     ) -> Result<Vec<HuggingFaceModel>, AppError> {
-        self.enforce_rate_limit().await;
-
         // `filter:<tag>` is an internal catalog query used for category
         // discovery. The Hub's filter searches model metadata, while its
         // `search` parameter mostly searches repository names and leaves out
@@ -126,8 +87,6 @@ impl HuggingFaceAdapter {
     /// # Returns
     /// Model metadata or error.
     async fn get_model_api(&self, model_id: &str) -> Result<HuggingFaceModel, AppError> {
-        self.enforce_rate_limit().await;
-
         let encoded_model_id = model_id
             .split('/')
             .map(urlencoding::encode)

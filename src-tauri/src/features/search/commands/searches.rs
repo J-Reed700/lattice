@@ -34,17 +34,6 @@ pub(super) async fn search_fast_impl(
 ) -> lattice_core::shared::ipc::ApiResult<Vec<(String, f32)>> {
     use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
-    // Rate limiting check
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await
-    {
-        return ApiResult::error(ErrorCode::RateLimitExceeded, e.to_string());
-    }
-
     // Input validation
     if let Err(e) = container
         .security_context()
@@ -104,11 +93,10 @@ pub(super) async fn search_fast_impl(
 /// # Returns
 ///
 /// * `Ok(SearchResponseDto)` - Semantic search results with enriched metadata
-/// * `Err(AppError)` - If rate limited, validation fails, or execution fails
+/// * `Err(AppError)` - If validation fails or execution fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
 /// * `AppError::InvalidInput` - Query validation failed
 /// * `AppError::Other` - Use case execution failed
 ///
@@ -136,13 +124,12 @@ pub(super) async fn search_fast_impl(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query
 ///
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// - Applies cross-cutting concerns (rate limiting, validation)
+/// - Applies cross-cutting concerns (validation)
 /// - Delegates to `SemanticSearchUseCase` for business logic
 /// - Handles error translation
 ///
@@ -154,11 +141,10 @@ pub(super) async fn search_fast_impl(
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation
-/// 3. Delegate to SemanticSearchUseCase
-/// 4. Use case handles embedding, search, enrichment
-/// 5. Return enriched results
+/// 1. Input validation
+/// 2. Delegate to SemanticSearchUseCase
+/// 3. Use case handles embedding, search, enrichment
+/// 4. Return enriched results
 /// Implementation: Pure semantic search using vector similarity.
 #[tracing::instrument(skip(container), fields(query = %request.query))]
 pub async fn semantic_search_impl(
@@ -166,17 +152,6 @@ pub async fn semantic_search_impl(
     request: SearchRequestDto,
 ) -> lattice_core::shared::ipc::ApiResult<SearchResponseDto> {
     use lattice_core::shared::ipc::{ApiResult, ErrorCode};
-
-    // Rate limiting check
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await
-    {
-        return ApiResult::error(ErrorCode::RateLimitExceeded, e.to_string());
-    }
 
     // Input validation
     if let Err(e) = container
@@ -214,11 +189,10 @@ pub async fn semantic_search_impl(
 /// # Returns
 ///
 /// * `Ok(Vec<SearchResultDto>)` - Hybrid search results with dual ranking scores
-/// * `Err(AppError)` - If rate limited, validation fails, or execution fails
+/// * `Err(AppError)` - If validation fails or execution fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many search requests (rate limited)
 /// * `AppError::InvalidInput` - Query validation failed
 /// * `AppError::Other` - Embedding or search execution failed
 ///
@@ -244,7 +218,6 @@ pub async fn semantic_search_impl(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents DoS attacks
 /// - **Input Validation**: Sanitizes query
 ///
 /// # Search Modes
@@ -270,12 +243,11 @@ pub async fn semantic_search_impl(
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation
-/// 3. Parse search mode string
-/// 4. Run the library search orchestrator (vector + BM25 + RRF)
-/// 5. Enrich results with metadata
-/// 6. Return ranked results
+/// 1. Input validation
+/// 2. Parse search mode string
+/// 3. Run the library search orchestrator (vector + BM25 + RRF)
+/// 4. Enrich results with metadata
+/// 5. Return ranked results
 ///
 /// Implementation: Hybrid search combining vector similarity and BM25 keyword matching.
 pub async fn hybrid_search_impl(
@@ -285,17 +257,6 @@ pub async fn hybrid_search_impl(
     search_mode: String,
 ) -> lattice_core::shared::ipc::ApiResult<Vec<SearchResultDto>> {
     use lattice_core::shared::ipc::{ApiResult, ErrorCode};
-
-    // Rate limiting check
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await
-    {
-        return ApiResult::error(ErrorCode::RateLimitExceeded, e.to_string());
-    }
 
     // Input validation
     if let Err(e) = container
@@ -377,13 +338,6 @@ pub async fn search_documents_impl(
     options: SearchOptions,
 ) -> Result<EnhancedSearchResponse, AppError> {
     let start_time = std::time::Instant::now();
-
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
 
     container
         .security_context()
@@ -503,13 +457,6 @@ pub async fn find_similar_impl(
     chunk_id: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
-
     let limit = limit.unwrap_or(10);
 
     let enrichment_service = container.search_enrichment_service();

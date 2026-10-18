@@ -21,6 +21,10 @@ impl ConversationBranches for ConversationRepository {
         ConversationRepository::list_tangents(self, conversation_id).await
     }
 
+    async fn tangent_selection(&self, conversation_id: &str) -> Result<Option<String>> {
+        ConversationRepository::tangent_selection(self, conversation_id).await
+    }
+
     async fn promote_tangent(&self, conversation_id: &str) -> Result<()> {
         ConversationRepository::promote_tangent(self, conversation_id).await
     }

@@ -270,6 +270,7 @@ impl<'a> ToolCalls<'a> {
             }
             !gone
         });
+        self.history_memo.get_mut().results_condensed();
     }
 
     fn prepare(

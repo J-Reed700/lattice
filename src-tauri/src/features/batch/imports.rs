@@ -19,10 +19,10 @@ pub const FILE_IMPORT: &str = "batch.file_import";
 pub const URL_IMPORT: &str = "batch.url_import";
 const KINDS: [&str; 2] = [FILE_IMPORT, URL_IMPORT];
 
-const MAX_FILES: usize = 100;
-const MAX_URLS: usize = 50;
+pub(super) const MAX_FILES: usize = 10_000;
+pub(super) const MAX_URLS: usize = 1_000;
 const DEFAULT_HISTORY: i64 = 50;
-const MAX_HISTORY: i64 = 100;
+const MAX_HISTORY: i64 = 1_000;
 
 /// The import's type as the renderer names it.
 fn job_type(kind: &str) -> &str {

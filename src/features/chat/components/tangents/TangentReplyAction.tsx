@@ -1,8 +1,9 @@
 import { useContext, useId, useRef, useState } from 'react';
 
-import { GitBranch } from 'lucide-react';
+import { GitBranch, Layers } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 
 import { MAX_TANGENT_PASSAGE_LENGTH, TangentSelectionContext } from './TangentSelection';
 
@@ -28,6 +29,9 @@ export function TangentReplyAction({ source, className, disabled }: {
     conversationId: source.conversationId, messageId: source.messageId, selectedText: text,
   });
   const length = Array.from(passage?.trim() ?? '').length;
+  // Whole-reply tangents leave no highlight in the text, so the count is the
+  // one place a reply shows what was explored from it.
+  const opened = tangents.tangents?.filter(tangent => tangent.sourceMessageId === source.messageId) ?? [];
 
   return <>
     <button ref={buttonRef} type="button" className={className} disabled={disabled || tangents.creating}
@@ -40,6 +44,13 @@ export function TangentReplyAction({ source, className, disabled }: {
       }}>
       <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />Tangent
     </button>
+    {opened.length > 0 && <button type="button" className={className}
+      aria-label={`Show ${opened.length === 1 ? 'the tangent' : `the ${opened.length} tangents`} from this reply`}
+      onClick={() => conversationUiStore.setState({
+        requestedTangentReply: { parentId: opened[0].parentConversationId, messageId: source.messageId },
+      })}>
+      <Layers aria-hidden="true" className="h-3.5 w-3.5" />{opened.length} {opened.length === 1 ? 'tangent' : 'tangents'}
+    </button>}
     <Dialog open={passage !== null} onOpenChange={open => { if (!open) setPassage(null); }}>
       <DialogContent onCloseAutoFocus={event => {
         event.preventDefault();

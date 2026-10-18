@@ -19,13 +19,13 @@ use std::collections::BTreeMap;
 
 /// Enough room for a turn's worth of dead links without letting a model that
 /// invents URLs grow the map without bound.
-const MAX_REMEMBERED_FAILURES: usize = 64;
+const MAX_REMEMBERED_FAILURES: usize = 1_024;
 
 /// Pages held at once. A page is whole extracted text, bounded by the
 /// fetcher's decoded-body limit, so this bounds a turn's memory however many
 /// pages it reads. A page past it is not lost: it is in the conversation's
 /// archive, and a request for it reads it from there.
-const MAX_REMEMBERED_PAGES: usize = 32;
+const MAX_REMEMBERED_PAGES: usize = 1_024;
 
 /// What part of a page one result gave the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

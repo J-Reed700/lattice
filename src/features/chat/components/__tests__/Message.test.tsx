@@ -38,7 +38,10 @@ vi.mock('react-router', async () => {
   const actual = await vi.importActual<typeof import('react-router')>('react-router');
   return { ...actual, useNavigate: () => vi.fn() };
 });
-vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: undefined }) }));
+vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
+  useSettingsQuery: () => ({ data: undefined }),
+  useUpdateSettingsMutation: () => ({ mutateAsync: vi.fn() }),
+}));
 vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => [] }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ activeModel: null }) }));
 // The chips the answer body draws are what the reader is opened from, so the

@@ -191,6 +191,33 @@ fn evidence_room(llm: &dyn LLMPort, skeleton: &str, output_tokens: usize) -> (us
     }
 }
 
+/// Refuses a model whose window cannot write a lesson before any research or
+/// model call is spent on it. The budget planner never reserves more than
+/// half the window for output, so a window under twice the lesson's output
+/// reserve cuts the lesson itself short; a prompt that leaves no evidence
+/// room has nothing to check the lesson against.
+pub(super) fn ensure_window_holds_a_lesson(
+    llm: &dyn LLMPort,
+    bare_prompt: &str,
+    output_tokens: usize,
+) -> Result<()> {
+    let window = llm.max_context_tokens();
+    let needed = 2 * output_tokens;
+    if window < needed {
+        return Err(AppError::InvalidConfig(format!(
+            "{}'s {window}-token context window is too small to write a lesson, which needs at least {needed} tokens. Set this model's context length to Auto or to {needed} or more in Settings, or choose a model with a larger window",
+            llm.model_name()
+        )));
+    }
+    if evidence_room(llm, bare_prompt, output_tokens).0 == 0 {
+        return Err(AppError::InvalidConfig(format!(
+            "This program's goal and lesson brief fill {}'s {window}-token context window and leave no room for evidence. Raise this model's context length in Settings, or choose a model with a larger window",
+            llm.model_name()
+        )));
+    }
+    Ok(())
+}
+
 fn source_data(
     sources: &[crate::features::learning::dto::LearningSourceDto],
 ) -> Vec<serde_json::Value> {
@@ -223,13 +250,23 @@ pub async fn prepare_lesson_with_references<'a>(
         ));
     }
     let output_tokens = LESSON_OUTPUT_RESERVE;
+    let bare_prompt = lesson_prompt(
+        llm,
+        program,
+        lesson,
+        references,
+        Vec::new(),
+        Vec::new(),
+        true,
+    )?;
+    ensure_window_holds_a_lesson(llm, &bare_prompt, output_tokens)?;
     // Adding research references must not discard an otherwise identical draft.
     // Retain its original source indices and prompt while all original snapshots
     // remain unchanged. New evidence still participates in factual verification.
     let scope_hash = crate::features::learning::content_verification::digest(
         &serde_json::to_string(&json!({
             "policy":AUTHORING_POLICY,
-            "request":authoring_scope(&lesson_prompt(llm, program, lesson, references, Vec::new(), Vec::new(), true)?)?,
+            "request":authoring_scope(&bare_prompt)?,
             "revision":crate::features::learning::lesson_drafts::authoring_revision(program.summary.revision),"model":llm.model_name(),
         }))?,
     );
@@ -269,7 +306,11 @@ pub async fn prepare_lesson_with_references<'a>(
         let (prompt, sources) = loop {
             let (sources, map) = evidence::assemble(&gathered, &topics, active, &added);
             if sources.is_empty() {
-                return Err(invalid("The supplied sources exceed this model's context window or contain no usable excerpts. Choose fewer or shorter sources."));
+                return Err(AppError::InvalidConfig(format!(
+                    "No saved passage fits beside this lesson's prompt in {}'s {}-token context window. Raise this model's context length in Settings, or choose a model with a larger window",
+                    llm.model_name(),
+                    llm.max_context_tokens()
+                )));
             }
             let prompt = lesson_prompt(
                 llm,

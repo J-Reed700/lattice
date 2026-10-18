@@ -107,6 +107,8 @@ pub(crate) struct InferenceScheduler {
 
 struct State {
     next_ticket: u64,
+    /// Monotonic counter stamped onto a slot each time it is assigned.
+    clock: u64,
     /// Waiting requests, highest priority first, then oldest first.
     queue: BTreeMap<(Reverse<InferencePriority>, u64), Waiter>,
     /// Admitted requests whose callers have not yet collected the grant.
@@ -123,6 +125,8 @@ struct Slot {
     /// The cache key of the last request this slot served. Its prefix is what
     /// the slot's KV cache still holds.
     last_key: Option<String>,
+    /// Monotonic timestamp of the last admission to this slot (`0` when never used).
+    last_used: u64,
 }
 
 struct Waiter {
@@ -178,6 +182,7 @@ impl InferenceScheduler {
             capacity,
             state: Mutex::new(State {
                 next_ticket: 0,
+                clock: 0,
                 queue: BTreeMap::new(),
                 granted: HashMap::new(),
                 slots,
@@ -301,9 +306,12 @@ impl InferenceScheduler {
                     stale.last_key = None;
                 }
             }
+            state.clock = state.clock.saturating_add(1);
+            let now = state.clock;
             if let Some(chosen) = state.slots.get_mut(slot) {
                 chosen.running = Some(waiter.tokens);
                 chosen.last_key = waiter.cache_key;
+                chosen.last_used = now;
             }
             state.reserved = state.reserved.saturating_add(waiter.tokens);
             let (_, ticket) = key;
@@ -334,22 +342,48 @@ impl InferenceScheduler {
     }
 }
 
-/// The slot that last served `key` when it is free; otherwise the lowest free
-/// slot no other key is waiting to reuse; otherwise the lowest free slot.
+/// Pick a free slot for `key`:
+/// - Keyed requests (`Some(key)`) prefer the slot that last served `key`, then
+///   a never-used slot, then a slot that last served an unkeyed utility call,
+///   and finally the least-recently-used free slot.
+/// - Unkeyed requests (`None`, e.g. intent classification, HyDE, verification)
+///   prefer a slot that already ran an unkeyed request — isolating ephemeral
+///   utility calls to one reusable slot so they do not overwrite active
+///   conversation KV caches — then a never-used slot, then the least-recently-
+///   used free slot.
 fn choose_slot(slots: &[Slot], free: &[usize], key: Option<&str>) -> usize {
-    let affine = key.and_then(|key| {
+    let lru_free = || {
         free.iter()
             .copied()
-            .find(|index| slots.get(*index).and_then(|s| s.last_key.as_deref()) == Some(key))
-    });
-    affine
-        .or_else(|| {
-            free.iter()
-                .copied()
-                .find(|index| slots.get(*index).is_some_and(|s| s.last_key.is_none()))
+            .min_by_key(|&index| slots.get(index).map_or(0, |s| s.last_used))
+    };
+    let never_used = || {
+        free.iter()
+            .copied()
+            .find(|&index| slots.get(index).is_some_and(|s| s.last_used == 0))
+    };
+    let unkeyed_used = || {
+        free.iter().copied().find(|&index| {
+            slots
+                .get(index)
+                .is_some_and(|s| s.last_used > 0 && s.last_key.is_none())
         })
-        .or_else(|| free.first().copied())
-        .unwrap_or(0)
+    };
+
+    match key {
+        Some(key) => free
+            .iter()
+            .copied()
+            .find(|&index| slots.get(index).and_then(|s| s.last_key.as_deref()) == Some(key))
+            .or_else(never_used)
+            .or_else(unkeyed_used)
+            .or_else(lru_free)
+            .unwrap_or(0),
+        None => unkeyed_used()
+            .or_else(never_used)
+            .or_else(lru_free)
+            .unwrap_or(0),
+    }
 }
 
 /// A caller's place in the queue. Whatever way the wait ends — admitted,

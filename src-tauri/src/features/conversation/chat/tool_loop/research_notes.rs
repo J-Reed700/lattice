@@ -20,7 +20,7 @@
 //! Nothing the turn records is in the rewritten span: the sources and their
 //! citation numbers, the step cards and their links, the pages read all live
 //! outside the transcript, so an answer written after condensing cites as one
-//! written before. It is done at most twice a turn.
+//! written before.
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
@@ -42,11 +42,6 @@ use tracing::{info, warn};
 /// LiteResearcher condenses only at the limit; condensing a little before it
 /// leaves the next round room for whole pages rather than scraps.
 pub(super) const CONDENSE_AT_WINDOW_SHARE: f64 = 0.6;
-
-/// Each condensing makes the next round re-read the transcript after the
-/// planned request. Twice is room for a long investigation; more would spend
-/// the turn re-reading its own notes.
-pub(super) const MAX_CONDENSES_PER_TURN: usize = 2;
 
 /// The request for the notes, said last.
 pub(super) const CONDENSE_INSTRUCTION: &str = "Your context window is nearly full. Before you continue, rewrite all the tool results you have so far into compact research notes. Keep every fact, number, date, name, short quotation and URL that could matter to my question, and keep each citation number exactly as it is written, for example [3], next to the facts it supports. Drop navigation text, boilerplate, repetition and anything that does not bear on my question. Group the notes by source, one short line per fact. Do not answer my question yet and do not call any tools: write only the notes.";
@@ -92,17 +87,14 @@ fn holds_results(item: &CompletionInput) -> bool {
     }
 }
 
-/// Whether the loop's results have outgrown their share of the window, with
-/// a condensing left to spend. A provider that reports no window is never
-/// full.
+/// Whether the loop's results have outgrown their share of the window. A
+/// provider that reports no window is never full.
 pub(super) fn should_condense(
     window_chars: usize,
     input: &[CompletionInput],
     loop_start: usize,
-    condensed_so_far: usize,
 ) -> bool {
     window_chars > 0
-        && condensed_so_far < MAX_CONDENSES_PER_TURN
         && loop_result_chars(input, loop_start) as f64
             > window_chars as f64 * CONDENSE_AT_WINDOW_SHARE
 }
@@ -299,13 +291,11 @@ mod tests {
     }
 
     #[test]
-    fn it_condenses_past_the_share_and_at_most_twice() {
+    fn it_condenses_past_the_share() {
         let input = transcript(&[&[7_000]]);
-        assert!(should_condense(10_000, &input, 2, 0));
-        assert!(should_condense(10_000, &input, 2, 1));
-        assert!(!should_condense(10_000, &input, 2, MAX_CONDENSES_PER_TURN));
-        assert!(!should_condense(20_000, &input, 2, 0), "under the share");
-        assert!(!should_condense(0, &input, 2, 0), "no window reported");
+        assert!(should_condense(10_000, &input, 2));
+        assert!(!should_condense(20_000, &input, 2), "under the share");
+        assert!(!should_condense(0, &input, 2), "no window reported");
     }
 
     #[test]

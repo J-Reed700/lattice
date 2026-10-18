@@ -230,3 +230,30 @@ async fn explorer_tangent_preserves_folder_prompt_and_sources() {
         .unwrap();
     assert_eq!(counts.get("/project"), Some(&2));
 }
+
+#[tokio::test]
+async fn tangent_selection_names_the_passage_until_promotion() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let parent = seed_thread(&pool).await;
+    let repo = ConversationRepository::new(pool);
+    let tangent = repo.create_tangent(request(&parent, "m2")).await.unwrap();
+    assert_eq!(
+        repo.tangent_selection(&tangent.conversation_id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("first answer")
+    );
+    assert_eq!(repo.tangent_selection(&parent).await.unwrap(), None);
+    assert_eq!(repo.tangent_selection("missing").await.unwrap(), None);
+    repo.promote_tangent(&tangent.conversation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.tangent_selection(&tangent.conversation_id)
+            .await
+            .unwrap(),
+        None
+    );
+}

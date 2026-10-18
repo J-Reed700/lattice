@@ -13,6 +13,8 @@ import { ImportCourseFlow } from '@/features/learning/portability/ImportCourseFl
 import { useExportAllPending } from '@/features/learning/portability/useLearningPortability';
 import { FlashcardDeckView } from '@/features/learning/recall/flashcards/FlashcardDeckView';
 import { FlashcardsSection } from '@/features/learning/recall/flashcards/FlashcardsSection';
+import { CourseTangentsSection } from '@/features/learning/tangents/CourseTangentsSection';
+import { rememberedOpenProgram, rememberOpenProgram } from '@/features/learning/workspace/studioPosition';
 import { StudyActivityPanel } from '@/features/learning/workspace/StudyActivityPanel';
 import {
   LEARNING_PROGRAMS_KEY,
@@ -54,15 +56,17 @@ export function LearningStudioPage() {
     <StudyActivityPanel onOpen={next => void openTask(next)} />
     {navigationError && <p role="alert" className="px-6 py-3 text-sm text-danger-fg">Could not save before opening this task: {navigationError}</p>}
     {heldForExport && exportingAll && <p role="status" className="px-6 py-3 text-sm text-text-secondary">Your courses are still being exported. Open the task again when the export finishes.</p>}
-    <div className="min-h-0 flex-1"><LearningStudioContent destination={destination} exportingAll={exportingAll} /></div>
+    <div className="min-h-0 flex-1"><LearningStudioContent destination={destination} exportingAll={exportingAll} onOpenDestination={next => void openTask(next)} /></div>
   </div>;
 }
 
-function LearningStudioContent({ destination, exportingAll }: { destination?: StudyDestination; exportingAll: boolean }) {
+function LearningStudioContent({ destination, exportingAll, onOpenDestination }: { destination?: StudyDestination; exportingAll: boolean; onOpenDestination?: (destination: StudyDestination) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const client = useQueryClient();
   const [screen, setScreen] = useState<Screen>('programs');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Coming back to Studio reopens the course left open, unless the link asks for something else.
+  const [pendingRestore, setPendingRestore] = useState(() => ['new', 'deck', 'newDeck', 'section'].some((key) => searchParams.has(key)) ? null : rememberedOpenProgram());
   const navigation = useStudioNavigationGuard(selectedId !== null);
   const [forms, setForms] = useState<Record<string, FormSnapshot>>({});
   const programs = useLearningPrograms();
@@ -82,6 +86,20 @@ function LearningStudioContent({ destination, exportingAll }: { destination?: St
     setScreen('programs');
     setSelectedId(destination.programId ?? null);
   }, [destination]);
+  // Only a course that still exists is reopened; an opened task takes precedence.
+  useEffect(() => {
+    if (!pendingRestore) return;
+    if (destination) { setPendingRestore(null); return; }
+    if (!programs.data && !programs.isError) return;
+    if (programs.data?.some((item) => item.id === pendingRestore)) {
+      setSelectedId(pendingRestore);
+      void client.invalidateQueries({ queryKey: learningProgramKey(pendingRestore) });
+    }
+    setPendingRestore(null);
+  }, [client, destination, pendingRestore, programs.data, programs.isError]);
+  useEffect(() => {
+    if (!pendingRestore) rememberOpenProgram(selectedId);
+  }, [pendingRestore, selectedId]);
   useEffect(() => {
     // Let the current course's save guard update before moving to a deck.
     // Avoid navigating to the current URL, which would unnecessarily block.
@@ -126,6 +144,15 @@ function LearningStudioContent({ destination, exportingAll }: { destination?: St
     onSuccess: (program) => { setSelectedId(program.summary.id); setScreen('programs'); },
   });
 
+  const handleSelectDestination = (next: StudyDestination) => {
+    if (onOpenDestination) {
+      onOpenDestination(next);
+    } else {
+      setScreen('programs');
+      setSelectedId(next.programId ?? null);
+    }
+  };
+
   const formFor = (key: string, questions: { id: string }[]): FormSnapshot => {
     const existing = forms[key];
     if (!existing) return { answers: {}, attemptId: null, fingerprint: null };
@@ -160,6 +187,7 @@ function LearningStudioContent({ destination, exportingAll }: { destination?: St
     submit.mutate(request, { onSuccess: () => { setForms((current) => ({ ...current, [key]: { answers: {}, attemptId: null, fingerprint: null } })); } });
   };
 
+  const loadingProgram = <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>;
   if (flashcardRoute && !selectedId && screen === 'programs') return <FlashcardDeckView />;
   if (screen === 'import' || screen === 'export-all') return <div className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
   if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ? message(generate.error) : undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
@@ -167,11 +195,12 @@ function LearningStudioContent({ destination, exportingAll }: { destination?: St
   return <div className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5">
     {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1500px] rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">{navigation.error}</p>}
     {selectedId ? (
-      detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
+      detail.isLoading ? loadingProgram
         : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} formFor={formFor} setAnswer={setAnswer} onSubmitAttempt={submitAttempt} submitPending={submit.isPending} submitError={submit.error ? message(submit.error) : undefined} />
-    ) : <div className="mx-auto max-w-[1450px]">
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} formFor={formFor} setAnswer={setAnswer} onSubmitAttempt={submitAttempt} submitPending={submit.isPending} submitError={submit.error ? message(submit.error) : undefined} />
+    ) : pendingRestore ? loadingProgram : <div className="mx-auto max-w-[1450px]">
       <header className="relative overflow-hidden rounded-[1.6rem] border border-[#d7c9b8] bg-[#eee8df] px-7 py-8 sm:px-10 sm:py-10 dark:border-white/10 dark:bg-[#28251f]"><div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full border border-accent/20" /><div className="relative flex flex-wrap items-end justify-between gap-6"><div className="max-w-2xl"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.18em] text-accent"><BookOpenCheck size={15} /> Learning Studio</div><h1 className="mt-3 font-serif text-4xl leading-tight text-text-primary sm:text-[3.2rem]">A course shaped around your curiosity.</h1><p className="mt-3 max-w-xl text-sm leading-6 text-text-secondary">Start with a goal. Follow a complete course through in-depth lessons, practical assignments, knowledge checks, and a final project. Your own materials are optional.</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setScreen('import')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Upload size={15} /> Import a course…</button><button type="button" onClick={() => setScreen('export-all')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Archive size={15} /> Export all courses…</button><button type="button" onClick={() => { generate.reset(); setScreen('builder'); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-fg shadow-sm transition hover:brightness-95"><Plus size={16} /> Build a program</button></div></div></header>
+      <CourseTangentsSection onOpenDestination={handleSelectDestination} />
       <div className="mt-8 flex flex-wrap items-end justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-text-muted">Your learning</div><h2 className="mt-1 font-serif text-2xl text-text-primary">Programs</h2></div>{programs.data?.length ? <div className="text-xs text-text-muted">{programs.data.length} {programs.data.length === 1 ? 'program' : 'programs'}</div> : null}</div>
       {programs.isLoading ? <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{[0, 1, 2].map((n) => <div key={n} className="h-52 animate-pulse rounded-2xl bg-surface" />)}</div>
         : programs.isError ? <div role="alert" className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-rose-500/25 bg-surface p-6"><div><h3 className="font-serif text-xl text-text-primary">Programs are unavailable</h3><p className="mt-1 text-sm text-text-secondary">{message(programs.error)}</p></div><button type="button" onClick={refresh} className="rounded-full border border-border px-4 py-2 text-sm">Retry</button></div>

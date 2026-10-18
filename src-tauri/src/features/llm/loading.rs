@@ -152,16 +152,25 @@ impl ModelLoader {
             settings.provider,
             lattice_core::application::contracts::settings::LLMProvider::Openai
                 | lattice_core::application::contracts::settings::LLMProvider::Anthropic
+                | lattice_core::application::contracts::settings::LLMProvider::Google
         ) {
-            let name = if settings.provider
-                == lattice_core::application::contracts::settings::LLMProvider::Openai
-            {
-                "openai"
-            } else {
-                "anthropic"
+            let name = match settings.provider {
+                lattice_core::application::contracts::settings::LLMProvider::Openai => "openai",
+                lattice_core::application::contracts::settings::LLMProvider::Anthropic => {
+                    "anthropic"
+                }
+                lattice_core::application::contracts::settings::LLMProvider::Google => "google",
+                _ => unreachable!(),
             };
             let storage = crate::infrastructure::security::keyring_storage::SecureStorage::new();
-            let key = match std::env::var(format!("{}_API_KEY", name.to_uppercase())).ok() {
+            let env_key = if name == "google" {
+                std::env::var("GOOGLE_API_KEY")
+                    .or_else(|_| std::env::var("GEMINI_API_KEY"))
+                    .ok()
+            } else {
+                std::env::var(format!("{}_API_KEY", name.to_uppercase())).ok()
+            };
+            let key = match env_key {
                 Some(key) => Some(key),
                 None => storage.get_api_key(name)?,
             }
@@ -175,12 +184,7 @@ impl ModelLoader {
         let config = Self::generation_config_from_settings(settings);
         lattice_core::application::services::model_selection::select_model(
             settings.provider,
-            || {
-                self.try_load_active_model(
-                    config.clone(),
-                    LocalServerOptions::from_settings(settings),
-                )
-            },
+            || self.try_load_active_model(config.clone(), settings),
             || self.try_load_llama_cpp(settings),
             || self.try_load_ollama(settings, config.clone()),
         )
@@ -219,7 +223,8 @@ impl ModelLoader {
             .try_load_router_local_model(
                 model_name,
                 generation_config.clone(),
-                LocalServerOptions::from_settings(settings),
+                LocalServerOptions::from_settings(settings)
+                    .with_model_config(settings.local_model_configs.get(model_name)),
             )
             .await?
         {
@@ -236,7 +241,8 @@ impl ModelLoader {
                 return self.load(&router).await;
             }
             lattice_core::application::contracts::settings::LLMProvider::Openai
-            | lattice_core::application::contracts::settings::LLMProvider::Anthropic => {
+            | lattice_core::application::contracts::settings::LLMProvider::Anthropic
+            | lattice_core::application::contracts::settings::LLMProvider::Google => {
                 let mut router = settings.clone();
                 router.model = model_name.to_owned();
                 router.max_tokens = router_settings.max_tokens;
@@ -450,9 +456,10 @@ impl ModelLoader {
 
         match settings.provider {
             LLMProvider::Local => Ok(None),
-            LLMProvider::Llamacpp | LLMProvider::Openai | LLMProvider::Anthropic => {
-                self.load(&utility).await.map(Some)
-            }
+            LLMProvider::Llamacpp
+            | LLMProvider::Openai
+            | LLMProvider::Anthropic
+            | LLMProvider::Google => self.load(&utility).await.map(Some),
             LLMProvider::Ollama => self
                 .try_load_ollama_with_model(settings, model, generation_config)
                 .await
@@ -488,7 +495,7 @@ impl ModelLoader {
     async fn try_load_active_model(
         &self,
         generation_config: crate::features::llm::engine::GenerationConfig,
-        server: LocalServerOptions,
+        settings: &LLMSettingsDto,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         use crate::features::llm::engine::factory::LLMConfig;
 
@@ -524,6 +531,9 @@ impl ModelLoader {
         }
 
         tracing::info!("Loading GGUF model from: {}", model_path.display());
+
+        let server = LocalServerOptions::from_settings(settings)
+            .with_model_config(settings.local_model_configs.get(active_model.model_id()));
 
         // Attempt to load the GGUF model
         let llm_config = LLMConfig::Local {

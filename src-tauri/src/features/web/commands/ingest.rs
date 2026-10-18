@@ -232,21 +232,10 @@ pub async fn ingest_web_url(
         Err(e) => return Err(e),
     }
 
-    // 1. Rate limiting
-    if let Err(e) = container
-        .security_context()
-        .rate_limiters()
-        .web_ingest
-        .check_rate_limit("web_ingest")
-        .await
-    {
-        return Err(AppError::RateLimitExceeded(e.to_string()));
-    }
-
-    // 2. Get use case
+    // 1. Get use case
     let ingest_use_case = container.ingest_web_url_use_case();
 
-    // 3. Ingest URL via use case
+    // 2. Ingest URL via use case
     let result = match ingest_use_case
         .execute(IngestWebUrlRequestDto { url: url.clone() })
         .await

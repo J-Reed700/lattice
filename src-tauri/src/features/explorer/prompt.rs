@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tracing::warn;
 
 /// Top-level entries named in the block before the rest are counted instead.
-const TOP_LEVEL_ENTRIES: usize = 40;
+const TOP_LEVEL_ENTRIES: usize = 200;
 
 /// What the folder index found for the question before generation.
 #[derive(Debug, Clone, Default)]

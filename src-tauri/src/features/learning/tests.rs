@@ -2,7 +2,7 @@ use super::{dto::*, repository::LearningRepository};
 use lattice_core::shared::error::Result;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
+    Row, SqlitePool,
 };
 
 pub(super) async fn pool() -> Result<SqlitePool> {
@@ -553,7 +553,7 @@ async fn module_test_requires_every_ready_lesson_question() -> Result<()> {
 }
 
 #[tokio::test]
-async fn module_test_rejects_a_partially_prepared_module() -> Result<()> {
+async fn module_test_covers_the_lessons_prepared_so_far() -> Result<()> {
     let pool = pool().await?;
     let repo = LearningRepository::new(pool);
     let p = fixture();
@@ -592,7 +592,8 @@ async fn module_test_rejects_a_partially_prepared_module() -> Result<()> {
             selected_index: 0,
         }],
     };
-    assert!(repo.submit(&req).await.is_err());
+    let attempt = repo.submit(&req).await?;
+    assert_eq!(attempt.total, 1);
     Ok(())
 }
 
@@ -1330,5 +1331,260 @@ async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Res
         })
         .await?;
     assert_eq!(saved.full_text, text);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_learning_tangents_lifecycle() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+
+    // 1. Setup program 1 with modules and lessons
+    let mut program1 = fixture();
+    program1.summary.title = "Rust Systems Programming".into();
+    program1.summary.goal = "Master memory safety and concurrency".into();
+    program1.modules[0].title = "Ownership and Borrowing".into();
+    program1.modules[0].summary = "Deep dive into affine types".into();
+    program1.modules[0].lessons[0].title = "Lifetimes in Practice".into();
+    program1.modules[0].lessons[0].objective = "Understand lifetime elision and bounds".into();
+    repo.create(&program1).await?;
+
+    let p1_id = program1.summary.id.clone();
+    let m1_id = program1.modules[0].id.clone();
+    let l1_id = program1.modules[0].lessons[0].id.clone();
+
+    // Insert a learning block for lesson 1 with ordinal 0
+    sqlx::query(
+        "INSERT INTO learning_blocks (lesson_id, ordinal, kind, title, body, source_ids_json) VALUES (?, 0, 'explanation', 'Invariant Lifetimes', 'Lifetimes are invariant over mutable references.', '[]')"
+    )
+    .bind(&l1_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Insert a candidate document in documents table
+    let doc_id = id();
+    sqlx::query(
+        "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) VALUES (?, '/docs/rust.pdf', 'rust.pdf', 1024, '2026-01-01T00:00:00Z', 'abc123checksum')"
+    )
+    .bind(&doc_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Link document in learning_source_library
+    let src_lib_id = id();
+    sqlx::query(
+        "INSERT INTO learning_source_library (id, program_id, kind, origin, requested_url, freshness_policy, active_version_id, pending_version_id, revision, created_at, updated_at) VALUES (?, ?, 'document', ?, NULL, 'fixed', NULL, NULL, 0, 100, 100)"
+    )
+    .bind(&src_lib_id)
+    .bind(&p1_id)
+    .bind(&doc_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Insert a web source in learning_sources
+    let web_src_id = id();
+    sqlx::query(
+        "INSERT INTO learning_sources (id, program_id, title, url, excerpt, acquired_at) VALUES (?, ?, 'The Rust Nomicon', 'https://doc.rust-lang.org/nomicon/subtyping.html', 'Subtyping and Variance', 100)"
+    )
+    .bind(&web_src_id)
+    .bind(&p1_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Test 1: Validation error on empty selection
+    let empty_req = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: "   ".into(),
+    };
+    let empty_err = repo.create_tangent(&empty_req).await;
+    assert!(matches!(
+        empty_err,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+
+    // Test 2: Validation error on selection > 8000 chars
+    let huge_req = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: "x".repeat(8001),
+    };
+    let huge_err = repo.create_tangent(&huge_req).await;
+    assert!(matches!(
+        huge_err,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+
+    // Test 3: Create tangent with section_index = Some(0) and section_title = None (resolves to block title)
+    let selected_text = "Why is &mut T invariant over T while &T is covariant?";
+    let req1 = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: selected_text.into(),
+    };
+    let tangent1 = repo.create_tangent(&req1).await?;
+
+    assert_eq!(tangent1.program_id, p1_id);
+    assert_eq!(tangent1.program_title, "Rust Systems Programming");
+    assert_eq!(tangent1.space_id, format!("space_learning_{}", p1_id));
+    assert_eq!(tangent1.module_id, m1_id);
+    assert_eq!(tangent1.module_title, "Ownership and Borrowing");
+    assert_eq!(tangent1.lesson_id, l1_id);
+    assert_eq!(tangent1.lesson_title, "Lifetimes in Practice");
+    assert_eq!(tangent1.section_index, Some(0));
+    assert_eq!(
+        tangent1.section_title.as_deref(),
+        Some("Invariant Lifetimes")
+    );
+    assert_eq!(tangent1.selected_text, selected_text);
+    assert_eq!(tangent1.title, selected_text);
+    assert_eq!(tangent1.message_count, 1);
+    assert_eq!(tangent1.context_message_count, 1);
+
+    // Verify Course Space creation
+    let space_row =
+        sqlx::query("SELECT id, name, icon, space_prompt FROM conversation_spaces WHERE id = ?")
+            .bind(&tangent1.space_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let space_icon: String = space_row.get("icon");
+    let space_name: String = space_row.get("name");
+    assert_eq!(space_icon, "graduation-cap");
+    assert_eq!(space_name, "Course · Rust Systems Programming");
+
+    // Verify Space membership
+    let member_role: String = sqlx::query_scalar(
+        "SELECT role FROM conversation_space_members WHERE space_id = ? AND member_id = 'member_local_owner'"
+    )
+    .bind(&tangent1.space_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(member_role, "owner");
+
+    // Verify Conversation row
+    let conv_row = sqlx::query(
+        "SELECT id, space_id, tangent_selection, tangent_parent_id, tangent_context_message_count, message_count FROM conversations WHERE id = ?"
+    )
+    .bind(&tangent1.conversation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let conv_space: String = conv_row.get("space_id");
+    let conv_sel: String = conv_row.get("tangent_selection");
+    let conv_parent: Option<String> = conv_row.get("tangent_parent_id");
+    let conv_msg_count: i64 = conv_row.get("message_count");
+    assert_eq!(conv_space, tangent1.space_id);
+    assert_eq!(conv_sel, selected_text);
+    assert!(conv_parent.is_none());
+    assert_eq!(conv_msg_count, 1);
+
+    // Verify Seeded Message
+    let msg_row = sqlx::query(
+        "SELECT role, sequence, content FROM conversation_messages WHERE conversation_id = ? AND sequence = 1"
+    )
+    .bind(&tangent1.conversation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let msg_role: String = msg_row.get("role");
+    let msg_content: String = msg_row.get("content");
+    assert_eq!(msg_role, "assistant");
+    assert!(msg_content.contains("Course: Rust Systems Programming"));
+    assert!(msg_content.contains("Invariant Lifetimes"));
+    assert!(msg_content.contains("> Why is &mut T invariant over T while &T is covariant?"));
+
+    // Verify attached document and space membership
+    let doc_attached: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_documents WHERE conversation_id = ? AND document_id = ?",
+    )
+    .bind(&tangent1.conversation_id)
+    .bind(&doc_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(doc_attached, 1);
+
+    let doc_space_member: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM document_space_memberships WHERE space_id = ? AND document_id = ?",
+    )
+    .bind(&tangent1.space_id)
+    .bind(&doc_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(doc_space_member, 1);
+
+    // Verify web source attached
+    let web_attached: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_web_sources WHERE conversation_id = ? AND url = 'https://doc.rust-lang.org/nomicon/subtyping.html'"
+    )
+    .bind(&tangent1.conversation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(web_attached, 1);
+
+    // Verify learning_tangents table entry
+    let lt_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM learning_tangents WHERE conversation_id = ? AND program_id = ?",
+    )
+    .bind(&tangent1.conversation_id)
+    .bind(&p1_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(lt_count, 1);
+
+    // 2. Setup program 2 with a tangent to test list filtering
+    let mut program2 = fixture();
+    program2.summary.title = "Compiler Construction".into();
+    repo.create(&program2).await?;
+    let p2_id = program2.summary.id.clone();
+    let m2_id = program2.modules[0].id.clone();
+    let l2_id = program2.modules[0].lessons[0].id.clone();
+
+    let req2 = CreateLearningTangentRequestDto {
+        program_id: p2_id.clone(),
+        module_id: m2_id.clone(),
+        lesson_id: l2_id.clone(),
+        section_index: None,
+        section_title: Some("Parsing ASTs".into()),
+        selected_text: "How does Pratt parsing handle precedence?".into(),
+    };
+    let tangent2 = repo.create_tangent(&req2).await?;
+    assert_eq!(tangent2.program_id, p2_id);
+    assert_eq!(tangent2.section_title.as_deref(), Some("Parsing ASTs"));
+
+    // Test list_tangents by program_id
+    let p1_list = repo.list_tangents(Some(&p1_id)).await?;
+    assert_eq!(p1_list.len(), 1);
+    assert_eq!(p1_list[0].conversation_id, tangent1.conversation_id);
+
+    let p2_list = repo.list_tangents(Some(&p2_id)).await?;
+    assert_eq!(p2_list.len(), 1);
+    assert_eq!(p2_list[0].conversation_id, tangent2.conversation_id);
+
+    // Test list_tangents without program_id (all tangents)
+    let all_list = repo.list_tangents(None).await?;
+    assert_eq!(all_list.len(), 2);
+    let all_ids: Vec<String> = all_list.iter().map(|t| t.conversation_id.clone()).collect();
+    assert!(all_ids.contains(&tangent1.conversation_id));
+    assert!(all_ids.contains(&tangent2.conversation_id));
+
     Ok(())
 }

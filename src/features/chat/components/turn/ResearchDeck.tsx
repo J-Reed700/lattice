@@ -17,8 +17,9 @@ import {
   formatDuration,
   useElapsedSeconds,
 } from '@/features/chat/components/turn/StepRow';
+import { fromConversationWebSource } from '@/features/reading/model/sourceAdapter';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import type { TurnStep } from '@/types/conversation';
-import { openExternalUrl } from '@/utils/openExternalUrl';
 
 import '@/features/chat/components/turn/research-deck.css';
 
@@ -223,13 +224,22 @@ const STATE_WORD: Record<DeckPage['state'], string> = {
 
 function PageRow({ page, index }: { page: DeckPage; index: number }) {
   const style = { '--i': index, '--hue': hostHue(page.host) } as CSSProperties;
+
+  const handleOpenPage = () => {
+    const { source } = fromConversationWebSource({
+      url: page.url,
+      title: page.title ?? page.host,
+    });
+    useChatReaderStore.getState().open('research-deck', [source], 0);
+  };
+
   return (
     <li className="deck-page" data-state={page.state} style={style}>
       <button
         type="button"
         className="deck-page-link"
         title={page.url}
-        onClick={() => void openExternalUrl(page.url)}
+        onClick={handleOpenPage}
       >
         <span className="deck-page-tile" aria-hidden="true">
           {page.host.charAt(0).toUpperCase()}

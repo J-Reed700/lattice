@@ -15,10 +15,10 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF", little-endian
+pub(super) const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF", little-endian
 
 /// GGUF metadata value types, as written in the header.
-mod value_type {
+pub(super) mod value_type {
     pub const UINT8: u32 = 0;
     pub const INT8: u32 = 1;
     pub const UINT16: u32 = 2;
@@ -99,10 +99,15 @@ pub struct GgufModelInfo {
     /// Trailing layers that reuse an earlier layer's cache rather than keep
     /// their own (Gemma 4 E2B and E4B).
     pub shared_kv_layers: Option<u32>,
+    /// Whether `tokenizer.chat_template` in the GGUF header declares tool-calling
+    /// markers (`tools`, `tool_call`, or `tool_calls`).
+    pub chat_template_supports_tools: bool,
 }
 
 /// llama.cpp stores keys and values as f16 by default: two bytes an element.
 const KV_CACHE_BYTES_PER_ELEMENT: u64 = 2;
+/// When KV cache quantization (`q8_0`) is enabled, each element takes ~1 byte.
+const KV_CACHE_QUANTIZED_BYTES_PER_ELEMENT: u64 = 1;
 
 /// Slots llama-server opens when it is launched without `--parallel`, as the
 /// sidecar is: four sequences over one unified cache. A sliding-window layer
@@ -125,6 +130,19 @@ struct LayerCache {
 }
 
 impl GgufModelInfo {
+    /// Whether the GGUF metadata indicates this model supports native tool calling
+    /// in `llama-server` (either via its embedded Jinja `tokenizer.chat_template`
+    /// or its architecture family).
+    pub fn supports_tool_calling(&self) -> bool {
+        if self.chat_template_supports_tools {
+            return true;
+        }
+        matches!(
+            self.architecture.as_deref(),
+            Some("qwen2" | "qwen3" | "qwen3moe" | "qwen35" | "qwen35moe" | "gemma4")
+        )
+    }
+
     /// Bytes of KV cache llama-server allocates for a window of
     /// `context_tokens`, when the header says enough to work it out.
     ///
@@ -151,7 +169,22 @@ impl GgufModelInfo {
     /// the header cannot say, so the estimate errs by one layer towards a
     /// window that fits.
     pub fn kv_cache_bytes(&self, context_tokens: u32) -> Option<u64> {
-        let layers = self.layer_caches()?;
+        self.kv_cache_bytes_with_quantization(context_tokens, false)
+    }
+
+    /// Like [`Self::kv_cache_bytes`], accounting for `q8_0` KV cache quantization
+    /// when `quantized` is `true`.
+    pub fn kv_cache_bytes_with_quantization(
+        &self,
+        context_tokens: u32,
+        quantized: bool,
+    ) -> Option<u64> {
+        let bytes_per_element = if quantized {
+            KV_CACHE_QUANTIZED_BYTES_PER_ELEMENT
+        } else {
+            KV_CACHE_BYTES_PER_ELEMENT
+        };
+        let layers = self.layer_caches(bytes_per_element)?;
         if layers.iter().all(|layer| layer.bytes_per_token == 0) {
             return None;
         }
@@ -176,7 +209,7 @@ impl GgufModelInfo {
 
     /// Every layer that keeps a KV cache of its own, with what one token of
     /// it costs. `None` when a layer's heads or widths cannot be worked out.
-    fn layer_caches(&self) -> Option<Vec<LayerCache>> {
+    fn layer_caches(&self, bytes_per_element: u64) -> Option<Vec<LayerCache>> {
         let blocks = self.block_count?;
         let trunk = blocks.saturating_sub(self.nextn_predict_layers.unwrap_or(0));
         // Layers from here on read an earlier layer's cache.
@@ -210,7 +243,7 @@ impl GgufModelInfo {
                 };
                 let bytes_per_token = u64::from(kv_heads.at(index)?)
                     .checked_mul(u64::from(key).checked_add(u64::from(value))?)?
-                    .checked_mul(KV_CACHE_BYTES_PER_ELEMENT)?;
+                    .checked_mul(bytes_per_element)?;
                 Some(LayerCache {
                     bytes_per_token,
                     sliding,
@@ -278,6 +311,16 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
 
         if key == "general.architecture" && kind == value_type::STRING {
             architecture = read_string(&mut reader);
+            continue;
+        }
+
+        if key == "tokenizer.chat_template" && kind == value_type::STRING {
+            let Some(template) = read_string(&mut reader) else {
+                break;
+            };
+            info.chat_template_supports_tools = template.contains("tools")
+                || template.contains("tool_call")
+                || template.contains("tool_calls");
             continue;
         }
 
@@ -352,44 +395,21 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
     })
 }
 
-/// Inspect a bounded download prefix without touching tensor data.
-/// Missing/truncated metadata is unknown, never evidence of compatibility.
-pub(super) fn architecture_from_prefix(bytes: &[u8]) -> Option<String> {
-    let mut reader = std::io::Cursor::new(bytes);
-    if read_u32(&mut reader)? != GGUF_MAGIC || !(2..=3).contains(&read_u32(&mut reader)?) {
-        return None;
-    }
-    read_u64(&mut reader)?;
-    let count = read_u64(&mut reader)?;
-    for _ in 0..count.min(100_000) {
-        let key = read_string(&mut reader)?;
-        let kind = read_u32(&mut reader)?;
-        if key == "general.architecture" && kind == value_type::STRING {
-            return read_string(&mut reader).filter(|value| !value.is_empty());
-        }
-        skip_value(&mut reader, kind)?;
-        if reader.position() >= bytes.len() as u64 {
-            return None;
-        }
-    }
-    None
-}
-
-fn read_exact<const N: usize>(reader: &mut impl Read) -> Option<[u8; N]> {
+pub(super) fn read_exact<const N: usize>(reader: &mut impl Read) -> Option<[u8; N]> {
     let mut buffer = [0u8; N];
     reader.read_exact(&mut buffer).ok()?;
     Some(buffer)
 }
 
-fn read_u32(reader: &mut impl Read) -> Option<u32> {
+pub(super) fn read_u32(reader: &mut impl Read) -> Option<u32> {
     read_exact::<4>(reader).map(u32::from_le_bytes)
 }
 
-fn read_u64(reader: &mut impl Read) -> Option<u64> {
+pub(super) fn read_u64(reader: &mut impl Read) -> Option<u64> {
     read_exact::<8>(reader).map(u64::from_le_bytes)
 }
 
-fn read_string(reader: &mut impl Read) -> Option<String> {
+pub(super) fn read_string(reader: &mut impl Read) -> Option<String> {
     let length = read_u64(reader)?;
     // A corrupt length must not turn into a multi-gigabyte allocation.
     if length > 1 << 20 {
@@ -455,7 +475,7 @@ fn read_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<Value> {
     Some(Value::Other)
 }
 
-fn is_integer(kind: u32) -> bool {
+pub(super) fn is_integer(kind: u32) -> bool {
     matches!(
         kind,
         value_type::UINT8
@@ -473,7 +493,7 @@ fn is_integer(kind: u32) -> bool {
 /// Read an integer of the given type, widened to `u32`. The outer `None` means
 /// the header could not be read; the inner one a value no count or length
 /// could be, negative or past `u32`, which has still been read past.
-fn read_integer(reader: &mut impl Read, kind: u32) -> Option<Option<u32>> {
+pub(super) fn read_integer(reader: &mut impl Read, kind: u32) -> Option<Option<u32>> {
     let value = match kind {
         value_type::UINT8 | value_type::BOOL => i128::from(read_exact::<1>(reader)?[0]),
         value_type::INT8 => i128::from(i8::from_le_bytes(read_exact::<1>(reader)?)),
@@ -488,29 +508,39 @@ fn read_integer(reader: &mut impl Read, kind: u32) -> Option<Option<u32>> {
     Some(u32::try_from(value).ok())
 }
 
+fn fixed_value_width(kind: u32) -> Option<u64> {
+    match kind {
+        value_type::UINT8 | value_type::INT8 | value_type::BOOL => Some(1),
+        value_type::UINT16 | value_type::INT16 => Some(2),
+        value_type::UINT32 | value_type::INT32 | value_type::FLOAT32 => Some(4),
+        value_type::UINT64 | value_type::INT64 | value_type::FLOAT64 => Some(8),
+        _ => None,
+    }
+}
+
 /// Advance past a value the caller does not need.
-fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<()> {
-    let width = match kind {
-        value_type::UINT8 | value_type::INT8 | value_type::BOOL => 1,
-        value_type::UINT16 | value_type::INT16 => 2,
-        value_type::UINT32 | value_type::INT32 | value_type::FLOAT32 => 4,
-        value_type::UINT64 | value_type::INT64 | value_type::FLOAT64 => 8,
+pub(super) fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<()> {
+    if let Some(width) = fixed_value_width(kind) {
+        reader
+            .seek(SeekFrom::Current(i64::try_from(width).ok()?))
+            .ok()?;
+        return Some(());
+    }
+    match kind {
         value_type::STRING => {
             let length = read_u64(reader)?;
             reader
                 .seek(SeekFrom::Current(i64::try_from(length).ok()?))
                 .ok()?;
-            return Some(());
+            Some(())
         }
         value_type::ARRAY => {
             let element_type = read_u32(reader)?;
             let count = read_u64(reader)?;
-            return skip_elements(reader, element_type, count);
+            skip_elements(reader, element_type, count)
         }
-        _ => return None,
-    };
-    reader.seek(SeekFrom::Current(width)).ok()?;
-    Some(())
+        _ => None,
+    }
 }
 
 /// Advance past the elements of an array whose type and count are read.
@@ -520,10 +550,27 @@ fn skip_elements(reader: &mut (impl Read + Seek), element_type: u32, count: u64)
     if element_type == value_type::ARRAY || count > 1_000_000 {
         return None;
     }
+    if let Some(width) = fixed_value_width(element_type) {
+        let total = count.checked_mul(width)?;
+        reader
+            .seek(SeekFrom::Current(i64::try_from(total).ok()?))
+            .ok()?;
+        return Some(());
+    }
     for _ in 0..count {
         skip_value(reader, element_type)?;
     }
     Some(())
+}
+
+/// [`ModelFileInspector`] that reads the GGUF key/value header.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GgufFileInspector;
+
+impl lattice_core::application::ports::ModelFileInspector for GgufFileInspector {
+    fn trained_context_length(&self, path: &Path) -> Option<u32> {
+        read_model_info(path).and_then(|info| info.trained_context_length)
+    }
 }
 
 #[cfg(test)]

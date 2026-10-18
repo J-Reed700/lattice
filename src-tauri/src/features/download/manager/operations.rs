@@ -195,6 +195,10 @@ impl DownloadManager for DownloadManagerService {
         session.pause()?;
         self.repository.update(&session).await?;
         self.auth_tokens.write().await.remove(id);
+        self.download_queue
+            .write()
+            .await
+            .retain(|queued| queued != id);
         drop(_queue_guard);
         send_control_event(
             &self.event_tx,
@@ -218,7 +222,9 @@ impl DownloadManager for DownloadManagerService {
 
         {
             let mut queue = self.download_queue.write().await;
-            queue.push_back(id.to_string());
+            if !queue.iter().any(|queued| queued == id) {
+                queue.push_back(id.to_string());
+            }
         }
 
         self.process_queue().await?;

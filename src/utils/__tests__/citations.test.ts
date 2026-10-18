@@ -237,14 +237,15 @@ describe('parseCitations - Performance & DoS Protection', () => {
     expect(result).toHaveLength(3); // text + citation + text
   });
 
-  it('should reject text over 100KB', () => {
-    const oversized = 'x'.repeat(150_000);
+  it('should preserve text over 100KB without truncating', () => {
+    const oversized = `${'x'.repeat(120_000)}[1]${'y'.repeat(30_000)}`;
 
     const result = parseCitations(oversized);
 
-    expect(result).toHaveLength(1);
-    expect(result[0].citationNumber).toBeUndefined();
-    expect(result[0].text).toContain('truncated');
+    expect(result).toHaveLength(3);
+    expect(result[0].text).toHaveLength(120_000);
+    expect(result[1].citationNumber).toBe(1);
+    expect(result[2].text).toHaveLength(30_000);
   });
 
   it('should timeout on excessive citations', () => {

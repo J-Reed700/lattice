@@ -7,7 +7,7 @@
  * bar; if the frame ever loads a second document anyway, it is put back.
  */
 
-import { type KeyboardEvent, type ReactNode, useCallback, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,7 @@ export interface WebPageSnapshotViewProps {
   /** The Reader | Page tabs, drawn at the start of the toolbar row. */
   toggle?: ReactNode;
   onShowReader?: () => void;
+  autoCapture?: boolean;
 }
 
 const primaryButton =
@@ -123,6 +124,7 @@ function statusLine(snapshot: WebPageSnapshotDto): { text: string; partial: stri
     snapshot.missingResourceCount > 0 ? `${resources}, ${snapshot.missingResourceCount} missing` : resources,
   );
   if (snapshot.method === 'http') parts.push('captured over HTTP');
+  else if (snapshot.method === 'browser') parts.push('captured in browser');
   const partial =
     snapshot.partial && snapshot.partialReasons.length > 0
       ? `incomplete: ${snapshot.partialReasons.join(', ')}`
@@ -136,12 +138,22 @@ export function WebPageSnapshotView({
   compact = false,
   toggle,
   onShowReader,
+  autoCapture = false,
 }: WebPageSnapshotViewProps) {
   const { snapshot: own, isLoading, isCapturing, capture, retry } = useWebPageSnapshot(conversationId, url);
   // "Open frozen copy" from the link bar shows another snapshot of this
   // conversation in place, until the reader moves to another citation.
   const [switched, setSwitched] = useState<{ forUrl: string; snapshot: WebPageSnapshotDto } | null>(null);
   const snapshot = switched?.forUrl === url ? switched.snapshot : own;
+
+  const autoCapturedUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!autoCapture || isLoading || snapshot || isCapturing || !url) return;
+    if (autoCapturedUrlRef.current === url) return;
+    autoCapturedUrlRef.current = url;
+    capture();
+  }, [autoCapture, isLoading, snapshot, isCapturing, url, capture]);
 
   const zoom = useWebPageSnapshotStore((state) => state.zoom);
   const clean = useWebPageSnapshotStore((state) => state.clean);

@@ -149,19 +149,25 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const shouldUseUrlActions = isExternalWebSource || (isWebCategory && !!externalSourceUrl);
   const importableUrl = externalSourceUrl ?? (isHttpUrl(source.filePath) ? source.filePath : null);
   const openableUrl = importableUrl;
+  const isDocx =
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    Boolean(source.filePath?.toLowerCase().endsWith('.docx'));
   // Audio is binary: without this, useFileContent reads the mp3 as UTF-8,
   // errors, and the generic error branch short-circuits before the audio
   // branch in renderViewer.
   const isBinaryPreview =
     mimeType === 'application/pdf' ||
     mimeType.startsWith('image/') ||
-    mimeType.startsWith('audio/');
+    mimeType.startsWith('audio/') ||
+    isDocx;
   const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
   /** A web citation rendered from its saved page text or saved excerpt. */
   const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
   // A frozen copy belongs to a conversation, so the Page view needs one.
-  const snapshotConversationId = showsWebArticle && openableUrl ? activeConversationId : null;
-  const snapshotUrl = snapshotConversationId ? openableUrl : null;
+  const snapshotConversationId = showsWebArticle && openableUrl
+    ? (source.conversationId ?? activeConversationId ?? '')
+    : null;
+  const snapshotUrl = showsWebArticle ? openableUrl : null;
   const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
@@ -172,8 +178,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const shouldFetchContent =
     !isFileTooLarge &&
     !isBinaryPreview &&
-    !isExternalWebSource &&
-    (!isWebSourceLike || (!externalSourceUrl && !isWebArchiveArticle));
+    !isWebArchiveArticle &&
+    (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const [resolvedPreviewPath, setResolvedPreviewPath] = useState<string | undefined>(undefined);
   const [isResolvingPreviewPath, setIsResolvingPreviewPath] = useState(false);
 
@@ -354,6 +360,24 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
   };
 
+  const enrichedWebSource = (() => {
+    if (!showsWebArticle) return source;
+    if (source.webSnapshot?.text) return source;
+    const resolvedText = webPageMode.snapshot?.readerText?.trim() || content?.trim();
+    if (!resolvedText) return source;
+    return {
+      ...source,
+      content: resolvedText,
+      webSnapshot: {
+        url: openableUrl ?? source.filePath,
+        title: webPageMode.snapshot?.title ?? source.fileName,
+        text: resolvedText,
+        fetchedAt: webPageMode.snapshot?.capturedAt ?? null,
+        truncated: Boolean(webPageMode.snapshot?.partial),
+      },
+    };
+  })();
+
   const renderViewer = () => (
     <SourceViewer
       source={source}
@@ -374,7 +398,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       webArticle={
         showsWebArticle ? (
           <WebSourceView
-            source={source}
+            source={enrichedWebSource}
             url={openableUrl}
             ownerKey={ownerKey}
             citationContent={citationContent}
@@ -389,6 +413,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             snapshotConversationId={snapshotConversationId}
             snapshotUrl={snapshotUrl}
             webPageMode={webPageMode}
+            initialLocator={initialLocator}
           />
         ) : null
       }

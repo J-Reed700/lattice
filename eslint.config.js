@@ -71,7 +71,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
   'src/features/chat/components/KnowledgePanel.tsx',
   'src/features/chat/components/sidebar/workspaceQueries.ts',
   'src/features/chat/components/tangents/ConversationTangents.tsx',
-  'src/features/chat/components/tangents/TangentPanel.tsx',
   'src/features/dashboard/components/Dashboard.tsx',
   'src/features/explorer/components/ExplorerFileView.tsx',
   'src/features/explorer/components/ExplorerSearch.tsx',
@@ -83,7 +82,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
   'src/features/model/components/FirstRun/FirstRunGate.tsx',
   'src/features/model/components/FirstRun/ModelSetupModal.tsx',
   'src/features/palette/components/CommandPalette/CommandPalette.tsx',
-  'src/features/reading/components/ContentViewer/ContentViewer.tsx',
   'src/features/reading/components/ContentViewer/renderers/DocxViewer.tsx',
   'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',
   'src/features/reading/components/ContentViewer/renderers/PDFViewerImpl.tsx',
@@ -107,7 +105,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
 // helper, then delete the file's entry.
 const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
   'src/features/explorer/components/ExplorerPage.tsx',
-  'src/features/files/components/FileBrowser/FileBrowser.tsx',
   'src/features/files/components/Ingest/ImportHistory.tsx',
   'src/features/journal/components/JournalPickerMenu.tsx',
   'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',

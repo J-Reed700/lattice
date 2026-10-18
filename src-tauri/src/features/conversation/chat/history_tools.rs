@@ -64,7 +64,7 @@ pub const TOOL_SEARCH_SAVED_KNOWLEDGE: &str = "search_saved_knowledge";
 /// largest page; a result names the offset its next page starts at, so every
 /// match is reachable. Automatic recall searches again for more while its
 /// budget has room.
-const MAX_CANDIDATES: usize = 24;
+const MAX_CANDIDATES: usize = 100;
 /// §9.1 step 1: how much recent-turn context may be folded into the query, in
 /// whitespace-separated tokens. Enough to resolve "that option"; not enough for
 /// the whole tail of the conversation to become the query.
@@ -89,7 +89,7 @@ const MIN_RESPONSE_BYTES: usize = 512;
 const DEFAULT_TURN_RESPONSE_BYTES: usize = 16 * DEFAULT_RESPONSE_BYTES;
 /// Message ceiling for one read. Paired with a byte ceiling because either one
 /// alone is unbounded in the other dimension.
-const MAX_READ_MESSAGES: usize = 64;
+const MAX_READ_MESSAGES: usize = 512;
 /// Arguments that would name a conversation. Present so a model that invents
 /// one is told the tool is already scoped, instead of receiving this
 /// conversation's text under the impression it read another.
@@ -352,6 +352,15 @@ impl HistoryToolMemo {
         budget
             .turn_response_bytes
             .saturating_sub(self.bytes_delivered)
+    }
+
+    /// When tool results are condensed into notes, the raw history text they
+    /// carried is no longer in the context window, so the turn's history
+    /// response budget and read-deduplication memo can be reclaimed.
+    pub(super) fn results_condensed(&mut self) {
+        self.reads.clear();
+        self.searches.clear();
+        self.bytes_delivered = 0;
     }
 }
 

@@ -147,8 +147,7 @@ fn repo_without_any_weights_names_both_candidates() {
 
 #[test]
 fn test_huggingface_adapter_creation() {
-    let adapter = HuggingFaceAdapter::new();
-    assert!(adapter.last_request.lock().is_none());
+    let _adapter = HuggingFaceAdapter::new();
 }
 
 #[test]
@@ -174,6 +173,7 @@ fn test_huggingface_model_to_external_metadata() {
         likes: 0,
         pipeline_tag: None,
         config: None,
+        gguf: None,
         card_data: None,
         gated: None,
         siblings: vec![],
@@ -204,6 +204,7 @@ fn test_huggingface_model_fallbacks() {
         likes: 0,
         pipeline_tag: None,
         config: None,
+        gguf: None,
         card_data: None,
         siblings: vec![],
     };
@@ -250,6 +251,7 @@ fn test_huggingface_model_uses_card_data_summary_for_description() {
         likes: 99,
         pipeline_tag: Some("text-generation".into()),
         config: None,
+        gguf: None,
         card_data: Some(serde_json::json!({
             "summary": "A compact instruction-tuned model for chat and coding."
         })),
@@ -261,6 +263,71 @@ fn test_huggingface_model_uses_card_data_summary_for_description() {
     assert_eq!(
         external.description,
         "A compact instruction-tuned model for chat and coding."
+    );
+}
+
+#[test]
+fn filters_out_auxiliary_draft_and_fork_only_gguf_files() {
+    // 1. Hadamard-rotated PrismML Bonsai 2 repo (PQ2_0 / PTQ1_0 / rotated F16) offers no downloadable GGUFs
+    let bonsai2: HuggingFaceModel = serde_json::from_value(serde_json::json!({
+        "id": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+        "tags": ["text-generation", "gguf", "prismml", "bonsai"],
+        "siblings": [
+            {"rfilename": "Ternary-Bonsai-2-27B-F16.gguf", "size": 53_560_288_416_u64},
+            {"rfilename": "Ternary-Bonsai-2-27B-PQ2_0.gguf", "size": 7_206_168_928_u64},
+            {"rfilename": "Ternary-Bonsai-2-27B-PTQ1_0.gguf", "size": 5_907_625_120_u64}
+        ]
+    }))
+    .unwrap();
+    assert!(bonsai2.gguf_variants().is_empty());
+    assert!(bonsai2.to_external_metadata().preferred_filename.is_none());
+
+    // 2. Ternary-Bonsai v1 skips fork-only g128 -Q2_0.gguf and selects mainline -Q2_0_g64.gguf over F16
+    let bonsai1: HuggingFaceModel = serde_json::from_value(serde_json::json!({
+        "id": "prism-ml/Ternary-Bonsai-8B-gguf",
+        "tags": ["text-generation", "gguf", "prismml", "bonsai"],
+        "siblings": [
+            {"rfilename": "Ternary-Bonsai-8B-F16.gguf"},
+            {"rfilename": "Ternary-Bonsai-8B-Q2_0.gguf"},
+            {"rfilename": "Ternary-Bonsai-8B-Q2_0_g64.gguf"}
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        bonsai1.to_external_metadata().preferred_filename.as_deref(),
+        Some("Ternary-Bonsai-8B-Q2_0_g64.gguf")
+    );
+    let variants: Vec<_> = bonsai1
+        .gguf_variants()
+        .into_iter()
+        .filter_map(|v| v.preferred_filename)
+        .collect();
+    assert_eq!(
+        variants,
+        vec![
+            "Ternary-Bonsai-8B-F16.gguf",
+            "Ternary-Bonsai-8B-Q2_0_g64.gguf"
+        ]
+    );
+
+    // 3. Auxiliary files (mtp-, dflash-, -dspark-, imatrix, -vision.gguf) are never selected
+    let mixed: HuggingFaceModel = serde_json::from_value(serde_json::json!({
+        "id": "prism-ml/Bonsai-27B-gguf",
+        "tags": ["text-generation", "gguf"],
+        "siblings": [
+            {"rfilename": "Bonsai-27B-dspark-Q4_1.gguf"},
+            {"rfilename": "dflash-Bonsai-27B-Q4_0.gguf"},
+            {"rfilename": "mtp-Bonsai-27B-Q8_0.gguf"},
+            {"rfilename": "imatrix-bonsai.gguf"},
+            {"rfilename": "Bonsai-27B-Vision.gguf"},
+            {"rfilename": "Bonsai-27B-F16.gguf"},
+            {"rfilename": "Bonsai-27B-Q1_0.gguf"}
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        mixed.to_external_metadata().preferred_filename.as_deref(),
+        Some("Bonsai-27B-Q1_0.gguf")
     );
 }
 
@@ -287,19 +354,6 @@ fn config_model_type_drives_embedding_compatibility_when_tags_do_not() {
             ref architecture
         }) if architecture == "modernbert"
     ));
-}
-
-#[tokio::test]
-async fn test_rate_limiting() {
-    let adapter = HuggingFaceAdapter::new();
-
-    let start = Instant::now();
-    adapter.enforce_rate_limit().await;
-    adapter.enforce_rate_limit().await;
-    let elapsed = start.elapsed();
-
-    // Second call should wait ~500ms
-    assert!(elapsed >= Duration::from_millis(450));
 }
 
 // Integration tests (requires network, mark with #[ignore])

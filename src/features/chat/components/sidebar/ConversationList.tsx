@@ -1,28 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import {
-  Archive,
-  Check,
-  ClipboardCopy,
-  Combine,
-  GitBranch,
-  GraduationCap,
-  Loader2,
-  MessageSquare,
-  MessageSquareShare,
-  MoreHorizontal,
-  NotebookPen,
-  Pencil,
-  Pin,
-  RotateCcw,
-  Star,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { GitBranch, Loader2, MessageSquare, NotebookPen } from 'lucide-react';
 
-import { IconButton } from '@/components/ui/IconButton';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ConversationActionsMenu, ConversationRenameField } from '@/features/chat/components/sidebar/ConversationActionsMenu';
 import {
   formatJournalGroupLabel,
   formatShortRelativeTime,
@@ -33,6 +14,7 @@ import {
   TIME_BUCKET_ORDER,
   TimeBucketKey,
 } from '@/features/chat/components/sidebar/sidebarUtils';
+import { useConversationRename } from '@/features/chat/components/sidebar/useConversationRename';
 import type { useConversationSynthesis } from '@/features/chat/components/sidebar/useConversationSynthesis';
 import { useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
 import type { ConversationExportActions } from '@/features/chat/hooks/useConversationExport';
@@ -40,7 +22,6 @@ import { useForkLineage } from '@/features/chat/hooks/useForkLineage';
 import { useGenerateConversationFlashcardDeck } from '@/features/learning/recall/flashcards/useFlashcards';
 import { normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
-import { toast } from '@/stores/toastStore';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -53,7 +34,6 @@ interface ConversationListProps {
   /** The two ways out of a conversation. Mounted once, by the sidebar. */
   exportActions: ConversationExportActions;
 }
-const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
 
 export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis, exportActions }: ConversationListProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -63,11 +43,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     activeConversationId,
     isLoading,
     selectConversation,
-    renameConversation,
     deleteConversation,
-    setConversationSaved,
-    setConversationPinned,
-    setConversationArchived,
   } = useConversationsStore();
   // Explorer threads live in the Explorer, beside their folder.
   const conversations = useMemo(
@@ -76,19 +52,14 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
   );
   const { journals } = useJournalsQuery();
   const forkLineage = useForkLineage(conversations);
-  const { synthesizeConversationToJournal, synthesizingConversationId, isSynthesizing, continueConversationInNewChat, continuingConversationId } = synthesis;
-  const {
-    copyConversationAsMarkdown,
-    saveConversationToJournal,
-    copyingConversationId,
-    savingConversationId,
-  } = exportActions;
-  const generateStudyDeck = useGenerateConversationFlashcardDeck();
+  const { synthesizingConversationId, continuingConversationId } = synthesis;
+  const studyDeck = useGenerateConversationFlashcardDeck();
+  const menuServices = { synthesis, exportActions, studyDeck };
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
-  const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
-  useEffect(() => { if (isSelectionMode) { setRenamingConversationId(null); setRenameDraft(''); } }, [isSelectionMode]);
+  const rename = useConversationRename();
+  const { renamingId: renamingConversationId, begin: beginRenameConversation, cancel: cancelRenameConversation } = rename;
+  useEffect(() => { if (isSelectionMode) cancelRenameConversation(); }, [cancelRenameConversation, isSelectionMode]);
   const spaceNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const space of spaces) {
@@ -172,9 +143,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
       }));
   }, [conversations, isJournalScope]);
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-
+  const handleDelete = async (id: string) => {
     const target = conversations.find((conversation) => conversation.id === id);
     if (!target) {
       return;
@@ -192,40 +161,6 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
   const openForkParent = async (parentId: string, messageId: string | null) => {
     await selectConversation(parentId);
     if (messageId) scrollToMessage(messageId);
-  };
-
-  const beginRenameConversation = (conversationId: string, title: string) => {
-    setRenamingConversationId(conversationId);
-    setRenameDraft(title);
-  };
-
-  const cancelRenameConversation = () => {
-    setRenamingConversationId(null);
-    setRenameDraft('');
-  };
-
-  const saveConversationRename = async (
-    conversationId: string,
-    currentTitle: string
-  ) => {
-    const nextTitle = renameDraft.trim();
-    if (!nextTitle) {
-      toast.warning('Title required', {
-        message: 'Conversation title cannot be empty.',
-        duration: 2800,
-      });
-      return;
-    }
-
-    if (nextTitle === currentTitle.trim()) {
-      cancelRenameConversation();
-      return;
-    }
-
-    const didRename = await renameConversation(conversationId, nextTitle);
-    if (didRename) {
-      cancelRenameConversation();
-    }
   };
 
   return (<>
@@ -342,56 +277,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                       )}
 
                       {renamingConversationId === conversation.id ? (
-                        <div
-                          className="flex min-w-0 flex-1 items-center gap-1"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            autoFocus
-                            value={renameDraft}
-                            maxLength={120}
-                            onChange={(e) => setRenameDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void saveConversationRename(
-                                  conversation.id,
-                                  conversation.title
-                                );
-                                return;
-                              }
-                              if (e.key === 'Escape') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                cancelRenameConversation();
-                              }
-                            }}
-                            className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-                            aria-label={`Rename conversation: ${conversation.title}`}
-                          />
-                          <IconButton
-                            label="Save conversation title"
-                            onClick={handleAsyncEvent(async (e) => {
-                              e.stopPropagation();
-                              await saveConversationRename(
-                                conversation.id,
-                                conversation.title
-                              );
-                            })}
-                          >
-                            <Check />
-                          </IconButton>
-                          <IconButton
-                            label="Cancel rename"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              cancelRenameConversation();
-                            }}
-                          >
-                            <X />
-                          </IconButton>
-                        </div>
+                        <ConversationRenameField conversation={conversation} rename={rename} />
                       ) : (
                         <h3
                           className={`min-w-0 flex-1 truncate text-ui text-text-primary ${isActive ? 'font-medium' : 'font-normal'
@@ -449,114 +335,15 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                         className={`absolute right-2 top-1.5 rounded-sm bg-surface-raised transition-opacity duration-fast ${openActionsId === conversation.id ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'}`}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <Popover open={openActionsId === conversation.id} onOpenChange={(open) => setOpenActionsId(open ? conversation.id : null)}>
-                          <PopoverTrigger asChild>
-                            <IconButton label={`Actions for ${conversation.title}`}>
-                              <MoreHorizontal />
-                            </IconButton>
-                          </PopoverTrigger>
-                          <PopoverContent aria-label={`Actions for ${conversation.title}`} align="end" sideOffset={5} className="w-60 p-1.5" onClick={(e) => e.stopPropagation()}>
-                            <div>
-                              {/* The two ways out come first: taking an answer
-                                  somewhere else is what a researcher opens this
-                                  menu for, and both act on this row, not on
-                                  whichever conversation happens to be open. */}
-                              <button
-                                type="button"
-                                className={MENU_ITEM_CLASS}
-                                disabled={copyingConversationId === conversation.id}
-                                onClick={() => {
-                                  setOpenActionsId(null);
-                                  void copyConversationAsMarkdown(conversation.id, conversation.title);
-                                }}
-                              >
-                                {copyingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCopy className="h-4 w-4" />}
-                                Copy as Markdown
-                              </button>
-                              <button
-                                type="button"
-                                className={MENU_ITEM_CLASS}
-                                disabled={savingConversationId === conversation.id}
-                                onClick={() => {
-                                  setOpenActionsId(null);
-                                  void saveConversationToJournal(conversation.id, conversation.title);
-                                }}
-                              >
-                                {savingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <NotebookPen className="h-4 w-4" />}
-                                Save to journal
-                              </button>
-
-                              <div className="my-1 h-px bg-border-subtle" />
-
-                              <button
-                                type="button"
-                                className={MENU_ITEM_CLASS}
-                                disabled={generateStudyDeck.isPending}
-                                onClick={() => {
-                                  setOpenActionsId(null);
-                                  generateStudyDeck.mutate(
-                                    { conversationId: conversation.id, title: `${conversation.title} · Verified claims`.slice(0, 120) },
-                                    { onError: (error) => toast.error("Couldn't create flashcards", { message: error.message }) },
-                                  );
-                                }}
-                              >
-                                {generateStudyDeck.isPending && generateStudyDeck.variables?.conversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <GraduationCap className="h-4 w-4" />}
-                                Create flashcards
-                              </button>
-                              <button
-                                type="button"
-                                className={MENU_ITEM_CLASS}
-                                disabled={isSynthesizing}
-                                onClick={() => {
-                                  setOpenActionsId(null);
-                                  void synthesizeConversationToJournal(conversation.id, conversation.title);
-                                }}
-                              >
-                                {synthesizingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Combine className="h-4 w-4" />}
-                                Synthesize to journal
-                              </button>
-                              <button
-                                type="button"
-                                className={MENU_ITEM_CLASS}
-                                disabled={continuingConversationId !== null}
-                                title="Summarize this chat and start a new one in the same space from the summary"
-                                onClick={() => {
-                                  setOpenActionsId(null);
-                                  void continueConversationInNewChat(conversation.id, conversation.title);
-                                }}
-                              >
-                                {continuingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquareShare className="h-4 w-4" />}
-                                Continue in new chat
-                              </button>
-
-                              <div className="my-1 h-px bg-border-subtle" />
-
-                              <button type="button" className={MENU_ITEM_CLASS} onClick={() => { setOpenActionsId(null); beginRenameConversation(conversation.id, conversation.title); }}>
-                                <Pencil className="h-4 w-4" />Rename
-                              </button>
-                              <button type="button" className={MENU_ITEM_CLASS} onClick={() => { setOpenActionsId(null); void setConversationSaved(conversation.id, !conversation.isSaved); }}>
-                                <Star className={`h-4 w-4 ${conversation.isSaved ? 'fill-current text-accent' : ''}`} />{conversation.isSaved ? 'Remove from saved' : 'Save conversation'}
-                              </button>
-                              <button type="button" className={MENU_ITEM_CLASS} onClick={() => { setOpenActionsId(null); void setConversationPinned(conversation.id, !conversation.isPinned); }}>
-                                <Pin className={`h-4 w-4 ${conversation.isPinned ? 'text-accent' : ''}`} />{conversation.isPinned ? 'Unpin' : 'Pin'}
-                              </button>
-                              <button type="button" className={MENU_ITEM_CLASS} onClick={() => { setOpenActionsId(null); void setConversationArchived(conversation.id, !conversation.isArchived); }}>
-                                {conversation.isArchived ? <RotateCcw className="h-4 w-4" /> : <Archive className="h-4 w-4" />}{conversation.isArchived ? 'Restore' : 'Archive'}
-                              </button>
-
-                              <div className="my-1 h-px bg-border-subtle" />
-
-                              <button
-                                type="button"
-                                disabled={isDeleting}
-                                className={`${MENU_ITEM_CLASS} text-danger-fg hover:bg-danger-muted focus-visible:bg-danger-muted`}
-                                onClick={(e) => { setOpenActionsId(null); void handleDelete(conversation.id, e); }}
-                              >
-                                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}Delete conversation
-                              </button>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
+                        <ConversationActionsMenu
+                          conversation={conversation}
+                          services={menuServices}
+                          open={openActionsId === conversation.id}
+                          onOpenChange={(open) => setOpenActionsId(open ? conversation.id : null)}
+                          onRename={() => beginRenameConversation(conversation.id, conversation.title)}
+                          onDelete={() => void handleDelete(conversation.id)}
+                          deleting={isDeleting}
+                        />
                       </div>
                     )}
                   </div>

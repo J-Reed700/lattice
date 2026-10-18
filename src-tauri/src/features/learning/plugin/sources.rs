@@ -43,21 +43,10 @@ pub async fn add_learning_web_source(
     container: State<'_, Container>,
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
     let web = container.web_service();
-    let security = std::sync::Arc::clone(container.security_context());
     crate::features::learning::source_workflows::add_web_source(
         &source_library(&container),
         request,
-        move |url| async move {
-            security
-                .rate_limiters()
-                .web_ingest
-                .check_rate_limit("learning_source_fetch")
-                .await
-                .map_err(|error| {
-                    lattice_core::shared::error::AppError::RateLimitExceeded(error.to_string())
-                })?;
-            web.fetch_reference_content(&url).await
-        },
+        move |url| async move { web.fetch_reference_content(&url).await },
     )
     .await
     .map_err(ApiError::from)
@@ -213,13 +202,6 @@ pub async fn refresh_learning_source(
         ));
     }
     let captured_result = async {
-        container
-            .security_context()
-            .rate_limiters()
-            .web_ingest
-            .check_rate_limit("learning_source_refresh")
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
         let article = container
             .web_service()
             .fetch_reference_content(&url)

@@ -77,7 +77,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 ///
 /// # Arguments
 /// * `pool` - SQLite connection pool
-/// * `security_context` - Security context with rate limiters
+/// * `security_context` - Security context
 /// * `model_dir` - Directory containing ML models (checks for model.onnx)
 /// * `data_dir` - Application data directory
 /// * `config` - Application configuration

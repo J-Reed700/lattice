@@ -9,7 +9,6 @@
 //! ## Features
 //!
 //! - **HTTP Client**: reqwest with connection pooling
-//! - **Rate Limiting**: 500ms minimum interval between requests
 //! - **Error Handling**: Network errors, API errors, timeout handling
 //! - **Graceful Degradation**: Returns empty results on errors (doesn't crash)
 //!
@@ -38,11 +37,9 @@
 //! ```
 
 use async_trait::async_trait;
-use parking_lot::Mutex;
 use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
 use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
@@ -101,6 +98,9 @@ struct HuggingFaceModel {
     /// local embedding loader can open a model.
     #[serde(default)]
     config: Option<serde_json::Value>,
+    /// GGUF header summary indexed by Hugging Face when available.
+    #[serde(default)]
+    gguf: Option<serde_json::Value>,
     /// Parsed model card metadata when available
     #[serde(rename = "cardData", default)]
     card_data: Option<serde_json::Value>,
@@ -145,6 +145,88 @@ impl HuggingFaceModel {
             && !filename.contains("..")
             && !lower.contains("mmproj")
             && !lower.contains("-of-")
+            && !lower.contains("imatrix")
+            && !lower.starts_with("ggml-vocab-")
+            && !lower.starts_with("mtp-")
+            && !lower.contains("-mtp-")
+            && !lower.contains("_mtp_")
+            && !lower.starts_with("dflash-")
+            && !lower.contains("-dflash-")
+            && !lower.contains("_dflash_")
+            && !lower.starts_with("dspark-")
+            && !lower.contains("-dspark-")
+            && !lower.contains("_dspark_")
+            && !lower.starts_with("eagle3-")
+            && !lower.contains("-eagle3-")
+            && !lower.contains("_eagle3_")
+            && !lower.ends_with("-vision.gguf")
+            && !lower.ends_with("_vision.gguf")
+            && !lower.contains("pq2_0")
+            && !lower.contains("ptq1_0")
+    }
+
+    fn gguf_architecture(&self) -> Option<&str> {
+        self.gguf
+            .as_ref()?
+            .get("architecture")?
+            .as_str()
+            .filter(|arch| !arch.trim().is_empty())
+    }
+
+    /// Repositories whose checkpoints are Hadamard-rotated for the PrismML fork
+    /// (`Ternary-Bonsai-2`, `PQ2_0` / `PTQ1_0`) cannot run on stock `llama.cpp`,
+    /// even when they also publish an `F16.gguf` sibling.
+    fn requires_fork_hadamard_runtime(&self) -> bool {
+        let repo_lower = self.resolve_repo_id().to_ascii_lowercase();
+        if repo_lower.contains("ternary-bonsai-2") {
+            return true;
+        }
+        self.siblings.iter().any(|s| {
+            let lower = s.filename.to_ascii_lowercase();
+            lower.ends_with(".gguf") && (lower.contains("pq2_0") || lower.contains("ptq1_0"))
+        })
+    }
+
+    /// PrismML's Ternary-Bonsai repos publish `-Q2_0.gguf` with a 128-element
+    /// fork-only block size alongside `-Q2_0_g64.gguf` / `-Q2_g64.gguf` for
+    /// mainline `llama.cpp` (where `GGML_TYPE_Q2_0` uses 64-element blocks).
+    fn is_fork_g128_q2_0(&self, filename: &str) -> bool {
+        let lower = filename.to_ascii_lowercase();
+        let is_unsuffixed_q2_0 = lower.ends_with("-q2_0.gguf") || lower.ends_with("_q2_0.gguf");
+        if !is_unsuffixed_q2_0 {
+            return false;
+        }
+        let has_g64_sibling = self.siblings.iter().any(|s| {
+            let sib = s.filename.to_ascii_lowercase();
+            sib.ends_with(".gguf") && sib.contains("g64")
+        });
+        let repo_lower = self.resolve_repo_id().to_ascii_lowercase();
+        let is_prism_ternary = repo_lower.starts_with("prism-ml/")
+            || repo_lower.contains("ternary-bonsai")
+            || self
+                .tags
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case("prismml") || t.eq_ignore_ascii_case("bonsai"));
+        has_g64_sibling || is_prism_ternary
+    }
+
+    fn is_compatible_gguf_sibling(&self, filename: &str) -> bool {
+        if !Self::is_standalone_gguf(filename) {
+            return false;
+        }
+        if !self.is_embedding_model() {
+            if let Some(arch) = self.gguf_architecture() {
+                if !lattice_core::domain::models::llm_architecture::is_supported_llm_architecture(
+                    arch,
+                ) {
+                    return false;
+                }
+            }
+        }
+        if self.requires_fork_hadamard_runtime() || self.is_fork_g128_q2_0(filename) {
+            return false;
+        }
+        true
     }
 
     fn gguf_variants(&self) -> Vec<ExternalModelMetadata> {
@@ -152,7 +234,7 @@ impl HuggingFaceModel {
         let mut variants: Vec<_> = self
             .siblings
             .iter()
-            .filter(|file| Self::is_standalone_gguf(&file.filename))
+            .filter(|file| self.is_compatible_gguf_sibling(&file.filename))
             .map(|file| ExternalModelMetadata {
                 preferred_filename: Some(file.filename.clone()),
                 preferred_size_bytes: file.size,
@@ -191,6 +273,13 @@ impl HuggingFaceModel {
             3
         } else if lower.contains("q8_0") {
             4
+        } else if lower.contains("f16")
+            || lower.contains("bf16")
+            || lower.contains("fp16")
+            || lower.contains("f32")
+            || lower.contains("fp32")
+        {
+            6
         } else {
             5
         }
@@ -214,7 +303,7 @@ impl HuggingFaceModel {
         let mut candidates: Vec<&HuggingFaceSibling> = self
             .siblings
             .iter()
-            .filter(|s| Self::is_standalone_gguf(&s.filename))
+            .filter(|s| self.is_compatible_gguf_sibling(&s.filename))
             .collect();
 
         if candidates.is_empty() {

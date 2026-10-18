@@ -74,13 +74,6 @@ pub async fn batch_import_urls(
 ) -> Result<StartBatchUrlImportResponseDto, ApiError> {
     let started = async {
         require_embedding(&container).await?;
-        container
-            .security_context()
-            .rate_limiters()
-            .web_ingest
-            .check_rate_limit("batch_url_import")
-            .await
-            .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
         imports(&container)
             .start_urls(&request.urls, request.options)
             .await

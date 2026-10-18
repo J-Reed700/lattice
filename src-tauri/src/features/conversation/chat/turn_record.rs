@@ -16,21 +16,20 @@ use serde::{Deserialize, Serialize};
 
 use super::ChatStreamEventDto;
 
-/// Steps one turn may record. More than this and the timeline is a log, not a
-/// record of what happened; a turn that hits the cap is pathological anyway.
-const MAX_STEPS: usize = 200;
+/// Steps one turn may record. High enough that long multi-round investigations
+/// never lose their activity timeline, while still bounding pathological loops.
+const MAX_STEPS: usize = 10_000;
 
 /// A step's `detail` is a hint, not a transcript: the query, the host, a tool's
 /// arguments. Anything longer is cut.
 const MAX_DETAIL_CHARS: usize = 200;
 
-/// Enough to inspect a substantial local-model trace without letting one
-/// verbose generation turn the message metadata into an unbounded transcript.
-const MAX_REASONING_CHARS: usize = 24_000;
+/// Enough to inspect a substantial reasoning trace across long investigations
+/// without letting one runaway generation grow without bound.
+const MAX_REASONING_CHARS: usize = 256_000;
 
-/// Links one step may carry. A search hands the model about ten results; past
-/// that the list stops being "where it looked" and becomes a results page.
-const MAX_STEP_LINKS: usize = 12;
+/// Links one step may carry.
+const MAX_STEP_LINKS: usize = 100;
 
 /// What kind of work a step was. Stable codes, not prose — the label is what a
 /// person reads, this is what the UI groups and tests match on.
@@ -740,7 +739,7 @@ mod tests {
     #[test]
     fn a_step_carries_no_more_links_than_a_reader_can_take_in() {
         let (recorder, _) = capturing();
-        let many = (0..40)
+        let many = (0..(MAX_STEP_LINKS + 20))
             .map(|n| TurnStepLinkDto::new(format!("https://example.com/{n}"), None))
             .collect();
 

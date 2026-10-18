@@ -67,10 +67,14 @@ pub(super) async fn retrieve_evidence(
     // has no subject of its own, so the web-query rewrite has to read one off
     // the attachment or it searches for the request instead of the question.
     let attachment_digest = carried.attachments.subject_digest(ATTACHMENT_DIGEST_CHARS);
+    let search_message = search_message(container, turn).await;
     let retrieval_start = Instant::now();
     let retrieval = run_retrieval_pipeline(
         container,
-        turn.chat_turn(),
+        ChatTurn {
+            message: &search_message,
+            ..turn.chat_turn()
+        },
         &turn.settings,
         &route.decision,
         flags,
@@ -86,4 +90,23 @@ pub(super) async fn retrieve_evidence(
         prior_left_out,
         retrieval,
     })
+}
+
+/// What the turn searches with. A tangent's questions point at the passage it
+/// was opened on ("how is that determined?"), so its search carries that
+/// passage beside the question; the question alone names nothing to find, and
+/// a short one would be planned from the parent thread's last turn instead.
+async fn search_message(container: &dyn ChatRuntime, turn: &PreparedTurn) -> String {
+    match container
+        .conversation_branches()
+        .tangent_selection(&turn.conv_id)
+        .await
+    {
+        Ok(Some(passage)) => format!("{}\n\nAbout this passage:\n{passage}", turn.message),
+        Ok(None) => turn.message.clone(),
+        Err(error) => {
+            tracing::warn!(%error, "Could not read the tangent's passage; searching the question alone");
+            turn.message.clone()
+        }
+    }
 }

@@ -246,7 +246,7 @@ async fn run(
     web: &Arc<Web>,
     tools: &[ToolDefinition],
     input_budget: usize,
-    rounds: usize,
+    rounds: impl Into<Option<usize>>,
     request_id: &str,
 ) -> Run {
     let runtime = FakeRuntime {
@@ -261,7 +261,7 @@ async fn run_on(
     model: &Arc<Model>,
     tools: &[ToolDefinition],
     input_budget: usize,
-    rounds: usize,
+    rounds: impl Into<Option<usize>>,
     request_id: &str,
 ) -> Run {
     let conv_service: Arc<dyn ConversationServiceTrait> = runtime.conversations.clone();
@@ -304,7 +304,7 @@ async fn run_on(
             max_output_tokens: 512,
             input_budget,
             time_budget: Duration::from_secs(60),
-            max_tool_rounds: rounds,
+            max_tool_rounds: rounds.into(),
             research: None,
         },
         &settings,
@@ -835,4 +835,45 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let last = requests.last().unwrap();
     assert!(last_text(last).ends_with(FINAL_ROUND_INSTRUCTION));
     assert!(!results_mentioning(last, &format!("Text of {PAGE_A}")).is_empty());
+}
+
+/// With `max_tool_rounds: None` and no condensation count cap, the loop keeps
+/// condensing as the window fills and continues for as many rounds as the
+/// model needs before answering.
+#[tokio::test]
+async fn unbounded_rounds_and_condenses_keep_going_until_the_model_answers() {
+    let web = Web::with_pages_of(30_000);
+    let model = Model::new([
+        reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
+        reads(&[PAGE_C]),
+        reads(&[PAGE_D]),
+        reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
+        reads(&[PAGE_C]),
+        reads(&[PAGE_D]),
+        CompletionResponse::from_text("It opened in 1932 [1]."),
+    ]);
+    let run = run(
+        &model,
+        &web,
+        &[tool("fetch_url_content")],
+        ONE_PAGE_WINDOW,
+        None,
+        "unbounded-rounds-and-condenses",
+    )
+    .await;
+
+    let outcome = run.outcome.unwrap();
+    assert_eq!(outcome.response, "It opened in 1932 [1].");
+    assert_eq!(outcome.timings.iterations, 9);
+    let condenses = model
+        .requests()
+        .iter()
+        .filter(|req| is_condense_request(req))
+        .count();
+    assert!(
+        condenses >= 3,
+        "expected at least 3 condensations, got {condenses}"
+    );
 }

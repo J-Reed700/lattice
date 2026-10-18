@@ -65,8 +65,10 @@ pub(super) struct LoopRequest<'a> {
     pub(super) input_budget: usize,
     /// One deadline for the whole turn: tool rounds and provider retries share it.
     pub(super) time_budget: Duration,
-    /// Model rounds this turn may spend; see [`max_tool_rounds`].
-    pub(super) max_tool_rounds: usize,
+    /// Optional ceiling on model rounds for tests; `None` lets the turn keep
+    /// running rounds until it answers, the window fills past condensing, the
+    /// user stops it, or the turn's time budget expires.
+    pub(super) max_tool_rounds: Option<usize>,
     /// A research turn saves every round it finishes here, and a resumed one
     /// starts after the last it saved.
     pub(super) research: Option<Rounds<'a>>,
@@ -179,7 +181,7 @@ pub(super) async fn run_agentic_tool_loop(
         max_tool_rounds,
         research,
     } = request;
-    let max_tool_rounds = max_tool_rounds.max(1);
+    let max_tool_rounds = max_tool_rounds.map(|rounds| rounds.max(1));
     let (journal, start) = match research {
         Some(Rounds { journal, start }) => (Some(journal), start),
         None => (None, None),
@@ -197,7 +199,10 @@ pub(super) async fn run_agentic_tool_loop(
         queries = start.queries;
         fetched = start.fetched;
         timings = start.timings;
-        first_round = start.rounds.min(max_tool_rounds - 1);
+        first_round = match max_tool_rounds {
+            Some(max) => start.rounds.min(max - 1),
+            None => start.rounds,
+        };
     }
     let spent = Duration::from_millis(
         timings
@@ -283,24 +288,21 @@ pub(super) async fn run_agentic_tool_loop(
         sources,
     );
     let mut condensed = 0;
-    for iteration in first_round..max_tool_rounds {
+    let mut condense_failed = false;
+    let mut iteration = first_round;
+    while max_tool_rounds.is_none_or(|max| iteration < max) {
         timings.iterations = (iteration + 1) as u32;
-        let out_of_rounds = iteration + 1 == max_tool_rounds;
+        let out_of_rounds = max_tool_rounds.is_some_and(|max| iteration + 1 == max);
         // Before the window can be judged full: results that have outgrown
         // their share are condensed into notes and the research goes on. The
         // full-window ending below is the last resort.
         if iteration > 0
             && !out_of_rounds
-            && research_notes::should_condense(
-                window,
-                &native_request.input,
-                planned_len,
-                condensed,
-            )
+            && !condense_failed
+            && research_notes::should_condense(window, &native_request.input, planned_len)
         {
-            condensed += 1;
             let condense_start = Instant::now();
-            if let Some(notes) = research_notes::condense(
+            match research_notes::condense(
                 llm.as_ref(),
                 &mut native_request,
                 planned_len,
@@ -310,13 +312,20 @@ pub(super) async fn run_agentic_tool_loop(
             )
             .await?
             {
-                info!(
-                    iteration,
-                    chars_before = notes.chars_before,
-                    chars_after = notes.chars_after,
-                    "Condensed earlier tool results to keep researching"
-                );
-                calls.results_condensed(&notes.result_ids);
+                Some(notes) => {
+                    condensed += 1;
+                    info!(
+                        iteration,
+                        condensed,
+                        chars_before = notes.chars_before,
+                        chars_after = notes.chars_after,
+                        "Condensed earlier tool results to keep researching"
+                    );
+                    calls.results_condensed(&notes.result_ids);
+                }
+                None => {
+                    condense_failed = true;
+                }
             }
             timings.llm_stream_ms = timings
                 .llm_stream_ms
@@ -528,11 +537,12 @@ pub(super) async fn run_agentic_tool_loop(
                 })
                 .await?;
         }
+        iteration += 1;
     }
 
     warn!(
         conversation_id = conv_id,
-        iterations = max_tool_rounds,
+        iterations = timings.iterations,
         llm_stream_ms = timings.llm_stream_ms,
         tool_execution_ms = timings.tool_execution_ms,
         tool_call_count = timings.tool_call_count,
@@ -545,21 +555,6 @@ pub(super) async fn run_agentic_tool_loop(
     Err(AppError::Other(
         "Tool calling loop exceeded maximum iterations without producing a final response".into(),
     ))
-}
-
-/// Model rounds a turn may spend on tool calls, the last of which is kept for
-/// the answer. Deep research has a two-hour budget and branches across many
-/// sources; five rounds would end it long before that budget does. An
-/// Explorer turn reads a folder file by file, two or three a round, so five
-/// rounds ended a walk through a codebase before it reached the answer.
-pub(super) fn max_tool_rounds(deep_research: bool, explorer: bool) -> usize {
-    if deep_research {
-        12
-    } else if explorer {
-        10
-    } else {
-        5
-    }
 }
 
 /// Appended where the last round's answer stopped to write a tool call it

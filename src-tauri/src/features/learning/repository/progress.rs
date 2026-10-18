@@ -181,18 +181,8 @@ impl LearningRepository {
                             "Module does not belong to this program.".into(),
                         ));
                     }
-                    let not_ready: i64 = sqlx::query_scalar(
-                        "SELECT count(*) FROM learning_lessons WHERE module_id=? AND preparation!='ready'",
-                    )
-                    .bind(&req.module_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?;
-                    if not_ready != 0 {
-                        return Err(AppError::InvalidInput(
-                            "Prepare every lesson in the module before starting its test.".into(),
-                        ));
-                    }
+                    // A module test covers whichever of its lessons are prepared
+                    // so far; lessons prepared later add their questions to it.
                     (sqlx::query("SELECT q.*,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id JOIN learning_lessons l ON l.id=q.lesson_id WHERE q.module_id=? AND q.kind='test' AND l.preparation='ready' ORDER BY l.ordinal,q.ordinal").bind(&req.module_id).fetch_all(&mut *tx).await.map_err(db)?,None)
                 }
             };

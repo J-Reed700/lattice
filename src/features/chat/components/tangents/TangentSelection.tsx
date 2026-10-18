@@ -1,9 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Copy, GitBranch } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+import type { ConversationTangentDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
+
+import { useTangentSourceHighlights } from './useTangentSourceHighlights';
 
 export interface TangentSelectionData {
   conversationId: string;
@@ -14,9 +17,13 @@ export interface TangentSelectionData {
 export const TangentSelectionContext = createContext<{
   create: (selection: TangentSelectionData) => void;
   creating: boolean;
+  /** Every tangent of the open conversation, nested ones included: their passages stay marked. */
+  tangents?: readonly ConversationTangentDto[];
 } | null>(null);
 
 export const MAX_TANGENT_PASSAGE_LENGTH = 8000;
+
+const NO_TANGENTS: readonly ConversationTangentDto[] = [];
 
 type PassageAction = { text: string; x: number; y: number; mode: 'selection' | 'menu' };
 
@@ -33,6 +40,10 @@ export function TangentSelection({ conversationId, messageId, enabled, children 
   const [selection, setSelection] = useState<PassageAction | null>(null);
   const pointerSelecting = useRef(false);
   const available = Boolean(tangents && enabled && conversationId && messageId);
+  const allTangents = tangents?.tangents;
+  const sourced = useMemo(() => (available && allTangents
+    ? allTangents.filter(tangent => tangent.sourceMessageId === messageId) : NO_TANGENTS), [allTangents, available, messageId]);
+  useTangentSourceHighlights(bodyRef, sourced);
 
   const readSelection = useCallback(() => {
     const range = window.getSelection();

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { DocxViewer } from '@/features/reading/components/ContentViewer/renderers/DocxViewer';
 import { HTMLViewer } from '@/features/reading/components/ContentViewer/renderers/HTMLViewer';
 import { AudioViewer, audioViewerPropsFromSource } from '@/features/reading/components/viewers/AudioViewer';
 import { ImageViewer } from '@/features/reading/components/viewers/ImageViewer';
@@ -132,6 +133,13 @@ export const SourceViewer = ({
         onMatch={onMatch}
       />
     );
+  }
+
+  if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    previewFilePath.toLowerCase().endsWith('.docx')
+  ) {
+    return <DocxViewer filePath={previewFilePath} title={source.fileName} />;
   }
 
   if (mimeType.startsWith('text/x-') || mimeType === 'application/javascript') {

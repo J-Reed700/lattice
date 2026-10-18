@@ -59,6 +59,8 @@ pub struct WebPageSnapshotDto {
     pub progress_message: Option<String>,
     /// Ready rows: whether the file's hash was re-checked when this DTO was built.
     pub verified: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader_text: Option<String>,
 }
 
 /// Payload of [`CHANGED_EVENT`].

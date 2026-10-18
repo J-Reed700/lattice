@@ -1,10 +1,18 @@
 import { useCallback, useState } from 'react';
 
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
+import type { LLMSettings } from '@/types/api/settings';
 import type { DisplayMessage } from '@/types/conversation';
+import {
+  buildChatModelOptions,
+  LLAMACPP_SERVER_MODEL_ID,
+  OLLAMA_SERVER_MODEL_ID,
+  resolveActiveChatOption,
+} from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
 /**
@@ -50,7 +58,15 @@ export function useMessageActions({
   const sendMessage = useConversationsStore((s) => s.sendMessage);
   const createConversation = useConversationsStore((s) => s.createConversation);
 
-  const { activeModel, setActiveChatModel } = useDownloadedModels();
+  const { activeModel, setActiveChatModel, downloadedModels = [] } = useDownloadedModels();
+  const { data: settings } = useSettingsQuery();
+  const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
+  const updateProvider = useCallback(
+    async (provider: LLMSettings['provider']) => {
+      await updateSettings({ category: 'llm', updates: { provider } });
+    },
+    [updateSettings]
+  );
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(normalizedMarkdownContent);
@@ -83,25 +99,67 @@ export function useMessageActions({
   const handleTryWithModel = useCallback(
     async (modelId: string, modelLabel: string) => {
       if (!conversationId) return;
-      const previousModelId = activeModel?.model_id ?? null;
-      const previousLabel = activeModel?.model_name ?? previousModelId;
+      const previousOption = resolveActiveChatOption(
+        settings?.llm,
+        downloadedModels,
+        activeModel?.model_id ?? null
+      );
+      const previousProvider = settings?.llm.provider;
+      const previousLocalModelId = activeModel?.model_id ?? null;
+      const previousLabel = previousOption?.triggerLabel ?? activeModel?.model_name ?? previousLocalModelId;
+
       try {
-        await setActiveChatModel(modelId);
+        const targetOption = buildChatModelOptions(settings?.llm, downloadedModels).find(
+          (o) => o.id === modelId
+        );
+
+        if (modelId === LLAMACPP_SERVER_MODEL_ID || targetOption?.backend === 'llamacpp') {
+          await updateProvider('llamacpp');
+        } else if (modelId === OLLAMA_SERVER_MODEL_ID || targetOption?.backend === 'ollama') {
+          if (targetOption?.downloadedModelId || downloadedModels.some((m) => m.model_id === modelId)) {
+            await setActiveChatModel(modelId);
+          }
+          if (settings?.llm && settings.llm.provider !== 'ollama') {
+            await updateProvider('ollama');
+          }
+        } else {
+          await setActiveChatModel(modelId);
+          if (settings?.llm && settings.llm.provider !== 'local') {
+            await updateProvider('local');
+          }
+        }
       } catch (error) {
         toast.error("Couldn't switch model", {
           message: error instanceof Error ? error.message : String(error),
         });
         return;
       }
+
+      const canSwitchBack = Boolean(
+        (previousLocalModelId && previousLocalModelId !== modelId) ||
+        (previousOption && previousOption.id !== modelId) ||
+        (previousProvider && settings?.llm)
+      );
+
       // The switch is app-wide, so every outcome offers the way back.
-      const switchBack = previousModelId
+      const switchBack = canSwitchBack
         ? {
             action: {
               label: 'Switch back',
               onClick: () => {
-                void setActiveChatModel(previousModelId).then(() => {
+                void (async () => {
+                  if (
+                    previousLocalModelId &&
+                    previousLocalModelId !== modelId &&
+                    (previousOption?.downloadedModelId || !settings?.llm)
+                  ) {
+                    await setActiveChatModel(previousLocalModelId);
+                  }
+                  if (previousProvider && settings?.llm) {
+                    await updateProvider(previousProvider);
+                  }
                   toast.success(`Back to ${previousLabel}`);
-                });
+                })();
               },
             },
           }
@@ -127,7 +185,7 @@ export function useMessageActions({
       }
       toast.success(`Answered with ${modelLabel}`, switchBack);
     },
-    [conversationId, activeModel, setActiveChatModel, regenerateResponse]
+    [conversationId, activeModel, downloadedModels, setActiveChatModel, settings, updateProvider, regenerateResponse]
   );
 
   const handleBranch = useCallback(async () => {

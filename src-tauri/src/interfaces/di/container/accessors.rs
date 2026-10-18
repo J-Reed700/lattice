@@ -81,6 +81,13 @@ impl Container {
         Arc::clone(self.system.model_manager())
     }
 
+    /// Reads what a local model file records about itself in its header.
+    pub fn model_file_inspector(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::ModelFileInspector> {
+        Arc::new(crate::features::llm::engine::gguf_metadata::GgufFileInspector)
+    }
+
     /// Get the backups directory path.
     ///
     /// Must stay in agreement with `BackupAdapter`, which derives the same

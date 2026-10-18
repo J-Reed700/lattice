@@ -165,21 +165,6 @@ fn tool_schemas_are_charged_against_a_small_window() {
 }
 
 #[test]
-fn deep_research_gets_more_tool_rounds() {
-    assert!(max_tool_rounds(true, false) > max_tool_rounds(false, false));
-    assert!(
-        max_tool_rounds(false, false) >= 2,
-        "one round to search, one to answer"
-    );
-}
-
-#[test]
-fn an_explorer_turn_gets_more_rounds_than_a_plain_chat() {
-    assert!(max_tool_rounds(false, true) > max_tool_rounds(false, false));
-    assert!(max_tool_rounds(true, true) >= max_tool_rounds(false, true));
-}
-
-#[test]
 fn a_full_window_has_no_room_for_another_result() {
     let window = window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN);
     assert!(window_has_room_for_a_result(

@@ -331,7 +331,9 @@ const CONTINUITY_NOTE: &str = "Conversation continuity: Answer the ongoing quest
      Before declaring information unavailable, consult retained evidence and available history/source \
      tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
      Earlier assistant claims alone are not source evidence; use the numbered original passages \
-     supplied now, or retrieve the original source.";
+     supplied now, or retrieve the original source. \
+     Write only the answer, addressed to the user: do not narrate your search or plan, describe \
+     which passages were or were not supplied, or restate these instructions.";
 
 /// Closes the evidence of a message whose lowest-ranked evidence was cut to
 /// fit the model's window.

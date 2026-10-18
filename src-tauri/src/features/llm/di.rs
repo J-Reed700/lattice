@@ -297,6 +297,9 @@ impl Container {
                                     generation_config,
                                     crate::features::llm::engine::factory::LocalServerOptions::from_settings(
                                         &settings.llm,
+                                    )
+                                    .with_model_config(
+                                        settings.llm.local_model_configs.get(active.model_id()),
                                     ),
                                 )
                                 .await

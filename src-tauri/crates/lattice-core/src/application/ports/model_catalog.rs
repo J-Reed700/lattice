@@ -331,6 +331,52 @@ impl ExternalModelMetadata {
             return Ok(ModelCategory::Embedding);
         }
 
+        // Speech-to-text / ASR models belong to Transcription, not chat LLMs.
+        if tags_lower.iter().any(|t| {
+            t == "automatic-speech-recognition"
+                || t == "speech-to-text"
+                || t == "asr"
+                || t == "transcribe.cpp"
+        }) {
+            return Ok(ModelCategory::Transcription);
+        }
+
+        // Reject non-text generation / non-LLM GGUF modalities (TTS, music,
+        // image/video diffusion, object detection) so they are never advertised
+        // as downloadable chat or utility LLMs.
+        const UNSUPPORTED_MODALITIES: &[&str] = &[
+            "text-to-speech",
+            "tts",
+            "audio-to-audio",
+            "text-to-audio",
+            "text-to-music",
+            "music-generation",
+            "audio.cpp",
+            "text-to-image",
+            "image-generation",
+            "text-to-video",
+            "image-to-video",
+            "image-text-to-video",
+            "video-to-video",
+            "video-generation",
+            "stable-diffusion",
+            "stable-diffusion.cpp",
+            "comfyui",
+            "object-detection",
+            "zero-shot-object-detection",
+            "image-segmentation",
+            "locate-anything.cpp",
+        ];
+        if tags_lower
+            .iter()
+            .any(|t| UNSUPPORTED_MODALITIES.contains(&t.as_str()))
+        {
+            return Err(AppError::InvalidInput(format!(
+                "Model '{}' targets a non-LLM modality that Lattice's local engine does not support",
+                self.id
+            )));
+        }
+
         // LLM indicators
         if tags_lower.iter().any(|t| {
             t.contains("text-generation")

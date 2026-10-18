@@ -57,3 +57,12 @@
   outline: none;
 }
 .tangent-menu-item:disabled { opacity: 0.5; }
+
+/* A tangent's passage in its source message (useTangentSourceHighlights). */
+::highlight(tangent-source) {
+  background-color: hsl(var(--accent) / 0.1);
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--accent) / 0.55);
+  text-decoration-thickness: 1.5px;
+}
+[data-tangent-hover] { cursor: pointer; }

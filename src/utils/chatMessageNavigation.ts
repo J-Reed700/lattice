@@ -167,6 +167,11 @@ export interface ScrollToMessageOptions {
    * clean up deep-link state or to tell the user nothing was found.
    */
   onSettled?: (outcome: 'found' | 'missing') => void;
+  /**
+   * Brings the reached message into view in place of centring it whole, so a
+   * caller can centre one part of a long message (find centres the match).
+   */
+  reveal?: (element: HTMLElement) => void;
 }
 
 /**
@@ -177,7 +182,7 @@ export function scrollToMessage(
   messageId: string,
   options: ScrollToMessageOptions = {}
 ): () => void {
-  const { span, onSettled } = options;
+  const { span, onSettled, reveal } = options;
   let attempts = 0;
   let retryTimeout: number | undefined;
   let highlightTimeout: number | undefined;
@@ -191,7 +196,8 @@ export function scrollToMessage(
   const tick = () => {
     const element = findMessageElement(messageId);
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (reveal) reveal(element);
+      else element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       element.classList.add(MESSAGE_HIGHLIGHT_CLASS);
       highlighted = element;
       if (span) highlightSpanWithin(element, span);

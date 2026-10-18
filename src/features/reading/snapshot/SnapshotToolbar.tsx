@@ -282,7 +282,7 @@ export function SnapshotToolbar({
             <div role="menu" aria-label="More" className="flex flex-col">
               {menuItem('Open live page in browser', onOpenLive)}
               {menuItem('Copy link', onCopyLink)}
-              {snapshot?.status === 'failed' ? menuItem('Capture again', onCaptureAgain) : null}
+              {snapshot?.status === 'failed' || snapshot?.status === 'ready' ? menuItem('Capture again', onCaptureAgain) : null}
               {onShowReader ? menuItem('Show in Reader', onShowReader) : null}
             </div>
           </PopoverContent>

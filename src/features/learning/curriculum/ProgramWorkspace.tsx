@@ -25,6 +25,8 @@ import { RecallEvolutionPanel } from '@/features/learning/recall/RecallEvolution
 import { SourceLine } from '@/features/learning/sources/SourceLine';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
+import { ProgramTangents, ProgramTangentsTrigger } from '@/features/learning/tangents/ProgramTangents';
+import { rememberProgramPosition, resumePosition } from '@/features/learning/workspace/studioPosition';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -39,9 +41,10 @@ const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPane
 type Tab = StudyTab;
 type NotebookDraft = { title: string; content: string };
 
-export function ProgramWorkspace({ program, destination, outlineGeneration, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, preparePending, prepareError, onComplete, completePending, completeError, formFor, setAnswer, onSubmitAttempt, submitPending, submitError }: {
+export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, preparePending, prepareError, onComplete, completePending, completeError, formFor, setAnswer, onSubmitAttempt, submitPending, submitError }: {
   destination?: StudyDestination;
   outlineGeneration?: OutlineOperation;
+  initialTangentId?: string | null;
   program: LearningProgramDto; onBack: () => void; onAccept: (title: string) => void; acceptPending: boolean; acceptError?: string;
   /** Opens another course, e.g. the copy an import just created. */
   onOpenProgram: (programId: string) => void;
@@ -51,20 +54,22 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
   onSubmitAttempt: (key: string, kind: LearningAssessmentKind, module: LearningModuleDto, lesson: LearningLessonDto | null, questions: LearningLessonDto['questions'], form: FormSnapshot, attemptId: string) => void;
   submitPending: boolean; submitError?: string;
 }) {
-  const [moduleId, setModuleId] = useState(() => program.modules.find((m) => m.lessons.some((l) => l.id === program.summary.currentLessonId))?.id ?? program.modules[0]?.id ?? '');
-  const [lessonId, setLessonId] = useState(program.summary.currentLessonId ?? program.modules[0]?.lessons[0]?.id ?? '');
-  const [tab, setTab] = useState<Tab>('lessons');
-  const [lastPracticeTab, setLastPracticeTab] = useState<Tab>('workbench');
+  // Reopening a course returns to the module, lesson and section last shown.
+  const [start] = useState(() => resumePosition(program));
+  const [moduleId, setModuleId] = useState(start.moduleId);
+  const [lessonId, setLessonId] = useState(start.lessonId);
+  const [tab, setTab] = useState<Tab>(start.tab);
+  const [lastPracticeTab, setLastPracticeTab] = useState<Tab>(['workbench', 'practical', 'quick-checks', 'assess-evidence'].includes(start.tab) ? start.tab : 'workbench');
   const [moreOpen, setMoreOpen] = useState(false);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [quickKind, setQuickKind] = useState<LearningAssessmentKind>('practice');
   const [showQuickResults, setShowQuickResults] = useState(false);
-  const [canvasOpened, setCanvasOpened] = useState(false);
-  const [practicalOpened, setPracticalOpened] = useState(false);
+  const [canvasOpened, setCanvasOpened] = useState(start.tab === 'canvas');
+  const [practicalOpened, setPracticalOpened] = useState(start.tab === 'practical');
   const [requestedFormId, setRequestedFormId] = useState<string | null>(null);
   const [projectRequest, setProjectRequest] = useState<{ id: string; brief: string } | null>(null);
-  const [writtenOpened, setWrittenOpened] = useState(false);
+  const [writtenOpened, setWrittenOpened] = useState(start.tab === 'workbench');
   const [importEpoch, setImportEpoch] = useState(0);
   const handleImported = (importedProgramId: string) => {
     // A copy or another course: land on it, which resumes at its current lesson.
@@ -91,12 +96,13 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
       setLessonId(destination.lessonId ?? targetModule.lessons[0]?.id ?? '');
     }
     if (destination.formId) setRequestedFormId(destination.formId);
-    setTab(next);
+    const resolvedTab = next === 'study' ? 'lessons' : next;
+    setTab(resolvedTab);
     setMoreOpen(false);
-    if (next === 'canvas') setCanvasOpened(true);
-    if (next === 'practical') setPracticalOpened(true);
-    if (next === 'workbench') setWrittenOpened(true);
-    if (['workbench', 'practical', 'quick-checks', 'assess-evidence'].includes(next)) setLastPracticeTab(next);
+    if (resolvedTab === 'canvas') setCanvasOpened(true);
+    if (resolvedTab === 'practical') setPracticalOpened(true);
+    if (resolvedTab === 'workbench') setWrittenOpened(true);
+    if (['workbench', 'practical', 'quick-checks', 'assess-evidence'].includes(resolvedTab)) setLastPracticeTab(resolvedTab);
   }, [destination, program.modules]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
@@ -119,13 +125,18 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
   const theme = useEffectiveTheme();
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
   const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;
+  useEffect(() => {
+    if (currentModule?.id) rememberProgramPosition(program.summary.id, { moduleId: currentModule.id, lessonId: currentLesson?.id ?? '', tab });
+  }, [program.summary.id, currentModule?.id, currentLesson?.id, tab]);
   const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
   const completedCount = allLessons.filter(({ lesson }) => lesson.completed).length;
   const readyCount = allLessons.filter(({ lesson }) => lesson.preparation === 'ready').length;
   const practiceCount = program.attempts.filter((a) => a.kind === 'practice').length;
   const demonstratedCount = program.attempts.filter((a) => a.kind === 'test').length;
-  const moduleTestQuestions = currentModule?.lessons.flatMap((lesson) => lesson.questions.filter((q) => q.kind === 'test')) ?? [];
-  const testReady = Boolean(currentModule?.lessons.length && currentModule.lessons.every((lesson) => lesson.preparation === 'ready'));
+  const preparedModuleLessons = currentModule?.lessons.filter((lesson) => lesson.preparation === 'ready') ?? [];
+  // A module test covers the lessons prepared so far, never waits for the rest.
+  const moduleTestQuestions = preparedModuleLessons.flatMap((lesson) => lesson.questions.filter((q) => q.kind === 'test'));
+  const modulePrepared = Boolean(currentModule?.lessons.length) && preparedModuleLessons.length === currentModule?.lessons.length;
   const moduleAttempts = program.attempts.filter((a) => a.moduleId === currentModule?.id);
   const resume = allLessons.find(({ lesson }) => lesson.id === program.summary.currentLessonId) ?? allLessons.find(({ lesson }) => !lesson.completed);
   const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'sources' as const, label: 'Sources' }];
@@ -195,9 +206,25 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
     move();
   };
 
-  return <div className="mx-auto max-w-[1500px] pb-12">
-    <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</button><div className="mb-2 flex w-full flex-wrap items-center gap-2 sm:w-auto"><CitationVisibilityToggle />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}</div></div>
-    {showCitations && <OutlineEvidenceStatus report={outlineEvidence} />}
+  const effectiveTangentId = initialTangentId ?? destination?.tangentId ?? null;
+
+  return (
+    <ProgramTangents
+      program={program}
+      currentModuleId={currentModule?.id ?? null}
+      currentLessonId={currentLesson?.id ?? null}
+      initialTangentId={effectiveTangentId}
+      onSelectLesson={(mId, lId) => {
+        void afterNotebookSave(() => {
+          setModuleId(mId);
+          setLessonId(lId);
+          activateTab('lessons');
+        });
+      }}
+    >
+      <div className="mx-auto max-w-[1500px] pb-12">
+        <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</button><div className="mb-2 flex w-full flex-wrap items-center gap-2 sm:w-auto"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}</div></div>
+        {showCitations && <OutlineEvidenceStatus report={outlineEvidence} />}
     <header className="relative overflow-hidden rounded-2xl border border-[#d7c9b8] bg-[#eee8df] px-4 py-3 sm:px-6 dark:border-white/10 dark:bg-[#28251f]"><div className="relative flex flex-wrap items-center justify-between gap-x-6 gap-y-2"><div className="min-w-0 flex-1 basis-full sm:basis-0"><div className="flex items-center gap-2 text-xs font-medium text-accent"><Layers3 size={15} /> {program.summary.status === 'draft' ? 'Draft outline' : 'Active program'} <span className="text-text-muted">· Revision {program.summary.revision}</span></div>{program.summary.status === 'draft' ? <><h1 className="sr-only">{title || 'Untitled program'}</h1><label className="sr-only" htmlFor="program-title">Program title</label><input id="program-title" aria-label="Program title" value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full max-w-2xl border-b border-accent/35 bg-transparent font-serif text-2xl leading-tight text-text-primary outline-hidden focus:border-accent" /></> : <h1 className="mt-1 line-clamp-2 wrap-break-word font-serif text-2xl leading-tight text-text-primary sm:text-[1.75rem]">{program.summary.title}</h1>}<p className="mt-1 line-clamp-1 max-w-3xl text-sm leading-5 text-text-secondary">{program.summary.goal}</p></div><div className="w-full shrink-0 sm:w-[150px]"><div className="flex items-center justify-between gap-2 text-xs"><span className="text-text-secondary">Lessons complete</span><span className="shrink-0 whitespace-nowrap font-semibold tabular-nums text-text-primary">{completedCount}<span className="font-normal text-text-muted"> / {allLessons.length}</span></span></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${allLessons.length ? completedCount / allLessons.length * 100 : 0}%` }} /></div></div></div>
       {program.summary.status === 'draft' && <div className="relative mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-black/10 pt-2 dark:border-white/10"><p className="text-sm text-text-secondary">{outlineBlocked ? 'Resolve the outline findings before accepting this course.' : 'Accept to prepare lessons individually and track progress.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-rose-700">{acceptError}</span>}<button type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="min-h-11 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50">{acceptPending ? 'Saving…' : 'Accept program'}</button></div></div>}
     </header>
@@ -230,7 +257,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
         {activeProgram && <LessonPreparationProgress job={preparationJob} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError} />}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-rose-700">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
         {tab === 'lessons' && <div className="mt-3 space-y-3">{!currentModule?.lessons.length ? <p className="rounded-xl bg-background p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson) => <div key={lesson.id} className="relative"><div className="absolute -left-0.5 top-11 hidden h-[calc(100%+12px)] w-px bg-border last:hidden sm:block" /><div className="absolute left-[-3px] top-8 hidden h-1.5 w-1.5 rounded-full bg-accent sm:block" /><div className="sm:pl-5"><LessonCard lesson={lesson} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparingLesson)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => void afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} /></div></div>)}</div>}
-        {activeProgram && tab === 'lessons' && <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Module milestones"><div className="rounded-xl border border-border bg-background/50 p-4"><span className="text-xs font-semibold uppercase tracking-wide text-accent">01 · Learn</span><p className="mt-2 text-sm text-text-primary">{currentModule?.lessons.filter((item) => item.completed).length ?? 0} of {currentModule?.lessons.length ?? 0} lessons complete</p><p className="mt-1 text-xs leading-5 text-text-muted">Build understanding, work through examples, and complete each assignment.</p></div><button type="button" onClick={() => selectTab('workbench')} className="rounded-xl border border-border bg-background/50 p-4 text-left hover:border-accent/40"><span className="text-xs font-semibold uppercase tracking-wide text-accent">02 · Apply</span><span className="mt-2 block text-sm text-text-primary">Practice with feedback →</span><span className="mt-1 block text-xs leading-5 text-text-muted">Submit your assignment, get criterion feedback, and refine your reasoning.</span></button><button type="button" onClick={() => selectTab('assess-evidence')} className="rounded-xl border border-border bg-background/50 p-4 text-left hover:border-accent/40"><span className="text-xs font-semibold uppercase tracking-wide text-accent">03 · Check</span><span className="mt-2 block text-sm text-text-primary">Module assessment →</span><span className="mt-1 block text-xs leading-5 text-text-muted">{testReady ? 'Explain and apply the module outcomes in a written checkpoint.' : 'Study first, or challenge the module if you already know the material.'}</span></button><button type="button" disabled={!currentModule?.lessons.some((item) => item.preparation === 'ready')} onClick={() => void afterNotebookSave(() => {
+        {activeProgram && tab === 'lessons' && <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Module milestones"><div className="rounded-xl border border-border bg-background/50 p-4"><span className="text-xs font-semibold uppercase tracking-wide text-accent">01 · Learn</span><p className="mt-2 text-sm text-text-primary">{currentModule?.lessons.filter((item) => item.completed).length ?? 0} of {currentModule?.lessons.length ?? 0} lessons complete</p><p className="mt-1 text-xs leading-5 text-text-muted">Build understanding, work through examples, and complete each assignment.</p></div><button type="button" onClick={() => selectTab('workbench')} className="rounded-xl border border-border bg-background/50 p-4 text-left hover:border-accent/40"><span className="text-xs font-semibold uppercase tracking-wide text-accent">02 · Apply</span><span className="mt-2 block text-sm text-text-primary">Practice with feedback →</span><span className="mt-1 block text-xs leading-5 text-text-muted">Submit your assignment, get criterion feedback, and refine your reasoning.</span></button><button type="button" onClick={() => selectTab('assess-evidence')} className="rounded-xl border border-border bg-background/50 p-4 text-left hover:border-accent/40"><span className="text-xs font-semibold uppercase tracking-wide text-accent">03 · Check</span><span className="mt-2 block text-sm text-text-primary">Module assessment →</span><span className="mt-1 block text-xs leading-5 text-text-muted">{modulePrepared ? 'Explain and apply the module outcomes in a written checkpoint.' : 'Study first, or challenge the module if you already know the material.'}</span></button><button type="button" disabled={!currentModule?.lessons.some((item) => item.preparation === 'ready')} onClick={() => void afterNotebookSave(() => {
           if (!currentModule) return;
           const anchor = [...currentModule.lessons].reverse().find((item) => item.preparation === 'ready');
           if (!anchor) return;
@@ -243,7 +270,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
         {activeProgram && tab === 'plan' && <div className="mt-5"><PlanPanel programId={program.summary.id} onStartingPoint={() => selectTab('starting_point')} /></div>}
         {tab === 'portability' && <div className="mt-5"><PortabilityPanel programId={program.summary.id} onImported={handleImported} /></div>}
         {activeProgram && (practiceTab || writtenOpened || practicalOpened) && <div id="practice-content" role="tabpanel" tabIndex={0} aria-labelledby={`practice-tab-${practiceTab ? tab : lastPracticeTab}`} hidden={!practiceTab} className="mt-3">
-        {activeProgram && tab === 'quick-checks' && <div className="mt-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-2" role="group" aria-label="Quick check type">{(['practice', 'quiz', 'test'] as LearningAssessmentKind[]).map((kind) => <button key={kind} type="button" aria-pressed={!showQuickResults && quickKind === kind} onClick={() => { setShowQuickResults(false); setQuickKind(kind); }} className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${!showQuickResults && quickKind === kind ? 'border-accent bg-accent text-accent-fg' : 'border-border text-text-secondary'}`}>{kind === 'test' ? 'Module test' : kind}</button>)}<button type="button" aria-pressed={showQuickResults} onClick={() => setShowQuickResults(true)} className={`rounded-full border px-3 py-2 text-xs font-medium ${showQuickResults ? 'border-accent bg-accent text-accent-fg' : 'border-border text-text-secondary'}`}>History ({moduleAttempts.length})</button></div><p className="text-sm text-text-muted">Quick checks draw on lesson knowledge and show answer keys after submission.</p></div>{showQuickResults ? <AttemptReview attempts={moduleAttempts} sources={program.sources} /> : <>{quickKind === 'test' && !testReady ? <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm leading-6 text-text-secondary">Prepare all {currentModule?.lessons.length ?? 0} lessons in this module to unlock its test. Browsing the syllabus never changes progress.</div> : null}<AssessmentPanel key={`${assessmentKey}:${chosenQuestions.map((q) => q.id).join(',')}`} kind={quickKind} questions={quickKind === 'test' && !testReady ? [] : chosenQuestions} sources={program.sources} attempt={form} pending={submitPending} error={submitError} onAnswer={(id, value) => setAnswer(assessmentKey, id, value)} onSubmit={(attemptId) => currentModule && onSubmitAttempt(assessmentKey, quickKind, currentModule, quickKind === 'test' ? null : currentLesson ?? null, chosenQuestions, form, attemptId)} onReview={() => setTab('lessons')} />{submitError && <span className="sr-only" role="status">Answers remain saved in this session.</span>}</>}</div>}
+        {activeProgram && tab === 'quick-checks' && <div className="mt-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-2" role="group" aria-label="Quick check type">{(['practice', 'quiz', 'test'] as LearningAssessmentKind[]).map((kind) => <button key={kind} type="button" aria-pressed={!showQuickResults && quickKind === kind} onClick={() => { setShowQuickResults(false); setQuickKind(kind); }} className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${!showQuickResults && quickKind === kind ? 'border-accent bg-accent text-accent-fg' : 'border-border text-text-secondary'}`}>{kind === 'test' ? 'Module test' : kind}</button>)}<button type="button" aria-pressed={showQuickResults} onClick={() => setShowQuickResults(true)} className={`rounded-full border px-3 py-2 text-xs font-medium ${showQuickResults ? 'border-accent bg-accent text-accent-fg' : 'border-border text-text-secondary'}`}>History ({moduleAttempts.length})</button></div><p className="text-sm text-text-muted">Quick checks draw on lesson knowledge and show answer keys after submission.</p></div>{showQuickResults ? <AttemptReview attempts={moduleAttempts} sources={program.sources} /> : <>{quickKind === 'test' && !modulePrepared ? <div className="mb-4 rounded-xl border border-border bg-background p-4 text-sm leading-6 text-text-secondary">{preparedModuleLessons.length ? `This test covers the ${preparedModuleLessons.length} of ${currentModule?.lessons.length ?? 0} lessons prepared so far. Lessons you prepare later add their questions.` : 'Prepare any lesson in this module to get test questions. You can take the test before preparing the rest.'}</div> : null}<AssessmentPanel key={`${assessmentKey}:${chosenQuestions.map((q) => q.id).join(',')}`} kind={quickKind} questions={chosenQuestions} sources={program.sources} attempt={form} pending={submitPending} error={submitError} onAnswer={(id, value) => setAnswer(assessmentKey, id, value)} onSubmit={(attemptId) => currentModule && onSubmitAttempt(assessmentKey, quickKind, currentModule, quickKind === 'test' ? null : currentLesson ?? null, chosenQuestions, form, attemptId)} onReview={() => setTab('lessons')} />{submitError && <span className="sr-only" role="status">Answers remain saved in this session.</span>}</>}</div>}
         {activeProgram && tab === 'assess-evidence' && <div className="mt-5"><AssessmentEvidencePanel requestedFormId={requestedFormId} programId={program.summary.id} program={program} module={currentModule} /></div>}
         {activeProgram && writtenOpened && <div hidden={tab !== 'workbench'} className="mt-5"><PracticeWorkbenchPanel key={currentLesson?.id} program={program} lesson={currentLesson} /></div>}
         {activeProgram && practicalOpened && <div hidden={tab !== 'practical'} className="mt-5"><PracticalWorkbenchPanel program={program} lesson={currentLesson ?? null} projectRequest={projectRequest} /></div>}
@@ -259,5 +286,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, onBa
       <section className="rounded-xl border border-border bg-background p-4"><h3 className="text-sm font-medium text-text-primary">Source materials</h3><p className="mt-1 text-sm leading-5 text-text-secondary">{program.sources.length ? `${program.sources.length} original ${program.sources.length === 1 ? 'source snapshot' : 'source snapshots'} grounding this program.` : 'No source snapshots are attached.'}</p>{program.summary.status === 'active' && <button type="button" disabled={savingBeforeMove} onClick={() => selectTab('sources')} className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline disabled:opacity-50">Open source library <ArrowRight size={15} className="ml-1" /></button>}{program.sources.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm text-text-muted">Original outline excerpts</summary><SourceLine ids={program.sources.map((item) => item.id)} sources={program.sources} /></details>}</section>
       <section className="rounded-xl border border-border bg-background p-4"><h3 className="text-sm font-medium text-text-primary">Course authorship</h3><p className="mt-2 text-sm leading-5 text-text-secondary">Generated with {program.modelName || 'the selected model'}{program.sources.length ? ' using your chosen sources' : ' from general knowledge'}. The outline is saved before review. Corrections are rechecked and unresolved findings remain available for repair. Lesson material receives its own review and source checks. Lesson answer keys are model-authored and shown after submission.</p></section></div></details>
     </div>
-  </div>;
+  </div>
+  </ProgramTangents>
+  );
 }

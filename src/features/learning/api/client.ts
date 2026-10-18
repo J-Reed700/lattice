@@ -8,6 +8,17 @@ import type { ApiResult } from '@/types';
 const learningCall = <T>(command: CommandName, args?: Record<string, unknown>) =>
   studyActivityCall<T>('learning', command, args);
 
+async function invokeCommand<T>(
+  command: CommandName,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const result = await learningCall<T>(command, args);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  return result.data;
+}
+
 export const learningApi = {
   listLearningPrograms: (): Promise<
     ApiResult<Wire.LearningProgramSummaryDto[]>
@@ -573,4 +584,22 @@ export const learningApi = {
     learningCall<Wire.LearningRecallWorkspaceDto>('review_learning_recall_card', {
       request,
     }),
+
+  createLearningTangent: (
+    request: Wire.CreateLearningTangentRequestDto,
+  ): Promise<Wire.LearningTangentDto> =>
+    invokeCommand('create_learning_tangent', { request }),
+
+  listLearningTangents: (
+    programId?: string | null,
+  ): Promise<Wire.LearningTangentDto[]> =>
+    invokeCommand('list_learning_tangents', {
+      request: { programId: programId ?? null },
+    }),
 };
+
+export type {
+  CreateLearningTangentRequestDto,
+  LearningTangentDto,
+} from '@/lib/bindings';
+

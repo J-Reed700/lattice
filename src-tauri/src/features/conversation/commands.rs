@@ -3,13 +3,11 @@
 //! Thin controllers for managing LLM conversations and conversational question-answering.
 //! Conversations maintain context across multiple Q&A interactions, enabling follow-up
 //! questions and contextual understanding. These commands follow Domain-Driven Design
-//! principles with cross-cutting concerns (rate limiting, validation)
-//! and business logic delegation to ConversationService.
+//! principles with input validation and business logic delegation to ConversationService.
 //!
 //! # Architecture
 //!
 //! Commands are **thin controllers** that delegate to the service layer:
-//! - **Rate limiting**: Protect against resource exhaustion
 //! - **Input validation**: Sanitize and validate user inputs (XSS prevention)
 //! - **Service delegation**: Business logic in ConversationService
 //!
@@ -24,11 +22,10 @@
 //! # Command Pattern
 //!
 //! Each command follows this structure (< 50 lines):
-//! 1. Rate limiting check
-//! 2. Input validation
-//! 3. Get service from container
-//! 4. Delegate to service
-//! 5. Return result
+//! 1. Input validation
+//! 2. Get service from container
+//! 3. Delegate to service
+//! 4. Return result
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::interfaces::di::container::Container;
@@ -63,11 +60,10 @@ pub use space::create_conversation_space_impl;
 /// # Returns
 ///
 /// * `Ok(Conversation)` - Created conversation with ID and metadata
-/// * `Err(AppError)` - If rate limited, validation fails, or creation fails
+/// * `Err(AppError)` - If validation fails or creation fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many conversation creation requests
 /// * `AppError::InvalidInput` - Title validation failed (XSS prevention)
 /// * `AppError::Other` - Database error or service unavailable
 ///
@@ -106,7 +102,6 @@ pub use space::create_conversation_space_impl;
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents conversation spam
 /// - **Input Validation**: Title sanitized to prevent XSS attacks
 ///
 /// # System Prompts
@@ -128,16 +123,14 @@ pub use space::create_conversation_space_impl;
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Validates and sanitizes title input
-/// 3. Delegates to `ConversationService.create_conversation()`
+/// 1. Validates and sanitizes title input
+/// 2. Delegates to `ConversationService.create_conversation()`
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Input validation (title sanitization)
-/// 3. Execute ConversationService.create_conversation()
-/// 4. Return conversation metadata
+/// 1. Input validation (title sanitization)
+/// 2. Execute ConversationService.create_conversation()
+/// 3. Return conversation metadata
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn create_conversation_impl(
@@ -146,23 +139,14 @@ pub async fn create_conversation_impl(
     model_name: String,
     system_prompt: Option<String>,
 ) -> Result<Conversation> {
-    // 1. Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_question
-        .check_rate_limit("create_conversation")
-        .await
-        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
-
-    // 2. Input validation
+    // 1. Input validation
     let sanitized_title = container
         .security_context()
         .input_validator()
         .validate_search_query(&title)
         .map_err(|e| AppError::Other(format!("Invalid title: {}", e)))?;
 
-    // 3. Delegate to service
+    // 2. Delegate to service
     let service = container.conversation_service();
     let conversation = service
         .create_conversation(sanitized_title, model_name, system_prompt)
@@ -191,18 +175,17 @@ pub async fn create_conversation(
 ///
 /// # Arguments
 ///
-/// * `container` - Service container with conversation service and security context
+/// * `container` - Service container with conversation service
 /// * `limit` - Maximum number of conversations to return (default: 100, capped at 100)
 /// * `offset` - Number of conversations to skip for pagination (default: 0)
 ///
 /// # Returns
 ///
 /// * `Ok(Vec<Conversation>)` - List of conversation metadata (no messages)
-/// * `Err(AppError)` - If rate limited or database query fails
+/// * `Err(AppError)` - If database query fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many list requests (rate limited)
 /// * `AppError::Other` - Database query failed
 ///
 /// # Example
@@ -251,7 +234,6 @@ pub async fn create_conversation(
 ///
 /// # Security
 ///
-/// - **Rate Limiting (CWE-770)**: Prevents excessive list requests
 /// - **Limit Capping**: Automatically caps limit at 100 to prevent DoS
 ///
 /// # Pagination Pattern
@@ -269,16 +251,14 @@ pub async fn create_conversation(
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Caps limit at 100 (security)
-/// 3. Delegates to `ConversationService.list_conversations()`
+/// 1. Caps limit at 100
+/// 2. Delegates to `ConversationService.list_conversations()`
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Validate and cap limit (≤ 100)
-/// 3. Execute ConversationService.list_conversations()
-/// 4. Return conversation metadata list
+/// 1. Validate and cap limit (≤ 100)
+/// 2. Execute ConversationService.list_conversations()
+/// 3. Return conversation metadata list
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn list_conversations_impl(
@@ -286,13 +266,10 @@ pub async fn list_conversations_impl(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<Conversation>> {
-    // 1. Rate limiting
-    runtime.check_read_rate_limit("list_conversations").await?;
-
-    // 2. Validate and cap limit
+    // 1. Validate and cap limit
     let limit = limit.map(|l| l.min(100)); // Cap at 100
 
-    // 3. Delegate to service
+    // 2. Delegate to service
     let service = runtime.conversation_service();
     service.list_conversations(limit, offset).await
 }
@@ -315,18 +292,17 @@ pub async fn list_conversations(
 ///
 /// # Arguments
 ///
-/// * `container` - Service container with conversation service and security context
+/// * `container` - Service container with conversation service
 /// * `conversation_id` - Unique identifier of the conversation to retrieve
 ///
 /// # Returns
 ///
 /// * `Ok(Some(Conversation))` - Conversation found, returns metadata
 /// * `Ok(None)` - Conversation ID not found
-/// * `Err(AppError)` - If rate limited or database query fails
+/// * `Err(AppError)` - If database query fails
 ///
 /// # Errors
 ///
-/// * `AppError::RateLimitExceeded` - Too many get requests (rate limited)
 /// * `AppError::Other` - Database query failed
 ///
 /// # Example
@@ -365,10 +341,6 @@ pub async fn list_conversations(
 /// }
 /// ```
 ///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Prevents excessive metadata queries
-///
 /// # Use Cases
 ///
 /// - **Conversation Header**: Display title, model, stats in UI
@@ -387,26 +359,20 @@ pub async fn list_conversations(
 /// # DDD Architecture
 ///
 /// This command is a **thin controller** that:
-/// 1. Applies rate limiting
-/// 2. Delegates to `ConversationService.get_conversation()`
-/// 3. Maps aggregate to conversation DTO (metadata only)
+/// 1. Delegates to `ConversationService.get_conversation()`
+/// 2. Maps aggregate to conversation DTO (metadata only)
 ///
 /// # Command Flow
 ///
-/// 1. Rate limiting check
-/// 2. Execute ConversationService.get_conversation()
-/// 3. Map aggregate to Conversation (extract metadata, discard messages)
-/// 4. Return `Option<Conversation>`
+/// 1. Execute ConversationService.get_conversation()
+/// 2. Map aggregate to Conversation (extract metadata, discard messages)
+/// 3. Return `Option<Conversation>`
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn get_conversation_impl(
     runtime: &dyn ChatRuntime,
     conversation_id: String,
 ) -> Result<Option<Conversation>> {
-    // 1. Rate limiting
-    runtime.check_read_rate_limit("get_conversation").await?;
-
-    // 2. Delegate to service
     let service = runtime.conversation_service();
     let aggregate = service.get_conversation(&conversation_id).await?;
 

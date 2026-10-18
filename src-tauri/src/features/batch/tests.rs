@@ -1027,12 +1027,12 @@ async fn imports_are_checked_before_anything_is_saved() -> anyhow::Result<()> {
         );
     }
     assert!(imports.start_urls(&[], None).await.is_err());
-    let too_many: Vec<String> = (0..=50)
+    let too_many: Vec<String> = (0..=super::imports::MAX_URLS)
         .map(|n| format!("https://example.com/{n}"))
         .collect();
     assert!(imports.start_urls(&too_many, None).await.is_err());
     assert!(harness.files(&[], None).await.is_err());
-    let too_many: Vec<PathBuf> = (0..=100)
+    let too_many: Vec<PathBuf> = (0..=super::imports::MAX_FILES)
         .map(|n| dir.path().join(format!("{n}.txt")))
         .collect();
     assert!(harness.files(&too_many, None).await.is_err());

@@ -21,12 +21,15 @@ import { TurnRecord } from '@/features/chat/components/turn/TurnRecord';
 import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
+import { resolveActiveChatOption } from '@/utils/chatModelSelection';
 
 interface MessageProps {
   message: DisplayMessage;
@@ -70,6 +73,8 @@ export const Message = memo(({
   // and reads back where the viewer found it.
   const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
   const showCitations = useCitationDisplayStore((s) => s.visible);
+  const { data: settings } = useSettingsQuery();
+  const { downloadedModels = [] } = useDownloadedModels();
 
   const messageId = 'id' in message ? message.id : undefined;
   const messageBookmark = messageId ? messageBookmarkMap.get(messageId) : undefined;
@@ -167,6 +172,12 @@ export const Message = memo(({
     isMessageBookmarked,
     normalizedMarkdownContent,
   });
+
+  const activeChatOption = resolveActiveChatOption(
+    settings?.llm,
+    downloadedModels,
+    activeModel?.model_id ?? null
+  );
 
   const {
     citationMap, citationNumbers, openCitation, openSource, provenanceBySource,
@@ -339,7 +350,7 @@ export const Message = memo(({
           canBranch={Boolean(conversationId && messageId)}
           isBookmarked={isMessageBookmarked}
           isBusy={isBusy}
-          activeModelId={activeModel?.model_id ?? null}
+          activeModelId={activeChatOption?.id ?? activeModel?.model_id ?? null}
           onCopy={handleCopy}
           onBookmarkToggle={handleBookmarkToggle}
           onDelete={handleDeleteMessage}

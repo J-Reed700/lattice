@@ -29,7 +29,7 @@ export interface UseWebPageSnapshot {
 
 export function useWebPageSnapshot(conversationId: string | null, url: string | null): UseWebPageSnapshot {
   const queryClient = useQueryClient();
-  const enabled = Boolean(conversationId && url);
+  const enabled = Boolean(url);
   const queryKey = useMemo(
     () => webPageSnapshotQueryKey(conversationId ?? '', url ?? ''),
     [conversationId, url],
@@ -44,7 +44,7 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
   });
 
   useEffect(() => {
-    if (!conversationId || !url) return;
+    if (!url) return;
     const target = normalizeSnapshotUrl(url);
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -52,13 +52,18 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
       TauriEventNames.WebPageSnapshot.Changed,
       EventSchemas.WebPageSnapshot.Changed,
       ({ payload }) => {
-        if (payload.conversationId !== conversationId) return;
+        const conversationMatches = !conversationId || payload.conversationId === conversationId;
         const { snapshot } = payload;
         const matches =
           payload.url === url ||
           snapshot.requestedUrl === url ||
-          (target !== null && snapshot.normalizedUrl === target);
-        if (matches) queryClient.setQueryData(queryKey, snapshot);
+          snapshot.finalUrl === url ||
+          (target !== null &&
+            (snapshot.normalizedUrl.toLowerCase() === target.toLowerCase() ||
+              normalizeSnapshotUrl(snapshot.requestedUrl)?.toLowerCase() === target.toLowerCase() ||
+              (snapshot.finalUrl !== null &&
+                normalizeSnapshotUrl(snapshot.finalUrl)?.toLowerCase() === target.toLowerCase())));
+        if (conversationMatches && matches) queryClient.setQueryData(queryKey, snapshot);
       },
     ).then((stop) => {
       if (disposed) stop();
@@ -72,7 +77,19 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
 
   const mutation = useMutation({
     mutationFn: () => captureWebPageSnapshot(conversationId ?? '', url ?? ''),
-    onSuccess: (snapshot) => queryClient.setQueryData(queryKey, snapshot),
+    onSuccess: (snapshot) => {
+      queryClient.setQueryData<WebPageSnapshotDto | null>(queryKey, (current) => {
+        if (
+          current &&
+          current.id === snapshot.id &&
+          current.status === 'ready' &&
+          snapshot.status === 'pending'
+        ) {
+          return current;
+        }
+        return snapshot;
+      });
+    },
   });
   const { mutate } = mutation;
   const capture = useCallback(() => {
@@ -97,5 +114,5 @@ export function useWebPageMode(conversationId: string | null, url: string | null
   const chosen = useWebPageSnapshotStore((state) => state.mode);
   const setMode = useWebPageSnapshotStore((state) => state.setMode);
   const mode: WebPageMode = chosen ?? (snapshot?.status === 'ready' ? 'page' : 'reader');
-  return { mode, setMode, isResolving: chosen === null && isLoading };
+  return { mode, setMode, snapshot, isResolving: chosen === null && isLoading };
 }

@@ -156,7 +156,7 @@ struct ReasoningProgress {
 }
 
 impl ReasoningProgress {
-    const MAX_CHARS: usize = 24_000;
+    const MAX_CHARS: usize = 256_000;
     const MIN_EMIT_CHARS: usize = 160;
     const MAX_EMIT_DELAY: Duration = Duration::from_millis(120);
 

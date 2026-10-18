@@ -299,3 +299,43 @@ fn course_context_carries_whole_objectives_and_every_earlier_recap() {
         .iter()
         .all(|entry| entry["recap"][0] == recap.as_str()));
 }
+
+struct Window(usize);
+
+#[async_trait::async_trait]
+impl LLMPort for Window {
+    async fn complete(
+        &self,
+        _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        unreachable!("the window check makes no model call")
+    }
+    fn model_name(&self) -> &str {
+        "Ornith-1.5-9B-Q4_K_M"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[test]
+fn a_window_too_small_to_write_a_lesson_is_refused_with_the_window_it_needs() {
+    let error =
+        super::lesson::ensure_window_holds_a_lesson(&Window(8704), "{}", LESSON_OUTPUT_RESERVE)
+            .unwrap_err();
+    let needed = (2 * LESSON_OUTPUT_RESERVE).to_string();
+    assert!(
+        matches!(&error, AppError::InvalidConfig(message)
+            if message.contains("Ornith-1.5-9B-Q4_K_M's 8704-token") && message.contains(&needed)),
+        "{error}"
+    );
+    assert!(super::lesson::ensure_window_holds_a_lesson(
+        &Window(32768),
+        "{}",
+        LESSON_OUTPUT_RESERVE
+    )
+    .is_ok());
+}

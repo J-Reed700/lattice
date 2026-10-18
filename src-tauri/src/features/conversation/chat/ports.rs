@@ -183,6 +183,9 @@ pub trait ConversationBranches: Send + Sync {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<crate::features::conversation::tangent_dto::ConversationTangentDto>>;
+    /// The passage a side thread was opened on; `None` for any other
+    /// conversation, a promoted one included.
+    async fn tangent_selection(&self, conversation_id: &str) -> Result<Option<String>>;
     /// Promote a side thread to a full conversation.
     async fn promote_tangent(&self, conversation_id: &str) -> Result<()>;
     /// A fresh conversation in the same space whose only message stands in
@@ -312,6 +315,7 @@ pub trait SynthesisEntries: Send + Sync {
 pub trait ChatTools: Send + Sync {
     fn list_tools(&self) -> Vec<ToolDefinition>;
     async fn execute(&self, call: FunctionCall) -> Result<FunctionResult>;
+    fn record_call(&self, _name: &str) {}
 }
 
 /// Reads a web page live, under the network policy every read obeys.
@@ -355,14 +359,9 @@ pub trait ChatPolicy: Send + Sync {
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
     fn consolidate_after_turn(&self, id: String);
-    /// The rate limit a conversation read (list/get) spends before it runs.
-    async fn check_read_rate_limit(&self, name: &str) -> Result<()>;
-    /// The rate limit a user-initiated delete spends.
-    async fn check_delete_rate_limit(&self, name: &str) -> Result<()>;
     /// Remove a conversation and everything it owns — its in-flight turn, its
-    /// attachments, its messages — without spending the user delete's rate
-    /// limit.
-    async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()>;
+    /// attachments, its messages.
+    async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;
 }
 
 /// Where work that outlives a request runs: a deep research turn is a job.

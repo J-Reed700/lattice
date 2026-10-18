@@ -62,6 +62,19 @@ describe('the thread a folder opens on', () => {
     await waitFor(() => expect(mocks.store.selectConversation).toHaveBeenCalledWith('newer'));
   });
 
+  it('is never an archived one, which is listed apart', async () => {
+    mocks.api.listConversationsExplorer.mockResolvedValue({
+      ok: true,
+      data: { conversations: [thread('older', '2026-10-01T10:00:00Z'), { ...thread('shelved', '2026-10-09T10:00:00Z'), isArchived: true }] },
+    });
+    mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: null, folders: [folder('shelved')] } });
+    const { result } = renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
+    await waitFor(() => expect(mocks.store.selectConversation).toHaveBeenCalledWith('older'));
+    expect(mocks.api.listConversationsExplorer).toHaveBeenCalledWith({ includeArchived: true });
+    expect(result.current.threads.map((item) => item.id)).toEqual(['older']);
+    expect(result.current.archived.map((item) => item.id)).toEqual(['shelved']);
+  });
+
   it('is saved on the folder\'s row when another thread is shown, once', async () => {
     mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: null, folders: [folder('older')] } });
     const { rerender } = renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });

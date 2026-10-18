@@ -124,7 +124,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_files: 20_000,
+            max_files: 100_000,
             batch_size: 16,
             save_every: 500,
         }

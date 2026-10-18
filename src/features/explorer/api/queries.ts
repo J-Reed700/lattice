@@ -18,6 +18,7 @@ import type { ExplorerFolderListDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
+import type { Conversation } from '@/types/conversation';
 
 /** The job kind of a folder index build; its activity is a `FolderIndexStatusDto`. */
 export const FOLDER_INDEX_JOB = 'explorer.folder_index';
@@ -50,6 +51,15 @@ export const resolveExplorerRoot = (path: string) => VaultAPI.explorerResolveRoo
  */
 export const bindThreadToFolder = (conversationId: string, root: string) =>
   VaultAPI.setConversationExplorerRoot(conversationId, root);
+
+/** Every thread bound to a folder, archived ones too, newest first. */
+export async function fetchFolderThreads(root: string): Promise<Conversation[]> {
+  const result = await VaultAPI.listConversationsExplorer({ includeArchived: true });
+  if (!result.ok) throw new Error(result.error);
+  return (result.data.conversations as Conversation[])
+    .filter((conversation) => conversation.explorerRoot === root)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
 
 /**
  * The folders list's writes. Each refreshes the list; the ones that move or

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ResearchDeck } from '@/features/chat/components/turn/ResearchDeck';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import type { TurnStep } from '@/types/conversation';
 
 
@@ -113,12 +114,16 @@ describe('ResearchDeck', () => {
     expect(screen.getByText('403 Forbidden')).toBeInTheDocument();
   });
 
-  it('opens a page in the browser when it is clicked', async () => {
+  it('opens a page in the reader when it is clicked', async () => {
+    useChatReaderStore.getState().close();
     render(<ResearchDeck live={false} steps={[search('s', 'q', ['https://a.example/1'])]} />);
 
     await userEvent.click(screen.getByRole('button', { name: /About a\.example/ }));
 
-    expect(openExternalUrl).toHaveBeenCalledWith('https://a.example/1');
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    const session = useChatReaderStore.getState().session;
+    expect(session).not.toBeNull();
+    expect(session?.citations[0].filePath).toBe('https://a.example/1');
   });
 
   it('shows a thought in progress as one, and a finished one as a plain row', () => {

@@ -13,6 +13,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   mp3: 'audio/mpeg',
   m4a: 'audio/mp4',
   wav: 'audio/wav',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 
 /**

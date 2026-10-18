@@ -16,9 +16,9 @@ import { ArrowUpRight, HardDrive, Network } from 'lucide-react';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { PageHeader, SettingsSection, SidebarSearch, TooltipProvider } from '@/components/ui';
+import { configuredConnections } from '@/utils/configuredConnections';
 
 import { useSettingsQuery } from '../hooks/useSettingsQuery';
-import { configuredConnections } from './modelRoles/configuredConnections';
 import { LlamaCppMetaRow } from './modelRoles/LlamaCppMetaRow';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
 import { LocalModelRowSkeleton } from './modelRoles/LocalModelRowSkeleton';

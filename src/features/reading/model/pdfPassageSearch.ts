@@ -9,10 +9,6 @@
 
 import { buildNeedles, normalizeForMatch } from '@/shared/sources/passageLocator';
 
-/** Pages scanned before giving up. A very long PDF is not worth a stall. */
-const DEFAULT_MAX_PAGES = 400;
-
-
 interface PdfTextItem {
   str: string;
 }
@@ -130,7 +126,7 @@ export async function findPassagePage(
   if (needles.length) needles.unshift(normalizeForMatch(text));
   if (needles.length === 0) return null;
 
-  const maxPages = Math.min(pdf.numPages, options.maxPages ?? DEFAULT_MAX_PAGES);
+  const maxPages = Math.min(pdf.numPages, options.maxPages ?? pdf.numPages);
 
   const pages = Array.from({ length: maxPages }, (_, index) => index + 1);
   if (options.preferredPage && options.preferredPage <= pdf.numPages && options.preferredPage > 0) {
