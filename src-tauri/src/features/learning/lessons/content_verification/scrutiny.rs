@@ -107,30 +107,29 @@ pub(super) fn review(findings: &[Finding]) -> Scrutiny {
             .max()
             .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
             .map(|at| at.format("%Y-%m-%d").to_string());
-        let mut gap = json!({
-            "claim": finding.statement,
-            "missingEvidence": trust.explain(),
-            "kind": trust.profile.kind.as_str(),
-        });
+        let mut gap = serde_json::Map::new();
+        gap.insert("claim".into(), json!(finding.statement));
+        gap.insert("missingEvidence".into(), json!(trust.explain()));
+        gap.insert("kind".into(), json!(trust.profile.kind.as_str()));
         if let Some(subject) = &trust.profile.subject {
-            gap["subject"] = json!(subject.name);
+            gap.insert("subject".into(), json!(subject.name));
         }
         if let Some(origin) = &trust.profile.measurement_origin {
-            gap["measuredBy"] = json!(origin);
+            gap.insert("measuredBy".into(), json!(origin));
         }
         if let Some(attributed) = &trust.profile.attributed_to {
-            gap["attributedTo"] = json!(attributed);
+            gap.insert("attributedTo".into(), json!(attributed));
         }
         if !owner_hints.is_empty() {
-            gap["ownerOriginHints"] = json!(owner_hints);
+            gap.insert("ownerOriginHints".into(), json!(owner_hints));
         }
         if independent {
-            gap["needsIndependentSource"] = json!(true);
+            gap.insert("needsIndependentSource".into(), json!(true));
         }
         if newer {
-            gap["needsNewerThan"] = json!(newest_support);
+            gap.insert("needsNewerThan".into(), json!(newest_support));
         }
-        scrutiny.gaps.push(gap);
+        scrutiny.gaps.push(Value::Object(gap));
     }
     scrutiny
 }
