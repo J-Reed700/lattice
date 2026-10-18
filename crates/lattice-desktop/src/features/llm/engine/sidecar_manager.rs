@@ -152,3 +152,5 @@ use registry::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) mod weights_fixture;
