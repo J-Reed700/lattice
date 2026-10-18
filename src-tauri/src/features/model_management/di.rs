@@ -29,12 +29,12 @@ impl Container {
 
     /// The downloaded-model records.
     pub fn downloaded_models(&self) -> Arc<dyn DownloadedModelRepository> {
-        Arc::clone(self.ai.downloaded_model_repo()) as Arc<dyn DownloadedModelRepository>
+        self.ai.downloaded_models()
     }
 
     /// Which downloaded models are active for chat, embedding and utility.
     pub fn active_models(&self) -> Arc<dyn ActiveModels> {
-        Arc::clone(self.ai.downloaded_model_repo()) as Arc<dyn ActiveModels>
+        self.ai.active_models()
     }
 
     /// Get download manager service
