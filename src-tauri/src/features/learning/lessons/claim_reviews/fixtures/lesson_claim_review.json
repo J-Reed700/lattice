@@ -45,7 +45,8 @@
             "text": "At one atmosphere, pure water boils at 99.97 °C.",
             "startByte": 120,
             "endByte": 184,
-            "retrievalKind": "vector"
+            "retrievalKind": "vector",
+            "trust": null
           },
           "addedBy": "user"
         }
@@ -176,14 +177,16 @@
               "text": "At one atmosphere, pure water boils at 99.97 °C.",
               "startByte": 120,
               "endByte": 184,
-              "retrievalKind": "vector"
+              "retrievalKind": "vector",
+              "trust": null
             },
             "addedBy": "user"
           }
         ],
         "at": 1760000000001
       },
-      "verifierCheck": null
+      "verifierCheck": null,
+      "sufficiency": null
     },
     {
       "claimId": "claim-2",
@@ -262,13 +265,15 @@
               "text": "At one atmosphere, pure water boils at 99.97 °C.",
               "startByte": 120,
               "endByte": 184,
-              "retrievalKind": "vector"
+              "retrievalKind": "vector",
+              "trust": null
             },
             "addedBy": "user"
           }
         ],
         "at": 1760000400000
-      }
+      },
+      "sufficiency": null
     }
   ]
 }
