@@ -9,10 +9,17 @@
 //! are. Nothing here imports another feature.
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §16-§18.
 
+pub mod capture;
 pub mod repository;
 mod rows;
 
 pub use repository::SqliteSourceTrustStore;
 
 #[cfg(test)]
+mod capture_tests;
+#[cfg(test)]
 mod migration_tests;
+#[cfg(test)]
+mod repository_tests;
+#[cfg(test)]
+mod test_support;

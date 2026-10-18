@@ -115,6 +115,9 @@ pub struct CapturedLearningSource {
     pub text: String,
     pub truncated: bool,
     pub extraction_version: String,
+    /// What capture read about where the text came from; the capture hook
+    /// stores it with the version (`trust::capture::record`).
+    pub signals: lattice_core::domain::provenance::ProvenanceSignals,
 }
 
 impl LearningSourceLibraryRepository {

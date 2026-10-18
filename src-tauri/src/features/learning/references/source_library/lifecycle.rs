@@ -1,5 +1,6 @@
 //! Adopting versions, changing freshness policy, deleting and reimporting sources.
 use super::*;
+use crate::features::learning::references::trust;
 
 impl LearningSourceLibraryRepository {
     pub async fn adopt(&self, req: &AdoptLearningSourceVersionRequestDto) -> Result<()> {
@@ -328,6 +329,22 @@ impl LearningSourceLibraryRepository {
                 },
             )
             .await?;
+            // The restored version keeps the provenance of the one it restores.
+            let prior_id: String = prior.get("id");
+            let signals =
+                trust::capture::carried_forward(&mut tx, &req.program_id, &prior_id).await?;
+            let kind = parse_kind(&source.get::<String, _>("kind"))?;
+            let restored = trust::capture::CapturedVersion {
+                program_id: &req.program_id,
+                source_id: &req.source_id,
+                version_id: &req.version_id,
+                kind: &kind,
+                title: &title,
+                resolved_url: resolved_url.as_deref(),
+                text: &text,
+                acquired_at_ms: timestamp,
+            };
+            trust::capture::record(&mut tx, &restored, &signals).await?;
             mirror_legacy(
                 &mut tx,
                 &req.program_id,

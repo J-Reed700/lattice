@@ -300,6 +300,9 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
                     text: format!("Saved reference {index} with complete text."),
                     truncated: false,
                     extraction_version: "fixture".into(),
+                    signals: crate::features::learning::references::trust::capture::not_extracted(
+                        "test fixture",
+                    ),
                 },
                 format!("capture-{index}"),
             )
@@ -382,6 +385,9 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
                 text: "The next needed source can be saved after recovery.".into(),
                 truncated: false,
                 extraction_version: "fixture".into(),
+                signals: crate::features::learning::references::trust::capture::not_extracted(
+                    "test fixture",
+                ),
             },
             "new-evidence".into(),
         )

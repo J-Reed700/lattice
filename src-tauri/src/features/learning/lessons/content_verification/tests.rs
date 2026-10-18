@@ -1928,6 +1928,9 @@ pub(crate) async fn install_source(
                 text: text.into(),
                 truncated: false,
                 extraction_version: "test".into(),
+                signals: crate::features::learning::references::trust::capture::not_extracted(
+                    "test fixture",
+                ),
             },
             "fixture".into(),
         )

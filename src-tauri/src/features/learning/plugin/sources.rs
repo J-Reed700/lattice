@@ -46,7 +46,7 @@ pub async fn add_learning_web_source(
     crate::features::learning::source_workflows::add_web_source(
         &source_library(&container),
         request,
-        move |url| async move { web.fetch_reference_content(&url).await },
+        move |url| async move { web.fetch_reference_page(&url).await },
     )
     .await
     .map_err(ApiError::from)
@@ -141,6 +141,10 @@ pub async fn add_learning_text_source(
         text: request.text.clone(),
         truncated: false,
         extraction_version: "pasted_text_v1".into(),
+        signals: crate::features::learning::references::trust::capture::pasted_signals(
+            request.publisher.as_deref(),
+            &request.text,
+        ),
     };
     source_library(&container)
         .add(
@@ -202,23 +206,14 @@ pub async fn refresh_learning_source(
         ));
     }
     let captured_result = async {
-        let article = container
+        let page = container
             .web_service()
-            .fetch_reference_content(&url)
+            .fetch_reference_page(&url)
             .await
             .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+        let title = page.output.title.clone().unwrap_or_else(|| url.clone());
         Ok::<_, lattice_core::shared::error::AppError>(
-            crate::features::learning::source_library::CapturedLearningSource {
-                title: article.title.unwrap_or_else(|| url.clone()),
-                publisher: None,
-                requested_url: Some(url.clone()),
-                resolved_url: Some(article.url),
-                text: article.content,
-                truncated: article.content_truncated,
-                extraction_version:
-                    lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION
-                        .into(),
-            },
+            crate::features::learning::references::trust::capture::web_capture(page, &url, title),
         )
     }
     .await;

@@ -253,6 +253,9 @@ pub(super) fn references(
                 text: s.excerpt.clone(),
                 truncated: false,
                 extraction_version: "complete_test_capture".into(),
+                signals: crate::features::learning::references::trust::capture::not_extracted(
+                    "test fixture",
+                ),
             },
         })
         .collect()

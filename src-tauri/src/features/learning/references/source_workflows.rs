@@ -2,9 +2,10 @@
 use crate::features::learning::dto::{
     AddLearningWebSourceRequestDto, LearningSourceKind, LearningSourceWorkspaceDto,
 };
+use crate::features::learning::references::trust::capture::web_capture;
 use crate::features::learning::source_identity::{source_request_hash, validate_source_ids};
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use lattice_core::application::contracts::web::FetchUrlContentOutput;
+use lattice_core::application::contracts::web::ReferencePage;
 use lattice_core::shared::error::Result;
 
 pub async fn add_web_source<F, Fetch>(
@@ -14,7 +15,7 @@ pub async fn add_web_source<F, Fetch>(
 ) -> Result<LearningSourceWorkspaceDto>
 where
     F: FnOnce(String) -> Fetch,
-    Fetch: std::future::Future<Output = Result<FetchUrlContentOutput>>,
+    Fetch: std::future::Future<Output = Result<ReferencePage>>,
 {
     validate_source_ids(
         &request.program_id,
@@ -54,29 +55,22 @@ where
     }
     repo.preflight_new_source(&request.program_id, &request.source_id, &request.version_id)
         .await?;
-    let article = fetch(request.url.trim().to_string()).await?;
-    if article
+    let page = fetch(request.url.trim().to_string()).await?;
+    if page
+        .output
         .title
         .as_deref()
         .unwrap_or_default()
         .trim()
         .is_empty()
-        || article.content.trim().is_empty()
+        || page.output.content.trim().is_empty()
     {
         return Err(lattice_core::shared::error::AppError::InvalidInput(
             "The page did not contain usable article text.".into(),
         ));
     }
-    let captured = crate::features::learning::source_library::CapturedLearningSource {
-        title: article.title.unwrap_or_default(),
-        publisher: None,
-        requested_url: Some(requested_url.into()),
-        resolved_url: Some(article.url),
-        text: article.content,
-        truncated: article.content_truncated,
-        extraction_version:
-            lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
-    };
+    let title = page.output.title.clone().unwrap_or_default();
+    let captured = web_capture(page, requested_url, title);
     repo.add(
         crate::features::learning::source_library::NewLearningSource {
             operation_id: &request.operation_id,

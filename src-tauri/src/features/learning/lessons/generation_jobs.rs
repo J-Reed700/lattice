@@ -398,6 +398,10 @@ mod repository_tests {
                         text: source.excerpt.clone(),
                         truncated: false,
                         extraction_version: "fixture_complete".into(),
+                        signals:
+                            crate::features::learning::references::trust::capture::not_extracted(
+                                "test fixture",
+                            ),
                     },
                 },
             )
