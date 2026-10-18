@@ -61,3 +61,4 @@ After changing a source row, run `python3 -I evals/provenance/build_sources.py`.
 | --- | --- | --- | --- |
 | 2026-10-18 | source-trust-v1 | Threshold sweep, 219 pairs | resemblance_copy 0.64 (F1 1.0 for 0.60-0.69); containment_copy 0.60 (F1 1.0 for 0.40-0.81) |
 | 2026-10-18 | source-trust-v1 | §5 procedure on 120 labelled sources | 120/120 levels as labelled; 115/115 web origins match the compiled suffix list |
+| 2026-10-18 | source-trust-v1 | P7 offline run on the integrated branch (`results/2026-10-18-offline-p7.json`) | sources 120/120 levels, 115/115 origins; pairs sweep unchanged (0.64 / 0.60, F1 1.0); sufficiency 50/50; chains 12/12; injection 30/30; the gate's sufficiency fixture 8/8; function-calling lesson 5/5 primary-backed claims pass with one check. Live judgement evals not run (no llama-server) |
