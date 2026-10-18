@@ -1,6 +1,6 @@
 import { TrustBadge } from '@/features/learning/sources/trust/TrustBadge';
-import { bestLevel, bestOf, insufficiencyExplanation, sufficiencyHeadline } from '@/features/learning/sources/trust/trustPresentation';
 import { TrustOverrideMenu } from '@/features/learning/sources/trust/TrustOverrideMenu';
+import { bestLevel, bestOf, insufficiencyExplanation, sufficiencyHeadline } from '@/features/learning/sources/trust/trustPresentation';
 import { useReprofileClaim, useSourceTrust } from '@/features/learning/sources/trust/useSourceTrust';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
 
