@@ -435,6 +435,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::download::plugin::clear_completed_downloads,
             lattice::features::download::plugin::get_download_status,
             lattice::features::download::plugin::list_downloads,
+            lattice::features::download::plugin::start_vision_projector_download,
             // Mentions plugin
             lattice::features::mentions::plugin::extract_mentions,
             lattice::features::mentions::plugin::search_mentions,

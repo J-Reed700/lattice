@@ -3669,6 +3669,18 @@ async listDownloads() : Promise<Result<DownloadStatusResponse[], ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Start downloading the catalog vision projector for the downloaded model
+ * `id`, beside its weights. Follow it like any download, by the returned id.
+ */
+async startVisionProjectorDownload(id: string) : Promise<Result<VisionProjectorDownloadDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|start_vision_projector_download", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async extractMentions(documentId: string, content: string) : Promise<Result<ExtractMentionsResultDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:mention|extract_mentions", { documentId, content }) };
@@ -5549,7 +5561,32 @@ supports_tool_calling?: boolean | null;
 /**
  * The context window saved for this model in Settings; `None` is Auto.
  */
-configured_context_length?: number | null }
+configured_context_length?: number | null;
+/**
+ * The catalog's vision projector for this model, when it has one.
+ */
+vision?: DownloadedVisionDto | null }
+/**
+ * A downloaded model's vision projector: whether it is on disk, whether the
+ * user lets the model see, and what it costs to fetch.
+ */
+export type DownloadedVisionDto = {
+/**
+ * The whole projector file is beside the weights.
+ */
+projector_downloaded: boolean;
+/**
+ * Vision is on for this model: unless switched off, once downloaded.
+ */
+enabled: boolean;
+/**
+ * How the model's encoder resizes and charges for a picture.
+ */
+geometry: VisionGeometry;
+/**
+ * The projector download's size, in bytes.
+ */
+projector_bytes: number }
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
@@ -9023,6 +9060,15 @@ export type VisionGeometry =
  * `base_tokens` for the overview.
  */
 { kind: "tiles"; tile_side: number; tokens_per_tile: number; base_tokens: number; max_tiles: number; max_side: number }
+/**
+ * What asking for a projector started.
+ */
+export type VisionProjectorDownloadDto = {
+/**
+ * The download to follow in the download list and its events; `None`
+ * when the whole projector is already on disk.
+ */
+downloadId: string | null }
 /**
  * Response from web ingestion command
  */

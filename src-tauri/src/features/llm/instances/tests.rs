@@ -912,3 +912,43 @@ async fn a_server_two_roles_hold_is_named_once_in_a_refusal() {
     assert_eq!(message.matches("Qwen3.5-27B (").count(), 1, "{message}");
     assert!(message.contains("Research notes"), "{message}");
 }
+
+/// Whether a projector was on disk when a server started is not a setting:
+/// an unrelated save leaves a server that sees in place. The Vision switch is
+/// one: turning it off or on reloads the model's server.
+#[test]
+fn a_finished_projector_is_not_a_setting_but_the_vision_switch_is() {
+    use crate::features::llm::engine::factory::LocalServerOptions;
+    let before = settings();
+    let local = keys(&before).swap_remove(0);
+    let seeing = ModelKey {
+        launch: local.launch.map(|launch| LocalServerOptions {
+            projector_ready: true,
+            ..launch
+        }),
+        ..local
+    };
+    let unrelated = changed(&before, |s| {
+        s.provider = lattice_core::application::contracts::settings::LLMProvider::Ollama;
+    });
+    assert!(!invalidation::matches(&seeing, &unrelated));
+    let switched_off = changed(&before, |s| {
+        if let Some(config) = s.local_model_configs.get_mut("a") {
+            config.vision = Some(false);
+        }
+    });
+    assert!(invalidation::matches(&seeing, &switched_off));
+
+    // Switching it back on reloads the text-only server too.
+    let mut off = before.clone();
+    if let Some(config) = off.local_model_configs.get_mut("a") {
+        config.vision = Some(false);
+    }
+    let blind = keys(&off).swap_remove(0);
+    let switched_on = changed(&off, |s| {
+        if let Some(config) = s.local_model_configs.get_mut("a") {
+            config.vision = None;
+        }
+    });
+    assert!(invalidation::matches(&blind, &switched_on));
+}

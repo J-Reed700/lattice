@@ -19,6 +19,8 @@
 //! - `crate::features::download::plugin::init()` — Tauri plugin
 //! - `crate::features::download::events` — model download domain events
 //!   and outbound UI event payloads
+//! - `crate::features::download::vision_projector` — a catalog chat model's
+//!   vision projector, fetched beside its weights on request
 //!
 //! Domain types (DownloadSession, DownloadError, DownloadedModel, the
 //! DownloadedModelRepository port) live in the domain layer under
@@ -37,3 +39,4 @@ pub mod events;
 pub mod manager;
 pub mod plugin;
 pub mod saga;
+pub mod vision_projector;

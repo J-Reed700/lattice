@@ -5,6 +5,7 @@ use lattice_core::application::ports::llm_port::InvalidationCause;
 use lattice_core::domain::models::model_ref::ModelRef;
 
 use super::ModelKey;
+use crate::features::llm::engine::factory::LocalServerOptions;
 use crate::features::llm::loading::launch_profile_for;
 
 /// Whether `cause` makes the model loaded for `key` stale.
@@ -54,7 +55,15 @@ fn client_changed(key: &ModelKey, before: &LLMSettingsDto, after: &LLMSettingsDt
     match &key.model {
         // The model's own saved configuration and Settings' server options
         // make up its server; the key carries the launch it was started with.
-        ModelRef::Local { .. } => launch_profile_for(&key.model, after) != key.launch,
+        // Whether the projector was on disk is not a setting, so it is left
+        // out: the next request notices a finished download by itself.
+        ModelRef::Local { .. } => {
+            let configured = key.launch.map(|launch| LocalServerOptions {
+                projector_ready: false,
+                ..launch
+            });
+            launch_profile_for(&key.model, after) != configured
+        }
         ModelRef::Ollama { .. } => {
             before.ollama_url != after.ollama_url
                 || before.ollama_auth_header_name != after.ollama_auth_header_name

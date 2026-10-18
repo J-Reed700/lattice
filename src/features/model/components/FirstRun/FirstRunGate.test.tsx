@@ -15,7 +15,7 @@ vi.mock('@/routes', () => ({
 }));
 
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({
-  useModelCatalog: () => ({ systemCapabilities: null }),
+  useModelCatalog: () => ({ systemCapabilities: null, compatibleModels: [] }),
 }));
 
 const FIRST_RUN_STATUS = JSON.stringify({
