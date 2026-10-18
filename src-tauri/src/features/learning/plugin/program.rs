@@ -89,15 +89,20 @@ pub async fn generate_learning_program(
                 "Drafting this course outline",
             )?;
             let llm = PatientModel::new(pin.llm.as_ref(), progress.as_ref());
-            service::generate_with_references_and_progress(
-                &LearningRepository::new(container.db_pool().clone()),
-                &container.draft_run_registry(),
-                &llm,
-                request,
-                sources.sources,
-                &sources.references,
-                progress,
-                Some(container.web_service().as_ref()),
+            // Supported outline assertions are weighed for their sources'
+            // standing, as a lesson's claims are.
+            crate::features::learning::content_verification::with_outline_trust(
+                container.db_pool().clone(),
+                service::generate_with_references_and_progress(
+                    &LearningRepository::new(container.db_pool().clone()),
+                    &container.draft_run_registry(),
+                    &llm,
+                    request,
+                    sources.sources,
+                    &sources.references,
+                    progress,
+                    Some(container.web_service().as_ref()),
+                ),
             )
             .await
         })
@@ -141,13 +146,16 @@ pub async fn repair_learning_outline(
                 "Repairing this course outline",
             )?;
             let llm = PatientModel::new(pin.llm.as_ref(), progress.as_ref());
-            crate::features::learning::outline_draft::repair_saved(
-                &LearningRepository::new(container.db_pool().clone()),
-                &container.draft_run_registry(),
-                &llm,
-                &request,
-                progress,
-                Some(container.web_service().as_ref()),
+            crate::features::learning::content_verification::with_outline_trust(
+                container.db_pool().clone(),
+                crate::features::learning::outline_draft::repair_saved(
+                    &LearningRepository::new(container.db_pool().clone()),
+                    &container.draft_run_registry(),
+                    &llm,
+                    &request,
+                    progress,
+                    Some(container.web_service().as_ref()),
+                ),
             )
             .await
         })

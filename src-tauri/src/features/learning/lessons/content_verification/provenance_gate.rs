@@ -34,7 +34,7 @@ use std::sync::Arc;
 mod context;
 mod relevel;
 pub(super) use context::passage_labels;
-pub(in crate::features::learning) use context::with_trust;
+pub(in crate::features::learning) use context::{outline_trust, with_outline_trust, with_trust};
 pub(in crate::features::learning) use relevel::relevel;
 
 #[cfg(test)]

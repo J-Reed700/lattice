@@ -73,6 +73,35 @@ pub(in crate::features::learning) async fn with_trust<T>(
         .await
 }
 
+tokio::task_local! {
+    static OUTLINE_POOL: SqlitePool;
+}
+
+/// Turns the provenance gate on for the outline that `future` drafts or
+/// repairs. The outline commands install it, as the lesson preparation job
+/// installs [`with_trust`]; the course may not exist yet, so the outline's
+/// review and repair loop opens the course's scope itself
+/// ([`outline_trust`]). Outside it (unit tests) no outline is weighed.
+pub(in crate::features::learning) async fn with_outline_trust<T>(
+    pool: SqlitePool,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    OUTLINE_POOL.scope(pool, future).await
+}
+
+/// Runs `future` in `program_id`'s trust scope when an outline command
+/// turned the gate on; otherwise runs it as it is.
+pub(in crate::features::learning) async fn outline_trust<T>(
+    program_id: String,
+    topic: String,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    match OUTLINE_POOL.try_with(Clone::clone) {
+        Ok(pool) => with_trust(pool, program_id, topic, future).await,
+        Err(_) => future.await,
+    }
+}
+
 fn course() -> Option<Course> {
     COURSE.try_with(Clone::clone).ok()
 }

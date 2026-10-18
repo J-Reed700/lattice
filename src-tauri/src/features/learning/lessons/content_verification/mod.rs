@@ -66,7 +66,7 @@ mod passes;
 use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
 pub(in crate::features::learning) use provenance_gate::{
-    gate_reason, relevel, weigh_claim, with_trust,
+    gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
 };
 mod repair;
 mod repair_loop;
