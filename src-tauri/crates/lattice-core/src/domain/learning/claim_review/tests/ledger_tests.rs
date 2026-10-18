@@ -61,6 +61,9 @@ fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
     entry
         .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
         .unwrap();
+    // The rewritten sentence retrieved other passages: what the machine's own
+    // rewrite brings is not new information, so the rewrite still costs its
+    // attempt (§4 "Bounded").
     entry
         .append(machine(4), checked(Some(VerdictKind::Unsupported), "v2"))
         .unwrap();
@@ -69,12 +72,24 @@ fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
         &ClaimState::Open {
             kind: VerdictKind::Unsupported,
             reason: "compared v2".into(),
+            machine_attempts_left: MACHINE_ATTEMPTS - 1
+        }
+    );
+    // Research found other passages: genuinely new material restores it.
+    entry
+        .append(machine(5), checked(Some(VerdictKind::Unsupported), "v3"))
+        .unwrap();
+    assert_eq!(
+        entry.state(),
+        &ClaimState::Open {
+            kind: VerdictKind::Unsupported,
+            reason: "compared v3".into(),
             machine_attempts_left: MACHINE_ATTEMPTS
         }
     );
     // A recheck on unchanged evidence with no repair in between costs nothing.
     entry
-        .append(machine(5), checked(Some(VerdictKind::Unsupported), "v2"))
+        .append(machine(6), checked(Some(VerdictKind::Unsupported), "v3"))
         .unwrap();
     assert!(matches!(
         entry.state(),

@@ -70,9 +70,12 @@ pub(super) fn charge(kind: VerdictKind, reason: String, attempts_left: u8) -> Cl
 }
 
 /// §3 `after_machine_failure`, applied to a failing check of an Open claim:
-/// new evidence restores the budget; the same evidence after a repair uses
-/// an attempt; a kind the machine cannot repair, or no source after
-/// research, goes to the user.
+/// new evidence restores the budget; the check that decides a repair uses an
+/// attempt; a kind the machine cannot repair, or no source after research,
+/// goes to the user. `new_evidence` is false for the check that decides a
+/// rewrite even when the rewritten sentence retrieved other passages: what
+/// the machine's own rewrite brings is not new information, or a claim the
+/// machine keeps rewriting would never reach the user (§4 "Bounded").
 fn after_machine_failure(
     cursor: &Cursor,
     kind: VerdictKind,
@@ -126,10 +129,12 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
         }
         Checker::Local { model } => model.clone(),
     };
-    let new_evidence = cursor
-        .basis
-        .as_ref()
-        .is_none_or(|basis| basis.fingerprint != check.fingerprint);
+    let charged = std::mem::take(&mut cursor.repair_pending);
+    let new_evidence = !charged
+        && cursor
+            .basis
+            .as_ref()
+            .is_none_or(|basis| basis.fingerprint != check.fingerprint);
     if new_evidence {
         cursor.researched = false;
     }
@@ -143,7 +148,6 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
             .map(|seen| seen.source_version_id.clone())
             .collect(),
     });
-    let charged = std::mem::take(&mut cursor.repair_pending);
     if cursor.state.is_settled() {
         return;
     }
