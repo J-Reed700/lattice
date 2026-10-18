@@ -60,6 +60,16 @@ export const downloadApi = {
     apiCall<void>('resume_download', { id: downloadId }),
 
   /**
+   * Starts fetching a downloaded catalog chat model's vision projector into
+   * its folder. `downloadId` is null when the whole file is already there;
+   * otherwise the download runs and reports like any other.
+   *
+   * @param id - The downloaded model's own id, as `deleteModel` takes
+   */
+  startVisionProjectorDownload: async (id: string): Promise<ApiResult<Wire.VisionProjectorDownloadDto>> =>
+    apiCall<Wire.VisionProjectorDownloadDto>('start_vision_projector_download', { id }),
+
+  /**
    * Cancels an ongoing or paused download.
    * Deletes partial download file.
    *

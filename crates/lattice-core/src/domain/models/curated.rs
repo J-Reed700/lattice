@@ -34,9 +34,10 @@ mod ocr;
 mod transcription;
 
 pub use chat::{
-    chat_model_file_supports_tool_calling, chat_model_uses_mtp_draft, curated_chat_model_for_file,
-    curated_chat_models_matching, get_curated_llm_models, recommend_chat_model_for_ram,
-    CuratedChatModel, TOOL_CALLING_CAPABILITY,
+    chat_model_file_supports_tool_calling, chat_model_uses_mtp_draft, chat_model_vision,
+    curated_chat_model_for_file, curated_chat_models_matching, get_curated_llm_models,
+    recommend_chat_model_for_ram, ChatModelVision, CuratedChatModel, CuratedVision,
+    CHAT_PROJECTOR_FILE, TOOL_CALLING_CAPABILITY,
 };
 pub use embedding::{embedding_model_supports_matryoshka, get_curated_embedding_models};
 pub use ocr::{

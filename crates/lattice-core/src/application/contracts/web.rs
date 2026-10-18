@@ -10,6 +10,7 @@ pub use crate::domain::provenance::{
     NamedEntity, Origin, OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals,
     RegistryKind, SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
 };
+use crate::domain::sourcing::FinderOutcome;
 
 /// The version stamped on every reference text the web reader extracts for a
 /// learning collection. Bump it when extraction changes what a stored
@@ -150,6 +151,38 @@ pub struct WebSearchOutput {
     /// results were actually results *for*.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub followup_queries: Vec<String>,
+
+    /// Every finder the search ran or skipped, with its result, so the model
+    /// and the step line see failures instead of a silently shorter list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<FinderOutcomeDto>,
+}
+
+/// One finder's outcome as the model and the UI read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinderOutcomeDto {
+    /// Finder id (`duckduckgo`).
+    pub finder: String,
+    /// `answered`, `empty`, `failed` or `skipped`.
+    pub result: String,
+    /// Leads this finder returned.
+    pub leads: usize,
+    pub elapsed_ms: u64,
+    /// The failure cause or skip reason, as the user reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+}
+
+impl From<&FinderOutcome> for FinderOutcomeDto {
+    fn from(outcome: &FinderOutcome) -> Self {
+        Self {
+            finder: outcome.finder.to_string(),
+            result: outcome.result.as_str().to_string(),
+            leads: outcome.leads.len(),
+            elapsed_ms: u64::try_from(outcome.elapsed.as_millis()).unwrap_or(u64::MAX),
+            cause: outcome.result.detail(),
+        }
+    }
 }
 
 /// A page read for a learning reference, with what capture recorded about
@@ -194,6 +227,34 @@ pub struct FetchUrlContentOutput {
     /// model sees for an ordinary page is exactly what it saw before.
     #[serde(default, skip_serializing_if = "is_false")]
     pub from_cache: bool,
+
+    /// How the text was read. Left out for a direct read, so an ordinary
+    /// page's payload is unchanged; a browser or archive read says so.
+    #[serde(default, skip_serializing_if = "ReadVia::is_direct")]
+    pub read_via: ReadVia,
+}
+
+/// How a page's text was read.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadVia {
+    /// A plain HTTP read of the live page.
+    #[default]
+    Direct,
+    /// The hidden browser reader, after the site refused a plain client.
+    Browser,
+    /// The Internet Archive's copy captured at `captured_at`; provenance
+    /// folds it into `original`.
+    Archive {
+        captured_at: DateTime<Utc>,
+        original: String,
+    },
+}
+
+impl ReadVia {
+    pub fn is_direct(&self) -> bool {
+        matches!(self, ReadVia::Direct)
+    }
 }
 
 /// `skip_serializing_if` for a flag only worth sending when it is set.

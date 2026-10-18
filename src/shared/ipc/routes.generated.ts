@@ -372,6 +372,7 @@ export const COMMAND_PLUGINS = {
   start_learning_practice_session: 'learning',
   start_learning_simulation: 'learning',
   start_model_download: 'download',
+  start_vision_projector_download: 'download',
   submit_learning_assessment_form: 'learning',
   submit_learning_attempt: 'learning',
   submit_learning_diagnostic: 'learning',

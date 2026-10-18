@@ -3,7 +3,8 @@
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
-use std::path::Path;
+use crate::domain::models::vision::{VisionGeometry, VISION_CAPABILITY};
+use std::path::{Path, PathBuf};
 
 /// Capability tag for a chat model whose GGUF chat template carries a native
 /// tool-call format that llama.cpp parses under `--jinja`.
@@ -58,6 +59,76 @@ pub fn chat_model_uses_mtp_draft(model_path: &Path) -> bool {
     })
 }
 
+/// The name a chat model's vision projector is saved under, beside its
+/// weights in the model's own directory (as the OCR model's is).
+pub const CHAT_PROJECTOR_FILE: &str = "mmproj.gguf";
+
+/// A catalog entry's vision projector: the file its repository publishes,
+/// pinned like the weights, and the geometry its encoder resizes pictures to.
+///
+/// The projector is a separate download from the weights, so a reader who
+/// never attaches a picture never fetches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CuratedVision {
+    /// The projector file inside the entry's repository.
+    pub projector_remote_file: &'static str,
+    pub projector_bytes: u64,
+    /// Lower-case hex SHA-256 of `projector_remote_file`.
+    pub projector_sha256: &'static str,
+    pub geometry: VisionGeometry,
+}
+
+/// Where a downloaded catalog chat model keeps its projector, what to fetch
+/// it from, and how its encoder sees.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChatModelVision {
+    /// `<model directory>/mmproj.gguf`.
+    pub projector_path: PathBuf,
+    /// The projector download: URL, size and pinned digest.
+    pub projector: ModelFileMetadata,
+    pub geometry: VisionGeometry,
+    /// The entry's display name, for the download list.
+    pub model_name: &'static str,
+}
+
+impl ChatModelVision {
+    /// Whether a projector file of `on_disk_bytes` is the whole download. The
+    /// download manager writes into the destination as bytes arrive and
+    /// deletes a file whose digest does not match, so a file of the pinned
+    /// size is a finished, verified one and anything shorter is in progress.
+    pub fn is_complete(&self, on_disk_bytes: u64) -> bool {
+        on_disk_bytes == self.projector.size_bytes
+    }
+}
+
+/// The vision projector the catalog declares for the chat model at
+/// `model_path`, matched on the download layout like
+/// [`chat_model_uses_mtp_draft`]. `None` for a file the catalog does not
+/// vouch for, or an entry whose repository publishes no projector.
+pub fn chat_model_vision(model_path: &Path) -> Option<ChatModelVision> {
+    let file_name = model_path.file_name()?.to_str()?;
+    let directory = model_path.parent()?;
+    let directory_name = directory.file_name()?.to_str()?;
+    let model = CURATED_CHAT_MODELS.iter().find(|model| {
+        model.id.eq_ignore_ascii_case(directory_name) && model.file.eq_ignore_ascii_case(file_name)
+    })?;
+    let vision = model.vision?;
+    Some(ChatModelVision {
+        projector_path: directory.join(CHAT_PROJECTOR_FILE),
+        projector: ModelFileMetadata::with_checksum(
+            CHAT_PROJECTOR_FILE.into(),
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                model.repo, vision.projector_remote_file
+            ),
+            vision.projector_bytes,
+            vision.projector_sha256.into(),
+        ),
+        geometry: vision.geometry,
+        model_name: model.name,
+    })
+}
+
 /// The catalog entry for one file of one Hugging Face repository, if the
 /// catalog vouches for that exact file.
 ///
@@ -102,7 +173,8 @@ pub fn curated_chat_models_matching(query: &str) -> Vec<ModelMetadata> {
 /// from each file's own GGUF header. A publisher that re-uploads a file keeps
 /// its name and changes its digest; the download then fails verification
 /// instead of installing something nobody checked, and the entry needs
-/// re-reading.
+/// re-reading. Projectors are pinned the same way: each entry's
+/// `mmproj-F16.gguf`, its `size` and `lfs.oid` read from the same listing.
 #[derive(Debug, Clone, Copy)]
 pub struct CuratedChatModel {
     pub id: &'static str,
@@ -127,6 +199,9 @@ pub struct CuratedChatModel {
     /// (`--spec-type draft-mtp --spec-draft-n-max N`), which also requires a
     /// single slot (`-np 1`). Read it through [`chat_model_uses_mtp_draft`].
     pub mtp_draft: bool,
+    /// The vision projector the repository publishes, if any. Read it
+    /// through [`chat_model_vision`].
+    pub vision: Option<CuratedVision>,
 }
 
 /// What a model's KV cache costs on top of its weights, from its GGUF header,
@@ -178,6 +253,13 @@ impl CuratedChatModel {
     fn metadata(&self) -> ModelMetadata {
         let repo_url = format!("https://huggingface.co/{}", self.repo);
         let file_url = format!("{repo_url}/resolve/main/{}", self.file);
+        // "Est. memory" is the download as offered: the weights alone. The
+        // projector is a second, optional download, and the sidecar counts it
+        // as resident when it sizes a server that has it (see its config).
+        let mut capabilities: Vec<String> = self.capabilities.iter().map(|&c| c.into()).collect();
+        if self.vision.is_some() {
+            capabilities.push(VISION_CAPABILITY.into());
+        }
         ModelMetadata {
             id: self.id.into(),
             name: self.name.into(),
@@ -193,7 +275,7 @@ impl CuratedChatModel {
             context_length: self.context_length,
             performance_tier: self.performance_tier,
             supported_quantizations: vec![self.quantization.into()],
-            capabilities: self.capabilities.iter().map(|&c| c.into()).collect(),
+            capabilities,
             download_url: Some(repo_url),
             license: self.license.into(),
             requires_auth: false,
@@ -252,6 +334,40 @@ const QWEN35_4B_9B_KV: KvFootprint = KvFootprint {
 /// tools. Older families were removed rather than hidden: a pre-release
 /// catalog has no installs to keep working.
 ///
+/// How the pinned llama-server (`v0.6.0`, `tools/mtmd/clip.cpp`) sizes a
+/// picture for the Qwen 3.5, 3.6 and 3.8 projectors. Their headers read
+/// `clip.projector_type = qwen3vl_merger`, `clip.vision.patch_size = 16` and
+/// `clip.vision.spatial_merge_size = 2`: one token per 32 px square. The
+/// server keeps a picture between 8 and 4,096 squares
+/// (`set_limit_image_tokens(8, 4096)` for the Qwen-VL projectors); pictures
+/// are sent at no more than the 2,048 squares Qwen3-VL's model card
+/// recommends, so the server never shrinks them again. Two tokens mark where
+/// the picture starts and ends (`<|vision_start|>` and `<|vision_end|>`, the
+/// Qwen-VL markers in `tools/mtmd/mtmd.cpp`).
+const QWEN_VISION: VisionGeometry = VisionGeometry::Grid {
+    token_side: 32,
+    min_pixels: 8 * 32 * 32,
+    max_pixels: 2048 * 32 * 32,
+    overhead_tokens: 2,
+};
+
+/// How the pinned llama-server sizes a picture for the Gemma 4 projectors.
+/// Their headers read `clip.vision.patch_size = 16` with
+/// `clip.vision.projector_type = gemma4v` (patches pooled 3×3) or `gemma4uv`
+/// (the 12B: 48 px patches, no pooling): one token per 48 px square either
+/// way (`n_merge = 3` in `clip.cpp`). The server keeps a picture between 70
+/// and 1,120 tokens (`set_limit_image_tokens(70, 1120)`), the smallest and
+/// largest visual token budgets of Gemma 4's model card. Pictures take the
+/// dynamic-size preprocessor there, not the fixed one Gemma 3 used. Two tokens
+/// mark where the picture starts and ends (`<|image>` and `<image|>`, the
+/// Gemma 4 markers in `tools/mtmd/mtmd.cpp`).
+const GEMMA4_VISION: VisionGeometry = VisionGeometry::Grid {
+    token_side: 48,
+    min_pixels: 70 * 48 * 48,
+    max_pixels: 1120 * 48 * 48,
+    overhead_tokens: 2,
+};
+
 /// Thinking defaults below are read from each GGUF's embedded template
 /// (`tokenizer.chat_template`), which is what llama-server renders. They
 /// disagree between entries, so a request has to say `enable_thinking`
@@ -275,6 +391,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 668_227_264,
+            projector_sha256: "7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7",
+            geometry: QWEN_VISION,
+        }),
     },
     // Template: thinking off unless `enable_thinking: true`.
     CuratedChatModel {
@@ -292,6 +414,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 672_423_616,
+            projector_sha256: "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864",
+            geometry: QWEN_VISION,
+        }),
     },
     // Gemma 4 E4B: 42 blocks, the last 18 reusing earlier layers' cache; of
     // the 24 that keep one, 4 are global (2 KV heads, 512-wide) and 20 slide
@@ -315,6 +443,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 990_372_672,
+            projector_sha256: "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51",
+            geometry: GEMMA4_VISION,
+        }),
     },
     // Template: thinking off unless `enable_thinking: true`; a system
     // message anywhere but first raises a template error.
@@ -333,6 +467,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 918_166_080,
+            projector_sha256: "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+            geometry: QWEN_VISION,
+        }),
     },
     // A separate quantization, not the plain 9B file plus a block: 75 of the
     // 427 shared tensors are quantized differently. It adds one MTP block,
@@ -359,6 +499,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: true,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 918_165_984,
+            projector_sha256: "5a40d1f771686432172a4981018a0d30d03a5aaf5793a5badd5416573362a232",
+            geometry: QWEN_VISION,
+        }),
     },
     // Gemma 4 12B: 48 blocks, 8 global (1 KV head, 512-wide) and 40 sliding
     // over 1024 tokens (8 KV heads, 256-wide). Template: thinking off unless
@@ -381,6 +527,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 175_115_840,
+            projector_sha256: "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e",
+            geometry: GEMMA4_VISION,
+        }),
     },
     // Unsloth publishes no plain Q4_K_M for this model; UD-Q4_K_M is its
     // dynamic Q4_K_M and the file Lattice's remote evals run. 64 blocks + 1
@@ -406,6 +558,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 927_607_488,
+            projector_sha256: "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e",
+            geometry: QWEN_VISION,
+        }),
     },
     // No plain Q4_K_M here either; UD-Q4_K_M is the nearest. 30 blocks, 5
     // global (2 KV heads, 512-wide) and 25 sliding over 1024 tokens (8 KV
@@ -428,6 +586,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 1_193_058_784,
+            projector_sha256: "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f",
+            geometry: GEMMA4_VISION,
+        }),
     },
     // UD-Q4_K_XL because Unsloth's KL-divergence table for this architecture
     // (measured on Qwen 3.5 35B A3B) puts it at 0.0137 against Q4_K_M's 0.0192
@@ -453,6 +617,12 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 899_283_680,
+            projector_sha256: "8971ee4f331ff0a4c609374f32984b3d4e6dc086c0aa35f1d637fad1829e887f",
+            geometry: QWEN_VISION,
+        }),
     },
 ];
 

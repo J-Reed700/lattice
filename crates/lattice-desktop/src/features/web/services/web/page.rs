@@ -1,17 +1,20 @@
-//! Reading one page: bounded download, charset decoding, parsing and the browser fallback.
+//! Reading one page: bounded download, charset decoding, parsing, and the
+//! fetch chain's fallbacks: the browser reader, then the Internet Archive.
 use super::address_guard::validate_url_resolved;
 use super::{
     FetchUrlContentOutput, PageRead, ReadPage, WebService, ARTICLE_SHARE_DENOMINATOR,
     HTML_PARSE_TIMEOUT, MAX_PAGE_BODY_BYTES, RESPONSE_BODY_TIMEOUT, THIN_PAGE_CHARS,
 };
+use crate::features::web::services::finders::retry_after;
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage};
 use crate::features::web::services::provenance::{
     self, PageMetadata, PageProvenance, PageReading, TextForm,
 };
-use crate::features::web::services::{browser_reader, reference_text, stealth};
-use chrono::Utc;
+use crate::features::web::services::{browser_reader, identity, reference_text};
+use chrono::{NaiveDate, Utc};
 use encoding_rs::{Encoding, UTF_8};
-use lattice_core::application::contracts::web::{HttpFacts, ProvenanceSignals};
+use lattice_core::application::contracts::web::{HttpFacts, ProvenanceSignals, ReadVia};
+use lattice_core::domain::sourcing::unwrap_archive;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::StatusCode;
 use scraper::{Html, Selector};
@@ -169,6 +172,104 @@ pub(super) fn parse_fetchable_url(url: &str) -> Result<Url> {
     }
 }
 
+/// Which copy of a page a read wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Want {
+    /// The live page; the archive only when nothing else reads it.
+    Live,
+    /// The archived copy nearest this day, instead of the live page.
+    AsOf(NaiveDate),
+}
+
+/// Why the live page gave nothing, as the error names it.
+enum LiveFailure {
+    Status(StatusCode),
+    Transport(String),
+}
+
+impl LiveFailure {
+    fn describe(&self) -> String {
+        match self {
+            LiveFailure::Status(status) => format!(
+                "HTTP {}: {}",
+                status,
+                status.canonical_reason().unwrap_or("Unknown")
+            ),
+            LiveFailure::Transport(detail) => format!("Failed to fetch URL: {detail}"),
+        }
+    }
+}
+
+/// What reading the live page came to.
+enum Live {
+    /// A page worth returning.
+    Read(ReadPage),
+    /// Only a shell (kept and cached): the archive may hold more text.
+    Thin(ReadPage),
+    Failed(LiveFailure),
+}
+
+/// A page's extracted text and how it was read, before it is counted and
+/// cached.
+pub(super) struct PageText {
+    pub(super) final_url: String,
+    pub(super) title: Option<String>,
+    pub(super) content: String,
+    pub(super) content_type: Option<String>,
+    pub(super) via: ReadVia,
+}
+
+/// A direct read of an archive URL is an archived read, and says so.
+fn direct_read_via(final_url: &str) -> ReadVia {
+    Url::parse(final_url)
+        .ok()
+        .and_then(|url| unwrap_archive(&url))
+        .and_then(|copy| {
+            copy.captured_at.map(|captured_at| ReadVia::Archive {
+                captured_at,
+                original: copy.original.to_string(),
+            })
+        })
+        .unwrap_or(ReadVia::Direct)
+}
+
+fn served_from_cache(page: CachedPage, lookup_start: Instant) -> ReadPage {
+    ReadPage {
+        output: FetchUrlContentOutput {
+            url: page.final_url,
+            title: page.title,
+            content: page.content,
+            content_truncated: page.content_truncated,
+            word_count: page.word_count,
+            fetch_time_ms: lookup_start.elapsed().as_secs_f64() * 1000.0,
+            content_type: page.content_type,
+            from_cache: true,
+            read_via: page.read_via,
+        },
+        fetched_at: page.fetched_at,
+        signals: ProvenanceSignals::NotExtracted {
+            reason: provenance::FROM_PAGE_CACHE.to_string(),
+        },
+    }
+}
+
+fn cached_page(page: &ReadPage) -> CachedPage {
+    CachedPage {
+        final_url: page.output.url.clone(),
+        title: page.output.title.clone(),
+        content: page.output.content.clone(),
+        content_truncated: page.output.content_truncated,
+        word_count: page.output.word_count,
+        content_type: page.output.content_type.clone(),
+        fetched_at: page.fetched_at,
+        read_via: page.output.read_via.clone(),
+    }
+}
+
+fn text_len(page: &ReadPage) -> usize {
+    page.output.content.trim().len()
+}
+
 impl WebService {
     /// Read `url`, from the page cache when it holds it and from the network
     /// otherwise.
@@ -178,12 +279,30 @@ impl WebService {
     /// address to re-resolve. Only the scheme is still checked, because a
     /// `file://` URL must not be readable by any path.
     pub async fn read_page(&self, url: &str) -> Result<ReadPage> {
-        self.read_page_as(url, PageRead::Chat).await
+        self.read_page_as(url, PageRead::Chat, Want::Live).await
     }
 
-    pub(super) async fn read_page_as(&self, url: &str, read: PageRead) -> Result<ReadPage> {
+    /// Read the Internet Archive's copy of `url` nearest `as_of`, never the
+    /// live page. `read_via` names the capture and its date.
+    pub async fn read_page_as_of(&self, url: &str, as_of: NaiveDate) -> Result<ReadPage> {
+        self.read_page_as(url, PageRead::Chat, Want::AsOf(as_of))
+            .await
+    }
+
+    /// The fetch chain (design §3.8): cache → guard → pacer → direct GET →
+    /// the browser reader for refusals and shells → the Internet Archive when
+    /// still nothing. A dated read goes to the archive alone.
+    pub(super) async fn read_page_as(
+        &self,
+        url: &str,
+        read: PageRead,
+        want: Want,
+    ) -> Result<ReadPage> {
         debug!("Fetching URL: {}", url);
-        parse_fetchable_url(url)?;
+        let parsed = parse_fetchable_url(url)?;
+        if let Want::AsOf(day) = want {
+            return self.read_dated(&parsed, day, read).await;
+        }
 
         let lookup_start = Instant::now();
         // Reference snapshots have their own durable storage. Never return a
@@ -196,23 +315,7 @@ impl WebService {
         match cached {
             Some(CachedFetch::Page(page)) => {
                 info!(url, words = page.word_count, "URL served from page cache");
-                let fetched_at = page.fetched_at;
-                return Ok(ReadPage {
-                    output: FetchUrlContentOutput {
-                        url: page.final_url,
-                        title: page.title,
-                        content: page.content,
-                        content_truncated: page.content_truncated,
-                        word_count: page.word_count,
-                        fetch_time_ms: lookup_start.elapsed().as_secs_f64() * 1000.0,
-                        content_type: page.content_type,
-                        from_cache: true,
-                    },
-                    fetched_at,
-                    signals: ProvenanceSignals::NotExtracted {
-                        reason: provenance::FROM_PAGE_CACHE.to_string(),
-                    },
-                });
+                return Ok(served_from_cache(page, lookup_start));
             }
             Some(CachedFetch::Refusal { reason }) => {
                 info!(url, %reason, "URL refusal served from page cache");
@@ -225,52 +328,64 @@ impl WebService {
 
         // Validate URL for security. The client's resolver and redirect
         // policy hold every later hop to the same rule; this first check is
-        // here for the clearer error.
+        // here for the clearer error. A URL that fails it is never sent to
+        // the archive either.
         validate_url_resolved(url).await?;
 
+        let start = Instant::now();
+        // The live read holds the site's pacer slot; the archive steps run
+        // after it is released (archive.org has a slot of its own, and a
+        // page on archive.org must not wait on itself).
+        match self.read_live(url, start, read).await? {
+            Live::Read(page) => Ok(page),
+            Live::Thin(page) => Ok(self
+                .thicker_from_archive(url, &parsed, page, start, read)
+                .await),
+            Live::Failed(failure) => {
+                self.rescue_or_refuse(url, &parsed, failure, start, read)
+                    .await
+            }
+        }
+    }
+
+    /// One paced direct GET, and the browser reader for refusals and shells.
+    async fn read_live(&self, url: &str, start: Instant, read: PageRead) -> Result<Live> {
         // Paced per site, like the searches: repeat requests to one host are
         // spaced and never overlap, and a host this process has not contacted
-        // is contacted at once. This used to be a blind 0.5–2s sleep before
-        // every fetch, which a host seeing us for the first time cannot even
-        // observe — it only made the user wait, once per page per round.
+        // is contacted at once.
         let _site_slot = self.pacer.acquire(url).await;
 
-        let start = Instant::now();
-        let profile = stealth::random_profile();
-        let headers = stealth::browser_headers(profile, None);
+        let profile = identity::random_profile();
+        let headers = identity::browser_headers(profile, None);
+        let mut response = match self.client.get(url).headers(headers.clone()).send().await {
+            Ok(response) => response,
+            Err(error) => return Ok(Live::Failed(LiveFailure::Transport(error.to_string()))),
+        };
 
-        let mut response = self
-            .client
-            .get(url)
-            .headers(headers.clone())
-            .send()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
-
+        // A host that says when to come back is asked once more after that
+        // wait, in full (§3.6); a 429 without one goes on to the browser and
+        // the archive. The caller's own deadline drops the read if the wait
+        // outlasts it.
         if response.status() == StatusCode::TOO_MANY_REQUESTS {
-            let retry_after_secs = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(2)
-                .min(5);
-            debug!(
-                url,
-                retry_after_secs, "Rate limited by host; retrying once after delay"
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(retry_after_secs)).await;
-            if let Ok(retry_resp) = self.client.get(url).headers(headers).send().await {
-                response = retry_resp;
+            if let Some(wait) = retry_after(response.headers(), Utc::now()) {
+                debug!(
+                    url,
+                    ?wait,
+                    "Rate limited by host; retrying once after its wait"
+                );
+                tokio::time::sleep(wait).await;
+                if let Ok(retried) = self.client.get(url).headers(headers).send().await {
+                    response = retried;
+                }
             }
         }
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        if !status.is_success() {
             warn!("URL fetch failed with status: {}", status);
-            // 403, 429 and 503 are what a JavaScript or rate-limiting check answers a plain client
-            // with. The page may open in a browser, so it is tried there
-            // before the refusal is believed.
+            // 403, 429 and 503 are what a JavaScript or rate-limiting check
+            // answers a plain client with. The page may open in a browser, so
+            // it is tried there before the refusal is believed.
             if matches!(
                 status,
                 StatusCode::FORBIDDEN
@@ -281,19 +396,10 @@ impl WebService {
                     .read_through_browser(url, start, read, status.as_u16())
                     .await
                 {
-                    return Ok(page);
+                    return Ok(Live::Read(page));
                 }
             }
-            // Remembered only when the status means the answer is settled, so
-            // the next turn does not spend a request finding out again.
-            self.page_cache
-                .remember_refusal(url, status, &format!("HTTP {status}"))
-                .await;
-            return Err(AppError::Network(format!(
-                "HTTP {}: {}",
-                status,
-                status.canonical_reason().unwrap_or("Unknown")
-            )));
+            return Ok(Live::Failed(LiveFailure::Status(status)));
         }
 
         // Every hop to here was cleared by the redirect policy and the
@@ -324,53 +430,46 @@ impl WebService {
             .await
             .map_err(|e| AppError::Network(format!("Failed to read response body: {e}")))?;
         let html = decode_response_text(html, content_type.as_deref());
-
-        let (title, content, metadata, text) = if read == PageRead::Chat {
-            let (title, content, metadata) =
-                run_html_parser(self.html_parsers.clone(), move || {
-                    read_chat_html(&html, &page_url)
-                })
-                .await?;
-            (title, content, metadata, TextForm::Plain)
-        } else {
-            let (title, content, metadata) =
-                run_html_parser(self.html_parsers.clone(), move || {
-                    read_reference_html(&html, &page_url)
-                })
-                .await??;
-            (title, content, metadata, TextForm::Markdown)
-        };
+        let (title, content, metadata, text_form) = self.extract(html, page_url, read).await?;
+        let thin = content.trim().len() < THIN_PAGE_CHARS;
 
         // A page whose text is written by its scripts arrives as a shell: a
         // title and a menu. The browser runs the scripts; its text is kept
         // only when it is actually more.
-        if content.trim().len() < THIN_PAGE_CHARS {
+        if thin {
             if let Some(page) = self
                 .read_through_browser(url, start, read, http.status)
                 .await
             {
                 if page.output.content.trim().len() > content.trim().len() {
-                    return Ok(page);
+                    return Ok(if text_len(&page) < THIN_PAGE_CHARS {
+                        Live::Thin(page)
+                    } else {
+                        Live::Read(page)
+                    });
                 }
             }
         }
 
+        let via = direct_read_via(&final_url);
+        let text = PageText {
+            final_url,
+            title,
+            content,
+            content_type,
+            via,
+        };
         let provenance = PageProvenance::Read(Box::new(PageReading {
             metadata,
             http,
-            text,
+            text: text_form,
         }));
-        Ok(self
-            .keep_page(
-                url,
-                final_url,
-                title,
-                content,
-                content_type,
-                (start, read),
-                provenance,
-            )
-            .await)
+        let page = self.keep_page(url, text, (start, read), provenance).await;
+        Ok(if thin {
+            Live::Thin(page)
+        } else {
+            Live::Read(page)
+        })
     }
 
     /// Read `url` in a hidden browser window, and cache and return it if that
@@ -394,17 +493,16 @@ impl WebService {
                     );
                     return None;
                 }
+                let text = PageText {
+                    final_url: page.final_url,
+                    title: page.title,
+                    content: page.content,
+                    content_type: Some(BROWSER_CONTENT_TYPE.to_string()),
+                    via: ReadVia::Browser,
+                };
                 Some(
-                    self.keep_page(
-                        url,
-                        page.final_url,
-                        page.title,
-                        page.content,
-                        Some(BROWSER_CONTENT_TYPE.to_string()),
-                        (start, page_read),
-                        page.provenance,
-                    )
-                    .await,
+                    self.keep_page(url, text, (start, page_read), page.provenance)
+                        .await,
                 )
             }
             Ok(_) => {
@@ -467,20 +565,47 @@ impl WebService {
         })
     }
 
+    /// Title, text and metadata, by what the page is read for: article
+    /// extraction for a conversation, the whole document for a reference.
+    async fn extract(
+        &self,
+        html: String,
+        page_url: Url,
+        read: PageRead,
+    ) -> Result<(Option<String>, String, PageMetadata, TextForm)> {
+        if read == PageRead::Chat {
+            let (title, content, metadata) =
+                run_html_parser(self.html_parsers.clone(), move || {
+                    read_chat_html(&html, &page_url)
+                })
+                .await?;
+            return Ok((title, content, metadata, TextForm::Plain));
+        }
+        let (title, content, metadata) = run_html_parser(self.html_parsers.clone(), move || {
+            read_reference_html(&html, &page_url)
+        })
+        .await??;
+        Ok((title, content, metadata, TextForm::Markdown))
+    }
+
     /// Count, cache and wrap a page's extracted text, all of it, with the
     /// signals `provenance` yields for it.
     pub(super) async fn keep_page(
         &self,
         url: &str,
-        final_url: String,
-        title: Option<String>,
-        content: String,
-        content_type: Option<String>,
+        text: PageText,
         budget: (Instant, PageRead),
         provenance: PageProvenance,
     ) -> ReadPage {
         let (start, read) = budget;
         let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let PageText {
+            final_url,
+            title,
+            content,
+            content_type,
+            via,
+        } = text;
 
         let word_count = content.split_whitespace().count();
 
@@ -490,25 +615,8 @@ impl WebService {
         );
 
         let fetched_at = Utc::now();
-        if read == PageRead::Chat {
-            self.page_cache
-                .remember_page(
-                    url,
-                    &CachedPage {
-                        final_url: final_url.clone(),
-                        title: title.clone(),
-                        content: content.clone(),
-                        content_truncated: false,
-                        word_count,
-                        content_type: content_type.clone(),
-                        fetched_at,
-                    },
-                )
-                .await;
-        }
-
         let signals = provenance.into_signals(&final_url, &content, fetched_at.timestamp());
-        ReadPage {
+        let page = ReadPage {
             output: FetchUrlContentOutput {
                 url: final_url,
                 title,
@@ -518,10 +626,17 @@ impl WebService {
                 fetch_time_ms,
                 content_type,
                 from_cache: false,
+                read_via: via,
             },
             fetched_at,
             signals,
+        };
+        if read == PageRead::Chat {
+            self.page_cache
+                .remember_page(url, &cached_page(&page))
+                .await;
         }
+        page
     }
 
     /// Extract main text content from HTML
@@ -549,3 +664,10 @@ struct BrowserRead {
     content: String,
     provenance: PageProvenance,
 }
+
+#[path = "page_archive.rs"]
+mod archive;
+
+#[cfg(test)]
+#[path = "page_tests.rs"]
+mod archive_tests;

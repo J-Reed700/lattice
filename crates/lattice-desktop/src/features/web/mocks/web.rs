@@ -8,8 +8,8 @@ use crate::features::web::traits::web::{WebIngestionResult, WebIngestionServiceT
 use async_trait::async_trait;
 #[cfg(test)]
 use lattice_core::application::contracts::web::{
-    FetchUrlContentOutput, ProvenanceSignals, ReferencePage, WebSearchInput, WebSearchOutput,
-    WebSearchResult,
+    FetchUrlContentOutput, FinderOutcomeDto, ProvenanceSignals, ReferencePage, WebSearchInput,
+    WebSearchOutput, WebSearchResult,
 };
 #[cfg(test)]
 use lattice_core::application::ports::web_service::NO_PROVENANCE_READER;
@@ -149,6 +149,7 @@ impl WebIngestionServiceTrait for MockWebIngestionService {
 /// Mock web service for testing
 pub struct MockWebService {
     search_results: Arc<RwLock<Vec<WebSearchResult>>>,
+    search_outcomes: Arc<RwLock<Vec<FinderOutcomeDto>>>,
     url_contents: Arc<RwLock<HashMap<String, FetchUrlContentOutput>>>,
     page_signals: Arc<RwLock<HashMap<String, ProvenanceSignals>>>,
 }
@@ -158,6 +159,7 @@ impl MockWebService {
     pub fn new() -> Self {
         Self {
             search_results: Arc::new(RwLock::new(Vec::new())),
+            search_outcomes: Arc::new(RwLock::new(Vec::new())),
             url_contents: Arc::new(RwLock::new(HashMap::new())),
             page_signals: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -176,6 +178,12 @@ impl MockWebService {
     /// Set canned web search results
     pub fn set_search_results(&self, results: Vec<WebSearchResult>) {
         *self.search_results.write().expect("Mock lock poisoned") = results;
+    }
+
+    /// Set the finder outcomes every search reports, as a search whose
+    /// providers partly failed would.
+    pub fn set_search_outcomes(&self, outcomes: Vec<FinderOutcomeDto>) {
+        *self.search_outcomes.write().expect("Mock lock poisoned") = outcomes;
     }
 
     /// Set canned URL content
@@ -230,6 +238,11 @@ impl WebServiceTrait for MockWebService {
             unique_url_count: total_results,
             unique_domain_count: total_results,
             followup_queries: Vec::new(),
+            outcomes: self
+                .search_outcomes
+                .read()
+                .expect("Mock lock poisoned")
+                .clone(),
         })
     }
 
@@ -247,6 +260,7 @@ impl WebServiceTrait for MockWebService {
                 fetch_time_ms: 10.0,
                 content_type: Some("text/html".to_string()),
                 from_cache: false,
+                read_via: Default::default(),
             })
         }
     }
@@ -276,5 +290,114 @@ impl WebServiceTrait for MockWebService {
             ));
         }
         Ok(())
+    }
+}
+
+/// A finder that answers from a script, for the sourcing runner's tests:
+/// `per_page` leads on every page (on its own host, ranked as a real engine
+/// ranks them), after any queued failures, or one failure on every call.
+#[cfg(test)]
+pub struct ScriptedFinder {
+    descriptor: lattice_core::domain::sourcing::FinderDescriptor,
+    per_page: usize,
+    queued:
+        std::sync::Mutex<std::collections::VecDeque<lattice_core::domain::sourcing::FailureCause>>,
+    always: Option<lattice_core::domain::sourcing::FailureCause>,
+    calls: std::sync::Mutex<Vec<(String, usize)>>,
+}
+
+#[cfg(test)]
+impl ScriptedFinder {
+    /// Answers `per_page` leads on every page.
+    pub fn answering(
+        descriptor: lattice_core::domain::sourcing::FinderDescriptor,
+        per_page: usize,
+    ) -> Self {
+        Self {
+            descriptor,
+            per_page,
+            queued: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            always: None,
+            calls: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Fails every call with `cause`.
+    pub fn failing(
+        descriptor: lattice_core::domain::sourcing::FinderDescriptor,
+        cause: lattice_core::domain::sourcing::FailureCause,
+    ) -> Self {
+        Self {
+            always: Some(cause),
+            ..Self::answering(descriptor, 0)
+        }
+    }
+
+    /// Fails the next calls with these causes, one each, before answering.
+    pub fn failing_first(self, causes: Vec<lattice_core::domain::sourcing::FailureCause>) -> Self {
+        *self.queued.lock().expect("Mock lock poisoned") = causes.into();
+        self
+    }
+
+    /// Every call so far: the query it was sent and the page asked for.
+    pub fn calls(&self) -> Vec<(String, usize)> {
+        self.calls.lock().expect("Mock lock poisoned").clone()
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl lattice_core::application::ports::SourceFinder for ScriptedFinder {
+    fn descriptor(&self) -> &lattice_core::domain::sourcing::FinderDescriptor {
+        &self.descriptor
+    }
+
+    async fn find(
+        &self,
+        need: &lattice_core::domain::sourcing::SourceNeed,
+        page: usize,
+        _budget: &lattice_core::application::ports::Budget,
+    ) -> lattice_core::domain::sourcing::FinderOutcome {
+        use lattice_core::domain::sourcing::{FinderOutcome, FinderResult, Lead};
+        self.calls
+            .lock()
+            .expect("Mock lock poisoned")
+            .push((need.query.clone(), page));
+        let id = self.descriptor.id.clone();
+        let queued = self.queued.lock().expect("Mock lock poisoned").pop_front();
+        if let Some(cause) = queued.or_else(|| self.always.clone()) {
+            return FinderOutcome {
+                finder: id,
+                leads: Vec::new(),
+                result: FinderResult::Failed(cause),
+                elapsed: std::time::Duration::ZERO,
+            };
+        }
+        let slug: String = need
+            .query
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        let leads: Vec<Lead> = (0..self.per_page)
+            .map(|index| {
+                let rank = (page - 1) * self.per_page + index + 1;
+                let url = url::Url::parse(&format!("https://{id}.example/{slug}/{rank}"))
+                    .expect("scripted lead URL");
+                Lead {
+                    title: Some(format!("{id} {rank}")),
+                    ..Lead::page(url, id.clone(), rank)
+                }
+            })
+            .collect();
+        FinderOutcome {
+            finder: id,
+            result: if leads.is_empty() {
+                FinderResult::Empty
+            } else {
+                FinderResult::Answered
+            },
+            leads,
+            elapsed: std::time::Duration::ZERO,
+        }
     }
 }

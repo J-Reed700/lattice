@@ -24,6 +24,8 @@ use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
 
+use crate::features::llm::engine::factory::LocalServerOptions;
+use crate::features::llm::engine::vision::local_vision;
 use crate::features::llm::instances::refusal::{self, Window};
 use crate::features::llm::instances::{
     Acquire, Acquired, GpuBudget, Holder, LaunchProfile, LearningShortfall, LlmInstances, ModelKey,
@@ -450,11 +452,6 @@ impl RoleModels {
         want: &Want<'_>,
     ) -> Result<(ModelKey, Acquired)> {
         let role = want.role;
-        let key = ModelKey {
-            model: model.clone(),
-            launch: launch_profile_for(model, settings),
-            tuning: want.tuning,
-        };
         let local = match model {
             ModelRef::Local { model_id } => Some(
                 self.loader
@@ -471,6 +468,23 @@ impl RoleModels {
                     })?,
             ),
             _ => None,
+        };
+        // A projector that finished downloading since this model's server
+        // started makes a different server: the next request starts one that
+        // sees, and the text-only one is evicted when its memory is wanted.
+        let launch = launch_profile_for(model, settings).map(|launch| {
+            let projector_ready = local
+                .as_ref()
+                .is_some_and(|local| local_vision(&local.path, launch.vision).is_some());
+            LocalServerOptions {
+                projector_ready,
+                ..launch
+            }
+        });
+        let key = ModelKey {
+            model: model.clone(),
+            launch,
+            tuning: want.tuning,
         };
         let floor = want
             .requirements

@@ -45,6 +45,7 @@ impl crate::features::conversation::chat::ports::PageReader for ReadyReader {
             fetch_time_ms: 1.0,
             content_type: Some("text/html".into()),
             from_cache: false,
+            read_via: Default::default(),
         })
     }
 }

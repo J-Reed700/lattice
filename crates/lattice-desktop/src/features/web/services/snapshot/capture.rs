@@ -18,7 +18,7 @@ use super::resources::{
 };
 use super::sanitize::{collect, sanitize_with_resources};
 use super::{CAPTURE_DEADLINE, MAX_DOCUMENT_BYTES};
-use crate::features::web::services::stealth::{self, BrowserProfile};
+use crate::features::web::services::identity::{self, BrowserProfile};
 use crate::features::web::services::web::{fetchable_url, validate_url_resolved};
 use crate::features::web::traits::page_snapshot::{
     CaptureError, CaptureMethod, CaptureProgress, CaptureRequest, CapturedPage, PageCapturePort,
@@ -82,7 +82,7 @@ impl HttpPageCapture {
         deadline: Instant,
     ) -> Result<CapturedPage, CaptureError> {
         let url = fetchable_url(&request.url).map_err(|e| CaptureError::Refused(e.to_string()))?;
-        let profile = stealth::random_profile();
+        let profile = identity::random_profile();
         let doc_result =
             match tokio::time::timeout_at(deadline, self.fetch_document(&url, profile)).await {
                 Ok(res) => res,
@@ -228,7 +228,7 @@ impl HttpPageCapture {
         let mut response = self
             .client
             .get(url.clone())
-            .headers(stealth::browser_headers(profile, None))
+            .headers(identity::browser_headers(profile, None))
             .send()
             .await
             .map_err(send_error)?;
@@ -244,7 +244,7 @@ impl HttpPageCapture {
             response = self
                 .client
                 .get(url.clone())
-                .headers(stealth::browser_headers(profile, None))
+                .headers(identity::browser_headers(profile, None))
                 .send()
                 .await
                 .map_err(send_error)?;

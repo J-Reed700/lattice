@@ -551,3 +551,37 @@ Integration (owner or the last agent, once): `… cargo test --test vision_reque
 ## 21. As built
 
 Filled in by the build agents: departures from §5–§16 and why; the geometry each catalog entry ended with and the header fields it was read from; the live results from §19.
+
+### 21.1 PR 1: capability contract, multimodal requests, token accounting
+
+Departures from §5, §6 and §8:
+
+- Declarations are resolved where the adapters are built, `features/llm/loading.rs::load_ref`, rather than in `di/roles.rs`: that is the one place a `ModelRef` becomes a client. `engine/vision.rs::declared_vision` holds the rule. A changed declaration counts as a client change in `instances/invalidation.rs`, so the model reloads.
+- A `Grid` picture smaller than `min_pixels` is charged as `min_pixels`, because the encoder enlarges it to that area itself. Without that, the count reads low. The TypeScript port uses the same rule, and both suites check it against the same rows.
+- `CONSERVATIVE_DEFAULT` does not cover Anthropic (about 1,089 tokens at 896×896) or Gemini (1,032), as §5.1 said it did. It does cover the local families and OpenAI. This does not matter in practice: every `claude-*` and `gemini-*` model gets its provider default. The doc comment and test say so.
+- `CompletionInput::Multimodal`'s parts, `ContentPart` and `ImagePart`, and the `text`/`image_tokens`/`without_images` helpers live in `llm_port/multimodal.rs`, which keeps `llm_port.rs` under 800 lines. `ImagePart`'s `Debug` prints the byte count, never the base64. `CompletionRequest` also gained `image_count`, so a refusal can name how many pictures it carried.
+- `attach_images_to_last_user` takes `&mut [CompletionInput]`.
+- `RequestSize` gained `image_tokens` and `image_count`. A refusal reads "text counted exactly; N tokens for K pictures estimated from the model's declared geometry".
+- `CloudLlm::with_endpoint` points a cloud client at another URL that speaks the same format. The request-body integration test needs it.
+- Research jobs strip pictures in the job journal (`research_job.rs`), for both the saved request and every round, not only in the round transcript.
+- The settings validator rejects a degenerate geometry through `LLMSettingsDto::vision_problems`, in both settings validators.
+
+### 21.2 PR 4: local sidecar vision
+
+Departures from §12:
+
+- `ModelMetadata` gained no `vision` or `vision_projector` fields. A catalog entry with a projector carries the `vision` capability tag. The projector itself is reached through `curated::chat_model_vision(model_path)`, which matches the download layout as `chat_model_uses_mtp_draft` does and returns the projector's path, pinned download and geometry. Adding the two fields would have touched every `ModelMetadata` literal for no reader that needs them.
+- "Est. memory" stays the weights-only figure. Adding the projector would push the 2B past the first-run tier and move every recommendation for a download most readers never make. The sidecar's own sizing counts a downloaded projector as resident weights whether or not a start loads it, so switching Vision never changes the window a model is sized to.
+- The download command is `start_vision_projector_download(id)` in the download plugin, taking the downloaded model's id as `delete_model` does. The download feature owns the manager. It returns `{ downloadId }`, which is null when the whole projector is already on disk. The download is not a model of its own: no model record waits on it. A projector of the pinned size is a finished one, because the manager deletes a file whose digest does not match.
+- Projector state is reported on the downloaded-model response (`DownloadedVisionDto`: downloaded, enabled, geometry, bytes), not on the stored `DownloadedModel`.
+- `engine/vision.rs::local_vision` takes the switch as a flag. The switch is `LocalServerOptions.vision`, set from `LocalModelConfigDto.vision` (on unless `Some(false)`). Changing it is a settings change, so it reloads the model's server, with or without `--mmproj`.
+- A projector that finishes downloading while a text-only server runs changes the server's identity (`LocalServerOptions.projector_ready`, set when a role pins the model, and `SidecarConfig.projector_path`). The next request starts a server that sees. Invalidation ignores that flag, because it is not a setting.
+- An older server's refusal to draft and see at once is recognised in `readiness.rs::refused_combination` and reported as `InvalidConfig` naming both switches. A new attempt kind, `Refused`, stops the fallback ladder without marking the file unloadable.
+- `MockLLMPort` moved to `engine/factory/mock.rs` to keep `factory.rs` under 800 lines.
+
+Catalog geometries. Every catalog repository publishes `mmproj-F16.gguf`. Its size and digest come from the Hugging Face tree listing (`size`, `lfs.oid`), and its encoder fields from the projector's GGUF header. Token limits and picture markers come from the pinned llama.cpp source (`tools/mtmd/clip.cpp`, `tools/mtmd/mtmd.cpp`).
+
+- Qwen 3.5 2B, 4B, 9B and 9B MTP, Qwen 3.8 27B and Qwen 3.6 35B A3B: `Grid { token_side: 32, min_pixels: 8·32², max_pixels: 2048·32², overhead_tokens: 2 }`. The header gives `clip.projector_type = qwen3vl_merger`, `clip.vision.patch_size = 16` and `clip.vision.spatial_merge_size = 2`. The minimum of 8 squares is the server's own Qwen-VL limit (`set_limit_image_tokens(8, 4096)`). The maximum of 2,048 squares is the Qwen3-VL model card's recommendation and sits under the server's 4,096, so the server never resizes again. The overhead is `<|vision_start|>` and `<|vision_end|>`. The MTP build's projector is its own file with its own digest.
+- Gemma 4 E4B (`gemma4v`), 12B (`gemma4uv`) and 26B A4B (`gemma4v`): `Grid { token_side: 48, min_pixels: 70·48², max_pixels: 1120·48², overhead_tokens: 2 }`. The header gives `clip.vision.patch_size = 16`. The server pools 3×3 (`n_merge = 3`; the unified 12B uses 48 px patches without pooling), takes the dynamic-size preprocessor, and keeps a picture between 70 and 1,120 tokens (`set_limit_image_tokens(70, 1120)`), the model card's smallest and largest budgets. The overhead is `<|image>` and `<image|>`. Gemma 4 is a resolution grid, not the fixed 896 px SigLIP input §5.1 assumed for Gemma 3.
+
+Live results (§19) are still to be recorded. That includes the first start of the pinned server with `--mmproj` and MTP drafting together.

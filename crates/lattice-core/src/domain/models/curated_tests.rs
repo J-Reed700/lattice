@@ -524,3 +524,76 @@ fn embedding_models_use_safetensors_not_onnx() {
         );
     }
 }
+
+/// Every chat entry's repository publishes an F16 projector, pinned like
+/// the weights; the projector stays out of `files`, so a model download is
+/// still the weights alone, and the catalog tags the entry as seeing.
+#[test]
+fn every_chat_entry_pins_a_projector_and_is_tagged_as_seeing() {
+    use crate::domain::models::vision::VISION_CAPABILITY;
+    for model in CURATED_CHAT_MODELS {
+        let vision = model
+            .vision
+            .expect("every catalog repository ships a projector");
+        assert_eq!(
+            vision.projector_remote_file, "mmproj-F16.gguf",
+            "{}",
+            model.id
+        );
+        assert_eq!(vision.projector_sha256.len(), 64, "{}", model.id);
+        assert!(vision.projector_bytes > 100_000_000, "{}", model.id);
+        assert_eq!(vision.geometry.problem(), None, "{}", model.id);
+        let metadata = curated_chat_model_for_file(model.repo, model.file).unwrap();
+        assert!(metadata.capabilities.iter().any(|c| c == VISION_CAPABILITY));
+        assert_eq!(metadata.files.len(), 1, "{}", model.id);
+    }
+}
+
+/// The projector is found where a catalog download lands, beside the
+/// weights, and the MTP build gets its own repository's projector.
+#[test]
+fn a_downloaded_entry_finds_its_projector_beside_its_weights() {
+    let models = Path::new("/Users/someone/.cache/lattice/models");
+    let plain = chat_model_vision(&models.join("qwen3.5-9b-q4_k_m/Qwen3.5-9B-Q4_K_M.gguf"))
+        .expect("the 9B declares a projector");
+    assert_eq!(
+        plain.projector_path,
+        models.join("qwen3.5-9b-q4_k_m").join(CHAT_PROJECTOR_FILE)
+    );
+    assert_eq!(
+        plain.projector.url,
+        "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf"
+    );
+    assert!(plain.is_complete(918_166_080));
+    assert!(!plain.is_complete(918_166_079));
+    let mtp = chat_model_vision(&models.join("qwen3.5-9b-mtp-q4_k_m/Qwen3.5-9B-Q4_K_M.gguf"))
+        .expect("the MTP build declares a projector");
+    assert_ne!(mtp.projector.checksum, plain.projector.checksum);
+    assert!(chat_model_vision(Path::new("Qwen3.5-9B-Q4_K_M.gguf")).is_none());
+    assert!(chat_model_vision(&models.join("custom/Qwen3.5-9B-Q4_K_M.gguf")).is_none());
+}
+
+/// Qwen pictures stay inside the pinned server's 4,096-square ceiling, so it
+/// never shrinks them again; Gemma 4's stay inside its 1,120-token budget.
+#[test]
+fn catalog_geometries_send_what_the_pinned_server_keeps() {
+    let qwen = chat_model_vision(Path::new("m/qwen3.5-4b-q4_k_m/Qwen3.5-4B-Q4_K_M.gguf"))
+        .unwrap()
+        .geometry;
+    let fitted = qwen.plan(4000, 3000);
+    assert!(
+        fitted.tokens - 2 <= 2048 && fitted.width.is_multiple_of(32),
+        "{fitted:?}"
+    );
+    let gemma = chat_model_vision(Path::new(
+        "m/gemma-4-e4b-it-q4_k_m/gemma-4-E4B-it-Q4_K_M.gguf",
+    ))
+    .unwrap()
+    .geometry;
+    let fitted = gemma.plan(4000, 3000);
+    assert!(
+        fitted.tokens - 2 <= 1120 && fitted.height.is_multiple_of(48),
+        "{fitted:?}"
+    );
+    assert_eq!(gemma.min_tokens(), 72);
+}

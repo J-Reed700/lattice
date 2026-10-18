@@ -405,6 +405,7 @@ mod citable_tests {
                 fetch_time_ms: 1.0,
                 content_type: None,
                 from_cache: false,
+                read_via: Default::default(),
             })
             .unwrap(),
         );

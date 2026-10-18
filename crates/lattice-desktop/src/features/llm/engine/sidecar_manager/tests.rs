@@ -1821,3 +1821,124 @@ fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left()
         "a GPU that does not report its memory cannot be checked"
     );
 }
+
+/// A server that may see loads its projector beside the model and keeps MTP
+/// drafting and its single slot exactly as a text-only one does.
+#[test]
+fn a_seeing_server_loads_its_projector_and_keeps_drafting() {
+    let drafting = SidecarConfig {
+        mtp_capable: true,
+        speculative_decoding: SpeculativeDecoding::MtpDraft { n_max: 3 },
+        ..SidecarConfig::for_model(PathBuf::from("/models/qwen/Qwen3.5-9B-Q4_K_M.gguf"))
+    };
+    let seeing = SidecarConfig {
+        projector_path: Some(PathBuf::from("/models/qwen/mmproj.gguf")),
+        ..drafting.clone()
+    };
+    let args = build_server_args(&seeing, 12345);
+    assert_eq!(
+        flag_value(&args, "--mmproj"),
+        Some("/models/qwen/mmproj.gguf")
+    );
+    assert_eq!(flag_value(&args, "--spec-type"), Some("draft-mtp"));
+    assert_eq!(flag_value(&args, "-np"), Some("1"));
+    assert!(flag_value(&build_server_args(&drafting, 12345), "--mmproj").is_none());
+    assert_ne!(seeing, drafting, "a server that sees is a different server");
+    assert_eq!(
+        seeing.without_gpu_offload().projector_path,
+        seeing.projector_path
+    );
+}
+
+/// An older server that cannot draft and see at once is told as the two
+/// switches to choose between, and no fallback start asks it again.
+#[test]
+fn a_server_that_cannot_draft_and_see_at_once_names_the_two_switches() {
+    let output = vec![
+        "srv load_model: loading multimodal projector".to_string(),
+        "common_init: Speculative decoding is not supported with multimodal".to_string(),
+    ];
+    let refused = refused_combination(&output).expect("recognised");
+    assert_eq!(refused.kind, AttemptFailure::Refused);
+    assert!(refused.message.contains("Vision"));
+    assert!(refused.message.contains("Speculative decoding"));
+    assert!(matches!(
+        refused.into_llm_error(),
+        LLMError::InvalidConfig(_)
+    ));
+    let primary = Attempt {
+        binary: SidecarBinary::Primary,
+        gpu_offload: true,
+    };
+    assert_eq!(next_attempt(primary, AttemptFailure::Refused, true), None);
+    assert!(refused_combination(&["error loading model".to_string()]).is_none());
+}
+
+/// A catalog download of the 9B in a temporary models directory, with a
+/// sparse projector of `projector_len` bytes beside it when given.
+fn catalog_9b(projector_len: Option<u64>) -> (tempfile::TempDir, PathBuf) {
+    let models = tempfile::tempdir().unwrap();
+    let directory = models.path().join("qwen3.5-9b-q4_k_m");
+    std::fs::create_dir_all(&directory).unwrap();
+    let weights = directory.join("Qwen3.5-9B-Q4_K_M.gguf");
+    std::fs::write(&weights, b"GGUF").unwrap();
+    if let Some(len) = projector_len {
+        std::fs::File::create(directory.join("mmproj.gguf"))
+            .unwrap()
+            .set_len(len)
+            .unwrap();
+    }
+    (models, weights)
+}
+
+/// The launch arguments for `weights` under the saved per-model `vision`
+/// switch, as Settings → Models saves it.
+fn launch_args(weights: &std::path::Path, vision: Option<bool>) -> (SidecarConfig, Vec<String>) {
+    use crate::features::llm::engine::factory::{sidecar_config, LocalServerOptions};
+    use lattice_core::application::contracts::settings::{LLMSettingsDto, LocalModelConfigDto};
+    let saved = LocalModelConfigDto {
+        vision,
+        ..LocalModelConfigDto::default()
+    };
+    let server = LocalServerOptions::from_settings(&LLMSettingsDto::default())
+        .with_model_config(Some(&saved));
+    let config = sidecar_config(weights, -1, server, &make_caps(None, 32.0), 0, None);
+    let args = build_server_args(&config, 12345);
+    (config, args)
+}
+
+/// The per-model switch decides whether a downloaded projector is loaded:
+/// unset and on load it, off leaves it out, each a different server.
+#[test]
+fn the_vision_switch_adds_and_removes_the_projector_from_the_launch() {
+    let (_models, weights) = catalog_9b(Some(918_166_080));
+    let projector = weights.with_file_name("mmproj.gguf");
+    let (unset, unset_args) = launch_args(&weights, None);
+    let (on, _) = launch_args(&weights, Some(true));
+    let (off, off_args) = launch_args(&weights, Some(false));
+    assert_eq!(
+        flag_value(&unset_args, "--mmproj"),
+        Some(projector.to_string_lossy().as_ref())
+    );
+    assert_eq!(on, unset);
+    assert!(flag_value(&off_args, "--mmproj").is_none());
+    assert_ne!(off, on, "switching Vision changes which server runs");
+}
+
+/// A projector is loaded only once its whole file is on disk, and finishing
+/// the download makes the launch a different server from the text-only one.
+#[test]
+fn a_finished_projector_download_changes_the_server() {
+    let (_models, weights) = catalog_9b(Some(918_166_079));
+    let (partial, partial_args) = launch_args(&weights, None);
+    assert!(flag_value(&partial_args, "--mmproj").is_none());
+    std::fs::File::options()
+        .write(true)
+        .open(weights.with_file_name("mmproj.gguf"))
+        .unwrap()
+        .set_len(918_166_080)
+        .unwrap();
+    let (finished, finished_args) = launch_args(&weights, None);
+    assert!(flag_value(&finished_args, "--mmproj").is_some());
+    assert_ne!(finished, partial);
+}

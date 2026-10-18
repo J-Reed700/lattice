@@ -11,6 +11,7 @@ pub mod history_share;
 pub mod live_index;
 pub mod model_selection;
 pub mod source_trust;
+pub mod sourcing;
 pub mod transcript;
 
 pub use context_window_builder::ContextWindowBuilder;

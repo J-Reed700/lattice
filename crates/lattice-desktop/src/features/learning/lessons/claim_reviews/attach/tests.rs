@@ -244,6 +244,7 @@ impl WebServiceTrait for ScriptedWeb {
                 fetch_time_ms: 1.0,
                 content_type: Some("text/html".into()),
                 from_cache: false,
+                read_via: Default::default(),
             }),
             Reply::Error(error, message) => Err(error(message.clone())),
         }
@@ -473,6 +474,7 @@ fn an_article_with_a_subscribe_footer_is_not_a_wall() {
         fetch_time_ms: 0.0,
         content_type: None,
         from_cache: false,
+        read_via: Default::default(),
     };
     assert!(AttachFailureDto::from_wall(&page.url, &page).is_none());
 }

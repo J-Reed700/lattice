@@ -7,7 +7,9 @@
 //! were a bare "Searching the web" with nothing under it.
 
 use lattice_core::application::contracts::images::FindImageOutput;
-use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
+use lattice_core::application::contracts::web::{
+    FetchUrlContentOutput, FinderOutcomeDto, WebSearchOutput,
+};
 
 use super::fetch_memory;
 use super::turn_record::{StepGuard, TurnRecorder, TurnStepKind, TurnStepLinkDto};
@@ -29,12 +31,33 @@ pub(super) fn result_count_line(count: usize) -> String {
     }
 }
 
+/// One line naming what every search provider did, when any of them did
+/// not simply answer: "duckduckgo: skipped, paused until 14:02:00 UTC (bot
+/// challenge) · bing_html: 10". `None` when every provider answered, so an
+/// ordinary search records nothing extra.
+pub(super) fn outcome_line(outcomes: &[FinderOutcomeDto]) -> Option<String> {
+    if outcomes.iter().all(|outcome| outcome.result == "answered") {
+        return None;
+    }
+    let parts: Vec<String> = outcomes
+        .iter()
+        .map(|outcome| match (outcome.result.as_str(), &outcome.cause) {
+            ("answered", _) => format!("{}: {}", outcome.finder, outcome.leads),
+            ("empty", _) => format!("{}: nothing", outcome.finder),
+            (result, Some(cause)) => format!("{}: {result}, {cause}", outcome.finder),
+            (result, None) => format!("{}: {result}", outcome.finder),
+        })
+        .collect();
+    Some(parts.join(" · "))
+}
+
 /// Finish a search with where it led, then account for the searches inside it.
 ///
 /// A deep search runs follow-up queries of its own before it returns. They are
 /// over by the time anything can be said about them, so each is noted rather
 /// than timed — but each is said, because the results belong to those queries
-/// as much as to the one that was asked.
+/// as much as to the one that was asked. A provider that failed or was
+/// skipped is said too, so a shorter list is never a silent one.
 pub(super) fn finish_search(
     step: StepGuard<'_>,
     recorder: &TurnRecorder,
@@ -44,6 +67,14 @@ pub(super) fn finish_search(
         Some(result_count_line(output.results.len())),
         search_links(output),
     );
+    if let Some(line) = outcome_line(&output.outcomes) {
+        recorder.note(
+            TurnStepKind::WebSearch,
+            "Not every search provider answered",
+            Some(line),
+            None,
+        );
+    }
     for query in &output.followup_queries {
         recorder.note(
             TurnStepKind::WebSearch,
@@ -240,6 +271,43 @@ mod tests {
         assert!(steps
             .iter()
             .all(|s| s.kind == TurnStepKind::WebSearch && s.state == TurnStepState::Done));
+    }
+
+    /// DuckDuckGo was paused and Bing answered: the record says both, in
+    /// one line under the search, and an all-answered search adds nothing.
+    #[test]
+    fn a_provider_that_did_not_answer_is_named_under_the_search() {
+        let recorder = TurnRecorder::silent("c", "r");
+        let step = recorder.begin_guarded(TurnStepKind::WebSearch, "Searching the web", None);
+        let mut output = search_output(&[]);
+        output.outcomes = vec![
+            FinderOutcomeDto {
+                finder: "duckduckgo".into(),
+                result: "skipped".into(),
+                leads: 0,
+                elapsed_ms: 0,
+                cause: Some("paused until 14:02:00 UTC (bot challenge)".into()),
+            },
+            FinderOutcomeDto {
+                finder: "bing_html".into(),
+                result: "answered".into(),
+                leads: 10,
+                elapsed_ms: 812,
+                cause: None,
+            },
+        ];
+
+        finish_search(step, &recorder, &output);
+
+        let steps = recorder.steps();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(
+            steps[1].detail.as_deref(),
+            Some("duckduckgo: skipped, paused until 14:02:00 UTC (bot challenge) · bing_html: 10")
+        );
+
+        output.outcomes.remove(0);
+        assert_eq!(outcome_line(&output.outcomes), None);
     }
 
     /// The search listed one address and a redirect landed on another. Filing

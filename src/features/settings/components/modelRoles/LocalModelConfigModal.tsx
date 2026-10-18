@@ -129,6 +129,8 @@ export function LocalModelConfigModal({
       const nextConfigs = { ...(settings.llm.localModelConfigs ?? {}) };
       if (rememberSettings) {
         nextConfigs[model.model_id] = {
+          // Kept as saved: vision is switched on the model row, not here.
+          ...savedConfig,
           contextLength: resolvedContext,
           maxConcurrentPredictions:
             resolvedSlots === DEFAULT_CONCURRENT_PREDICTIONS ? null : resolvedSlots,
