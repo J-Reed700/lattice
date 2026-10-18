@@ -2,6 +2,7 @@
 //! holds (§6, §12.3), and the subject classes site overrides are scoped to.
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use super::reason::Reason;
 
@@ -147,3 +148,83 @@ pub struct ClaimProfile {
     pub policy: String,
     pub model: String,
 }
+
+impl SubjectKey {
+    /// The key of a subject or class name: Unicode NFKC, lower case, every
+    /// character other than a letter, a digit, `#` or `+` (which tell `C#`
+    /// and `C++` from `C`) read as a space, spaces collapsed.
+    pub fn of(name: &str) -> Self {
+        let mapped: String = name
+            .nfkc()
+            .flat_map(char::to_lowercase)
+            .map(|c| {
+                if c.is_alphanumeric() || c == '#' || c == '+' {
+                    c
+                } else {
+                    ' '
+                }
+            })
+            .collect();
+        Self(mapped.split_whitespace().collect::<Vec<_>>().join(" "))
+    }
+}
+
+impl ClaimSubject {
+    /// A subject with its key computed from its name.
+    pub fn new(
+        name: impl Into<String>,
+        kind: SubjectKind,
+        aliases: Vec<String>,
+        classes: Vec<String>,
+    ) -> Self {
+        let name = name.into();
+        Self {
+            key: SubjectKey::of(&name),
+            name,
+            kind,
+            aliases,
+            classes,
+        }
+    }
+
+    /// The keys the subject answers to, most specific first: its own, its
+    /// aliases', then its classes' in the order the profile gave them.
+    pub fn keys(&self) -> Vec<SubjectKey> {
+        let mut keys = vec![self.key.clone()];
+        for name in self.aliases.iter().chain(self.classes.iter()) {
+            let key = SubjectKey::of(name);
+            if !key.0.is_empty() && !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
+    }
+}
+
+impl SubjectClass {
+    /// A class with its key computed from its label.
+    pub fn new(label: impl Into<String>, kinds: Vec<SubjectKind>) -> Self {
+        let label = label.into();
+        Self {
+            key: SubjectKey::of(&label),
+            label,
+            kinds,
+        }
+    }
+
+    /// Whether `subject` is in the class, and how specifically: `Some(0)`
+    /// when the class is the subject itself, larger for an alias or a
+    /// broader class further down the subject's list, `None` when it is not
+    /// in the class. Keys are compared whole, never as substrings, so the
+    /// class "Python" does not take in "Python packaging".
+    pub fn match_rank(&self, subject: &ClaimSubject) -> Option<usize> {
+        if !self.kinds.is_empty() && !self.kinds.contains(&subject.kind) {
+            return None;
+        }
+        subject.keys().iter().position(|key| *key == self.key)
+    }
+}
+
+#[cfg(test)]
+#[path = "claim_profile_tests.rs"]
+mod tests;

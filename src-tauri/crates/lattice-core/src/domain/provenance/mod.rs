@@ -51,6 +51,7 @@ mod claim_profile;
 mod contradiction;
 mod independence;
 mod judgement;
+mod level;
 mod origin;
 mod overrides;
 mod overturn;
@@ -64,25 +65,30 @@ mod temporal;
 
 pub use authority::{AuthorityAssessment, InheritedTrust, SubjectRelation, Trust, TrustLevel};
 pub use calibration::{
-    BarBasis, Calibration, CalibrationCell, EffectiveBar, EffectiveBars, LabelSource, LevelBar,
-    Outcome, OutcomeRecord, Posterior,
+    effective_bars, BarBasis, Calibration, CalibrationCell, EffectiveBar, EffectiveBars,
+    LabelSource, LevelBar, Outcome, OutcomeRecord, Posterior, Prior,
 };
-pub use chain::{CitationCandidate, LinkStanding};
+pub use chain::{citation_candidates, follow_further, CitationCandidate, LinkStanding};
 pub use claim_profile::{
     ClaimKind, ClaimProfile, ClaimSubject, SubjectClass, SubjectKey, SubjectKind, TemporalScope,
 };
-pub use contradiction::{Contrary, Resolution};
+pub use contradiction::{resolve, resolve_all, Contrary, Resolution};
 pub use independence::{
-    Cluster, ClusterId, RelationEvidence, RelationKind, RelationTarget, ShingleSet, Sketch,
-    SourceRelation,
+    clusters, containment, page_relations, passage_merges, resemblance, shingles, Cluster,
+    ClusterId, RelationEvidence, RelationKind, RelationTarget, ShingleSet, Sketch, SourceRelation,
+    SKETCH_VALUES,
 };
-pub use judgement::{Judged, JudgementKey};
-pub use origin::{ArchivedFrom, Origin, OriginKey, RegistryKind, TldRegistry};
+pub use judgement::{canonical_json, sha256_hex, Judged, JudgementKey};
+pub use level::{trust_level, LevelInputs};
+pub use origin::{
+    ArchivedFrom, CanonicalLink, Origin, OriginError, OriginKey, RegistryKind, TldRegistry,
+};
 pub use overrides::{OverrideRef, OverrideScope, Overrides, SiteStanding, TrustOverride};
-pub use overturn::Overturn;
-pub use policy::{Policy, TRUST_POLICY_VERSION};
+pub use overturn::{overturn, Overturn};
+pub use policy::{Policy, POLICY, TRUST_POLICY_VERSION};
 pub use reason::{AddedBy, Reason, ReasonCode};
 pub use record::{ExtractedFrom, ProvenanceRecord};
+pub use signals::{addresses_reader, markdown_links, self_description};
 pub use signals::{
     DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts, NamedEntity, OutboundLink, PageSignals,
     PastedSignals, ProvenanceSignals, SourceDates, PAGE_SIGNALS_VERSION,
@@ -92,6 +98,7 @@ pub use standing::{
     TrackRecord,
 };
 pub use sufficiency::{
-    Bar, CountedSupport, Decision, Label, Missing, NextStep, PassageKind, StaticBars, Support,
+    decide, Bar, CountedSupport, Decision, Label, Missing, NextStep, PassageKind, StaticBars,
+    Support,
 };
-pub use temporal::{EffectiveDate, TemporalValidity};
+pub use temporal::{effective_date, validity, EffectiveDate, TemporalValidity};

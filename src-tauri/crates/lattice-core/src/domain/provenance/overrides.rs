@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::authority::TrustLevel;
-use super::claim_profile::SubjectClass;
+use super::claim_profile::{ClaimSubject, SubjectClass};
 
 /// Where an override applies: the override table's key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -108,4 +108,106 @@ pub struct OverrideRef {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Overrides {
     pub entries: Vec<TrustOverride>,
+}
+
+impl TrustOverride {
+    /// Where it applies.
+    pub fn scope(&self) -> OverrideScope {
+        match self {
+            Self::Source {
+                program_id,
+                source_id,
+                ..
+            } => OverrideScope::Source {
+                program_id: program_id.clone(),
+                source_id: source_id.clone(),
+            },
+            Self::Site {
+                registrable_domain, ..
+            } => OverrideScope::Site {
+                registrable_domain: registrable_domain.clone(),
+            },
+            Self::SiteSubject {
+                registrable_domain,
+                class,
+                ..
+            } => OverrideScope::SiteSubject {
+                registrable_domain: registrable_domain.clone(),
+                class: class.clone(),
+            },
+        }
+    }
+
+    pub fn note(&self) -> Option<&str> {
+        match self {
+            Self::Source { note, .. }
+            | Self::Site { note, .. }
+            | Self::SiteSubject { note, .. } => note.as_deref(),
+        }
+    }
+
+    /// How a level's reasons cite it.
+    pub fn reference(&self) -> OverrideRef {
+        OverrideRef {
+            scope: self.scope(),
+            note: self.note().map(str::to_owned),
+        }
+    }
+}
+
+impl Overrides {
+    /// The override for one source in one course.
+    pub fn source(
+        &self,
+        program_id: &str,
+        source_id: &str,
+    ) -> Option<(TrustLevel, &TrustOverride)> {
+        self.entries.iter().find_map(|entry| match entry {
+            TrustOverride::Source {
+                program_id: program,
+                source_id: source,
+                level,
+                ..
+            } if program == program_id && source == source_id => Some((*level, entry)),
+            _ => None,
+        })
+    }
+
+    /// The standing override for a site.
+    pub fn site(&self, registrable_domain: &str) -> Option<(SiteStanding, &TrustOverride)> {
+        self.entries.iter().find_map(|entry| match entry {
+            TrustOverride::Site {
+                registrable_domain: domain,
+                standing,
+                ..
+            } if domain == registrable_domain => Some((*standing, entry)),
+            _ => None,
+        })
+    }
+
+    /// The site-for-subject override for a site whose class takes in
+    /// `subject` most specifically (`SubjectClass::match_rank`); ties go to
+    /// the class whose key sorts first, so the choice never depends on
+    /// storage order.
+    pub fn site_subject(
+        &self,
+        registrable_domain: &str,
+        subject: &ClaimSubject,
+    ) -> Option<(TrustLevel, &SubjectClass, &TrustOverride)> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                TrustOverride::SiteSubject {
+                    registrable_domain: domain,
+                    class,
+                    level,
+                    ..
+                } if domain == registrable_domain => class
+                    .match_rank(subject)
+                    .map(|rank| (rank, *level, class, entry)),
+                _ => None,
+            })
+            .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.key.cmp(&b.2.key)))
+            .map(|(_, level, class, entry)| (level, class, entry))
+    }
 }

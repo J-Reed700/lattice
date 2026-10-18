@@ -7,9 +7,14 @@
 //! similarity, which is exactly what two *independent* sources on one
 //! subject share.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
+use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use unicode_normalization::UnicodeNormalization;
+
+use super::origin::OriginKey;
+use super::policy::Policy;
 
 /// Values in a [`Sketch`]: one minimum per hash function.
 pub const SKETCH_VALUES: usize = 128;
@@ -167,3 +172,312 @@ pub struct Cluster {
     /// Member version ids, sorted.
     pub members: Vec<String>,
 }
+
+/// FNV-1a 64-bit offset basis and prime: a fixed, documented hash, so a
+/// shingle hashes the same on every machine and in every release.
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Seeds the sketch's hash family (SplitMix64 over this constant): any
+/// fixed value works; changing it invalidates stored sketches.
+const SKETCH_SEED: u64 = 0x5eed_0f5a_174e_55aa;
+
+/// The shingle set of `text` (§7): markdown link targets and bare URLs
+/// removed (anchors kept), Unicode NFKC, lower case, punctuation and
+/// markdown syntax read as spaces; then `policy.shingle_words`-word
+/// shingles, or `policy.shingle_chars`-character shingles when fewer than
+/// `policy.word_break_ratio` of the characters are whitespace (scripts
+/// without word breaks). A text shorter than one shingle is one shingle.
+pub fn shingles(text: &str, policy: &Policy) -> ShingleSet {
+    let text = strip_link_targets(text);
+    let normalised: String = text.nfkc().flat_map(char::to_lowercase).collect();
+    let visible = normalised.chars().filter(|c| !c.is_control()).count();
+    let spaces = normalised.chars().filter(|c| c.is_whitespace()).count();
+    let words: Vec<String> = normalised
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let mut hashes = HashSet::new();
+    if visible == 0 || words.is_empty() {
+        return ShingleSet { hashes };
+    }
+    if (spaces as f64) < policy.word_break_ratio * visible as f64 {
+        let chars: Vec<char> = words.concat().chars().collect();
+        let width = policy.shingle_chars.max(1);
+        if chars.len() <= width {
+            hashes.insert(fnv1a(&chars.iter().collect::<String>()));
+        }
+        for window in chars.windows(width) {
+            hashes.insert(fnv1a(&window.iter().collect::<String>()));
+        }
+    } else {
+        let width = policy.shingle_words.max(1);
+        if words.len() <= width {
+            hashes.insert(fnv1a(&words.join(" ")));
+        }
+        for window in words.windows(width) {
+            hashes.insert(fnv1a(&window.join(" ")));
+        }
+    }
+    ShingleSet { hashes }
+}
+
+/// Jaccard resemblance `|A ∩ B| / |A ∪ B|`; 0 when both are empty.
+pub fn resemblance(a: &ShingleSet, b: &ShingleSet) -> f64 {
+    let shared = a.hashes.intersection(&b.hashes).count();
+    let union = a.len() + b.len() - shared;
+    if union == 0 {
+        0.0
+    } else {
+        shared as f64 / union as f64
+    }
+}
+
+/// Containment of `small` in `large`: `|S ∩ L| / |S|`; 0 when `small` is
+/// empty.
+pub fn containment(small: &ShingleSet, large: &ShingleSet) -> f64 {
+    if small.is_empty() {
+        return 0.0;
+    }
+    small.hashes.intersection(&large.hashes).count() as f64 / small.len() as f64
+}
+
+impl Sketch {
+    /// The MinHash sketch of a shingle set: for each of [`SKETCH_VALUES`]
+    /// hash functions, the least hash over the set (all `u32::MAX` for an
+    /// empty set).
+    pub fn of(set: &ShingleSet) -> Self {
+        let mut values = [u32::MAX; SKETCH_VALUES];
+        let mut seed = SKETCH_SEED;
+        for value in values.iter_mut() {
+            seed = splitmix64(seed);
+            *value = set
+                .hashes
+                .iter()
+                .map(|hash| (splitmix64(hash ^ seed) >> 32) as u32)
+                .min()
+                .unwrap_or(u32::MAX);
+        }
+        Self(values)
+    }
+
+    /// The estimated resemblance of the two sets: the share of equal
+    /// minima.
+    pub fn resemblance(&self, other: &Self) -> f64 {
+        let equal = self
+            .0
+            .iter()
+            .zip(other.0.iter())
+            .filter(|(a, b)| a == b)
+            .count();
+        equal as f64 / SKETCH_VALUES as f64
+    }
+}
+
+/// Page-level relations between a newly captured version and a course's
+/// active versions (§7): `CopyOf` (the newer points at the older) at
+/// resemblance `policy.resemblance_copy`, else `ContainsCopyOf` in
+/// whichever direction reaches `policy.containment_copy`.
+pub fn page_relations(
+    new_id: &str,
+    new: &ShingleSet,
+    existing: &[(&str, &ShingleSet)],
+    policy: &Policy,
+) -> Vec<SourceRelation> {
+    let mut relations = Vec::new();
+    for (id, set) in existing {
+        if *id == new_id {
+            continue;
+        }
+        let r = resemblance(new, set);
+        let old_in_new = containment(set, new);
+        let new_in_old = containment(new, set);
+        let text = |containment: f64| RelationEvidence::Text {
+            resemblance: r,
+            containment,
+        };
+        if r >= policy.resemblance_copy {
+            relations.push(SourceRelation {
+                from: new_id.to_owned(),
+                to: RelationTarget::Version((*id).to_owned()),
+                kind: RelationKind::CopyOf,
+                evidence: text(old_in_new),
+            });
+            continue;
+        }
+        if old_in_new >= policy.containment_copy {
+            relations.push(SourceRelation {
+                from: new_id.to_owned(),
+                to: RelationTarget::Version((*id).to_owned()),
+                kind: RelationKind::ContainsCopyOf,
+                evidence: text(old_in_new),
+            });
+        }
+        if new_in_old >= policy.containment_copy {
+            relations.push(SourceRelation {
+                from: (*id).to_owned(),
+                to: RelationTarget::Version(new_id.to_owned()),
+                kind: RelationKind::ContainsCopyOf,
+                evidence: text(new_in_old),
+            });
+        }
+    }
+    relations
+}
+
+/// Pairs of a claim's supporting passages that are copies of each other
+/// (§7, passage level): a syndicated paragraph inside otherwise different
+/// pages merges their clusters for that claim only.
+pub fn passage_merges(passages: &[(&str, &str)], policy: &Policy) -> Vec<(String, String)> {
+    let sets: Vec<(&str, ShingleSet)> = passages
+        .iter()
+        .map(|(id, text)| (*id, shingles(text, policy)))
+        .collect();
+    let mut merges = Vec::new();
+    for (index, (a, set_a)) in sets.iter().enumerate() {
+        for (b, set_b) in sets.iter().skip(index + 1) {
+            if a != b && resemblance(set_a, set_b) >= policy.resemblance_copy {
+                merges.push(((*a).to_owned(), (*b).to_owned()));
+            }
+        }
+    }
+    merges
+}
+
+/// Origin clusters of a claim's supports (§7): union-find over the same
+/// origin key, copy, archive and canonical relations in either direction
+/// (also through versions that are not supports themselves, so two copies
+/// of one page fall together) and passage-level merges. Distrusted
+/// supports are dropped by the caller before clustering. Clusters come out
+/// sorted by id, each id its smallest member.
+pub fn clusters(
+    supports: &[&str],
+    relations: &[SourceRelation],
+    origins: &HashMap<String, OriginKey>,
+    passage_merges: &[(String, String)],
+) -> Vec<Cluster> {
+    let mut forest = Forest::default();
+    for support in supports {
+        forest.node(&format!("v:{support}"));
+        if let Some(origin) = origins.get(*support) {
+            forest.union(&format!("v:{support}"), &format!("o:{}", origin.0));
+        }
+    }
+    for relation in relations {
+        if !matches!(
+            relation.kind,
+            RelationKind::CopyOf
+                | RelationKind::ContainsCopyOf
+                | RelationKind::ArchiveOf
+                | RelationKind::CanonicalOf
+        ) {
+            continue;
+        }
+        let to = match &relation.to {
+            RelationTarget::Version(id) => format!("v:{id}"),
+            RelationTarget::Url(url) => format!("u:{url}"),
+        };
+        forest.union(&format!("v:{}", relation.from), &to);
+    }
+    for (a, b) in passage_merges {
+        forest.union(&format!("v:{a}"), &format!("v:{b}"));
+    }
+    let mut groups: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for support in supports {
+        let root = forest.find(&format!("v:{support}"));
+        let members = groups.entry(root).or_default();
+        if !members.iter().any(|member| member == support) {
+            members.push((*support).to_owned());
+        }
+    }
+    let mut clusters: Vec<Cluster> = groups
+        .into_values()
+        .filter_map(|mut members| {
+            members.sort();
+            Some(Cluster {
+                id: ClusterId(members.first()?.clone()),
+                members,
+            })
+        })
+        .collect();
+    clusters.sort_by(|a, b| a.id.cmp(&b.id));
+    clusters
+}
+
+/// Union-find over string-named nodes.
+#[derive(Default)]
+struct Forest {
+    index: HashMap<String, usize>,
+    parent: Vec<usize>,
+}
+
+impl Forest {
+    fn node(&mut self, name: &str) -> usize {
+        if let Some(&id) = self.index.get(name) {
+            return id;
+        }
+        let id = self.parent.len();
+        self.parent.push(id);
+        self.index.insert(name.to_owned(), id);
+        id
+    }
+
+    fn root(&mut self, mut id: usize) -> usize {
+        while let Some(&parent) = self.parent.get(id) {
+            if parent == id {
+                break;
+            }
+            let grandparent = self.parent.get(parent).copied().unwrap_or(parent);
+            if let Some(slot) = self.parent.get_mut(id) {
+                *slot = grandparent;
+            }
+            id = parent;
+        }
+        id
+    }
+
+    fn find(&mut self, name: &str) -> usize {
+        let id = self.node(name);
+        self.root(id)
+    }
+
+    fn union(&mut self, a: &str, b: &str) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a != b {
+            if let Some(slot) = self.parent.get_mut(a.max(b)) {
+                *slot = a.min(b);
+            }
+        }
+    }
+}
+
+fn fnv1a(text: &str) -> u64 {
+    text.bytes().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+    })
+}
+
+fn splitmix64(state: u64) -> u64 {
+    let mut z = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Markdown links become their anchors; bare URLs go. A link target is
+/// where text points, not text it shares.
+fn strip_link_targets(text: &str) -> String {
+    let links = Regex::new(r"\[([^\]]*)\]\([^)]*\)");
+    let urls = Regex::new(r"https?://\S+");
+    match (links, urls) {
+        (Ok(links), Ok(urls)) => urls
+            .replace_all(&links.replace_all(text, "$1"), " ")
+            .into_owned(),
+        _ => text.to_owned(),
+    }
+}
+
+#[cfg(test)]
+#[path = "independence_tests.rs"]
+mod tests;

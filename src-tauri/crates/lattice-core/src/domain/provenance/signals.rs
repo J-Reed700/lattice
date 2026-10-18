@@ -3,8 +3,11 @@
 //! heading lines and dates found in text, because a page must not be able
 //! to talk its way into trust.
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use super::judgement::{canonical_json, sha256_hex};
 use super::origin::Origin;
 
 /// The extraction version stamped on page signals. Bump it when the reader
@@ -183,3 +186,202 @@ pub enum DateBasis {
         field: String,
     },
 }
+
+/// Words a page uses to call itself official, verified or authoritative, in
+/// the languages the extractor meets most. Matched whole-word in scripts
+/// with word breaks and as substrings in those without. A risk input only
+/// (§14): standing never rests on what a page says about itself.
+const SELF_DESCRIPTION_TOKENS: [&str; 24] = [
+    "official",
+    "verified",
+    "authoritative",
+    "authorized",
+    "authorised",
+    "officiel",
+    "officielle",
+    "offiziell",
+    "offizielle",
+    "oficial",
+    "ufficiale",
+    "oficjalny",
+    "officieel",
+    "officiella",
+    "официальный",
+    "официальная",
+    "公式",
+    "官方",
+    "官网",
+    "認証",
+    "공식",
+    "rasmi",
+    "resmi",
+    "chính thức",
+];
+
+/// Phrases that address a reader or a model rather than describe a page.
+/// Metadata describes; text that instructs is an injection attempt (§14),
+/// whatever the model makes of it. Lower-case, matched as substrings of the
+/// lower-cased field.
+const READER_ADDRESSED_PHRASES: [&str; 16] = [
+    "ignore previous instructions",
+    "ignore all previous",
+    "ignore prior instructions",
+    "ignore the above",
+    "ignore other sources",
+    "disregard previous",
+    "disregard other sources",
+    "note to ai",
+    "note to llm",
+    "note to the model",
+    "attention ai",
+    "ai assistants",
+    "language model",
+    "system prompt",
+    "rate this source",
+    "rate this page",
+];
+
+impl ProvenanceSignals {
+    /// The dates capture found; `None` when nothing was extracted.
+    pub fn dates(&self) -> Option<&SourceDates> {
+        match self {
+            Self::Web(page) => Some(&page.dates),
+            Self::Document(document) => Some(&document.dates),
+            Self::Pasted(pasted) => Some(&pasted.dates),
+            Self::NotExtracted { .. } => None,
+        }
+    }
+
+    /// What the user said about a file or pasted text.
+    pub fn declared_origin(&self) -> Option<&DeclaredOrigin> {
+        match self {
+            Self::Document(document) => document.declared_origin.as_ref(),
+            Self::Pasted(pasted) => pasted.declared_origin.as_ref(),
+            Self::Web(_) | Self::NotExtracted { .. } => None,
+        }
+    }
+
+    /// Whether the user added it without saying where it came from (§5
+    /// step 9).
+    pub fn is_unattributed_user_material(&self) -> bool {
+        matches!(self, Self::Document(_) | Self::Pasted(_)) && self.declared_origin().is_none()
+    }
+
+    /// The form a standing judgement sees and is keyed by: the signals as
+    /// JSON without the outbound links (§12.1), which say where a page
+    /// points, not who publishes it.
+    pub fn judged_form(&self) -> Value {
+        let mut value = serde_json::to_value(self).unwrap_or(Value::Null);
+        if let Some(object) = value.as_object_mut() {
+            object.remove("links");
+        }
+        value
+    }
+
+    /// sha256 of the canonical judged form: the standing judgement's key.
+    pub fn signals_sha256(&self) -> String {
+        sha256_hex(&canonical_json(&self.judged_form()))
+    }
+
+    /// The metadata fields whose text addresses a reader or a model, by
+    /// field name. Non-empty means an injection attempt.
+    pub fn reader_addressed_fields(&self) -> Vec<&'static str> {
+        let fields: Vec<(&'static str, Option<&str>)> = match self {
+            Self::Web(page) => vec![
+                ("title", page.title.as_deref()),
+                ("site_name", page.site_name.as_deref()),
+                ("description", page.description.as_deref()),
+                (
+                    "publisher",
+                    page.publisher.as_ref().map(|p| p.name.as_str()),
+                ),
+                ("author", page.author.as_ref().map(|a| a.name.as_str())),
+                ("generator", page.generator.as_deref()),
+                ("license", page.license.as_deref()),
+            ],
+            Self::Document(document) => vec![("title", document.title.as_deref())]
+                .into_iter()
+                .chain(
+                    document
+                        .heading_lines
+                        .iter()
+                        .map(|line| ("heading_lines", Some(line.as_str()))),
+                )
+                .collect(),
+            Self::Pasted(_) | Self::NotExtracted { .. } => Vec::new(),
+        };
+        let mut found: Vec<&'static str> = Vec::new();
+        for (name, text) in fields {
+            if text.is_some_and(addresses_reader) && !found.contains(&name) {
+                found.push(name);
+            }
+        }
+        found
+    }
+}
+
+/// Whether `text` addresses a reader or a model.
+pub fn addresses_reader(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let collapsed = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    READER_ADDRESSED_PHRASES
+        .iter()
+        .any(|phrase| collapsed.contains(phrase))
+}
+
+/// The self-description tokens in a page's title, site name and
+/// description, each once, in the order found.
+pub fn self_description<'a>(fields: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut found = Vec::new();
+    for field in fields {
+        let lower = field.to_lowercase();
+        let words: Vec<&str> = lower
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect();
+        for token in SELF_DESCRIPTION_TOKENS {
+            // Whole words in cased scripts; substrings where words run together.
+            let present = if token.chars().all(is_cased) {
+                words.contains(&token)
+            } else {
+                lower.contains(token)
+            };
+            if present && !found.iter().any(|seen: &String| seen == token) {
+                found.push(token.to_owned());
+            }
+        }
+    }
+    found
+}
+
+/// Letters of scripts that separate words with spaces (cased scripts).
+fn is_cased(c: char) -> bool {
+    c.is_uppercase() || c.to_uppercase().next() != Some(c)
+}
+
+/// Every markdown link `[anchor](http(s)://…)` in `text`, with its byte
+/// offsets. An anchor may hold one level of brackets (`[[1]](url)`, the
+/// footnote form); an optional link title is dropped.
+pub fn markdown_links(text: &str) -> Vec<OutboundLink> {
+    let Ok(pattern) =
+        Regex::new(r#"\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\((https?://[^\s)]+)(?:\s+"[^"]*")?\)"#)
+    else {
+        return Vec::new();
+    };
+    pattern
+        .captures_iter(text)
+        .filter_map(|captures| {
+            let whole = captures.get(0)?;
+            Some(OutboundLink {
+                url: captures.get(2)?.as_str().to_owned(),
+                anchor: captures.get(1)?.as_str().to_owned(),
+                start_byte: whole.start(),
+                end_byte: whole.end(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "signals_tests.rs"]
+mod tests;
