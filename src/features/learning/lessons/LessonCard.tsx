@@ -6,7 +6,7 @@ import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueri
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
-import { changedSince, currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
@@ -70,7 +70,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   const waiting = review.data?.claims.filter(isWaitingForYou).length ?? null;
   const needsReview = reviewState === 'needs_review' || reviewState === 'stopped';
   // Never "0 claims": a lesson with none waiting is held by the audit or ready to resume.
-  const hold = review.data && waiting != null ? reviewHold(review.data, waiting, changedSince(review.data, holdingJob?.finishedAt ?? null)) : 'claims';
+  const hold = review.data && waiting != null ? reviewHold(review.data, waiting) : 'claims';
   const holdLabel: Record<ReviewHold, string> = {
     claims: `Needs your review${waiting ? ` · ${waiting} ${waiting === 1 ? 'claim' : 'claims'}` : ''}`,
     audit_stop: 'Waiting for the Verifier audit', audit: 'Waiting for the Verifier audit', resolved: 'Ready to resume',
@@ -85,7 +85,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   };
   const showReview = needsReview || (Boolean(review.data) && lesson.preparation === 'outline' && Boolean(activeJob));
   const reviewPanel = showReview && <LessonClaimReviewPanel programId={program.summary.id} lessonId={lesson.id} courseRevision={program.summary.revision}
-    stoppedAt={holdingJob?.finishedAt ?? null} jobActive={Boolean(activeJob)} lessonAnchor={lesson.preparation === 'ready' ? `lesson-${lesson.id}-section-` : null} />;
+    jobActive={Boolean(activeJob)} lessonAnchor={lesson.preparation === 'ready' ? `lesson-${lesson.id}-section-` : null} />;
 
   return (
     <article id={`lesson-${lesson.id}`} className={`overflow-clip rounded-2xl border bg-surface transition ${isCurrent ? 'border-accent/50 shadow-[0_8px_34px_-24px_hsl(var(--accent))]' : 'border-border shadow-sm'}`}>

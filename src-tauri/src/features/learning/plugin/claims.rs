@@ -113,7 +113,7 @@ pub async fn get_learning_lesson_claim_review(
     program_id: String,
     lesson_id: String,
     container: State<'_, Container>,
-) -> Result<LessonClaimReviewDto, ApiError> {
+) -> Result<Option<LessonClaimReviewDto>, ApiError> {
     Ok(claim_reviews(&container)
         .review(&program_id, &lesson_id)
         .await?)

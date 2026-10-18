@@ -13,6 +13,7 @@
   },
   "pass": 3,
   "stopReason": null,
+  "changedSinceStop": false,
   "claims": [
     {
       "claimId": "claim-1",
@@ -57,6 +58,7 @@
           ],
           "sourcesAdded": [
             {
+              "sourceId": "source-2",
               "sourceVersionId": "v2",
               "title": "Steam tables",
               "url": null,
@@ -245,6 +247,7 @@
         },
         "reason": "The passage states the figure.",
         "quotedSource": {
+          "sourceId": "source-1",
           "sourceVersionId": "v1",
           "title": "Thermodynamics, ch. 4",
           "url": "https://example.org/thermo",

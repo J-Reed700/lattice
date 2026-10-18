@@ -64,6 +64,7 @@ pub struct ClaimAttachReportDto {
 
 pub(super) fn source_ref(saved: &SavedSource) -> SourceRefDto {
     SourceRefDto {
+        source_id: saved.source_id.clone(),
         source_version_id: saved.version_id.clone(),
         title: saved.title.clone(),
         url: saved.url.clone(),

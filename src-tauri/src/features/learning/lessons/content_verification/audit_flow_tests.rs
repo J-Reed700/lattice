@@ -323,7 +323,8 @@ async fn a_dispute_holds_the_lesson_with_both_checkers_on_the_card() -> Result<(
     let card = course
         .service()
         .review(&course.program_id, &course.lesson_id)
-        .await?;
+        .await?
+        .expect("the held lesson has a review");
     let disputed = card
         .claims
         .iter()

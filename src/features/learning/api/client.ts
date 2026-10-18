@@ -93,11 +93,11 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningOutlineEvidenceDto | null>> =>
     learningCall('get_learning_outline_evidence', { programId }),
 
-  /** NOT_FOUND before the lesson's first verification pass. */
+  /** null before the lesson's first verification pass. */
   getLearningLessonClaimReview: (
     programId: string,
     lessonId: string,
-  ): Promise<ApiResult<Wire.LessonClaimReviewDto>> =>
+  ): Promise<ApiResult<Wire.LessonClaimReviewDto | null>> =>
     learningCall('get_learning_lesson_claim_review', { programId, lessonId }),
 
   resolveLearningClaim: (

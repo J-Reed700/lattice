@@ -23,7 +23,7 @@ function show(data: LessonClaimReviewDto | LessonClaimReviewDto[], props: Partia
   api.review.mockResolvedValue(ok(sequence[sequence.length - 1]));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={client}>
-    <LessonClaimReviewPanel programId="program-1" lessonId="lesson-1" courseRevision={44} stoppedAt={STOPPED_AT} {...props} />
+    <LessonClaimReviewPanel programId="program-1" lessonId="lesson-1" courseRevision={44} {...props} />
   </QueryClientProvider>);
 }
 
@@ -103,7 +103,7 @@ describe('Lesson claim review panel', () => {
     unmount();
 
     api.resume.mockResolvedValue(ok({ id: 'job-2' }));
-    show(review([claimItem({ history: [userActionAt(STOPPED_AT + 1)] })]));
+    show(review([claimItem({ history: [userActionAt(STOPPED_AT + 1)] })], { changedSinceStop: true }));
     const enabled = await screen.findByRole('button', { name: 'Resume verification' });
     expect(enabled).toBeEnabled();
     await userEvent.click(enabled);
@@ -113,7 +113,7 @@ describe('Lesson claim review panel', () => {
 
   it('shows the refusal when Resume finds nothing changed after all', async () => {
     api.resume.mockResolvedValue({ ok: false, error: NOTHING_CHANGED, details: { code: 'INVALID_STATE', message: NOTHING_CHANGED } });
-    show(review([claimItem()]), { stoppedAt: null });
+    show(review([claimItem()], { changedSinceStop: true }));
     await userEvent.click(await screen.findByRole('button', { name: 'Resume verification' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(NOTHING_CHANGED);
   });

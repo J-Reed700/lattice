@@ -29,7 +29,7 @@ async function holdLessonForReview(page: Page) {
     const passage = { sourceVersionId: 'source-version-field-notes-1', title: 'Public field notes', url: null, text: 'A careful comparison records the chosen measure and the observation period.', startByte: 0, endByte: 76, retrievalKind: 'hybrid' };
     const location = (unitIndex: number, quote: string) => ({ unitIndex, unitKind: 'block', unitTitle: `Section ${unitIndex + 1} title`, field: 'body', quote, span: null });
     state.claimReviews[lesson.id] = {
-      lessonId: lesson.id, programId: state.planWorkspace.programId, state: 'needs_review', revision: 3, pass: 2, stopReason: null,
+      lessonId: lesson.id, programId: state.planWorkspace.programId, state: 'needs_review', revision: 3, pass: 2, stopReason: null, changedSinceStop: false,
       counts: { verified: 9, confirmed: 0, generalKnowledge: 0, queued: 2, open: 0, removed: 0 },
       claims: [
         { claimId: 'contradicted', location: location(0, 'A comparison always proves a cause.'), statement: 'A comparison always proves a cause.',

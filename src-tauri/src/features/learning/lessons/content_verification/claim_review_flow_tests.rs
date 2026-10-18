@@ -490,6 +490,23 @@ async fn resume_with_nothing_changed_is_refused_and_starts_nothing() -> Result<(
             .changed_since_stop(&course.lesson_id)
             .await?
     );
+    let review = course
+        .service()
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the held lesson has a review");
+    assert!(
+        !review.changed_since_stop,
+        "the panel keeps Resume disabled"
+    );
+    assert!(
+        course
+            .service()
+            .review(&course.program_id, "no-pass-yet")
+            .await?
+            .is_none(),
+        "no review before the first pass is null, not an error"
+    );
 
     let refused = course.resume().await.unwrap_err();
     assert!(

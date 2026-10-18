@@ -32,6 +32,9 @@ pub struct LessonClaimReviewDto {
     /// Verification passes run on a new candidate text (§6.3).
     pub pass: u32,
     pub stop_reason: Option<StopReasonDto>,
+    /// The user acted on a claim since the job last stopped (§6.2): a lesson
+    /// held by claims waiting for the user resumes only then.
+    pub changed_since_stop: bool,
     pub claims: Vec<ClaimReviewItemDto>,
 }
 
@@ -344,6 +347,8 @@ impl From<SourceAddedByDto> for SourceAddedBy {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceRefDto {
+    /// The library source the version belongs to, for "Capture again" (§5.4).
+    pub source_id: String,
     pub source_version_id: String,
     pub title: String,
     pub url: Option<String>,

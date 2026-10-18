@@ -15,7 +15,6 @@ import {
   NOTHING_CHANGED,
   announcement,
   applyFilter,
-  changedSince,
   claimsNoun,
   countsLine,
   filterCounts,
@@ -105,13 +104,11 @@ function Header({ review, waiting, hold }: { review: LessonClaimReviewDto; waiti
  * The lesson's claims: what failed, why, against which passage, and the
  * user's fixes, then Resume (§10). Reads well at 1 claim and at 43.
  */
-export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, stoppedAt = null, jobActive = false, lessonAnchor = null }: {
+export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jobActive = false, lessonAnchor = null }: {
   programId: string;
   lessonId: string;
   /** The course revision, which Resume's job action checks. */
   courseRevision: number;
-  /** When the holding job finished; Resume is refused when nothing changed since (§6.2). */
-  stoppedAt?: number | null;
   /** A preparation attempt is running: act now, Resume is not needed. */
   jobActive?: boolean;
   /** `lesson-<id>-section-` when the lesson is published and its sections are on the page. */
@@ -212,13 +209,12 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
   if (query.isError) return <div role="alert" className="my-4 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700"><p>{query.error.message}</p><button type="button" onClick={() => void query.refetch()} className="mt-2 underline">Load the claim review again</button></div>;
   if (!review) return null;
 
-  const changed = changedSince(review, stoppedAt);
-  const hold = reviewHold(review, waiting, changed);
+  const hold = reviewHold(review, waiting);
   const resumable = review.state === 'needs_review' || review.state === 'stopped';
   // An audit hold is fixed outside the claims (Settings, the course switch), so
-  // no claim event is needed before Resume.
+  // no claim event is needed before Resume (§6.2, §14.6); the backend agrees.
   const resumeBlocked = jobActive ? 'Verification is running; it takes your changes into account at its next step.'
-    : review.state === 'needs_review' && hold === 'claims' && !changed ? NOTHING_CHANGED : null;
+    : review.state === 'needs_review' && hold === 'claims' && !review.changedSinceStop ? NOTHING_CHANGED : null;
   const resumeLabel = review.state === 'stopped' ? `Retry after fixing: ${review.stopReason?.fix ?? 'the cause above'}` : 'Resume verification';
 
   return (
