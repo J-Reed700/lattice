@@ -8,23 +8,32 @@ use async_trait::async_trait;
 use lattice_core::application::contracts::settings::SourcingSettingsDto;
 use lattice_core::application::ports::{Budget, SourceFinding};
 use lattice_core::application::services::sourcing::{plan, FinderGate};
+use lattice_core::domain::provenance::{
+    citation_candidates, markdown_links, LinkStanding, OutboundLink,
+};
 use lattice_core::domain::sourcing::{
     fusion, FinderDescriptor, FinderHealth, FinderId, FinderOutcome, FinderResult, Findings,
-    KeyService, Lead, Near, OwnerResolution, SourceNeed, SourcingPolicy, SubjectHint,
+    KeyService, Lead, LeadKind, LinkPlace, Near, Origin, OwnerResolution, SourceNeed,
+    SourcingPolicy, SubjectHint,
 };
 use lattice_core::shared::error::{AppError, Result};
 use url::Url;
 
 use super::cache::ProviderPageCache;
 use super::health::HealthBook;
+use super::owner::OwnerResolver;
 use super::runner::{Clock, Runner, SystemClock};
-use crate::features::web::services::finders::FinderEntry;
+use crate::features::web::services::finders::{Fetched, FinderEntry, FinderHttp};
+use crate::features::web::services::identity;
+use crate::features::web::services::reference_text;
+use crate::features::web::services::web::MAX_PAGE_BODY_BYTES;
 
 /// What one search found, plus the rewordings it actually ran (the chat
-/// tool's output lists them).
+/// tool's output lists them) and the owner resolution if one ran.
 pub(crate) struct Search {
     pub findings: Findings,
     pub alternatives_run: Vec<String>,
+    pub owner_resolution: Option<OwnerResolution>,
 }
 
 /// Routed, fused, budgeted source finding over the registered finders.
@@ -38,6 +47,8 @@ pub(crate) struct SourcingService {
     health: HealthBook,
     cache: ProviderPageCache,
     clock: Arc<dyn Clock>,
+    owner: Option<Arc<OwnerResolver>>,
+    http: Option<FinderHttp>,
 }
 
 impl SourcingService {
@@ -67,7 +78,19 @@ impl SourcingService {
             health: HealthBook::new(policy),
             cache: ProviderPageCache::new(policy),
             clock,
+            owner: None,
+            http: None,
         }
+    }
+
+    pub(crate) fn with_owner_and_http(
+        mut self,
+        owner: Arc<OwnerResolver>,
+        http: FinderHttp,
+    ) -> Self {
+        self.owner = Some(owner);
+        self.http = Some(http);
+        self
     }
 
     /// Finds sources for `need`, among the finders in `only` when the caller
@@ -97,6 +120,15 @@ impl SourcingService {
             refused: &refused,
         };
         let plan = plan(&need, &descriptors, &gate);
+        let mut owner_resolution: Option<OwnerResolution> = None;
+        let mut initial_owner: Option<Origin> = need.scope.clone();
+        if initial_owner.is_none() && plan.resolve_owner {
+            if let (Some(resolver), Some(subject)) = (&self.owner, &need.subject) {
+                let res = resolver.resolve(subject, &budget).await;
+                initial_owner = res.origins.first().cloned();
+                owner_resolution = Some(res);
+            }
+        }
         let runner = Runner::new(
             &entries,
             &self.health,
@@ -105,8 +137,14 @@ impl SourcingService {
             self.policy,
             &need,
             &budget,
+            initial_owner,
         );
-        let report = runner.run(&plan).await;
+        let mut report = runner.run(&plan).await;
+        if let Some(ref res) = owner_resolution {
+            let mut combined = res.outcomes.clone();
+            combined.extend(report.outcomes);
+            report.outcomes = combined;
+        }
 
         let lists: Vec<fusion::RankedList<'_>> = report
             .steps
@@ -117,7 +155,9 @@ impl SourcingService {
                 leads: &step.leads,
             })
             .collect();
-        let mut leads = fusion::diversify(fusion::rrf(&lists, self.policy.rrf_k, None), None);
+        let owner_ref = report.owner.as_ref();
+        let mut leads =
+            fusion::diversify(fusion::rrf(&lists, self.policy.rrf_k, owner_ref), owner_ref);
         if let Some(scope) = &need.scope {
             leads.retain(|lead| scope.covers(&lead.url));
         }
@@ -132,6 +172,7 @@ impl SourcingService {
                 exhausted: report.exhausted,
             },
             alternatives_run: report.alternatives_run,
+            owner_resolution,
         })
     }
 }
@@ -200,6 +241,109 @@ fn merge(so_far: &FinderResult, next: FinderResult) -> FinderResult {
     next
 }
 
+/// Extracts the leads (`LeadKind::ReferenceOf`) from already-extracted
+/// reference markdown of `page_url`, optionally ordered around `near`.
+pub(crate) fn leads_from_markdown(
+    page_url: &Url,
+    markdown: &str,
+    near: Option<&Near>,
+) -> Vec<Lead> {
+    let all_links = markdown_links(markdown);
+    let ordered: Vec<OutboundLink> = match near {
+        Some(Near::Bytes { start, end }) => {
+            citation_candidates(markdown, (*start, *end), &all_links, |_| {
+                LinkStanding::Unknown
+            })
+            .into_iter()
+            .map(|c| OutboundLink {
+                url: c.url,
+                anchor: c.anchor,
+                start_byte: c.start_byte,
+                end_byte: c.end_byte,
+            })
+            .collect()
+        }
+        Some(Near::Quote(quote)) => {
+            let trimmed = quote.trim();
+            let span = if trimmed.is_empty() {
+                None
+            } else {
+                markdown
+                    .find(trimmed)
+                    .map(|idx| (idx, idx + trimmed.len()))
+                    .or_else(|| {
+                        let lower_md = markdown.to_lowercase();
+                        let lower_q = trimmed.to_lowercase();
+                        lower_md
+                            .find(&lower_q)
+                            .map(|idx| (idx, (idx + lower_q.len()).min(markdown.len())))
+                    })
+            };
+            match span {
+                Some(span) => {
+                    citation_candidates(markdown, span, &all_links, |_| LinkStanding::Unknown)
+                        .into_iter()
+                        .map(|c| OutboundLink {
+                            url: c.url,
+                            anchor: c.anchor,
+                            start_byte: c.start_byte,
+                            end_byte: c.end_byte,
+                        })
+                        .collect()
+                }
+                None => all_links,
+            }
+        }
+        None => all_links,
+    };
+
+    let finder_id = FinderId::from_static("page_links");
+    let mut leads = Vec::with_capacity(ordered.len());
+    for (idx, link) in ordered.into_iter().enumerate() {
+        let Ok(target) = Url::parse(&link.url) else {
+            continue;
+        };
+        let context = sentence_around(markdown, link.start_byte, link.end_byte);
+        let rank = idx + 1;
+        leads.push(Lead {
+            url: target,
+            title: (!link.anchor.is_empty()).then(|| link.anchor.clone()),
+            snippet: Some(context.clone()),
+            published: None,
+            kind: LeadKind::ReferenceOf {
+                page: page_url.clone(),
+                place: Some(LinkPlace {
+                    anchor: link.anchor,
+                    context,
+                    offset: link.start_byte,
+                }),
+            },
+            owner: None,
+            rel_canonical: None,
+            terms: None,
+            found_by: vec![(finder_id.clone(), rank)],
+        });
+    }
+    leads
+}
+
+fn sentence_around(text: &str, start: usize, end: usize) -> String {
+    let start = start.min(text.len());
+    let end = end.min(text.len());
+    let line_start = text
+        .get(..start)
+        .and_then(|before| before.rfind('\n'))
+        .map_or(0, |pos| pos + 1);
+    let line_end = text
+        .get(end..)
+        .and_then(|after| after.find('\n'))
+        .map_or(text.len(), |pos| end + pos);
+    text.get(line_start..line_end)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
 #[async_trait]
 impl SourceFinding for SourcingService {
     async fn find(&self, need: SourceNeed, budget: Budget) -> Result<Findings> {
@@ -208,29 +352,46 @@ impl SourceFinding for SourcingService {
             .map(|search| search.findings)
     }
 
-    /// No finder resolves owners yet: Wikidata and the registries arrive in
-    /// Wave 1 (F1). Said, rather than answered with an empty resolution.
     async fn resolve_owner(
         &self,
         subject: &SubjectHint,
-        _budget: Budget,
+        budget: Budget,
     ) -> Result<OwnerResolution> {
-        Err(AppError::NotFound(format!(
-            "No owner finder is registered yet, so the owner of \"{}\" cannot be resolved",
-            subject.name
-        )))
+        let Some(resolver) = &self.owner else {
+            return Err(AppError::NotFound(format!(
+                "No owner finder is registered yet, so the owner of \"{}\" cannot be resolved",
+                subject.name
+            )));
+        };
+        Ok(resolver.resolve(subject, &budget).await)
     }
 
-    /// Following a page's links arrives with the chat tools (T1).
     async fn leads_from_page(
         &self,
         url: &Url,
-        _near: Option<Near>,
+        near: Option<Near>,
         _budget: Budget,
     ) -> Result<Vec<Lead>> {
-        Err(AppError::NotFound(format!(
-            "Following the links of {url} is not available yet"
-        )))
+        let Some(http) = &self.http else {
+            return Err(AppError::NotFound(format!(
+                "Following the links of {url} is not available yet"
+            )));
+        };
+        let headers = identity::browser_headers(identity::random_profile(), None);
+        let html = match http.get(url.as_str(), headers, MAX_PAGE_BODY_BYTES).await {
+            Fetched::Body(body) => body,
+            Fetched::Status { code, .. } => {
+                return Err(AppError::Network(format!("HTTP {code} fetching {url}")));
+            }
+            Fetched::Transport(err) => {
+                return Err(AppError::Network(format!("Failed to fetch {url}: {err}")));
+            }
+        };
+        let url_clone = url.clone();
+        let (_title, markdown) = http
+            .parse(move || reference_text::extract_with_url(&html, Some(url_clone.as_str())))
+            .await??;
+        Ok(leads_from_markdown(url, &markdown, near.as_ref()))
     }
 
     fn health(&self) -> Vec<FinderHealth> {

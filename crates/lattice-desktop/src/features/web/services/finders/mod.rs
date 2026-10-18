@@ -5,18 +5,53 @@
 //! what a failure means for the finder's breaker. Wave 0 holds the three
 //! search providers that used to live in `web/providers.rs`.
 
+pub(crate) mod arxiv;
 pub(crate) mod bing_html;
+pub(crate) mod brave;
+pub(crate) mod crates_io;
+pub(crate) mod crossref;
+pub(crate) mod discourse_json;
 pub(crate) mod duckduckgo;
+pub(crate) mod ecma_pattern;
+pub(crate) mod eurlex_celex;
+pub(crate) mod europe_pmc;
+pub(crate) mod exa;
+pub(crate) mod federal_register;
+pub(crate) mod github;
+pub(crate) mod go_module;
+pub(crate) mod govinfo;
+pub(crate) mod hn_algolia;
+pub(crate) mod ietf_datatracker;
+pub(crate) mod legislation_uk;
+pub(crate) mod marginalia;
+pub(crate) mod maven_pom;
+pub(crate) mod npm;
+pub(crate) mod nuget;
+pub(crate) mod openalex;
+pub(crate) mod pypi;
+pub(crate) mod rfc_index;
+pub(crate) mod rubygems;
+pub(crate) mod searxng;
+pub(crate) mod semantic_scholar;
 pub(crate) mod serp;
+pub(crate) mod site_discovery;
+pub(crate) mod stack_exchange;
+pub(crate) mod tavily;
+pub(crate) mod unpaywall;
+pub(crate) mod w3c;
+pub(crate) mod whatwg_index;
+pub(crate) mod wikidata;
 pub(crate) mod wikipedia;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use lattice_core::application::contracts::settings::SourcingSettingsDto;
 use lattice_core::application::ports::SourceFinder;
 use lattice_core::domain::sourcing::{
-    FailureCause, FinderDescriptor, FinderOutcome, FinderResult, Lead, SourceNeed,
+    FailureCause, FinderDescriptor, FinderOutcome, FinderResult, KeyService, Lead, SourceNeed,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::Client;
@@ -112,22 +147,165 @@ impl FinderEntry {
     }
 }
 
-/// The keyless finders, on by default (design §3.1 rule 6), in the order
-/// their leads are listed when they tie.
+fn entry<F: SourceFinder + 'static>(finder: F, page_size: usize) -> FinderEntry {
+    FinderEntry {
+        finder: Arc::new(finder),
+        page_size,
+    }
+}
+
+/// The default registry (keyless finders on, plus keyed/instance finders that
+/// report `Skipped(NoKey)` / `Skipped(NoInstance)` / `Skipped(NoContact)` until
+/// configured), in the order their leads are listed when they tie.
 pub(crate) fn keyless_registry(http: &FinderHttp) -> Vec<FinderEntry> {
+    registry(http, &SourcingSettingsDto::default(), &BTreeMap::new())
+}
+
+/// The full finder catalogue (§3.10), wired with any user-configured keys and
+/// instance URLs.
+pub(crate) fn registry(
+    http: &FinderHttp,
+    settings: &SourcingSettingsDto,
+    keys: &BTreeMap<KeyService, String>,
+) -> Vec<FinderEntry> {
+    let key = |service: KeyService| keys.get(&service).cloned();
     vec![
-        FinderEntry {
-            finder: Arc::new(duckduckgo::DuckDuckGo::new(http.clone())),
-            page_size: duckduckgo::RESULTS_PER_PAGE,
-        },
-        FinderEntry {
-            finder: Arc::new(bing_html::BingHtml::new(http.clone())),
-            page_size: bing_html::RESULTS_PER_PAGE,
-        },
-        FinderEntry {
-            finder: Arc::new(wikipedia::Wikipedia::new(http.clone())),
-            page_size: wikipedia::RESULTS_PER_PAGE,
-        },
+        // Open web engines
+        entry(
+            duckduckgo::DuckDuckGo::new(http.clone()),
+            duckduckgo::RESULTS_PER_PAGE,
+        ),
+        entry(
+            bing_html::BingHtml::new(http.clone()),
+            bing_html::RESULTS_PER_PAGE,
+        ),
+        entry(
+            brave::Brave::new(http.clone(), key(KeyService::Brave)),
+            brave::RESULTS_PER_PAGE,
+        ),
+        entry(
+            tavily::Tavily::new(http.clone(), key(KeyService::Tavily)),
+            tavily::RESULTS_PER_PAGE,
+        ),
+        entry(
+            exa::Exa::new(http.clone(), key(KeyService::Exa)),
+            exa::RESULTS_PER_PAGE,
+        ),
+        entry(
+            searxng::Searxng::new(http.clone(), settings.searxng_url().map(|u| u.to_string())),
+            searxng::RESULTS_PER_PAGE,
+        ),
+        entry(
+            marginalia::Marginalia::new(http.clone()),
+            marginalia::RESULTS_PER_PAGE,
+        ),
+        // Encyclopedia & owner sites
+        entry(
+            wikipedia::Wikipedia::new(http.clone()),
+            wikipedia::RESULTS_PER_PAGE,
+        ),
+        entry(
+            wikidata::Wikidata::new(http.clone()),
+            wikidata::RESULTS_PER_PAGE,
+        ),
+        entry(
+            site_discovery::SiteDiscovery::new(http.clone()),
+            site_discovery::RESULTS_PER_PAGE,
+        ),
+        // Code hosts & software package registries
+        entry(
+            github::GitHub::with_token(http.clone(), key(KeyService::GitHub)),
+            github::RESULTS_PER_PAGE,
+        ),
+        entry(
+            crates_io::CratesIo::new(http.clone()),
+            crates_io::RESULTS_PER_PAGE,
+        ),
+        entry(pypi::PyPi::new(http.clone()), pypi::RESULTS_PER_PAGE),
+        entry(npm::Npm::new(http.clone()), npm::RESULTS_PER_PAGE),
+        entry(nuget::Nuget::new(http.clone()), nuget::RESULTS_PER_PAGE),
+        entry(
+            rubygems::RubyGems::new(http.clone()),
+            rubygems::RESULTS_PER_PAGE,
+        ),
+        entry(
+            maven_pom::MavenPom::new(http.clone()),
+            maven_pom::RESULTS_PER_PAGE,
+        ),
+        entry(
+            go_module::GoModule::new(http.clone()),
+            go_module::RESULTS_PER_PAGE,
+        ),
+        // Scholarly & OA
+        entry(
+            openalex::OpenAlex::new(http.clone()),
+            openalex::RESULTS_PER_PAGE,
+        ),
+        entry(
+            crossref::Crossref::new(http.clone()),
+            crossref::RESULTS_PER_PAGE,
+        ),
+        entry(
+            semantic_scholar::SemanticScholar::new(http.clone(), key(KeyService::SemanticScholar)),
+            semantic_scholar::RESULTS_PER_PAGE,
+        ),
+        entry(arxiv::Arxiv::new(http.clone()), arxiv::RESULTS_PER_PAGE),
+        entry(
+            unpaywall::Unpaywall::new(http.clone()),
+            unpaywall::RESULTS_PER_PAGE,
+        ),
+        entry(
+            europe_pmc::EuropePmc::new(http.clone()),
+            europe_pmc::RESULTS_PER_PAGE,
+        ),
+        // Standards bodies
+        entry(
+            rfc_index::RfcIndex::new(http.clone()),
+            rfc_index::RESULTS_PER_PAGE,
+        ),
+        entry(
+            ietf_datatracker::IetfDatatracker::new(http.clone()),
+            ietf_datatracker::RESULTS_PER_PAGE,
+        ),
+        entry(w3c::W3c::new(http.clone()), w3c::RESULTS_PER_PAGE),
+        entry(
+            whatwg_index::WhatwgIndex::new(http.clone()),
+            whatwg_index::RESULTS_PER_PAGE,
+        ),
+        entry(
+            ecma_pattern::EcmaPattern::new(http.clone()),
+            ecma_pattern::RESULTS_PER_PAGE,
+        ),
+        // Law & regulations
+        entry(
+            federal_register::FederalRegister::new(http.clone()),
+            federal_register::RESULTS_PER_PAGE,
+        ),
+        entry(
+            legislation_uk::LegislationUk::new(http.clone()),
+            legislation_uk::RESULTS_PER_PAGE,
+        ),
+        entry(
+            eurlex_celex::EurlexCelex::new(http.clone()),
+            eurlex_celex::RESULTS_PER_PAGE,
+        ),
+        entry(
+            govinfo::Govinfo::new(http.clone(), key(KeyService::ApiDataGov)),
+            govinfo::RESULTS_PER_PAGE,
+        ),
+        // Community
+        entry(
+            stack_exchange::StackExchange::new(http.clone(), key(KeyService::StackExchange)),
+            stack_exchange::RESULTS_PER_PAGE,
+        ),
+        entry(
+            hn_algolia::HnAlgolia::new(http.clone()),
+            hn_algolia::RESULTS_PER_PAGE,
+        ),
+        entry(
+            discourse_json::DiscourseJson::new(http.clone()),
+            discourse_json::RESULTS_PER_PAGE,
+        ),
     ]
 }
 
@@ -191,5 +369,15 @@ pub(crate) fn cause_of(fetched: Fetched) -> FailureCause {
     }
 }
 
+#[cfg(test)]
+mod community_law_keyed_tests;
+#[cfg(test)]
+mod scholarly_tests;
+#[cfg(test)]
+mod software_registries_a_tests;
+#[cfg(test)]
+mod software_registries_b_tests;
+#[cfg(test)]
+mod standards_tests;
 #[cfg(test)]
 mod tests;

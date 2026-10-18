@@ -411,6 +411,73 @@ pub struct FetchUrlContentInput {
     /// fits the result's room.
     #[serde(default)]
     pub offset: usize,
+    /// Optional ISO date (`YYYY-MM-DD`): read the archived copy nearest this
+    /// date instead of the live page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
+}
+
+/// Input for `find_sources` tool (design §3.11).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindSourcesInput {
+    /// Primary-source category (`official_docs`, `package`, `paper`,
+    /// `standard`, `law`, `community`, `encyclopedia`).
+    pub kind: String,
+    /// What to find.
+    pub query: String,
+    /// The entity that owns the answer when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Optional exact identifier (`crates:tokio`, `npm:react`, `rfc:9110`, DOI, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    /// Optional host or host/path scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+    /// Maximum results per page.
+    #[serde(default = "default_max_results")]
+    pub max_results: usize,
+    /// 1-based page number.
+    #[serde(default = "default_find_sources_page")]
+    pub page: usize,
+}
+
+fn default_find_sources_page() -> usize {
+    1
+}
+
+/// Input for `follow_links` tool (design §3.11).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowLinksInput {
+    /// URL of a page whose outbound links should be inspected.
+    pub url: String,
+    /// Optional quote from the page; links in and around its paragraph are returned first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near_text: Option<String>,
+}
+
+/// One link extracted by `follow_links`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowedLinkDto {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+}
+
+/// Output from `follow_links`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowLinksOutput {
+    pub url: String,
+    pub links: Vec<FollowedLinkDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<crate::application::contracts::web::FinderOutcomeDto>,
 }
 
 /// Input for wiki_search function.

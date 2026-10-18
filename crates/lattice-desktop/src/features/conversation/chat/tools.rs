@@ -7,9 +7,11 @@ pub(super) const CORE_TOOL_NAMES: [&str; 4] = [
     "list_documents",
     "list_attachments",
 ];
-pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 5] = [
+pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 7] = [
     "web_search",
     "fetch_url_content",
+    "find_sources",
+    "follow_links",
     "find_image",
     "wiki_search",
     "wiki_summary",
@@ -57,8 +59,12 @@ pub(super) fn kept_with_grounded_context(
     matches!(
         tool_name,
         "semantic_search" | "get_document" | "list_attachments" | "find_image"
-    ) || (tool_name == "fetch_url_content" && can_open_pages)
-        || (deep_research && matches!(tool_name, "web_search" | "wiki_search" | "wiki_summary"))
+    ) || (matches!(tool_name, "fetch_url_content" | "follow_links") && can_open_pages)
+        || (deep_research
+            && matches!(
+                tool_name,
+                "web_search" | "find_sources" | "wiki_search" | "wiki_summary"
+            ))
 }
 
 /// Whether a deep-research turn may search the web again after its first
@@ -96,7 +102,7 @@ pub(super) fn optional_builtin_tool_allowed(
     allowlist: Option<&HashSet<String>>,
     allow_url_fetch: bool,
 ) -> bool {
-    if tool_name == "fetch_url_content" && allow_url_fetch {
+    if (tool_name == "fetch_url_content" || tool_name == "follow_links") && allow_url_fetch {
         return true;
     }
     let gate = if tool_name == "find_image" {
@@ -104,7 +110,10 @@ pub(super) fn optional_builtin_tool_allowed(
     } else {
         tool_name
     };
-    allowlist.is_some_and(|list| list.contains(gate))
+    allowlist.is_some_and(|list| {
+        list.contains(gate)
+            || (matches!(gate, "find_sources" | "follow_links") && list.contains("web_search"))
+    })
 }
 
 pub(super) fn build_llm_tool_definitions(

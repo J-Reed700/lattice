@@ -196,7 +196,7 @@ pub(super) fn collect_tool_sources(
     };
 
     match tool_name {
-        "web_search" => {
+        "web_search" | "find_sources" => {
             if let Ok(output) = serde_json::from_value::<WebSearchOutput>(data) {
                 return build_web_source_citations(
                     &output.results,
@@ -505,5 +505,36 @@ mod citable_tests {
         assert_eq!(sources[0].category, "Web image");
         assert_eq!(sources[0].file_name, "File:Apollo 11 Launch.jpg");
         assert_eq!(sources[0].content, "Saturn V lifting off");
+    }
+
+    #[test]
+    fn find_sources_collects_citations_same_as_web_search() {
+        let result = FunctionResult::success(serde_json::json!({
+            "results": [
+                { "title": "Tokio", "url": "https://tokio.rs/", "snippet": "Async runtime" }
+            ],
+            "query": "tokio",
+            "result_count": 1,
+            "page": 1,
+            "offset": 0,
+            "total_results": 1,
+            "has_more": false,
+            "providers_used": ["mock"],
+            "unique_query_count": 1,
+            "unique_url_count": 1,
+            "unique_domain_count": 1,
+            "followup_queries": [],
+            "outcomes": [],
+            "owner": null
+        }));
+        let sources = collect_tool_sources(
+            "find_sources",
+            &result,
+            &[],
+            &ToolOutputSettingsDto::default(),
+        );
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].document_id, "web:https://tokio.rs/");
+        assert_eq!(sources[0].file_name, "Tokio");
     }
 }

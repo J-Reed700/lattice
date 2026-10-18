@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identity,
-    Lead, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
+    Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
 };
 use url::Url;
 
@@ -33,10 +33,16 @@ pub(crate) const ID: FinderId = FinderId::from_static("wikipedia");
 pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
     id: ID,
     name: "Wikipedia",
-    finds: &[Role {
-        kind: NeedKind::Encyclopedia,
-        wave: WaveSlot::First,
-    }],
+    finds: &[
+        Role {
+            kind: NeedKind::Encyclopedia,
+            wave: WaveSlot::First,
+        },
+        Role {
+            kind: NeedKind::Leads,
+            wave: WaveSlot::First,
+        },
+    ],
     reaches: Reach::Encyclopedia,
     auth: Auth::None,
     privacy: Privacy::QueryLogged {
@@ -73,6 +79,121 @@ impl Wikipedia {
             api,
             descriptor: DESCRIPTOR,
         }
+    }
+
+    /// Extracts external links from the named page, returning them as
+    /// citation leads with `LeadKind::ReferenceOf`.
+    pub(crate) async fn external_links(&self, title_or_query: &str) -> (Vec<Lead>, FinderOutcome) {
+        let started = Instant::now();
+        let query = urlencoding::encode(title_or_query.trim()).into_owned();
+        if query.is_empty() {
+            return (Vec::new(), answered(&self.descriptor, Vec::new(), started));
+        }
+        let url = format!(
+            "{}?action=query&format=json&utf8=1&prop=extlinks&ellimit=50&redirects=1&titles={query}",
+            self.api
+        );
+        let headers =
+            identity::declared_client_headers(self.http.contact.as_deref(), "application/json");
+        let body = match self.http.get(&url, headers, MAX_BODY_BYTES).await {
+            Fetched::Body(body) => body,
+            other => {
+                return (
+                    Vec::new(),
+                    failed(&self.descriptor, cause_of(other), started),
+                )
+            }
+        };
+        let payload = match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(payload) => payload,
+            Err(e) => {
+                return (
+                    Vec::new(),
+                    failed(
+                        &self.descriptor,
+                        FailureCause::Parse(e.to_string()),
+                        started,
+                    ),
+                )
+            }
+        };
+        if let Some(error) = payload.get("error") {
+            let code = error
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let cause = if code == "ratelimited" {
+                FailureCause::Status {
+                    code: 429,
+                    retry_after: None,
+                }
+            } else {
+                FailureCause::Parse(format!("API error {code}"))
+            };
+            return (Vec::new(), failed(&self.descriptor, cause, started));
+        }
+        let Some(pages) = payload
+            .get("query")
+            .and_then(|q| q.get("pages"))
+            .and_then(serde_json::Value::as_object)
+        else {
+            return (
+                Vec::new(),
+                failed(
+                    &self.descriptor,
+                    FailureCause::Parse("no pages in query".into()),
+                    started,
+                ),
+            );
+        };
+
+        let mut leads = Vec::new();
+        for page in pages.values() {
+            let title = page
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(title_or_query);
+            let Ok(article_url) = Url::parse(&format!("{ARTICLE_BASE}{}", title.replace(' ', "_")))
+            else {
+                continue;
+            };
+            let Some(extlinks) = page.get("extlinks").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for link in extlinks {
+                let Some(raw_url) = link
+                    .get("*")
+                    .or_else(|| link.get("url"))
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                let full_url = if raw_url.starts_with("//") {
+                    format!("https:{raw_url}")
+                } else {
+                    raw_url.to_string()
+                };
+                let Ok(url) = Url::parse(&full_url) else {
+                    continue;
+                };
+                let rank = leads.len() + 1;
+                leads.push(Lead {
+                    url,
+                    title: None,
+                    snippet: None,
+                    published: None,
+                    kind: LeadKind::ReferenceOf {
+                        page: article_url.clone(),
+                        place: None,
+                    },
+                    owner: None,
+                    rel_canonical: None,
+                    terms: None,
+                    found_by: vec![(ID, rank)],
+                });
+            }
+        }
+        (leads.clone(), answered(&self.descriptor, leads, started))
     }
 }
 
@@ -139,6 +260,10 @@ impl SourceFinder for Wikipedia {
     }
 
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
+        if need.kind == NeedKind::Leads {
+            let (_leads, outcome) = self.external_links(&need.query).await;
+            return outcome;
+        }
         let started = Instant::now();
         let query = urlencoding::encode(need.query.trim()).into_owned();
         let offset = rank_of(page, RESULTS_PER_PAGE, 0).saturating_sub(1);

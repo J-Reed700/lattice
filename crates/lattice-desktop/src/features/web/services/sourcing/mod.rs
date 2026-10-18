@@ -11,10 +11,12 @@
 
 mod cache;
 mod health;
+pub(crate) mod owner;
 mod runner;
 mod service;
 
 pub(crate) use health::HealthBook;
+pub(crate) use owner::OwnerResolver;
 pub(crate) use service::{Search, SourcingService};
 
 #[cfg(test)]

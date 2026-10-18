@@ -9,8 +9,9 @@ pub use calls::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 pub use dto::{
     AttachmentItem, CustomQueryToolInput, CustomQueryToolOutput, DocumentEvidence,
     DocumentEvidenceMatch, DocumentListItem, DocumentMetadata, DocumentResult,
-    FetchUrlContentInput, FilterMode, FunctionCallError, GetDocumentInput, GetDocumentOutput,
-    ListAttachmentsOutput, ListDocumentsInput, ListDocumentsOutput, SearchMode,
-    SemanticSearchInput, SemanticSearchOutput, SortField, SortOrder, WikiSearchInput,
-    WikiSearchOutput, WikiSearchResult, WikiSummaryInput, WikiSummaryOutput,
+    FetchUrlContentInput, FilterMode, FindSourcesInput, FollowLinksInput, FollowLinksOutput,
+    FollowedLinkDto, FunctionCallError, GetDocumentInput, GetDocumentOutput, ListAttachmentsOutput,
+    ListDocumentsInput, ListDocumentsOutput, SearchMode, SemanticSearchInput, SemanticSearchOutput,
+    SortField, SortOrder, WikiSearchInput, WikiSearchOutput, WikiSearchResult, WikiSummaryInput,
+    WikiSummaryOutput,
 };

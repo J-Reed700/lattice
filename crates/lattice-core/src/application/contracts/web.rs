@@ -27,6 +27,27 @@ pub struct WebSearchInput {
     /// Web search query
     pub query: String,
 
+    /// Optional source kind (`official_docs`, `package`, `paper`, `standard`,
+    /// `law`, `community`, `encyclopedia`, `web`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+
+    /// The entity that owns the answer when known (product, package, org).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+
+    /// Optional exact identifier (`crates:tokio`, `npm:react`, `rfc:9110`, DOI, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+
+    /// Optional host or host/path to search within (`learn.microsoft.com`, `docs.python.org/3`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+
+    /// Optional ISO date (`YYYY-MM-DD`): only pages published after this date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+
     /// Maximum number of web results to return for this page (1-50)
     #[serde(default = "default_max_results")]
     pub max_results: usize,
@@ -60,6 +81,10 @@ pub struct WebSearchInput {
     /// subject. Without them a deep search is just `query`.
     #[serde(default)]
     pub followup_queries: Vec<String>,
+
+    /// Rewordings tried only if the first wave is thin.
+    #[serde(default)]
+    pub alternatives: Vec<String>,
 }
 
 /// Results per page when a search tool's input leaves it out; the wiki and
@@ -99,6 +124,14 @@ pub struct WebSearchResult {
     /// Source provider that produced this result.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+}
+
+/// Resolved owner metadata on a source-finding search output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedOwnerDto {
+    pub domain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_by: Option<String>,
 }
 
 /// Output from web_search function.
@@ -156,6 +189,10 @@ pub struct WebSearchOutput {
     /// and the step line see failures instead of a silently shorter list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<FinderOutcomeDto>,
+
+    /// Resolved owner domain when owner-first routing ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<ResolvedOwnerDto>,
 }
 
 /// One finder's outcome as the model and the UI read it.
@@ -357,6 +394,11 @@ mod tests {
     fn test_web_search_input_defaults() {
         let input = WebSearchInput {
             query: "test".to_string(),
+            kind: None,
+            subject: None,
+            identifier: None,
+            site: None,
+            after: None,
             max_results: default_max_results(),
             page: default_web_page(),
             offset: 0,
@@ -365,6 +407,7 @@ mod tests {
             depth: default_research_depth(),
             branch_queries: default_research_branch_queries(),
             followup_queries: Vec::new(),
+            alternatives: Vec::new(),
         };
 
         assert_eq!(input.max_results, 5);

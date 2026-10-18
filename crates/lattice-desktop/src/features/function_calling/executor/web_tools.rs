@@ -24,21 +24,10 @@ impl FunctionExecutor {
 
             debug!(
                 "Web search: query='{}', max_results={}, page={}, offset={}, providers={:?}, include_wikipedia={}, depth={}, branch_queries={}",
-                input.query,
-                input.max_results,
-                input.page,
-                input.offset,
-                input.providers,
-                input.include_wikipedia,
-                input.depth,
-                input.branch_queries
+                input.query, input.max_results, input.page, input.offset, input.providers, input.include_wikipedia, input.depth, input.branch_queries
             );
 
             let output = self.web_service.search_web(&input).await?;
-
-            // Every provider's outcome rides in the result (`outcomes`), so
-            // the model reads which provider failed or was skipped and why,
-            // instead of a list that is silently shorter.
             let not_answered: Vec<String> = output
                 .outcomes
                 .iter()
@@ -48,11 +37,7 @@ impl FunctionExecutor {
                     None => format!("{} {}", outcome.finder, outcome.result),
                 })
                 .collect();
-            info!(
-                results = output.result_count,
-                not_answered = ?not_answered,
-                "Web search completed"
-            );
+            info!(results = output.result_count, not_answered = ?not_answered, "Web search completed");
 
             Ok(FunctionResult::success(serde_json::to_value(output)?))
         }) // Box::pin handle_web_search
@@ -70,17 +55,125 @@ impl FunctionExecutor {
             let input: FetchUrlContentInput = serde_json::from_value(args.clone())
                 .map_err(|e| AppError::InvalidInput(format!("Invalid arguments: {}", e)))?;
 
-            debug!("Fetch URL: url='{}'", input.url);
+            debug!("Fetch URL: url='{}', as_of={:?}", input.url, input.as_of);
 
-            let output = self.web_service.fetch_url_content(&input.url).await?;
+            let output = match input
+                .as_of
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                Some(raw) => {
+                    let day = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|e| {
+                        AppError::InvalidInput(format!("Invalid as_of date '{raw}': {e}"))
+                    })?;
+                    self.web_service
+                        .fetch_url_content_as_of(&input.url, Some(day))
+                        .await?
+                }
+                None => self.web_service.fetch_url_content(&input.url).await?,
+            };
 
             info!(
                 "Fetch URL completed: {} words in {:.2}ms",
                 output.word_count, output.fetch_time_ms
             );
-
             Ok(FunctionResult::success(serde_json::to_value(output)?))
         }) // Box::pin handle_fetch_url
+    }
+
+    /// Execute the find_sources function.
+    pub(super) fn handle_find_sources<'a>(
+        &'a self,
+        args: &'a serde_json::Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FunctionResult>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let input: FindSourcesInput = serde_json::from_value(args.clone())
+                .map_err(|e| AppError::InvalidInput(format!("Invalid arguments: {e}")))?;
+
+            let web_input = WebSearchInput {
+                query: input.query,
+                kind: Some(input.kind),
+                subject: input.subject,
+                identifier: input.identifier,
+                site: input.site,
+                after: None,
+                max_results: input.max_results,
+                page: input.page,
+                offset: 0,
+                providers: Vec::new(),
+                include_wikipedia: false,
+                depth: 1,
+                branch_queries: 2,
+                followup_queries: Vec::new(),
+                alternatives: Vec::new(),
+            };
+
+            let output = self.web_service.search_web(&web_input).await?;
+            Ok(FunctionResult::success(serde_json::to_value(output)?))
+        })
+    }
+
+    /// Execute the follow_links function.
+    pub(super) fn handle_follow_links<'a>(
+        &'a self,
+        args: &'a serde_json::Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FunctionResult>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let input: FollowLinksInput = serde_json::from_value(args.clone())
+                .map_err(|e| AppError::InvalidInput(format!("Invalid arguments: {e}")))?;
+
+            let leads = self
+                .web_service
+                .follow_links(&input.url, input.near_text.as_deref())
+                .await?;
+            let links = leads
+                .into_iter()
+                .map(|lead| {
+                    let (kind, anchor, context, offset) = match lead.kind {
+                        lattice_core::domain::sourcing::LeadKind::ReferenceOf { place, .. } => {
+                            let (a, c, o) = match place {
+                                Some(p) => (Some(p.anchor), Some(p.context), Some(p.offset)),
+                                None => (None, None, None),
+                            };
+                            ("reference", a, c, o)
+                        }
+                        lattice_core::domain::sourcing::LeadKind::Document(_) => {
+                            ("document", None, None, None)
+                        }
+                        lattice_core::domain::sourcing::LeadKind::OfficialSite => {
+                            ("official_site", None, None, None)
+                        }
+                        lattice_core::domain::sourcing::LeadKind::Repository => {
+                            ("repository", None, None, None)
+                        }
+                        lattice_core::domain::sourcing::LeadKind::Page => {
+                            ("page", None, None, None)
+                        }
+                        lattice_core::domain::sourcing::LeadKind::ArchivedCopy { .. } => {
+                            ("archived_copy", None, None, None)
+                        }
+                    };
+                    FollowedLinkDto {
+                        url: lead.url.to_string(),
+                        anchor,
+                        context,
+                        offset,
+                        kind: kind.to_string(),
+                        owner: lead.owner.as_ref().map(|o| o.to_string()),
+                    }
+                })
+                .collect();
+
+            let output = FollowLinksOutput {
+                url: input.url,
+                links,
+                outcomes: Vec::new(),
+            };
+            Ok(FunctionResult::success(serde_json::to_value(output)?))
+        })
     }
 
     fn strip_html_tags(input: &str) -> String {
@@ -173,7 +266,6 @@ impl FunctionExecutor {
                         .collect::<Vec<_>>()
                         .join(" ");
                     let url = format!("https://en.wikipedia.org/wiki/{}", title.replace(' ', "_"));
-
                     results.push(WikiSearchResult {
                         title,
                         url,
