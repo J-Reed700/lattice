@@ -127,3 +127,22 @@ Conversation already defines its own ports (`chat/ports.rs`). The leak is that t
 - src-tauri/src/features/conversation/di/chat_runtime.rs
 - src-tauri/crates/lattice-core/src/application/contracts/mod.rs
 - src-tauri/src/features/download/downloaded_model_repository.rs
+## 7. PR 5 as built
+
+Feature edges 82 → 61 (−21), in two commits. `infrastructure-imports-feature` stays 0 and `feature-reexport` stays 15. No feature gained a `crate::interfaces` import, and `interfaces/di/container.rs` and `container/*` are untouched.
+
+| Edge | Δ | Where it went |
+|---|---|---|
+| indexing→mentions | −1 | `MentionRepository` moved with `git mv` to `infrastructure/persistence/repositories/mentions.rs` (own commit). It depends only on core. |
+| search→embedding, search→download | −5, −1 | `search::di::build_with_compression` takes `Arc<dyn EmbeddingPort>` and a `VectorSpace { identity, late_chunking, backfill_model }`. `modules/search.rs` reads the active embedding model at the same point in startup as before (just before the call), computes `index_identity` (moved with its tests), and passes a loader closure. That closure opens `CandleEmbeddingService` only when the index is short of vectors, as before. The unused `build` wrapper is deleted. |
+| indexing→embedding, →search, →transcription | −2, −1, −1 | `indexing::di::build` takes `IndexingPorts { embedding, embedding_repo, sparse_term_store, transcription }`, built in `modules/indexing.rs` right before the call, and loses its `background` parameter. All four are plain constructors (Whisper still loads on first use), so nothing loads earlier. |
+| corpus_shape→embedding | −1 | The command calls `container.embedding_repository()`. `IndexingModule` keeps the repository it hands to indexing, and the accessor sits in indexing's registrar. |
+| stats→tags | −1 | `modules/system.rs` builds the `TagRepository` and passes it to `stats::di::build`. |
+| health→llm | −1 | Core `DegradedLLMPort` in `ports/mock_llm_port.rs`. The `llm` field of the `health_check` response now reads `false` (it read `true` even with no model). No UI code calls `healthCheck`: only `src/lib/bindings.ts` and `src/features/health/api/client.ts` define it. `determine_status` ignores the flag, so the overall status is unchanged. |
+| learning→daily_notes, learning→vault | −1, −1 | `container.workspace_note(id)` (daily notes' registrar, in `daily_notes/commands.rs`) and `container.sync_workspace_notes_to_vault()` (vault's registrar). |
+| file→recent | −2 | `RecentDocument` moved to core `contracts/recent_documents.rs` with `From<RecentDocumentRecord>`. The file command reads `RecentDocumentsRepositoryPort` through `container.recent_documents_repository()`. recent's `get_recent_documents` wrapper had no other caller and is deleted. The TS type is unchanged. |
+| file→indexing | −3 | The settings-derived chunk size and file-type filter, and the request DTOs built from them, moved into `indexing::commands` (`index_file_with_settings_impl`, `index_directory_with_settings_impl`). |
+
+**Left in scope: file→indexing 4.** `features/file/plugin/commands.rs` is indexing's IPC adapter, and `bin/export_bindings/main.rs:278-297` pins its paths, so the commands cannot move without editing that file. What remains is the `indexing::commands` alias and three response types (`IndexFileResponseDto`, `IndexingStatsDto`, `RenameDocumentResponseDto`). Moving those types to core would lower the count, but the edge would stay. It closes when the commands move to an indexing plugin together with the bindings list.
+
+The other 57 references belong to PR 6 (download, model management, llm, embedding, settings) or to conversation.

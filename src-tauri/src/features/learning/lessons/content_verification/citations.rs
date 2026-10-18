@@ -1,20 +1,93 @@
 //! The passages a lesson section cites, shown to the judge before retrieved
-//! ones when it checks a claim of that section.
+//! ones when it checks a claim of that section, and the sources the lesson
+//! cites, whose passages are retrieved before the rest of the course's.
 use super::*;
 
 /// The retrieval kind of a passage a claim's own section cites.
 pub(super) const CITED: &str = "cited";
 
-/// Per section (unit), the source passages it cites: each block's and
-/// question's quote resolved to its span in the saved references and widened
-/// like a retrieved passage. A claim sees its own section's first.
-pub(super) type Citations = HashMap<usize, Vec<EvidencePassage>>;
+/// What a lesson cites. Per section (unit), the source passages it cites:
+/// each block's and question's quote resolved to its span in the saved
+/// references and widened like a retrieved passage. A claim sees its own
+/// section's first, and the sources the lesson cites anywhere before the
+/// rest of the course's.
+#[derive(Default)]
+pub(super) struct Citations {
+    by_unit: HashMap<usize, Vec<EvidencePassage>>,
+    sources: HashSet<String>,
+    /// The source each `sourceIndex` of the lesson stands for, as its
+    /// citations resolve: what "Source 2" in the lesson's text names.
+    by_index: HashMap<u64, String>,
+}
+
+impl Citations {
+    pub(super) fn new(
+        by_unit: HashMap<usize, Vec<EvidencePassage>>,
+        by_index: HashMap<u64, String>,
+    ) -> Self {
+        let sources = by_unit
+            .values()
+            .flatten()
+            .map(|passage| passage.source_id.clone())
+            .collect();
+        Self {
+            by_unit,
+            sources,
+            by_index,
+        }
+    }
+
+    /// The source the lesson's source index `index` stands for.
+    pub(super) fn source_at(&self, index: u64) -> Option<&str> {
+        self.by_index.get(&index).map(String::as_str)
+    }
+
+    /// `text` with each "Source N" it names written as that source's title,
+    /// as `Source "Title"`, so a model reading it beside numbered passages
+    /// cannot take the lesson's source index for a passage number.
+    pub(super) fn label(&self, text: &str, references: &ReferenceCollection<'_>) -> String {
+        let mut labelled = String::with_capacity(text.len());
+        let mut copied = 0;
+        for mention in source_mentions(text) {
+            let Some(title) = self
+                .source_at(mention.index)
+                .and_then(|id| references.sources.iter().find(|source| source.id == id))
+                .map(|source| source.title.trim())
+                .filter(|title| !title.is_empty())
+            else {
+                continue;
+            };
+            let (Some(before), Some(word)) = (
+                text.get(copied..mention.start),
+                text.get(mention.start..mention.start + "source".len()),
+            ) else {
+                continue;
+            };
+            labelled.push_str(before);
+            labelled.push_str(&format!("{word} \"{title}\""));
+            copied = mention.end;
+        }
+        labelled.push_str(text.get(copied..).unwrap_or_default());
+        labelled
+    }
+
+    /// The passages section `unit` cites.
+    pub(super) fn of(&self, unit: usize) -> &[EvidencePassage] {
+        self.by_unit.get(&unit).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the lesson cites `source_id` anywhere.
+    pub(super) fn cites(&self, source_id: &str) -> bool {
+        self.sources.contains(source_id)
+    }
+}
 
 pub(super) fn section_citations(
     candidate: &Value,
     references: &ReferenceCollection<'_>,
 ) -> Result<Citations> {
-    let mut citations = Citations::new();
+    let mut citations = HashMap::new();
+    let mut by_index = HashMap::new();
     let items = ["blocks", "questions"].into_iter().flat_map(|field| {
         candidate
             .get(field)
@@ -27,11 +100,108 @@ pub(super) fn section_citations(
             continue;
         };
         let passages = references.cited_passages(&[quote])?;
+        if let (Some(index), Some(passage)) = (
+            item.get("sourceIndex").and_then(Value::as_u64),
+            passages.first(),
+        ) {
+            by_index
+                .entry(index)
+                .or_insert_with(|| passage.source_id.clone());
+        }
         if !passages.is_empty() {
             citations.insert(unit, passages);
         }
     }
-    Ok(citations)
+    Ok(Citations::new(citations, by_index))
+}
+
+/// The next page of evidence for `claim`, in the `share` it has alongside
+/// `held`, skipping passages that overlap `shown`. Passages of the sources
+/// the lesson cites that mention the claim's subject come first, best first;
+/// passages from anywhere in the course fill the room they leave.
+pub(super) async fn lesson_sources_first(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    claim: &str,
+    share: usize,
+    held: &[EvidencePassage],
+    shown: &[EvidencePassage],
+    citations: &Citations,
+) -> Result<Vec<EvidencePassage>> {
+    let mut page = Vec::new();
+    if !citations.sources.is_empty() {
+        (page, _) = references
+            .verification_page_within(
+                claim,
+                shown,
+                |passage| {
+                    citations.cites(&passage.source_id)
+                        && references.mentions_subject_of(claim, &passage.text)
+                },
+                |passages| within_share(llm, share, held.iter().chain(passages)),
+            )
+            .await?;
+    }
+    let seen: Vec<_> = shown.iter().chain(&page).cloned().collect();
+    let (rest, _) = references
+        .verification_page(claim, &seen, |passages| {
+            within_share(llm, share, held.iter().chain(&page).chain(passages))
+        })
+        .await?;
+    page.extend(rest);
+    Ok(page)
+}
+
+/// Where a text names one of the lesson's sources by its index.
+pub(super) struct SourceMention {
+    /// The byte span of the mention, as in "Source 2".
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) index: u64,
+}
+
+/// Every "Source N" (or "source N") in `text`, as the lesson's writer names
+/// a source by its index.
+pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
+    const WORD: &str = "source";
+    let mut mentions = Vec::new();
+    for (start, _) in text.match_indices(['S', 's']) {
+        let Some(word) = text.get(start..start + WORD.len()) else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (text.get(..start), text.get(start + WORD.len()..))
+        else {
+            continue;
+        };
+        if !word.eq_ignore_ascii_case(WORD)
+            || before
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric)
+        {
+            continue;
+        }
+        let number = after.trim_start_matches(' ');
+        let digits = number.len()
+            - number
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .len();
+        let end = text.len() - number.len() + digits;
+        if digits == 0 || number.len() == after.len() {
+            continue;
+        }
+        if text
+            .get(end..)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(char::is_alphanumeric)
+        {
+            continue;
+        }
+        if let Some(index) = number.get(..digits).and_then(|digits| digits.parse().ok()) {
+            mentions.push(SourceMention { start, end, index });
+        }
+    }
+    mentions
 }
 
 /// Add `cited` passages not overlapping `evidence` to it, in order, while

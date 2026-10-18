@@ -32,7 +32,7 @@ use sqlx::SqlitePool;
 use super::manifest::{
     read_manifest, read_source_stamp, write_manifest, IndexManifest, ManifestMismatch,
 };
-use super::usearch_index::USearchVectorIndex;
+use crate::infrastructure::vector_index::USearchVectorIndex;
 use lattice_core::application::ports::VectorSearchPort;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;

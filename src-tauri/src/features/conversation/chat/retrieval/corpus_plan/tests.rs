@@ -80,9 +80,8 @@ async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverag
 
 #[tokio::test]
 async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models() {
-    use crate::features::search::engine::{
-        text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
-    };
+    use crate::features::search::engine::text_search::SqliteTextSearch;
+    use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::ports::MockEmbeddingPort;
     let pool = section_fixture().await;
     let repository = ConversationRepository::new(pool.clone());
@@ -122,9 +121,8 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
 /// so never found an attachment in a named space; only vector search could.
 #[tokio::test]
 async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
-    use crate::features::search::engine::{
-        text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
-    };
+    use crate::features::search::engine::text_search::SqliteTextSearch;
+    use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::ports::MockEmbeddingPort;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -174,9 +172,8 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
 /// out by long front matter.
 #[tokio::test]
 async fn reading_from_the_beginning_goes_as_deep_as_the_budget_round_robin() {
-    use crate::features::search::engine::{
-        text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
-    };
+    use crate::features::search::engine::text_search::SqliteTextSearch;
+    use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::ports::MockEmbeddingPort;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -399,7 +396,7 @@ async fn live_corpus_retrieval_and_answer() {
     use crate::features::embedding::candle_service::CandleEmbeddingService;
     use crate::features::llm::llama_cpp::LlamaCppLlm;
     use crate::features::search::engine::text_search::SqliteTextSearch;
-    use crate::features::search::engine::vector_search::USearchVectorIndex;
+    use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::ports::EmbeddingPort;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()

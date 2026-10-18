@@ -1,6 +1,7 @@
 use super::ports::{LinkedConversationArchive, NoteProjection};
-use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
+use crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
@@ -9,6 +10,7 @@ use uuid::Uuid;
 pub(super) use super::dto::row_to_dto;
 use super::dto::to_json;
 pub use super::dto::*;
+use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 
 async fn get_note_by_id(
     container: &Container,
@@ -16,6 +18,17 @@ async fn get_note_by_id(
     note_id: &str,
 ) -> Result<WorkspaceNoteDto> {
     hydrate_workspace_note(repository, container, repository.get(note_id).await?).await
+}
+
+/// Daily notes' registrar surface on `Container`.
+impl Container {
+    /// One journal page as the UI shows it, with the web citations its linked
+    /// conversations archived. A feature that keeps notes in the journal reads
+    /// them back through this.
+    pub async fn workspace_note(&self, note_id: &str) -> Result<WorkspaceNoteDto> {
+        let repository = DailyNotesRepository::new(self.db_pool().clone());
+        get_note_by_id(self, &repository, note_id).await
+    }
 }
 
 pub async fn list_workspace_notes_impl(
@@ -277,14 +290,14 @@ pub async fn quick_capture_impl(
     sources: Option<Vec<SourceDto>>,
     conversation_ids: Option<Vec<String>>,
 ) -> Result<QuickCaptureResultDto> {
-    let result = DailyNotesRepository::new(container.db_pool().clone())
-        .quick_capture(
-            &today_daily_title(),
-            &content,
-            sources.unwrap_or_default(),
-            conversation_ids.unwrap_or_default(),
-        )
-        .await?;
+    let result = super::capture_store::quick_capture(
+        container.db_pool(),
+        &today_daily_title(),
+        &content,
+        sources.unwrap_or_default(),
+        conversation_ids.unwrap_or_default(),
+    )
+    .await?;
     container.note_saved();
     Ok(result)
 }
@@ -293,9 +306,7 @@ pub async fn capture_reference_impl(
     container: &Container,
     request: CaptureReferenceRequestDto,
 ) -> Result<CaptureReferenceResultDto> {
-    let result = DailyNotesRepository::new(container.db_pool().clone())
-        .capture_reference(request)
-        .await?;
+    let result = super::capture_store::capture_reference(container.db_pool(), request).await?;
     container.note_saved();
     Ok(result)
 }

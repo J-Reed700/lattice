@@ -8,9 +8,10 @@ use super::tool;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
-use crate::features::search::engine::vector_search::USearchVectorIndex;
+use crate::infrastructure::vector_index::USearchVectorIndex;
 use async_trait::async_trait;
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::tools::explorer as explorer_tools;
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
@@ -1153,10 +1154,10 @@ mod model {
         );
         assert!(tool::run(&search, &json!({}), 1_000).await.is_err());
         assert_eq!(
-            tools::activity_label("search_folder", &json!({"query": "retry"})),
+            explorer_tools::activity_label("search_folder", &json!({"query": "retry"})),
             "Searched the folder for \"retry\""
         );
-        assert!(tools::is_explorer_tool("search_folder"));
+        assert!(explorer_tools::is_explorer_tool("search_folder"));
         manager.close().await;
     }
 

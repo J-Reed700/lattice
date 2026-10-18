@@ -4,11 +4,11 @@
 use super::ports::*;
 use crate::features::conversation::mocks::MockConversationService;
 use crate::features::conversation::repository::ConversationRepository;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::contracts::images::{
     ChatImageDto, FindImageInput, FindImageOutput, FoundImage,
 };
 use lattice_core::application::contracts::settings::LLMSettingsDto;
+use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, ModelRequirements, PinnedModel, ResolvedModel,
 };
@@ -31,7 +31,8 @@ const UNUSED: &str = "not provided to the test";
 #[derive(Clone)]
 pub(super) struct TestVault {
     pub(super) records: Arc<dyn ChatRecords>,
-    pub(super) search: Arc<dyn crate::features::search::trait_def::LibrarySearchTrait>,
+    pub(super) search:
+        Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait>,
 }
 
 /// The model `FakeRuntime::llm` stands for: the Settings default.
@@ -385,8 +386,8 @@ impl ChatStorage for FakeRuntime {
     async fn explorer_turn(
         &self,
         _conversation_id: &str,
-        _focus: Option<&crate::features::explorer::dto::ExplorerFocusDto>,
-    ) -> Option<crate::features::explorer::prompt::ExplorerTurn> {
+        _focus: Option<&lattice_core::application::contracts::explorer::ExplorerFocusDto>,
+    ) -> Option<ExplorerTurn> {
         None
     }
 }
@@ -408,7 +409,9 @@ impl ChatRetrieval for FakeRuntime {
     fn tools(&self) -> Arc<dyn ChatTools> {
         self.tools.clone().unwrap_or_else(|| Arc::new(NoTools))
     }
-    fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait> {
+    fn library_search(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait> {
         Arc::clone(&self.vault.as_ref().expect(UNUSED).search)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {
@@ -416,11 +419,19 @@ impl ChatRetrieval for FakeRuntime {
     }
     async fn summary_search(
         &self,
-    ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
+    ) -> Option<Arc<dyn lattice_core::application::ports::summary_search::SummarySearchPort>> {
         None
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(&self.planner_health)
+    }
+
+    fn query_interpreter(
+        &self,
+        llm: Arc<dyn LLMPort>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Arc<dyn lattice_core::application::ports::query_interpreter::QueryInterpreter> {
+        Arc::new(crate::features::search::hyde::HyDEService::new(llm).with_cancellation(cancel))
     }
 }
 
@@ -428,8 +439,8 @@ impl ChatRetrieval for FakeRuntime {
 impl ChatPolicy for FakeRuntime {
     /// The defaults, without the grounding check: it runs after the answer
     /// and would race what a test reads back.
-    async fn settings(&self) -> Result<crate::features::settings::dto::SettingsDto> {
-        let mut settings = crate::features::settings::dto::SettingsDto::default();
+    async fn settings(&self) -> Result<SettingsDto> {
+        let mut settings = SettingsDto::default();
         settings.llm.verification.enabled = false;
         settings.llm.answer_thinking = self.answer_thinking;
         Ok(settings)
@@ -487,7 +498,7 @@ impl SynthesisEntries for FakeRuntime {
     async fn references_created_since(
         &self,
         _cutoff: &str,
-    ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
+    ) -> Result<Vec<lattice_core::application::contracts::references::PassageReferenceRecord>> {
         unreachable!("{UNUSED}")
     }
     async fn notes_in_range(
@@ -500,7 +511,7 @@ impl SynthesisEntries for FakeRuntime {
     async fn hydrate_note(
         &self,
         _page: StoredJournalPage,
-    ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+    ) -> Result<lattice_core::application::contracts::notes::WorkspaceNoteDto> {
         unreachable!("{UNUSED}")
     }
 }

@@ -152,6 +152,16 @@ pub struct LearningAttemptDto {
     pub total: i64,
     pub results: Vec<LearningQuestionResultDto>,
     pub submitted_at: i64,
+    /// Module tests only: the share of the module the test covered.
+    pub coverage: Option<LearningModuleTestCoverageDto>,
+}
+/// A module test asks about the module's prepared lessons, so it may cover
+/// only some of them; such a test does not stand for the whole module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningModuleTestCoverageDto {
+    pub covered_lessons: i64,
+    pub module_lessons: i64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

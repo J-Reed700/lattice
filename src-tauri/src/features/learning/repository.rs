@@ -79,6 +79,26 @@ fn parse_assessment(s: &str) -> Result<LearningAssessmentKind> {
         _ => Err(AppError::Database("Invalid assessment kind".into())),
     }
 }
+fn attempt_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<LearningAttemptDto> {
+    let coverage = match (r.get("covered_lessons"), r.get("module_lessons")) {
+        (Some(covered_lessons), Some(module_lessons)) => Some(LearningModuleTestCoverageDto {
+            covered_lessons,
+            module_lessons,
+        }),
+        _ => None,
+    };
+    Ok(LearningAttemptDto {
+        id: r.get("id"),
+        module_id: r.get("module_id"),
+        lesson_id: r.get("lesson_id"),
+        kind: parse_assessment(r.get("kind"))?,
+        correct: r.get("correct"),
+        total: r.get("total"),
+        results: decode(r.get("results_json"))?,
+        submitted_at: r.get("submitted_at"),
+        coverage,
+    })
+}
 
 #[derive(Clone)]
 pub struct LearningRepository {
@@ -285,19 +305,8 @@ impl LearningRepository {
         .fetch_all(&mut *connection)
         .await
         .map_err(db)?
-        .into_iter()
-        .map(|r| {
-            Ok(LearningAttemptDto {
-                id: r.get("id"),
-                module_id: r.get("module_id"),
-                lesson_id: r.get("lesson_id"),
-                kind: parse_assessment(r.get("kind"))?,
-                correct: r.get("correct"),
-                total: r.get("total"),
-                results: decode(r.get("results_json"))?,
-                submitted_at: r.get("submitted_at"),
-            })
-        })
+        .iter()
+        .map(attempt_from_row)
         .collect::<Result<Vec<_>>>()?;
         let module_count: i64 = modules.len() as i64;
         let lesson_count = modules.iter().map(|m| m.lessons.len() as i64).sum();

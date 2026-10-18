@@ -9,17 +9,16 @@
 //! each one says how to get the rest when it is cut.
 
 use super::fs::{self, SearchRequest};
-use super::index::tool::{self as folder_index_tool, TOOL_SEARCH_FOLDER};
+use super::index::tool as folder_index_tool;
 use super::scope::Scope;
+use lattice_core::application::contracts::tools::explorer::{
+    arg_str, arg_u32, folder_path, TOOL_FIND_FILES, TOOL_LIST_DIRECTORY, TOOL_READ_FILE,
+    TOOL_SEARCH_FILES,
+};
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::{AppError, Result};
 use serde_json::Value;
-
-pub const TOOL_LIST_DIRECTORY: &str = "list_directory";
-pub const TOOL_READ_FILE: &str = "read_file";
-pub const TOOL_SEARCH_FILES: &str = "search_files";
-pub const TOOL_FIND_FILES: &str = "find_files";
 
 /// Lines one `read_file` call returns at most.
 /// The shortest a listed match or path can be ("a:1: x" and its newline):
@@ -35,17 +34,6 @@ fn listable(max_chars: usize) -> usize {
 /// clipped so one line cannot spend the whole allowance.
 /// Room kept for the header and the "how to read on" footer.
 const FRAMING_CHARS: usize = 300;
-
-pub fn is_explorer_tool(name: &str) -> bool {
-    matches!(
-        name,
-        TOOL_LIST_DIRECTORY
-            | TOOL_READ_FILE
-            | TOOL_SEARCH_FILES
-            | TOOL_FIND_FILES
-            | TOOL_SEARCH_FOLDER
-    )
-}
 
 pub fn definitions() -> Vec<ToolDefinition> {
     vec![
@@ -155,70 +143,11 @@ pub fn add_to_turn(tools: &mut Vec<ToolDefinition>, folder_index: bool) {
     }
 }
 
-fn arg_str<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-/// Small local models write numbers as strings often enough to be worth
-/// reading both.
-fn arg_u32(arguments: &Value, key: &str) -> Option<u32> {
-    match arguments.get(key)? {
-        Value::Number(number) => number.as_u64().and_then(|n| u32::try_from(n).ok()),
-        Value::String(text) => text.trim().parse().ok(),
-        _ => None,
-    }
-}
-
 fn arg_bool(arguments: &Value, key: &str) -> bool {
     match arguments.get(key) {
         Some(Value::Bool(value)) => *value,
         Some(Value::String(text)) => text.trim().eq_ignore_ascii_case("true"),
         _ => false,
-    }
-}
-
-/// A model asking for "/" or "." means the folder itself. That is the one
-/// absolute-looking path accepted, and only here: the scope still refuses
-/// every other absolute path.
-fn folder_path(arguments: &Value, key: &str) -> String {
-    match arg_str(arguments, key) {
-        None | Some("/") | Some(".") | Some("./") => String::new(),
-        Some(path) => path.to_string(),
-    }
-}
-
-/// The step label shown while the call runs and kept on the turn record.
-pub fn activity_label(tool: &str, arguments: &Value) -> String {
-    match tool {
-        TOOL_LIST_DIRECTORY => match folder_path(arguments, "path").as_str() {
-            "" => "Listed the folder".to_string(),
-            path => format!("Listed {}/", path.trim_end_matches('/')),
-        },
-        TOOL_READ_FILE => {
-            let path = arg_str(arguments, "path").unwrap_or("a file");
-            let start = arg_u32(arguments, "start_line").unwrap_or(1).max(1);
-            match arg_u32(arguments, "end_line") {
-                Some(end) => format!("Read {path} {start}–{}", end.max(start)),
-                None => format!("Read {path} from line {start}"),
-            }
-        }
-        TOOL_SEARCH_FILES => {
-            let query = arg_str(arguments, "query").unwrap_or_default();
-            match arg_str(arguments, "path") {
-                Some(path) => format!("Searched for \"{query}\" in {path}"),
-                None => format!("Searched for \"{query}\""),
-            }
-        }
-        TOOL_FIND_FILES => format!(
-            "Looked for files matching \"{}\"",
-            arg_str(arguments, "pattern").unwrap_or_default()
-        ),
-        TOOL_SEARCH_FOLDER => folder_index_tool::activity_label(arguments),
-        other => format!("Running {other}"),
     }
 }
 

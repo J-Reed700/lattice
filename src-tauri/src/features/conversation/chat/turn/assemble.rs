@@ -682,7 +682,7 @@ fn offered_tools(
     // need to open the file the question is about. A closed-book turn reads
     // nothing outside its message, the folder included.
     if let Some(explorer) = explorer.filter(|_| supports_tools && !flags.closed_book) {
-        crate::features::explorer::tools::add_to_turn(&mut turn_tools, explorer.has_folder_index());
+        explorer.add_tools(&mut turn_tools);
     }
     turn_tools
 }

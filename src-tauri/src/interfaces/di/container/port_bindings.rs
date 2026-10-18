@@ -74,7 +74,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
     ) -> lattice_core::shared::error::Result<
         Vec<crate::features::conversation::chat::ports::StoredJournalPage>,
     > {
-        let rows = crate::features::daily_notes::repository::DailyNotesRepository::new(
+        let rows = crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(
             self.db_pool().clone(),
         )
         .list_in_date_range(start_date, end_date)
@@ -83,7 +83,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         Ok(rows
             .into_iter()
             .map(|row| {
-                let crate::features::daily_notes::repository::WorkspaceNoteRecord {
+                let lattice_core::application::contracts::notes::WorkspaceNoteRecord {
                     revision,
                     id,
                     title,
@@ -138,7 +138,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
             created_at,
             updated_at,
         } = page;
-        let row = crate::features::daily_notes::repository::WorkspaceNoteRecord {
+        let row = lattice_core::application::contracts::notes::WorkspaceNoteRecord {
             revision,
             id,
             title,
@@ -154,7 +154,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
             updated_at,
         };
         crate::features::daily_notes::commands::hydrate_workspace_note(
-            &crate::features::daily_notes::repository::DailyNotesRepository::new(
+            &crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(
                 self.db_pool().clone(),
             ),
             self,

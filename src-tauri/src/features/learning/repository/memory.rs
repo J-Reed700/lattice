@@ -26,7 +26,7 @@ impl LearningRepository {
         }
         let note_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        let note = crate::features::daily_notes::repository::WorkspaceNoteRecord {
+        let note = lattice_core::application::contracts::notes::WorkspaceNoteRecord {
             revision: 0,
             id: note_id.clone(),
             title: title.trim().to_owned(),
@@ -41,7 +41,7 @@ impl LearningRepository {
             created_at: now.clone(),
             updated_at: now,
         };
-        crate::features::daily_notes::repository::DailyNotesRepository::insert_in_transaction(
+        crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::insert_in_transaction(
             &mut tx, &note,
         )
         .await?;
