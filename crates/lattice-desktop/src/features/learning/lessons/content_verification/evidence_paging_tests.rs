@@ -14,6 +14,8 @@ struct PagingModel {
     inner: Model,
     window: usize,
     checks: Mutex<Vec<Vec<String>>>,
+    /// The claim each check was asked about.
+    claims: Mutex<Vec<String>>,
 }
 
 impl PagingModel {
@@ -22,12 +24,17 @@ impl PagingModel {
             inner: Model::new(),
             window,
             checks: Mutex::new(Vec::new()),
+            claims: Mutex::new(Vec::new()),
         }
     }
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if let Some(rest) = prompt.strip_prefix("Source passages:\n") {
-            let shown = rest.split("\n\nClaim: ").next().unwrap_or_default();
+            let (shown, claim) = rest.split_once("\n\nClaim: ").unwrap_or_default();
+            self.claims
+                .lock()
+                .unwrap()
+                .push(claim.split("\n\n").next().unwrap_or_default().to_owned());
             let passages: Vec<String> = shown
                 .split("[passage-")
                 .skip(1)
@@ -301,7 +308,10 @@ async fn a_claim_whose_section_cites_its_support_is_settled_on_page_one() -> Res
     // Retrieval alone ranks the support past page 1.
     let retrieved = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
     assert!(retrieved.iter().all(|p| !p.text.contains(MARKER)));
-    let citations = Citations::from([(0, references.cited_passages(&[MARKER])?)]);
+    let citations = Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
 
     let results = evidence_checks::check_with_citations(
         &model,
@@ -329,7 +339,10 @@ async fn another_sections_citations_are_not_added() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
     // Section 1 cites the support; the claim belongs to section 0.
-    let citations = Citations::from([(1, references.cited_passages(&[MARKER])?)]);
+    let citations = Citations::new(
+        HashMap::from([(1, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
     evidence_checks::check_with_citations(
         &model,
         &references,
@@ -362,7 +375,8 @@ async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
         "the fixture must overflow"
     );
 
-    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &cited).await?;
+    let citations = Citations::new(HashMap::from([(0, cited.clone())]), HashMap::new());
+    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
 
     assert!(within_share(&model, share, page.iter()));
     let taken: Vec<_> = page.iter().filter(|p| p.retrieval_kind == CITED).collect();
@@ -445,4 +459,201 @@ async fn an_unusable_check_fails_the_job_once_and_an_outage_defers_it() -> Resul
     .unwrap();
     assert!(JobFailure::is_transient(&error), "{error}");
     Ok(())
+}
+
+#[tokio::test]
+async fn research_found_for_a_claim_leads_its_full_first_page_and_is_rechecked() -> Result<()> {
+    let sources: Vec<_> = (0..12).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let claims = inventory(&[CLAIM.into()]);
+    let mut retained = ClaimChecks::default();
+    let first = evidence_checks::check(&model, &references, &claims, &[], &retained).await?;
+    assert_eq!(first[0].2.verdict, ClaimVerdict::Unsupported);
+    let share = claim_share(&model, CLAIM, 1);
+    let first_page = first[0].2.evidence.clone();
+    let findings: Vec<_> = first.iter().map(|result| result.2.clone()).collect();
+    for (_, key, finding, _) in first {
+        retained.record(key, &finding);
+    }
+    let checks_before = model.checks.lock().unwrap().len();
+
+    // Research saves a source that states the claim, in a passage longer
+    // than any room the first page leaves.
+    let mut expanded_sources = sources.clone();
+    let archive = "Archive index entry. ".repeat(80);
+    expanded_sources.push(reference(
+        "marker".into(),
+        format!("{archive} {MARKER} {archive}"),
+    ));
+    let expanded = ReferenceCollection::lexical(&expanded_sources)?;
+    assert!(
+        !within_share(
+            &model,
+            share,
+            first_page
+                .iter()
+                .chain(&expanded.cited_passages(&[MARKER])?)
+        ),
+        "the fixture's first page has no room left for the new passage"
+    );
+    evidence_selection::record_research_scope(&expanded, &findings, &retained).await?;
+    let second = evidence_checks::check(&model, &expanded, &claims, &[], &retained).await?;
+
+    assert_eq!(second[0].2.verdict, ClaimVerdict::Supported);
+    let checks = model.checks.lock().unwrap();
+    let recheck = checks
+        .get(checks_before)
+        .expect("new evidence is checked again, not reused");
+    assert!(
+        recheck[0].contains(MARKER),
+        "what research found comes first"
+    );
+    assert!(within_share(&model, share, second[0].2.evidence.iter()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_sees_the_lesson_sources_before_the_rest_of_the_course() -> Result<()> {
+    let mut sources: Vec<_> = (0..12).map(related).collect();
+    let archive = "Archive index entry. ".repeat(80);
+    sources.push(reference(
+        "lesson-source".into(),
+        format!("{archive} Mineral alpha pressure readings were archived. {archive}"),
+    ));
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let from_lesson = |page: &[EvidencePassage]| {
+        page.iter()
+            .position(|passage| passage.source_id == "lesson-source")
+    };
+    let course_wide = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    assert_eq!(
+        from_lesson(&course_wide),
+        None,
+        "course-wide ranking puts the lesson's source past page 1"
+    );
+    // Another section of the lesson cites that source.
+    let citations = Citations::new(
+        HashMap::from([(
+            1,
+            references.cited_passages(&["Archive index entry. Archive index entry."])?,
+        )]),
+        HashMap::new(),
+    );
+    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    assert!(
+        from_lesson(&page).is_some(),
+        "the lesson's source is retrieved before the course's"
+    );
+    assert!(page.len() > 1, "the course fills the room left");
+    assert!(within_share(
+        &model,
+        claim_share(&model, CLAIM, 1),
+        page.iter()
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_checker_reads_a_source_index_as_its_title() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let citations = Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::from([(0, "marker".to_owned())]),
+    );
+    let statement = format!("Source 0 reports that {CLAIM}");
+    let results = evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &inventory(std::slice::from_ref(&statement)),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+    assert_eq!(
+        results[0].2.statement, statement,
+        "the finding keeps the lesson's words"
+    );
+    let claims = model.claims.lock().unwrap();
+    assert!(
+        claims[0].starts_with("Source \"Reference marker\" reports that"),
+        "{}",
+        claims[0]
+    );
+    assert!(claims.iter().all(|claim| !claim.contains("Source 0")));
+    Ok(())
+}
+
+#[test]
+fn only_a_known_source_index_is_labelled() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let citations = Citations::new(HashMap::new(), HashMap::from([(1, "related-1".to_owned())]));
+    assert_eq!(
+        citations.label(
+            "As source 1 notes, Source 7 and Resource 1 differ; see Source 1.",
+            &references
+        ),
+        "As source \"Reference related-1\" notes, Source 7 and Resource 1 differ; see Source \"Reference related-1\"."
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_verdict_saved_under_an_earlier_challenge_policy_is_checked_again() -> Result<()> {
+    use crate::features::learning::lesson_drafts;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let citations = Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
+    let claims = inventory(&[CLAIM.into()]);
+    let evidence = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    // The same comparison, keyed as before the challenge's policy was part
+    // of the key, where the old challenge had overturned its approval.
+    let comparison = ClaimChecks::key(0, &claims.units[0].claims[0], &evidence);
+    let earlier = format!(
+        "claim-v1:{}",
+        digest(
+            &json!({"policy": POLICY, "model": model.model_name(),
+                "context": model.max_context_tokens(), "comparison": comparison})
+            .to_string()
+        )
+    );
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        lesson_drafts::record_checkpoint(
+            &earlier,
+            serde_json::to_value(ClaimReceipt {
+                verdict: ClaimVerdict::Unsupported,
+                reason: "Independent review raised unresolved evidence questions.".into(),
+                supporting_quote: None,
+                interpretation_policy: Some(
+                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                        .into(),
+                ),
+            })?,
+        )
+        .await?;
+        let results = evidence_checks::check_with_citations(
+            &model,
+            &references,
+            &claims,
+            &[],
+            &ClaimChecks::default(),
+            &citations,
+        )
+        .await?;
+        assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
+        assert_eq!(model.checks.lock().unwrap().len(), 1, "checked again");
+        Ok(())
+    })
+    .await
 }
