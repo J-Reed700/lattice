@@ -4,10 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
-
 import { CheckerAccuracy } from '@/features/learning/lessons/review/CheckerAccuracy';
 import { ClaimReviewCard, type ClaimActionHandler } from '@/features/learning/lessons/review/ClaimReviewCard';
-import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import {
   AUDIT_STOP_PREFIX,
   CLAIM_FILTERS,
@@ -25,6 +23,7 @@ import {
   type ClaimFilter,
   type ReviewHold,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { useLessonClaimReview, useResolveLearningClaim, useResumeLearningLessonReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromLearningEvidencePassage, type ResolvedReaderTarget } from '@/features/reading/model/sourceAdapter';
