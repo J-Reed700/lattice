@@ -312,3 +312,7 @@ impl FinderDescriptor {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "descriptor_tests.rs"]
+mod tests;

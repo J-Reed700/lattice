@@ -119,6 +119,21 @@ pub enum SubjectKind {
     Other,
 }
 
+impl SubjectKind {
+    /// The wire name (`software`), as the tools, logs and cache keys spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubjectKind::Software => "software",
+            SubjectKind::Organisation => "organisation",
+            SubjectKind::Paper => "paper",
+            SubjectKind::Law => "law",
+            SubjectKind::Standard => "standard",
+            SubjectKind::Person => "person",
+            SubjectKind::Other => "other",
+        }
+    }
+}
+
 /// An exact identifier for a subject or document.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Identifier {
