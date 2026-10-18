@@ -77,12 +77,7 @@ pub(super) async fn record_research_scope(
     let current = sources(references);
     let mut targets: Vec<_> = findings
         .iter()
-        .filter(|finding| {
-            matches!(
-                finding.verdict,
-                ClaimVerdict::Unsupported | ClaimVerdict::Contradicted
-            )
-        })
+        .filter(|finding| finding.wants_research())
         .map(|finding| ResearchTarget {
             unit: finding.unit,
             statement: finding.statement.clone(),

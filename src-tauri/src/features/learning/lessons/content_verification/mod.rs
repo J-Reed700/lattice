@@ -72,6 +72,7 @@ mod repair_work;
 mod report;
 pub(in crate::features::learning) mod research;
 mod review_pass;
+mod scrutiny;
 mod section_checkpoints;
 mod support_gate;
 #[cfg(test)]
