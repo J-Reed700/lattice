@@ -109,13 +109,8 @@ impl AuditStop {
         }
     }
 
-    /// Whether a review's stop reason is an audit stop: one the user fixes
-    /// in Settings or with the course's switch, not in the ledger, so a
-    /// Resume needs no claim change.
-    pub(crate) fn is_audit_stop(code: &str) -> bool {
-        code.starts_with(STOP_CODE_PREFIX)
-    }
-
+    /// Every code starts with `verifier_`: the review panel tells an audit
+    /// stop from the claims' hold by it.
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::TurnedOff => "verifier_turned_off",
@@ -184,9 +179,6 @@ impl AuditStop {
         }
     }
 }
-
-/// What every audit stop's code starts with.
-const STOP_CODE_PREFIX: &str = "verifier_";
 
 /// A stored provider id as the user knows it.
 fn provider_name(id: &str) -> String {
