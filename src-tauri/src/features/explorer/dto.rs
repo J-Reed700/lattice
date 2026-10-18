@@ -6,10 +6,6 @@
 use super::index::dto::FolderIndexSummaryDto;
 use serde::{Deserialize, Serialize};
 
-// Temporary: chat's test runtime still names the focus at this path.
-#[cfg(test)]
-pub(crate) use lattice_core::application::contracts::explorer::ExplorerFocusDto;
-
 /// A folder the user chose, after canonicalisation.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

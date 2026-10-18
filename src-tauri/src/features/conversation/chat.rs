@@ -113,7 +113,9 @@ pub use self::turn_record::{
 };
 pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
-pub(crate) use crate::features::explorer::prompt::ExplorerTurn;
+/// The Explorer folder a turn reads beside the chat.
+pub(crate) type ExplorerTurn =
+    Arc<dyn lattice_core::application::ports::explorer_turn::ExplorerTurnPort>;
 
 struct TurnCancellationGuard {
     request_id: String,

@@ -4,11 +4,12 @@ use crate::features::daily_notes::capture::{
 };
 use crate::features::daily_notes::dto::{
     dto_to_row, row_to_dto, CaptureReferenceRequestDto, CaptureReferenceResultDto,
-    QuickCaptureResultDto, WorkspaceNoteDto,
+    QuickCaptureResultDto,
 };
 use crate::infrastructure::persistence::repositories::workspace_notes::{
     note_from_row, DailyNotesRepository, NOTE_COLUMNS,
 };
+use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};

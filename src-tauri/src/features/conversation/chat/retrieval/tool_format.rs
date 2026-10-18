@@ -47,7 +47,7 @@ pub(super) fn format_tool_result(
     // The folder tools already fit their text to this call's allowance, cut at
     // a line and saying where to read on. Through the JSON fallback below the
     // numbered lines would arrive as one escaped string.
-    if crate::features::explorer::tools::is_explorer_tool(tool_name) {
+    if lattice_core::application::contracts::tools::explorer::is_explorer_tool(tool_name) {
         if let Some(text) = data.as_str() {
             return safe_truncate(text, allowance);
         }
