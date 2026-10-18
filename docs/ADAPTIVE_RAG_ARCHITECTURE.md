@@ -53,18 +53,18 @@ Provide a modern, low-latency, citation-grounded architecture for Lattice that:
 
 ## Where It Lives
 
-- Router: `src-tauri/src/infrastructure/services/router.rs` (`RouterService`,
+- Router: `crates/lattice-desktop/src/infrastructure/services/router.rs` (`RouterService`,
   actions `use_last_document` / `new_search` / `clarify`).
 - Gate: `resolve_router_decision` in
-  `src-tauri/src/features/conversation/chat.rs`. Besides the cases above, it
+  `crates/lattice-desktop/src/features/conversation/chat.rs`. Besides the cases above, it
   skips the router for closed-book turns, forced web search, and Explorer turns
   the user did not point at the library. A turn's record keeps the router's
   decision only when the router actually ran (`chat/turn_record.rs`).
 - Settings: `llm.router` (`RouterSettingsDto` in
-  `src-tauri/crates/lattice-core/src/application/contracts/settings.rs`; default `enabled: false`,
+  `crates/lattice-core/src/application/contracts/settings.rs`; default `enabled: false`,
   model `phi-3.5-mini-instruct-q4_k_m`, 350 ms timeout). Validation in
   `features/settings/repository.rs` warns rather than fails when it is off.
-- Retrieval: `src-tauri/src/features/conversation/chat/retrieval/`; grounding
+- Retrieval: `crates/lattice-desktop/src/features/conversation/chat/retrieval/`; grounding
   checks: `chat/verification/`.
 
 ## Future Phases

@@ -13,6 +13,7 @@ import { ComposerControls } from '@/features/chat/components/ComposerControls';
 import type { AttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
 import type { ComposerState } from '@/features/chat/hooks/useComposer';
 import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
+import { isUnavailableChatModel } from '@/utils/chatModelSelection';
 
 /** The textarea points at the suggestion list through this, for screen readers. */
 const SUGGEST_LIST_ID = 'composer-suggest-list';
@@ -59,6 +60,11 @@ export function Composer({
     focusDocuments,
     applyFocusDocuments,
   } = composer;
+  // Named only when it is known not to see; an unusable model has its own notice.
+  const answering = model.effective;
+  const blindModelName = answering && !isUnavailableChatModel(answering) && answering.seesImages !== true
+    ? answering.label
+    : null;
 
   return (
     <div className="relative bg-bg before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-[hsl(var(--bg))] before:to-transparent">
@@ -67,6 +73,10 @@ export function Composer({
         isImporting={attachments.isImporting}
         onRemove={attachments.remove}
         onClear={attachments.clear}
+        pictures={attachments.pictures}
+        isAttachingPictures={attachments.isAttachingPictures}
+        onRemovePicture={attachments.removePicture}
+        blindModelName={blindModelName}
       />
 
       <ChatModelNotice {...modelNotice} />

@@ -27,7 +27,7 @@ These edits are unstaged, so `git diff` shows only the integration work on top o
 8. **H.** Compiles alongside the other tracks; no edits.
 9. **Bindings.** Already up to date; no regeneration was needed.
 
-Empty, git-ignored placeholders were created: `src-tauri/binaries/llama-server-aarch64-apple-darwin` and `dist/`.
+Empty, git-ignored placeholders were created: `crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin` and `dist/`.
 
 ## Commands
 
@@ -63,7 +63,7 @@ All cargo commands ran with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-targe
    - The recipe's `thinking: "off"` is now a no-op.
 3. **E2 compiles.** `cargo check --example claim_checker_eval` was clean with no changes.
 4. **C and H DI.** `cargo check --lib` was clean. No wiring test enumerates bindings beyond the lib suite, and the lib suite passed.
-5. **Markers.** `grep -rn "integration:" src-tauri/src src` returns one hit: the doc comment `HuggingFace integration:` in `features/huggingface/mod.rs`, which is already on main and is not a marker.
+5. **Markers.** `grep -rn "integration:" crates/lattice-desktop/src src` returns one hit: the doc comment `HuggingFace integration:` in `features/huggingface/mod.rs`, which is already on main and is not a marker.
 
 ## Fixes found by the full run
 
@@ -92,7 +92,7 @@ All cargo commands ran with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-targe
 | `npx vitest run` | 248 files, 2079 tests passed |
 | `python3 -m unittest discover -s scripts -p 'test_*.py'` | 99 OK |
 | `python3 scripts/validate_rag_evals.py` | OK (v2, v3, v1-answers, desktop-path-v1) |
-| `python3 -m unittest src-tauri/scripts/test_verify_llama_binaries.py` | 101 OK, 1 skipped |
+| `python3 -m unittest crates/lattice-desktop/scripts/test_verify_llama_binaries.py` | 101 OK, 1 skipped |
 
 The bindings check was not re-run: pass 2 changed no exported type.
 
@@ -143,7 +143,7 @@ The pass 1 follow-ups still stand, along with the following:
 
 # Pass 3: merge of main (2026-10-13)
 
-`origin/main` (d1fb4c4b, #42) was merged into `llm/sota-2026-10` with a merge commit, not a rebase. #42 split 31 backend files and 9 React components and moved their tests into new files; it changed no behaviour and nothing under `src-tauri/tests`. The rule for every conflict: keep main's layout and the branch's behaviour, and move the branch's test edits into the file main moved those tests to.
+`origin/main` (d1fb4c4b, #42) was merged into `llm/sota-2026-10` with a merge commit, not a rebase. #42 split 31 backend files and 9 React components and moved their tests into new files; it changed no behaviour and nothing under `crates/lattice-desktop/tests`. The rule for every conflict: keep main's layout and the branch's behaviour, and move the branch's test edits into the file main moved those tests to.
 
 ## Conflicts and resolutions
 
@@ -171,7 +171,7 @@ All cargo commands ran one at a time with `CARGO_TARGET_DIR=/Users/josh/Code/lat
 | `bash scripts/check-repository-barrier.sh` | clean |
 | `bash scripts/check-rust-layer-boundaries.sh` | 5 violations; the same 5 on the pre-merge branch, so they are not from the merge (see below) |
 
-The integration-test binaries were not run: main changed nothing under `src-tauri/tests`, and the resolutions keep the branch's behaviour, so no snapshot input moved.
+The integration-test binaries were not run: main changed nothing under `crates/lattice-desktop/tests`, and the resolutions keep the branch's behaviour, so no snapshot input moved.
 
 ## Still open
 

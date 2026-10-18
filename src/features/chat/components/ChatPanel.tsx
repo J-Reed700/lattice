@@ -163,6 +163,10 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
     : degradedReasonFor(effectiveRef, loadedModels);
   const activeModelLabel = effectiveModel?.label ?? null;
   const hasChatModel = effectiveModel !== null;
+  // Showing a picture again only helps a model that can see it.
+  const chatModelSeesImages = Boolean(
+    effectiveModel && !isUnavailableChatModel(effectiveModel) && effectiveModel.seesImages === true,
+  );
 
   // Mask the input while the default model warms up, and while there is no
   // model to answer with. Warm-up is the default model's: a chat on a model
@@ -341,6 +345,7 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
                 renderItem={(message, index) => {
                 const key = getMessageKey(message);
                 const previous = index > 0 ? messages[index - 1] : null;
+                const next = index < messages.length - 1 ? messages[index + 1] : null;
                 const showCompactionDivider =
                   Boolean(compactionRecord) &&
                   'id' in message &&
@@ -354,6 +359,8 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
                       previousMessageId={
                         previous && 'id' in previous ? previous.id : undefined
                       }
+                      nextMessageId={next && 'id' in next ? next.id : undefined}
+                      chatModelSeesImages={chatModelSeesImages}
                     />
                     {showCompactionDivider && compactionRecord && (
                       <div

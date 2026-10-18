@@ -62,7 +62,7 @@ streaming, desktop tools, workspace authorization, extraction, or answer
 verification. It must not be advertised as an end-to-end product benchmark.
 A future application adapter must export actual supplied evidence and complete
 execution traces; do not substitute whole documents for the retrieved passages. That adapter now exists for chat:
-`src-tauri/examples/shipped_path_eval` runs the desktop turn headlessly and
+`crates/lattice-desktop/examples/shipped_path_eval` runs the desktop turn headlessly and
 exports the evidence each turn supplied, every model request, the turn record
 and the grounding verdicts. See
 [`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
@@ -89,7 +89,7 @@ The harness only needs an OpenAI-compatible base URL, so the bundled
 shared single-slot remote. Same flags the app uses, plus a fixed port:
 
 ```sh
-src-tauri/binaries/llama-server-aarch64-apple-darwin \
+crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin \
   -m ~/.cache/lattice/models/qwen3.5-9b-q4_k_m/Qwen3.5-9B-Q4_K_M.gguf \
   --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 16384 --jinja &
 python3 scripts/chat_rag_eval.py evals/retrieval/synthetic-library-v1.json \
@@ -110,7 +110,7 @@ against the same weights hash; a 9B score is not a 27B regression signal.
 Answer runs are kept as one history per model under `results/chat/`:
 `qwen3.8-27b-remote/` and `qwen3.5-9b-local/`. Put a new run in the folder for
 the weights it used, never across folders, and keep the `.manifest.json` beside
-it. The conversation-memory suite (`src-tauri/tests/conversation_memory_evals.rs`)
+it. The conversation-memory suite (`crates/lattice-desktop/tests/conversation_memory_evals.rs`)
 keeps the same split under `evals/conversation-memory/results/`; only the
 printed summary goes there, since its traces carry conversation text.
 

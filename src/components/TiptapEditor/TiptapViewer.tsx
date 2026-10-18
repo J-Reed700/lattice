@@ -175,11 +175,11 @@ export function TiptapViewer({
               {figureCredit(openFigure) && <span className="media-lightbox-credit">{figureCredit(openFigure)}</span>}
             </>
           )}
-          actions={(
+          actions={openFigure.sourceUrl ? (
             <a href={openFigure.sourceUrl} target="_blank" rel="noopener noreferrer" className="media-lightbox-action">
               Open source page
             </a>
-          )}
+          ) : undefined}
         >
           <img
             className="media-lightbox-image"

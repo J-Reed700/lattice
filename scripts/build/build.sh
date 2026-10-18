@@ -37,7 +37,7 @@ set -u  # Exit on undefined variable
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-TAURI_DIR="${PROJECT_ROOT}/src-tauri"
+TAURI_DIR="${PROJECT_ROOT}/crates/lattice-desktop"
 LOG_DIR="${PROJECT_ROOT}/build-logs"
 DIST_DIR="${PROJECT_ROOT}/dist"
 START_TIME=$(date +%s)
@@ -197,7 +197,7 @@ clean_build() {
     log HEADER "Cleaning Build Artifacts"
     
     local paths_to_clean=(
-        "${TAURI_DIR}/target"
+        "${PROJECT_ROOT}/target"
         "${DIST_DIR}"
         "${PROJECT_ROOT}/.build-cache"
         "${PROJECT_ROOT}/node_modules/.vite"
@@ -343,7 +343,7 @@ verify_bundle() {
         bundle_subdir="release"
     fi
 
-    local bundle_dir="${TAURI_DIR}/target/${bundle_subdir}/bundle"
+    local bundle_dir="${PROJECT_ROOT}/target/${bundle_subdir}/bundle"
     local app_bundles=("${bundle_dir}/macos/"*.app)
     local dmg_bundles=("${bundle_dir}/dmg/"*.dmg)
 
@@ -392,7 +392,7 @@ generate_checksums() {
         bundle_subdir="release"
     fi
     
-    local bundle_dir="${TAURI_DIR}/target/${bundle_subdir}/bundle"
+    local bundle_dir="${PROJECT_ROOT}/target/${bundle_subdir}/bundle"
     
     if [[ ! -d "${bundle_dir}" ]]; then
         log WARNING "Bundle directory not found, skipping checksums"
@@ -452,7 +452,7 @@ show_summary() {
         target_subdir="release"
     fi
     
-    local target_dir="${TAURI_DIR}/target/${target_subdir}"
+    local target_dir="${PROJECT_ROOT}/target/${target_subdir}"
     
     if [[ -d "${target_dir}" ]]; then
         log INFO "Build artifacts location: ${target_dir}"

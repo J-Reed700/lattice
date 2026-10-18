@@ -27,7 +27,7 @@ Defect 3 of `evals/retrieval/2026-10-12-SHIPPED-PATH-BASELINE.md`. The intent st
   - When unsure, false.
   - The schema and the parser are unchanged.
 
-## What changed (file:line, all under `src-tauri/src/features/conversation/chat/`)
+## What changed (file:line, all under `crates/lattice-desktop/src/features/conversation/chat/`)
 
 - **`routing.rs`**
   - :14 adds the `web_fallback` field. :6 now documents `force_web_search` as user-only.

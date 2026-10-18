@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 # Project paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TAURI_DIR="$PROJECT_ROOT/src-tauri"
+TAURI_DIR="$PROJECT_ROOT/crates/lattice-desktop"
 DB_PATH="$HOME/Library/Application Support/com.lattice.lattice/lattice.db"
 MODELS_DIR="$HOME/.cache/lattice/models"
 LOG_DIR="/tmp"
@@ -159,14 +159,14 @@ clean_build() {
 
     cd "$TAURI_DIR"
 
-    if [ -d "target" ]; then
+    if [ -d "$PROJECT_ROOT/target" ]; then
         print_info "Removing Cargo target directory..."
-        if remove_dir_with_retries "target"; then
+        if remove_dir_with_retries "$PROJECT_ROOT/target"; then
             print_success "Cargo target removed"
         else
             print_warning "Target cleanup raced with another process, running cargo clean..."
             cargo clean >/dev/null 2>&1 || true
-            if [ -d "target" ]; then
+            if [ -d "$PROJECT_ROOT/target" ]; then
                 print_warning "Cargo target still present (likely being recreated by rust-analyzer/flycheck)"
             else
                 print_success "Cargo target removed"
@@ -311,14 +311,14 @@ rebuild_rust() {
     cd "$TAURI_DIR"
 
     # Clean Rust artifacts
-    if [ -d "target" ]; then
+    if [ -d "$PROJECT_ROOT/target" ]; then
         print_info "Removing Cargo target directory..."
-        if remove_dir_with_retries "target"; then
+        if remove_dir_with_retries "$PROJECT_ROOT/target"; then
             print_success "Cargo target removed"
         else
             print_warning "Target cleanup raced with another process, running cargo clean..."
             cargo clean >/dev/null 2>&1 || true
-            if [ -d "target" ]; then
+            if [ -d "$PROJECT_ROOT/target" ]; then
                 print_warning "Cargo target still present (likely being recreated by rust-analyzer/flycheck)"
             else
                 print_success "Cargo target removed"
@@ -358,7 +358,7 @@ build_tauri_release() {
     npm run tauri:build
     print_success "Tauri release built"
 
-    print_info "Binary location: $TAURI_DIR/target/release/lattice-desktop"
+    print_info "Binary location: $PROJECT_ROOT/target/release/lattice-desktop"
 }
 
 # Build Tauri (debug)
@@ -372,7 +372,7 @@ build_tauri_debug() {
     cargo build
     print_success "Tauri debug built"
 
-    print_info "Binary location: $TAURI_DIR/target/debug/lattice-desktop"
+    print_info "Binary location: $PROJECT_ROOT/target/debug/lattice-desktop"
 }
 
 # Run dev server (frontend only)

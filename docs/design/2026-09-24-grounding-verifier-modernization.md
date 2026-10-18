@@ -12,7 +12,7 @@ Date: 2026-09-24. Status: proposal, not built. Branch context: `conversation-mem
 
 ## 1. What we have, and why it fails
 
-`src-tauri/src/features/conversation/chat/verification/` runs two passes after every answer:
+`crates/lattice-desktop/src/features/conversation/chat/verification/` runs two passes after every answer:
 
 1. **Lexical pass** (`lexical.rs`): split the answer into sentences, stem tokens, cut each cited page into 1,200-character windows, take the window with the highest token overlap. Above 0.32 overlap and 2 shared tokens is "supported". Anything with a digit, month or negation is escalated regardless.
 2. **Judge** (`judge.rs`): a general chat model (the utility slot, Qwen3.5-9B) gets 12 claims and up to 12 passages as JSON, answers with JSON verdicts and a verbatim quote, under a wall-clock budget. Escalated claims are stamped "unsupported" until the judge overturns them.

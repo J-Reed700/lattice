@@ -28,7 +28,7 @@ $ErrorActionPreference = 'Stop'
 # ============================================================================
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
-$TauriDir    = Join-Path $ProjectRoot 'src-tauri'
+$TauriDir    = Join-Path $ProjectRoot 'crates/lattice-desktop'
 
 # Tauri's Windows AppData layout: %APPDATA%\<bundleIdentifier>\
 # tauri.conf.json sets identifier = "tech.lattice.app"
@@ -158,7 +158,7 @@ function Invoke-CleanBuild {
 
     Push-Location $TauriDir
     try {
-        $target = Join-Path $TauriDir 'target'
+        $target = Join-Path $ProjectRoot 'target'
         if (Test-Path $target) {
             Show-Info 'Removing Cargo target directory...'
             if (Remove-DirRetry $target) {
@@ -324,7 +324,7 @@ function Invoke-RebuildRust {
 
     Push-Location $TauriDir
     try {
-        $target = Join-Path $TauriDir 'target'
+        $target = Join-Path $ProjectRoot 'target'
         if (Test-Path $target) {
             Show-Info 'Removing Cargo target directory...'
             if (-not (Remove-DirRetry $target)) {
@@ -359,7 +359,7 @@ function Invoke-BuildTauriDebug {
         Show-Info 'Building Tauri debug binary...'
         cargo build
         Show-Success 'Tauri debug built'
-        Show-Info "Binary location: $TauriDir\target\debug\lattice-desktop.exe"
+        Show-Info "Binary location: $ProjectRoot\target\debug\lattice-desktop.exe"
     } finally {
         Pop-Location
     }
@@ -372,7 +372,7 @@ function Invoke-BuildTauriRelease {
         Show-Info 'Building Tauri release binary (this will take several minutes)...'
         npm run tauri:build
         Show-Success 'Tauri release built'
-        Show-Info "Binary location: $TauriDir\target\release\lattice-desktop.exe"
+        Show-Info "Binary location: $ProjectRoot\target\release\lattice-desktop.exe"
     } finally {
         Pop-Location
     }
@@ -585,10 +585,10 @@ function Invoke-HealthCheck {
     )
     $missing = $expected | Where-Object { -not (Test-Path (Join-Path $binaries $_)) }
     if ($missing.Count -eq 0) {
-        Show-Success "Sidecar binaries: all $($expected.Count) present (verify with: bash src-tauri/scripts/fetch-llama-binaries.sh --check)"
+        Show-Success "Sidecar binaries: all $($expected.Count) present (verify with: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --check)"
     } else {
         Show-Warn "Sidecar binaries missing: $($missing -join ', ')"
-        Show-Info 'Install with: bash src-tauri/scripts/fetch-llama-binaries.sh'
+        Show-Info 'Install with: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh'
     }
 }
 

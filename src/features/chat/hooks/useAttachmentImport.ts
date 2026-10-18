@@ -3,11 +3,19 @@ import { useCallback, useState, type RefObject } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useChatFileDrop, type StagedFile } from '@/features/chat/hooks/useChatFileDrop';
+import {
+  attachPictures,
+  isPicturePath,
+  releasePictures,
+  takePictures as takeStagedPictures,
+  useStagedPictures,
+} from '@/features/chat/images/stagedPictures';
 import { pollAttachmentImport } from '@/features/chat/model/attachmentImportPoll';
 import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
+import type { ChatImage } from '@/types/conversation';
 
 /** Poll a batch job until it stops moving, or five minutes elapse. */
 const BATCH_POLL_INTERVAL_MS = 1000;
@@ -26,10 +34,18 @@ export interface ImportedAttachments {
 
 export interface AttachmentImport {
   isDragging: boolean;
+  /** Documents, imported when the message is sent. */
   staged: StagedFile[];
   isImporting: boolean;
   remove: (_path: string) => void;
+  /** Drops every staged document and picture: the draft's attachments are discarded. */
   clear: () => void;
+  /** Pictures, stored as soon as they are staged and claimed by the send. */
+  pictures: readonly ChatImage[];
+  isAttachingPictures: boolean;
+  removePicture: (_id: string) => void;
+  /** The staged pictures, handed to a send and cleared from the draft without release. */
+  takePictures: () => ChatImage[];
   /** The file dialog, for people who would rather not drag. */
   chooseFiles: () => Promise<void>;
   /**
@@ -65,26 +81,56 @@ export function useAttachmentImport({
   const queryClient = useQueryClient();
   const loadConversationLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
   const [isImporting, setIsImporting] = useState(false);
+  const [attachingPictures, setAttachingPictures] = useState(0);
+  const pictures = useStagedPictures(conversationId);
+
+  // Pictures go to the backend now, not at send: the composer shows the
+  // stored file, and the turn reads the rows the send names.
+  const stagePictures = useCallback(async (paths: string[]) => {
+    const picturePaths = paths.filter(isPicturePath);
+    if (!conversationId || picturePaths.length === 0) return;
+    setAttachingPictures((count) => count + 1);
+    try {
+      await attachPictures(conversationId, picturePaths);
+    } finally {
+      setAttachingPictures((count) => count - 1);
+    }
+  }, [conversationId]);
+
   const {
     isDragging,
     staged,
     add: addStagedPaths,
-    clear,
+    clear: clearStagedFiles,
     remove,
-  } = useChatFileDrop(dropTargetRef, () => {
-    // Staging is the hook's own state; the panel only needs to re-render.
-  });
+  } = useChatFileDrop(dropTargetRef, (paths) => void stagePictures(paths), (path) => !isPicturePath(path));
 
   const chooseFiles = useCallback(async () => {
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const picked = await open({ multiple: true });
       if (!picked) return;
-      addStagedPaths(Array.isArray(picked) ? picked : [picked]);
+      const paths = Array.isArray(picked) ? picked : [picked];
+      addStagedPaths(paths);
+      void stagePictures(paths);
     } catch {
       // Not in a Tauri webview: the drop target is still there.
     }
-  }, [addStagedPaths]);
+  }, [addStagedPaths, stagePictures]);
+
+  const removePicture = useCallback((id: string) => {
+    if (conversationId) void releasePictures(conversationId, [id]);
+  }, [conversationId]);
+
+  const clear = useCallback(() => {
+    clearStagedFiles();
+    if (conversationId) void releasePictures(conversationId, pictures.map((picture) => picture.id));
+  }, [clearStagedFiles, conversationId, pictures]);
+
+  const takePictures = useCallback(
+    () => (conversationId ? takeStagedPictures(conversationId) : []),
+    [conversationId],
+  );
 
   const importStaged = useCallback(async (): Promise<ImportedAttachments | null> => {
     if (!conversationId || staged.length === 0 || isImporting) return null;
@@ -144,7 +190,7 @@ export function useAttachmentImport({
           });
           return null;
         }
-        clear();
+        clearStagedFiles();
         toast.info(`Still attaching ${requested} file${requested !== 1 ? 's' : ''}`, {
           message: "They'll appear in this conversation when indexing finishes.",
         });
@@ -155,7 +201,7 @@ export function useAttachmentImport({
         });
         return null;
       } else {
-        clear();
+        clearStagedFiles();
         toast.success(`Attached ${outcome.added} file${outcome.added !== 1 ? 's' : ''}`, {
           message:
             outcome.failed > 0
@@ -174,8 +220,20 @@ export function useAttachmentImport({
     scopedSpaceId,
     queryClient,
     loadConversationLinkedDocuments,
-    clear,
+    clearStagedFiles,
   ]);
 
-  return { isDragging, staged, isImporting, remove, clear, chooseFiles, importStaged };
+  return {
+    isDragging,
+    staged,
+    isImporting,
+    remove,
+    clear,
+    pictures,
+    isAttachingPictures: attachingPictures > 0,
+    removePicture,
+    takePictures,
+    chooseFiles,
+    importStaged,
+  };
 }

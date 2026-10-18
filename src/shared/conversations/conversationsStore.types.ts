@@ -6,6 +6,7 @@ import type {
   DocumentSpaceMembershipDto,
 } from '@/types';
 import type {
+  ChatImage,
   CompactionRecord,
   Conversation,
   ConversationMessageBookmark,
@@ -146,7 +147,8 @@ export interface ConversationsState {
     _conversationId?: string | null,
     _toolPreferences?: ToolPreferences,
     _attachmentNames?: string[],
-    _attachmentDocumentIds?: string[]
+    _attachmentDocumentIds?: string[],
+    _attachmentImages?: ChatImage[]
   ) => Promise<GenerationOutcome | undefined>;
   retryFailedMessage: (_tempId: string) => Promise<void>;
   /**

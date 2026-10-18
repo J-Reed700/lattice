@@ -14,7 +14,7 @@ Two planners disagreed about what the request would hold, and the second could n
 
 ## What changed
 
-### Context assembler (`src-tauri/src/application/services/context_assembler/`)
+### Context assembler (`crates/lattice-desktop/src/application/services/context_assembler/`)
 
 - `mod.rs:71` new `InlineEvidence { items, render }`: evidence the caller renders into the current message, best first. `ContextRequest` gains `inline_evidence` (`mod.rs:89`). With it, `current_input` is the bare message.
 - `mod.rs:141` new `ContextAssembler::fixed_parts(system_policy, current_input, tool_schema_tokens, today)`. It prices the policy (memory rules appended), the tools and the bare message under its date line, through the same `fixed_messages` helper (`mod.rs:660`) that `assemble` uses. The turn's budget plans with it.
@@ -23,7 +23,7 @@ Two planners disagreed about what the request would hold, and the second could n
 - `render.rs:261` `FinalUserMessage::set_input`. The date line and input are stored apart; the rendered bytes are unchanged.
 - `budget.rs` doc: evidence is never a fixed part.
 
-### Chat turn (`src-tauri/src/features/conversation/chat/`)
+### Chat turn (`crates/lattice-desktop/src/features/conversation/chat/`)
 
 - `turn/message.rs` (new): `TurnMessage` holds the message frame and its evidence as ranked items with the citation numbers each shows. Order, best first: attachments, the Explorer folder, prior evidence, the follow-up document, library passages in rank order, linked pages, web results. `render(keep)` builds the message through `PromptMessageBuilder` with the first `keep` items. `keep_sources` drops sources only cut items showed.
 - `turn/assemble.rs:256` `render_prompt` builds the `TurnMessage`. `enhanced_message` is `render(items)`, byte-identical to the old builder output.
@@ -52,7 +52,7 @@ Two planners disagreed about what the request would hold, and the second could n
 
 ## Verified
 
-All cargo commands ran from `src-tauri` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`.
+All cargo commands ran from `crates/lattice-desktop` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`.
 
 - `cargo check --lib` → `Finished`, exit 0, no warnings.
 - `cargo test --lib -- context_assembler conversation::chat::turn conversation::chat::retrieval conversation::chat::memory_context conversation::chat::prompting` → `test result: ok. 213 passed; 0 failed; 1 ignored` (the ignored one is the live corpus test that needs `LATTICE_RETRIEVAL_DB`). No compiler warnings. All new tests above passed, and so did the unchanged `tests/prefix.rs` (4) and `tests/eviction.rs` (3).

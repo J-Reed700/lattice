@@ -3,7 +3,7 @@
 
 A Tauri v2 command only works if it appears in *all* of:
 
-  1. the plugin's ``tauri::generate_handler![...]``  (src-tauri/src/**/plugin*.rs)
+  1. the plugin's ``tauri::generate_handler![...]``  (crates/lattice-desktop/src/**/plugin*.rs)
   2. ``build.rs``'s ``InlinedPlugin::new().commands(&[...])``
   3. ``capabilities/main.json`` as ``<plugin>:allow-<command-with-dashes>``
 
@@ -37,14 +37,14 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "src-tauri"
+SRC = ROOT / "crates/lattice-desktop"
 ORPHAN_BASELINE = ROOT / "scripts" / "tauri-command-orphans.baseline"
 ORPHAN_RULE = "orphan-command"
 REGENERATE = "bash scripts/check-rust-layer-boundaries.sh --write-baseline"
 ORPHAN_HEADER = """\
 # Tauri command-orphan baseline, read by scripts/check-tauri-command-inventory.py.
 #
-# Each line is `orphan-command <file under src-tauri/src> <fn> <count>`: a
+# Each line is `orphan-command <file under crates/lattice-desktop/src> <fn> <count>`: a
 # production function carrying #[tauri::command] that no generate_handler!
 # registers. CI fails when a new orphan appears and when a listed one is gone,
 # so this file only shrinks. Delete the dead command (or register it), then

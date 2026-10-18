@@ -35,7 +35,7 @@ Read the current symbols before editing; the repository has unrelated work in pr
 
 | Component | Current behavior | Integration responsibility |
 |---|---|---|
-| `src-tauri/src/features/conversation/chat/tool_loop.rs` | Runs scoped tools and sends formatted results through typed and legacy paths | Capture attempts before execution, persist outcomes immediately afterward, and select evidence for later rounds |
+| `crates/lattice-desktop/src/features/conversation/chat/tool_loop.rs` | Runs scoped tools and sends formatted results through typed and legacy paths | Capture attempts before execution, persist outcomes immediately afterward, and select evidence for later rounds |
 | `chat/tool_loop/document_evidence.rs` | Eight-entry in-memory fingerprint window; suppresses an unchanged document excerpt only after a fresh read and proof that exact text remains in the request | Keep as a turn-local optimization; share identity and visibility concepts with persistent evidence |
 | `chat/tool_loop/scoped_document_tools.rs` | Enforces conversation space/focus for document tools | Reuse scope resolution for archived evidence; an archive must not bypass this check |
 | `features/function_calling/executor/document_tools.rs` | `get_document` builds text from aggregate chunks, legacy chunks, or a raw-file fallback, then paginates it | Produce provenance for the actual representation and returned page |
@@ -47,7 +47,7 @@ Read the current symbols before editing; the repository has unrelated work in pr
 | `application/services/context_assembler/` | Typed assembly with allocations for mandatory memory, summary, recent history, recall, and document evidence | Add an explicitly accounted optional tool-evidence selection |
 | `chat/memory_context.rs` | Loads recent source, recalls history, and invokes the assembler | Load a bounded set of scoped evidence candidates and pass diagnostics |
 | `features/conversation/repository/` | Owns persisted conversation state, memory, source reads, forks, and pruning | Own evidence SQL and lifecycle transactions |
-| `src-tauri/migrations/20260916000000_init_schema.sql` | Current single-migration schema; messages have stable sequence and digests | Add evidence schema using the repository's current schema policy |
+| `crates/lattice-desktop/migrations/20260916000000_init_schema.sql` | Current single-migration schema; messages have stable sequence and digests | Add evidence schema using the repository's current schema policy |
 
 The current built-in chat tools inspect documents and web content; they do not expose Builder-style file edits. `FunctionResult.success` expresses tool success, not whether anything changed. A recent fix distinguishes returned failures from successes in tool timing counts. Do not infer mutations from a tool's English output.
 

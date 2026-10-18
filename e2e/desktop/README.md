@@ -10,15 +10,15 @@ Install the normal Tauri prerequisites and CMake. Then:
 
 ```bash
 npm ci
-bash src-tauri/scripts/fetch-llama-binaries.sh
+bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
 npm run test:desktop:build
 npm run test:desktop
 ```
 
 On an Intel Mac, the fetch command installs the published binary pinned in
-`src-tauri/scripts/llama-server.lock`; no local sidecar build is required. To
+`crates/lattice-desktop/scripts/llama-server.lock`; no local sidecar build is required. To
 test the source-build path, run
-`bash src-tauri/scripts/build-intel-macos-sidecar.sh` before the application
+`bash crates/lattice-desktop/scripts/build-intel-macos-sidecar.sh` before the application
 build. `npm run test:desktop:build` allows that local development binary
 automatically on Intel. For a direct Tauri debug build, set
 `LATTICE_ALLOW_UNPINNED_SIDECAR=1`. CI deliberately builds and checksum-pins an
@@ -31,7 +31,7 @@ The build helper assigns a unique identifier. Before each full run the runner
 moves that candidate's existing test library aside, so onboarding starts fresh
 and failed-run data remains available for debugging. The close/reopen portion
 uses the same library across both processes.
-Build artifacts default to `src-tauri/target/desktop-e2e`, keeping the normal
+Build artifacts default to `target/desktop-e2e`, keeping the normal
 development executable unchanged. Set `CARGO_TARGET_DIR` only to override this
 with another dedicated test build directory.
 

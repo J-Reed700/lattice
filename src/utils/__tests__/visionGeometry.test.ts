@@ -1,11 +1,13 @@
 /**
- * The vectors here are copied from the backend's `domain/models/vision/tests.rs`:
- * the Settings preview and the backend must price a picture alike. Change one
- * side and the other's tests must follow.
+ * The Settings preview and the backend must price a picture alike. Both
+ * suites run every row of the backend's `vision/plan_cases.json`, whose
+ * expected values are the Rust results; the hand-written tests below explain
+ * the rules one at a time.
  */
 
 import { describe, expect, it } from 'vitest';
 
+import planCases from '../../../crates/lattice-core/src/domain/models/vision/plan_cases.json';
 import {
   CONSERVATIVE_DEFAULT,
   VISION_PRESETS,
@@ -22,7 +24,20 @@ const fitted = (width: number, height: number, tokens: number) => ({ width, heig
 const grid = (token_side: number, min_pixels: number, max_pixels: number): VisionGeometry =>
   ({ kind: 'grid', token_side, min_pixels, max_pixels, overhead_tokens: 2 });
 
-describe('visionGeometry (vectors from vision/tests.rs)', () => {
+describe('visionGeometry against the shared plan cases', () => {
+  const geometries = planCases.geometries as unknown as Record<string, VisionGeometry>;
+
+  it('names the same geometries as the code', () => {
+    for (const preset of VISION_PRESETS) expect(geometries[preset.id]).toEqual(preset.geometry);
+    expect(geometries.conservative_default).toEqual(CONSERVATIVE_DEFAULT);
+  });
+
+  it.each(planCases.cases)('$geometry $width×$height: $covers', ({ geometry, width, height, fitted }) => {
+    expect(planPicture(geometries[geometry], width, height)).toEqual(fitted);
+  });
+});
+
+describe('visionGeometry (rules from vision/tests.rs)', () => {
   const qwen25 = presetGeometry('qwen25_vl');
   const qwen3 = presetGeometry('qwen3_vl');
   const gemma = presetGeometry('gemma_siglip');

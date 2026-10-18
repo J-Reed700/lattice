@@ -1,6 +1,6 @@
 # Source provenance and trust
 
-The labelled data that the source-trust rules are tested and calibrated against. The rules are in `src-tauri/crates/lattice-core/src/domain/provenance/`, and the design is in [`docs/design/2026-10-18-source-provenance-and-trust.md`](../../docs/design/2026-10-18-source-provenance-and-trust.md) (cited below as §n). Every file here is read by `cargo test -p lattice-core --lib provenance`, so if a rule or a label drifts, a test fails.
+The labelled data that the source-trust rules are tested and calibrated against. The rules are in `crates/lattice-core/src/domain/provenance/`, and the design is in [`docs/design/2026-10-18-source-provenance-and-trust.md`](../../docs/design/2026-10-18-source-provenance-and-trust.md) (cited below as §n). Every file here is read by `cargo test -p lattice-core --lib provenance`, so if a rule or a label drifts, a test fails.
 
 | File | Items | What it holds | Test |
 | --- | --- | --- | --- |
