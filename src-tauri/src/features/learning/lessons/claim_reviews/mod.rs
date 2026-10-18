@@ -14,3 +14,4 @@ mod dto_tests;
 mod migration_tests;
 pub mod repository;
 pub mod service;
+mod view;

@@ -18,6 +18,18 @@ pub struct LearningEvidencePassageDto {
     pub end_byte: usize,
     pub retrieval_kind: String,
 }
+/// How a published claim stands (§5.6): verified against a source, confirmed
+/// by the user, accepted as general knowledge, or verified against a source
+/// since removed. A string union, like the review panel's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningClaimResolutionDto {
+    Verified,
+    ConfirmedByYou,
+    GeneralKnowledge,
+    SourceRemoved,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningClaimEvidenceDto {
@@ -30,9 +42,8 @@ pub struct LearningClaimEvidenceDto {
     pub reason: String,
     pub supporting_quote: Option<String>,
     pub passages: Vec<LearningEvidencePassageDto>,
-    /// How the claim stands in the published lesson (§5.6): `verified`,
-    /// `confirmed_by_you`, `general_knowledge` or `source_removed`.
-    pub resolution: String,
+    /// How the claim stands in the published lesson (§5.6).
+    pub resolution: LearningClaimResolutionDto,
     /// The user's note on a claim confirmed by them.
     pub note: Option<String>,
 }

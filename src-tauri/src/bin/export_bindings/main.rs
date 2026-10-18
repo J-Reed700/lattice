@@ -161,6 +161,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::resolve_learning_claim,
             lattice::features::learning::plugin::resume_learning_lesson_review,
             lattice::features::learning::plugin::capture_learning_source_snapshot,
+            lattice::features::learning::plugin::get_learning_checker_accuracy,
+            lattice::features::learning::plugin::export_learning_checker_examples::<tauri::Wry>,
             lattice::features::learning::plugin::get_learning_recall_workspace,
             lattice::features::learning::plugin::save_learning_recall_card,
             lattice::features::learning::plugin::decide_learning_recall_duplicate,

@@ -356,6 +356,8 @@
     "learning:allow-resolve-learning-claim",
     "learning:allow-resume-learning-lesson-review",
     "learning:allow-capture-learning-source-snapshot",
+    "learning:allow-get-learning-checker-accuracy",
+    "learning:allow-export-learning-checker-examples",
     "learning:allow-get-learning-recall-workspace",
     "learning:allow-save-learning-recall-card",
     "learning:allow-decide-learning-recall-duplicate",

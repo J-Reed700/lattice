@@ -519,6 +519,8 @@ fn main() {
                     "resolve_learning_claim",
                     "resume_learning_lesson_review",
                     "capture_learning_source_snapshot",
+                    "get_learning_checker_accuracy",
+                    "export_learning_checker_examples",
                     "get_learning_recall_workspace",
                     "save_learning_recall_card",
                     "decide_learning_recall_duplicate",

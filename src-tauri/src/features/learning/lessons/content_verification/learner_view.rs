@@ -5,8 +5,8 @@ use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
     dto::LearningLessonDto,
     lesson_evidence::{
-        LearningClaimEvidenceDto, LearningEvidencePassageDto, LearningLessonEvidenceDto,
-        SavedEvidenceVersion,
+        LearningClaimEvidenceDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
+        LearningLessonEvidenceDto, SavedEvidenceVersion,
     },
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -103,10 +103,14 @@ impl LessonVerificationReport {
                         .is_some_and(|version| version.deleted_at.is_some())
                 });
                 let (resolution, note) = match &finding.resolution {
-                    Some(Resolution::Confirmed { note, .. }) => ("confirmed_by_you", note.clone()),
-                    Some(Resolution::GeneralKnowledge { .. }) => ("general_knowledge", None),
-                    None if source_removed => ("source_removed", None),
-                    None => ("verified", None),
+                    Some(Resolution::Confirmed { note, .. }) => {
+                        (LearningClaimResolutionDto::ConfirmedByYou, note.clone())
+                    }
+                    Some(Resolution::GeneralKnowledge { .. }) => {
+                        (LearningClaimResolutionDto::GeneralKnowledge, None)
+                    }
+                    None if source_removed => (LearningClaimResolutionDto::SourceRemoved, None),
+                    None => (LearningClaimResolutionDto::Verified, None),
                 };
                 Ok(LearningClaimEvidenceDto {
                     section_index: finding.unit,
@@ -129,7 +133,7 @@ impl LessonVerificationReport {
                     reason: finding.reason.clone(),
                     supporting_quote: finding.supporting_quote.clone(),
                     passages,
-                    resolution: resolution.into(),
+                    resolution,
                     note,
                 })
             })

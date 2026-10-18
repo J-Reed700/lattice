@@ -36,11 +36,11 @@ vi.mock('@/lib/api', () => ({ default: {
 const activeText = {
   id: 'version-1', versionNumber: 1, title: 'Field notes', publisher: 'Open Archive', resolvedUrl: 'https://archive.example/field',
   excerpt: 'A saved passage about careful observation.', contentSha256: 'sha256-a', wordCount: 9, truncated: false,
-  extractionVersion: 'reader-1', acquiredAt: 1_790_000_000_000,
+  extractionVersion: 'reader-1', acquiredAt: 1_790_000_000_000, snapshotHash: null,
 };
 const pendingText = { ...activeText, id: 'version-2', versionNumber: 2, title: 'Field notes revised', excerpt: 'A revised passage about careful observation.', contentSha256: 'sha256-b', acquiredAt: 1_790_100_000_000 };
 const source = {
-  id: 'source-1', kind: 'web' as const, origin: 'web', requestedUrl: 'https://archive.example/field', freshnessPolicy: 'manual' as const,
+  id: 'source-1', kind: 'web' as const, addedBy: 'user' as const, origin: 'web', requestedUrl: 'https://archive.example/field', freshnessPolicy: 'manual' as const,
   activeVersionId: 'version-1', pendingVersionId: 'version-2', revision: 4, deletedAt: null, deletionReason: null, activeVersion: activeText, pendingVersion: pendingText,
   versions: [pendingText, activeText], latestCheck: { operationId: 'check-1', status: 'update_available' as const, checkedAt: 1_790_100_000_000, activeDigest: 'sha256-a', pendingVersionId: 'version-2', message: null },
   checks: [], createdAt: 1_790_000_000_000, updatedAt: 1_790_100_000_000,

@@ -12,13 +12,23 @@ use crate::features::learning::lessons::claim_reviews::attach::{
     self, report::ClaimAttachReportDto, report::SnapshotNoteDto, AttachDeps, AttachRequest,
     Evidence,
 };
+use crate::features::learning::lessons::claim_reviews::checker_examples::{
+    export_file_name, CheckerAccuracyDto, CheckerExamples,
+};
 use crate::features::learning::lessons::claim_reviews::dto::{
     ClaimActionRequestDto, LessonClaimReviewDto,
 };
+use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
+use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
 use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::{ClaimReviewStore, ReferenceSnapshot};
-use lattice_core::domain::learning::claim_review::{ClaimId, Ledger, LessonReviewState, Revision};
+use lattice_core::domain::learning::claim_review::{ClaimId, Ledger, Revision};
 use lattice_core::shared::error::AppError;
+use tauri::AppHandle;
+use tauri_plugin_dialog::DialogExt;
+
+/// The extension of an exported checker-examples file (§15).
+const EXPORT_EXTENSION: &str = "jsonl";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -53,41 +63,34 @@ pub struct ResumeLearningLessonReviewRequestDto {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct ExportLearningCheckerExamplesRequestDto {
+    /// One course's examples; every course's when null.
+    pub program_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedLearningCheckerExamplesDto {
+    pub path: String,
+    /// Claim pairs written; retrieval misses are left out.
+    pub pairs: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct CaptureLearningSourceSnapshotRequestDto {
     pub program_id: String,
     pub source_id: String,
     pub version_id: String,
 }
 
-fn not_wired(what: &str) -> ApiError {
-    ApiError::from(AppError::ServiceNotAvailable(format!(
-        "{what} is not available in this build."
-    )))
-}
-
 /// The lesson claim ledger.
-// Integration with track L1: `Arc::new(ClaimReviewRepository::new(pool))`.
-fn claim_ledger(_container: &Container) -> Result<Arc<dyn ClaimReviewStore>, ApiError> {
-    Err(not_wired("The claim ledger"))
+fn claim_ledger(container: &Container) -> Arc<dyn ClaimReviewStore> {
+    Arc::new(ClaimReviewRepository::new(container.db_pool().clone()))
 }
 
-/// A lesson's review as the panel shows it.
-// Integration with track L1: the claim review service's assembly.
-async fn review_of(
-    _container: &Container,
-    _ledger: Ledger,
-) -> Result<LessonClaimReviewDto, ApiError> {
-    Err(not_wired("The claim review"))
-}
-
-/// Every action but attaching evidence: confirm, edit, remove, general
-/// knowledge, research again, unconfirm, undo (§5.1).
-// Integration with track L1: the claim review service's `resolve`.
-async fn resolve_by_service(
-    _container: &Container,
-    _request: &ResolveLearningClaimRequestDto,
-) -> Result<Revision, ApiError> {
-    Err(not_wired("This claim action"))
+fn claim_reviews(container: &Container) -> ClaimReviewService {
+    ClaimReviewService::new(container.db_pool().clone())
 }
 
 /// The lesson's preparation job while it runs, for event provenance.
@@ -111,17 +114,9 @@ pub async fn get_learning_lesson_claim_review(
     lesson_id: String,
     container: State<'_, Container>,
 ) -> Result<LessonClaimReviewDto, ApiError> {
-    let ledger = claim_ledger(&container)?.load(&lesson_id).await?;
-    if ledger
-        .review
-        .as_ref()
-        .is_some_and(|review| review.program_id != program_id)
-    {
-        return Err(ApiError::from(AppError::NotFound(
-            "Lesson not found in this course".into(),
-        )));
-    }
-    review_of(&container, ledger).await
+    Ok(claim_reviews(&container)
+        .review(&program_id, &lesson_id)
+        .await?)
 }
 
 #[tauri::command]
@@ -130,15 +125,31 @@ pub async fn resolve_learning_claim(
     request: ResolveLearningClaimRequestDto,
     container: State<'_, Container>,
 ) -> Result<ResolveLearningClaimResultDto, ApiError> {
+    let store = claim_ledger(&container);
+    let ledger = store.load(&request.lesson_id).await?;
+    if ledger
+        .review
+        .as_ref()
+        .is_some_and(|review| review.program_id != request.program_id)
+    {
+        return Err(ApiError::from(AppError::NotFound(
+            "Lesson not found in this course".into(),
+        )));
+    }
     let Some(evidence) = Evidence::of(&request.action) else {
-        let revision = resolve_by_service(&container, &request).await?;
+        let revision = claim_reviews(&container)
+            .resolve(
+                &request.lesson_id,
+                &request.claim_id,
+                request.action,
+                request.expected_revision,
+            )
+            .await?;
         return Ok(ResolveLearningClaimResultDto {
-            revision: revision.0,
+            revision,
             attach: None,
         });
     };
-    let store = claim_ledger(&container)?;
-    let ledger = store.load(&request.lesson_id).await?;
     let job_id = running_job(&container, &ledger).await;
     let pin = learning_model(
         &container,
@@ -182,48 +193,21 @@ pub async fn resolve_learning_claim(
     })
 }
 
-/// Resume verification (§6.2): a new attempt of the lesson's job, refused
-/// while nothing changed since it ended.
+/// Resume verification (§6.2): a lesson waiting for review continues its
+/// job once something changed; a stopped one retries it.
 #[tauri::command]
 #[specta::specta]
 pub async fn resume_learning_lesson_review(
     request: ResumeLearningLessonReviewRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
-    let ledger = claim_ledger(&container)?.load(&request.lesson_id).await?;
-    let review = ledger
-        .review
-        .as_ref()
-        .filter(|review| review.program_id == request.program_id)
-        .ok_or_else(|| {
-            ApiError::from(AppError::NotFound(
-                "This lesson has no claim review to resume.".into(),
-            ))
-        })?;
-    let repo = LearningCurriculumRepository::new(container.db_pool().clone());
-    let job = repo.job(&review.job_id).await?;
-    if review.state == LessonReviewState::NeedsReview {
-        let ended = job.finished_at.unwrap_or(job.created_at);
-        let changed = ledger.claims.iter().any(|claim| {
-            claim
-                .events()
-                .iter()
-                .any(|event| event.provenance.at > ended)
-        });
-        if !changed {
-            return Err(ApiError::from(AppError::InvalidState(
-                "Nothing changed since the last pass. Resolve a claim or add evidence first."
-                    .into(),
-            )));
-        }
-    }
-    let job = repo
-        .retry_job(&LearningGenerationJobActionRequestDto {
-            operation_id: request.operation_id,
-            program_id: request.program_id,
-            job_id: job.id,
-            expected_revision: request.expected_revision,
-        })
+    let job = claim_reviews(&container)
+        .resume(
+            &request.program_id,
+            &request.lesson_id,
+            request.expected_revision,
+            request.operation_id,
+        )
         .await?;
     container.jobs().submitted(&job.id).await;
     Ok(job)
@@ -258,4 +242,52 @@ pub async fn capture_learning_source_snapshot(
             ReferenceSnapshot::Failed { reason } => SnapshotNoteDto::Failed { reason },
         },
     )
+}
+
+/// The local checker's accuracy on the user's own labelled claims, per
+/// checker model (§15).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_learning_checker_accuracy(
+    container: State<'_, Container>,
+) -> Result<Vec<CheckerAccuracyDto>, ApiError> {
+    Ok(CheckerExamples::new(container.db_pool().clone())
+        .accuracy()
+        .await?)
+}
+
+/// Writes the labelled claims as `claim-pairs-v1` lines to a file the user
+/// picks, for `live_claim_pairs_eval` (§15, `evals/grounding/README.md`).
+/// `None` when the user dismissed the dialog.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_learning_checker_examples<R: Runtime>(
+    app: AppHandle<R>,
+    request: ExportLearningCheckerExamplesRequestDto,
+    container: State<'_, Container>,
+) -> Result<Option<ExportedLearningCheckerExamplesDto>, ApiError> {
+    let suggested = export_file_name(&chrono::Local::now().format("%Y-%m-%d").to_string());
+    let picked = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Export checker examples")
+            .set_file_name(suggested)
+            .add_filter("JSON Lines", &[EXPORT_EXTENSION])
+            .blocking_save_file()
+            .and_then(|picked| picked.into_path().ok())
+    })
+    .await
+    .map_err(|error| {
+        AppError::InternalError(format!("The file dialog stopped unexpectedly: {error}"))
+    })?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let pairs = CheckerExamples::new(container.db_pool().clone())
+        .export(request.program_id.as_deref(), &path)
+        .await?;
+    Ok(Some(ExportedLearningCheckerExamplesDto {
+        path: path.to_string_lossy().into_owned(),
+        pairs: u32::try_from(pairs).unwrap_or(u32::MAX),
+    }))
 }

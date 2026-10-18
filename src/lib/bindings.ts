@@ -655,8 +655,8 @@ async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Re
 }
 },
 /**
- * Resume verification (§6.2): a new attempt of the lesson's job, refused
- * while nothing changed since it ended.
+ * Resume verification (§6.2): a lesson waiting for review continues its
+ * job once something changed; a stopped one retries it.
  */
 async resumeLearningLessonReview(request: ResumeLearningLessonReviewRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
@@ -672,6 +672,31 @@ async resumeLearningLessonReview(request: ResumeLearningLessonReviewRequestDto) 
 async captureLearningSourceSnapshot(request: CaptureLearningSourceSnapshotRequestDto) : Promise<Result<SnapshotNoteDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|capture_learning_source_snapshot", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The local checker's accuracy on the user's own labelled claims, per
+ * checker model (§15).
+ */
+async getLearningCheckerAccuracy() : Promise<Result<CheckerAccuracyDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_checker_accuracy") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Writes the labelled claims as `claim-pairs-v1` lines to a file the user
+ * picks, for `live_claim_pairs_eval` (§15, `evals/grounding/README.md`).
+ * `None` when the user dismissed the dialog.
+ */
+async exportLearningCheckerExamples(request: ExportLearningCheckerExamplesRequestDto) : Promise<Result<ExportedLearningCheckerExamplesDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|export_learning_checker_examples", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4845,6 +4870,35 @@ captured?: CapturedSourcesDto | null;
 images?: ChatImageDto[] | null }
 export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
 export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+/**
+ * The checker's accuracy for one Learning model (§15 "Visible to the user").
+ */
+export type CheckerAccuracyDto = { checkerModel: string; labelled: number;
+/**
+ * Flags the user confirmed over, or that added evidence overturned.
+ */
+falseFlags: number;
+/**
+ * Flags the user agreed with by removing or editing the claim.
+ */
+trueFlags: number;
+/**
+ * `false_flags / (false_flags + true_flags)`; none without flags.
+ */
+falseFlagRate: number | null;
+/**
+ * Claims the checker passed that the Verifier contradicted and the user
+ * then removed or edited.
+ */
+falsePasses: number;
+/**
+ * Examples labelled through a Verifier audit.
+ */
+verifierLabelled: number;
+/**
+ * `false_passes / verifier_labelled`; none without Verifier examples.
+ */
+falsePassRate: number | null; retrievalMisses: number }
 export type CheckerDto = { role: CheckerRoleDto; model: string }
 export type CheckerRoleDto = "local" | "verifier"
 export type ChecksumRequest = { algorithm: string; value: string }
@@ -5999,6 +6053,11 @@ export type ExportJsonRequestDto = {
  * `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
  */
 outputPath?: string | null; pretty: boolean }
+export type ExportLearningCheckerExamplesRequestDto = {
+/**
+ * One course's examples; every course's when null.
+ */
+programId: string | null }
 /**
  * One course's export. Rust names the file from the course title; the
  * renderer never sends a file name.
@@ -6016,6 +6075,11 @@ export type ExportResultDto = { count: number;
  * guessing.
  */
 outputDir: string }
+export type ExportedLearningCheckerExamplesDto = { path: string;
+/**
+ * Claim pairs written; retrieval misses are left out.
+ */
+pairs: number }
 export type ExportedLearningPackDto = { programId: string; title: string; path: string }
 export type ExtractAndResolveResponseDto = { links: ResolvedLinkDto[] }
 export type ExtractMentionsResultDto = { mentions: MentionWithContextDto[]; count: number }
@@ -6738,7 +6802,42 @@ export type LearningClaimEvidenceDto = { sectionIndex: number;
  * Exact lesson text selected by the claim inventory. This anchors the
  * evidence to the generated section without asking the UI to guess.
  */
-contentQuote: string; claim: string; verdict: string; reason: string; supportingQuote: string | null; passages: LearningEvidencePassageDto[] }
+contentQuote: string; claim: string; verdict: string; reason: string; supportingQuote: string | null; passages: LearningEvidencePassageDto[];
+/**
+ * How the claim stands in the published lesson (§5.6).
+ */
+resolution: LearningClaimResolutionDto;
+/**
+ * The user's note on a claim confirmed by them.
+ */
+note: string | null }
+/**
+ * How a published claim stands (§5.6): verified against a source, confirmed
+ * by the user, accepted as general knowledge, or verified against a source
+ * since removed. A string union, like the review panel's.
+ */
+export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "general_knowledge" | "source_removed"
+/**
+ * The lesson's claims by who acts next (§6.3): "Pass 3 · 2 claims being
+ * repaired · 5 waiting for you · 108 verified".
+ */
+export type LearningClaimTally = {
+/**
+ * The machine's: being checked, researched or repaired.
+ */
+repairing: number;
+/**
+ * Waiting for the user.
+ */
+waiting: number;
+/**
+ * Verified against a source.
+ */
+verified: number;
+/**
+ * Closed by the user or removed: confirmed, general knowledge, removed.
+ */
+resolvedByYou: number }
 export type LearningContainerEngine = "docker" | "podman"
 export type LearningCourseDepth = "focused" | "course" | "deep_dive"
 export type LearningCurriculumChange = { kind: LearningCurriculumChangeKind; lessonId: string; fromModuleId: string | null; toModuleId: string | null;
@@ -6806,7 +6905,12 @@ modelChecksTotal: number | null;
  * Set while claims this pass left unsupported are checked against further
  * pages of their evidence.
  */
-deeperEvidence: LearningDeeperEvidence | null; recentSteps: LearningGenerationStep[] }
+deeperEvidence: LearningDeeperEvidence | null;
+/**
+ * Where the lesson's claims stand after the latest pass; none before
+ * the first pass observed them.
+ */
+claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"
@@ -6826,7 +6930,12 @@ export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; che
  * reference supports or contradicts them, and they were not checked
  * against a source.
  */
-generalKnowledgeCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+generalKnowledgeCount: number;
+/**
+ * Of `claim_count`, the claims the user confirmed without a supporting
+ * passage; shown apart from the machine-verified ones (§5.6).
+ */
+confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
