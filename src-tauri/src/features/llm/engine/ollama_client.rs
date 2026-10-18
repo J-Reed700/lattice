@@ -27,11 +27,13 @@ use crate::features::llm::engine::types::{
     OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool, OllamaToolCall,
     OllamaToolCallFunction,
 };
+use crate::features::llm::engine::vision::{not_set_up_to_see, pictures_outside_a_user_message};
 use crate::features::llm::engine::GenerationConfig;
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode,
+    CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ThinkingMode,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::http::reqwest_client_builder;
 
@@ -60,6 +62,9 @@ pub struct OllamaClient {
     stream_timeout: Duration,
     config: GenerationConfig,
     circuit_breaker: CircuitBreaker,
+    /// The geometry the model was declared to see with; `None` refuses
+    /// pictures.
+    vision: Option<VisionGeometry>,
 }
 
 impl OllamaClient {
@@ -132,12 +137,19 @@ impl OllamaClient {
             stream_timeout,
             config: GenerationConfig::default(),
             circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
+            vision: None,
         })
     }
 
     /// The sampling defaults and output ceiling every request starts from.
     pub fn with_generation_config(mut self, config: GenerationConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// The geometry the model was declared to see with.
+    pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
+        self.vision = vision;
         self
     }
 
@@ -178,6 +190,9 @@ impl OllamaClient {
 
     /// The `/api/chat` body for a typed request.
     fn chat_request(&self, request: &CompletionRequest) -> Result<OllamaChatRequest> {
+        if request.has_images() && self.vision.is_none() {
+            return Err(not_set_up_to_see(&self.model_name));
+        }
         let mut messages = Vec::with_capacity(request.input.len());
         // Ollama names the tool a result answers rather than the call's id,
         // so each id is resolved to the name of the call it answers.
@@ -192,6 +207,33 @@ impl OllamaClient {
                     tool_calls: None,
                     tool_name: None,
                 },
+                // Ollama takes a message's pictures as a list of base64
+                // strings beside its text.
+                CompletionInput::Multimodal { role, parts } => {
+                    if role != "user" {
+                        return Err(pictures_outside_a_user_message(role));
+                    }
+                    let text: Vec<&str> = parts
+                        .iter()
+                        .filter_map(|part| match part {
+                            ContentPart::Text { text } => Some(text.as_str()),
+                            ContentPart::Image(_) => None,
+                        })
+                        .collect();
+                    OllamaChatMessage {
+                        role: role.clone(),
+                        content: text.join("\n"),
+                        thinking: None,
+                        images: Some(
+                            input
+                                .images()
+                                .map(|image| image.data_base64.clone())
+                                .collect(),
+                        ),
+                        tool_calls: None,
+                        tool_name: None,
+                    }
+                }
                 CompletionInput::Native { value } => {
                     let message = serde_json::from_value::<OllamaChatMessage>(value.clone())
                         .map_err(|_| {
@@ -570,6 +612,10 @@ impl LLMPort for OllamaClient {
 
     fn supports_tool_calling(&self) -> bool {
         true
+    }
+
+    fn vision(&self) -> Option<VisionGeometry> {
+        self.vision
     }
 
     fn provider_name(&self) -> &str {

@@ -118,16 +118,15 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
                     validate_http_url(url).map_err(AppError::InvalidInput)?;
                 }
             }
-            // Shape only: whether the model still exists is answered when a
-            // learning job asks for it, with the real state.
-            if let Some(value) = request
-                .updates
-                .get("learningModel")
-                .filter(|value| !value.is_null())
-            {
-                serde_json::from_value::<ModelRef>(value.clone()).map_err(|_| {
-                    AppError::InvalidInput("learningModel is not a model reference".into())
-                })?;
+            // Shape only: whether the model still exists (or, for a cloud
+            // Verifier, has a key) is answered when a job asks for it, with
+            // the real state.
+            for key in ["learningModel", "verifierModel"] {
+                if let Some(value) = request.updates.get(key).filter(|value| !value.is_null()) {
+                    serde_json::from_value::<ModelRef>(value.clone()).map_err(|_| {
+                        AppError::InvalidInput(format!("{key} is not a model reference"))
+                    })?;
+                }
             }
         }
         Some(SettingsCategory::Indexing) => {
@@ -387,6 +386,41 @@ mod tests {
             .await
             .expect("null clears the Learning model");
         assert_eq!(cleared.llm.learning_model, None);
+    }
+
+    #[tokio::test]
+    async fn verifier_model_must_be_a_model_reference_or_null() {
+        let use_case = UpdateSettingsUseCase::new(Arc::new(MockSettingsRepository::new()));
+        let update = |value: serde_json::Value| {
+            let updates = HashMap::from([("verifierModel".to_string(), value)]);
+            use_case.update_category(SettingsCategory::Llm, updates)
+        };
+
+        for malformed in [
+            json!("cloud:anthropic/claude-x"),
+            json!({"kind": "cloud", "provider": "acme", "model": "x"}),
+        ] {
+            assert!(
+                matches!(update(malformed.clone()).await, Err(AppError::InvalidInput(message))
+                    if message == "verifierModel is not a model reference"),
+                "{malformed} is refused before anything is written"
+            );
+        }
+
+        let set = update(json!({"kind": "cloud", "provider": "anthropic", "model": "claude-x"}))
+            .await
+            .expect("a cloud model reference is accepted for the Verifier");
+        assert_eq!(
+            set.llm.verifier_model,
+            Some(ModelRef::Cloud {
+                provider: lattice_core::domain::models::model_ref::CloudProvider::Anthropic,
+                model: "claude-x".into()
+            })
+        );
+        let cleared = update(serde_json::Value::Null)
+            .await
+            .expect("null clears the Verifier model");
+        assert_eq!(cleared.llm.verifier_model, None);
     }
 
     #[tokio::test]

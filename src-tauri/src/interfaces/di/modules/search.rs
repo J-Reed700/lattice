@@ -15,11 +15,11 @@ use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use lattice_core::application::ports::{BM25SearchTrait, SearchServiceTrait};
 
 // The active embedding model, which names the index's vector space
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::embedding::candle_service::{prefixes_for_model_dir, CandleEmbeddingService};
 use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::di::{BackfillModelLoader, VectorSpace};
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::models::checkpoint::has_loadable_weights;
 use lattice_core::domain::models::downloaded::DownloadedModel;

@@ -227,6 +227,33 @@ describe('ModelPickerPopover', () => {
     expect(big).not.toHaveTextContent('no tools');
   });
 
+  it('says "sees images" beside a model declared to see, and a cloud model its provider documents as seeing', async () => {
+    const s = makeAppSettings();
+    s.llm.provider = 'anthropic';
+    s.llm.model = 'claude-test';
+    s.llm.llamaCpp = { url: 'http://127.0.0.1:8080', model: 'served-model', authHeaderName: '', authHeaderValue: '' };
+    s.llm.visionDeclarations = { 'llamacpp:served-model': { enabled: true, geometry: { kind: 'fixed', side: 896, tokens: 256 } } };
+    appSettings.current = s;
+    models.current = [model({ id: 'a' })];
+    await open();
+
+    const served = within(screen.getByRole('menuitemradio', { name: /^served-model/ })).getByText('sees images');
+    expect(served).toHaveAttribute('title', 'Pictures you attach are shown to this model.');
+    expect(screen.getByRole('menuitemradio', { name: /^claude-test/ })).toHaveTextContent('sees images');
+    expect(screen.getByRole('menuitemradio', { name: /^Llama 3\.2 3B/ })).not.toHaveTextContent('sees images');
+  });
+
+  it('drops the badge when a declaration turns vision off, even over a provider default', async () => {
+    const s = makeAppSettings();
+    s.llm.provider = 'openai';
+    s.llm.model = 'gpt-4o-test';
+    s.llm.visionDeclarations = { 'cloud:openai/gpt-4o-test': { enabled: false, geometry: { kind: 'fixed', side: 896, tokens: 256 } } };
+    appSettings.current = s;
+    await open();
+
+    expect(screen.getByRole('menuitemradio', { name: /^gpt-4o-test/ })).not.toHaveTextContent('sees images');
+  });
+
   it('says in words, with the reason as its tooltip, that a loaded model runs on the CPU', async () => {
     models.current = [model({ id: 'a' }), model({ id: 'b', model_id: 'big', model_name: 'Qwen3.5-27B' })];
     loaded.current = [{

@@ -10,13 +10,14 @@ pub async fn set_active_chat_model_impl(
     container: &Container,
     model_id: &str,
 ) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
+    let active_models = container.active_models();
     let validated_model_id = container
         .security_context()
         .input_validator()
         .validate_model_name(model_id)?;
 
-    let use_case = SetActiveChatModelUseCase::new(repository);
+    let use_case = SetActiveChatModelUseCase::new(repository, active_models);
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {
@@ -38,9 +39,9 @@ pub async fn set_active_chat_model_impl(
 /// Deactivates the currently active chat model.
 /// Called by gateway - async dispatch.
 pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let active_models = container.active_models();
 
-    let use_case = ClearActiveChatModelUseCase::new(repository);
+    let use_case = ClearActiveChatModelUseCase::new(active_models);
 
     match use_case.execute().await {
         Ok(()) => {
@@ -59,9 +60,9 @@ pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), A
 /// Deactivates the currently active embedding model.
 /// Called by gateway - async dispatch.
 pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let active_models = container.active_models();
 
-    let use_case = ClearActiveEmbeddingModelUseCase::new(repository);
+    let use_case = ClearActiveEmbeddingModelUseCase::new(active_models);
 
     match use_case.execute().await {
         Ok(()) => {
@@ -80,9 +81,9 @@ pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<
 /// Returns the model currently set as active for chat, or None if no model is active.
 /// Called by gateway - async dispatch.
 pub async fn get_active_chat_model_impl(container: &Container) -> Result<String, AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let active_models = container.active_models();
 
-    let use_case = GetActiveChatModelUseCase::new(repository);
+    let use_case = GetActiveChatModelUseCase::new(active_models);
 
     match use_case.execute().await {
         Ok(maybe_model) => {
@@ -105,9 +106,9 @@ pub async fn get_active_chat_model_impl(container: &Container) -> Result<String,
 /// Returns the model currently set as active for embeddings, or None if no model is active.
 /// Called by gateway - async dispatch.
 pub async fn get_active_embedding_model_impl(container: &Container) -> Result<String, AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let active_models = container.active_models();
 
-    let use_case = GetActiveEmbeddingModelUseCase::new(repository);
+    let use_case = GetActiveEmbeddingModelUseCase::new(active_models);
 
     match use_case.execute().await {
         Ok(maybe_model) => {
@@ -136,13 +137,14 @@ pub async fn set_active_utility_model_impl(
     container: &Container,
     model_id: &str,
 ) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
+    let active_models = container.active_models();
     let validated_model_id = container
         .security_context()
         .input_validator()
         .validate_model_name(model_id)?;
 
-    let use_case = SetActiveUtilityModelUseCase::new(repository);
+    let use_case = SetActiveUtilityModelUseCase::new(repository, active_models);
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {
@@ -160,9 +162,10 @@ pub async fn set_active_utility_model_impl(
 
 /// Clear the active utility model — reverts HyDE/router back to the chat model.
 pub async fn clear_active_utility_model_impl(container: &Container) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
+    let active_models = container.active_models();
 
-    let use_case = SetActiveUtilityModelUseCase::new(repository);
+    let use_case = SetActiveUtilityModelUseCase::new(repository, active_models);
 
     match use_case.clear().await {
         Ok(()) => {
@@ -188,16 +191,17 @@ pub async fn set_active_embedding_model_impl(
     container: &Container,
     model_id: &str,
 ) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
+    let active_models = container.active_models();
     let validated_model_id = container
         .security_context()
         .input_validator()
         .validate_model_name(model_id)?;
 
-    let use_case = SetActiveEmbeddingModelUseCase::new(repository);
+    let use_case = SetActiveEmbeddingModelUseCase::new(repository, active_models);
 
     let candidate = container
-        .downloaded_model_repository()
+        .downloaded_models()
         .find_by_model_id(&validated_model_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Embedding model not found".to_owned()))?;
@@ -215,17 +219,12 @@ pub async fn set_active_embedding_model_impl(
         Err(e) => return Err(embedding_activation_failed(&validated_model_id, e)),
     };
     let load_identity = identity.clone();
-    let model = task::spawn_blocking(move || {
-        crate::features::embedding::candle_service::CandleEmbeddingService::open(
-            &dir,
-            load_identity,
-        )
-    })
-    .await
-    .map_err(|e| AppError::InternalError(format!("Embedding model load task failed: {}", e)))??;
+    let model = container
+        .open_embedding_for_activation(dir, load_identity)
+        .await?;
     crate::infrastructure::persistence::repositories::embedding::generation::prepare(
         container.db_pool(),
-        &model,
+        model.as_ref(),
     )
     .await?;
 

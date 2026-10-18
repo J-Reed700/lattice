@@ -92,6 +92,7 @@ fn a_request_that_does_not_fit_is_refused_with_its_numbers() {
         prompt_tokens: 125_000,
         counted_exactly: true,
         output_tokens: 8_192,
+        ..RequestSize::default()
     };
     let reserved = window_refusal("m", size, 131_072, true).to_string();
     assert!(matches!(
@@ -130,6 +131,7 @@ fn a_rejection_carries_the_servers_account_the_numbers_and_the_fix() {
         prompt_tokens: 110_000,
         counted_exactly: true,
         output_tokens: 8_192,
+        ..RequestSize::default()
     };
     let AppError::ModelRejected(too_large) = rejected(
         "llama.cpp",
@@ -177,6 +179,7 @@ fn a_size_refusal_of_an_estimated_prompt_claims_no_lower_server_limit() {
         prompt_tokens: 110_000,
         counted_exactly: false,
         output_tokens: 8_192,
+        ..RequestSize::default()
     };
     let estimated = rejected(
         "llama.cpp",
@@ -194,4 +197,41 @@ fn a_size_refusal_of_an_estimated_prompt_claims_no_lower_server_limit() {
         assert!(estimated.contains(expected), "{estimated}");
     }
     assert!(!estimated.contains("real per-request limit"), "{estimated}");
+}
+
+#[test]
+fn a_refusal_names_the_pictures_and_how_they_were_charged() {
+    let size = RequestSize {
+        prompt_tokens: 7_900,
+        counted_exactly: true,
+        output_tokens: 1_000,
+        image_tokens: 2_052,
+        image_count: 2,
+    };
+    let told = window_refusal("m", size, 8_192, true).to_string();
+    assert!(
+        told.contains(
+            "a prompt of 7900 (text counted exactly; 2052 tokens for 2 pictures estimated from \
+             the model's declared geometry)"
+        ),
+        "{told}"
+    );
+}
+
+#[test]
+fn a_pictures_bytes_are_not_request_text() {
+    let body = json!({
+        "messages": [{"role":"user","content":[
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},
+            {"type":"text","text":"What is this?"}
+        ]}],
+        "ollama": {"role":"user","content":"Hi","images":["BBBB"]},
+        "anthropic": {"type":"image","source":{"type":"base64","media_type":"image/png","data":"CCCC"}}
+    });
+    let texts = request_texts(&body);
+    assert!(texts.contains(&"What is this?"));
+    assert!(texts.contains(&"image/png"));
+    for bytes in ["data:image/png;base64,AAAA", "BBBB", "CCCC"] {
+        assert!(!texts.contains(&bytes), "{texts:?}");
+    }
 }

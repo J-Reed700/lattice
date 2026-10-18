@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::active_models::ActiveModels;
+use lattice_core::application::ports::download_manager::DownloadManager;
 use lattice_core::application::ports::{ModelCatalogPort, SystemInfoPort};
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
 
 /// Model management's registrar surface on `Container`.
@@ -24,19 +27,20 @@ impl Container {
         Arc::clone(self.system.system_info())
     }
 
-    pub fn downloaded_model_repository(
-        &self,
-    ) -> Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>
-    {
-        Arc::clone(self.ai.downloaded_model_repo())
+    /// The downloaded-model records.
+    pub fn downloaded_models(&self) -> Arc<dyn DownloadedModelRepository> {
+        self.ai.downloaded_models()
+    }
+
+    /// Which downloaded models are active for chat, embedding and utility.
+    pub fn active_models(&self) -> Arc<dyn ActiveModels> {
+        self.ai.active_models()
     }
 
     /// Get download manager service
     ///
     /// Returns the shared download manager instance from AIModule.
-    pub fn download_manager(
-        &self,
-    ) -> Result<Arc<dyn crate::features::download::manager::DownloadManager>> {
+    pub fn download_manager(&self) -> Result<Arc<dyn DownloadManager>> {
         Ok(Arc::clone(self.ai.download_manager()))
     }
 }

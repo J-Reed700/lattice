@@ -127,17 +127,18 @@ export function ModelRolesProvider({ children }: ProviderProps) {
           } else {
             await setActiveUtilityModel(modelId);
           }
-        } else if (role === 'learning') {
+        } else if (role === 'learning' || role === 'verifier') {
           // A reference in Settings, not a row flag: it can name an Ollama
           // tag as well as a file, and nothing else ever writes it.
-          let learningModel = null;
+          let modelRef = null;
           if (modelId !== null) {
             const model = models.find(candidate => candidate.model_id === modelId);
             if (!model) throw new Error('Model is no longer available. Please refresh and try again.');
-            learningModel = modelRefForRow(model, llmSettings);
-            if (!learningModel) throw new Error('Set the Ollama chat tag in Chat settings first.');
+            modelRef = modelRefForRow(model, llmSettings);
+            if (!modelRef) throw new Error('Set the Ollama chat tag in Chat settings first.');
           }
-          await updateSettings({ category: 'llm', updates: { learningModel } });
+          const key = role === 'learning' ? 'learningModel' : 'verifierModel';
+          await updateSettings({ category: 'llm', updates: { [key]: modelRef } });
         }
       } catch (error) {
         toast.error(`Failed to set ${role} role`, {

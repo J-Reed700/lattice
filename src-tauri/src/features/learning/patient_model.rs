@@ -181,6 +181,9 @@ impl LLMPort for PatientModel<'_> {
     fn supports_tool_calling(&self) -> bool {
         self.inner.supports_tool_calling()
     }
+    fn vision(&self) -> Option<lattice_core::domain::models::vision::VisionGeometry> {
+        self.inner.vision()
+    }
     fn provider_name(&self) -> &str {
         self.inner.provider_name()
     }

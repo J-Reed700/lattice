@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::models::model_ref::ModelRef;
+use crate::domain::models::vision::VisionGeometry;
+use crate::shared::error::{AppError, Result};
 
 use super::generation::{
     LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
@@ -95,6 +97,12 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub local_model_configs: BTreeMap<String, LocalModelConfigDto>,
 
+    /// What remote llama.cpp, Ollama and cloud models see pictures with, keyed
+    /// by `ModelRef::to_string()`. A cloud model with no entry falls back to its
+    /// provider's documented default; any other model without one cannot see.
+    #[serde(default)]
+    pub vision_declarations: BTreeMap<String, VisionDeclarationDto>,
+
     /// Speculative decoding for the bundled local server. Experimental, and
     /// applied only to a model that carries a multi-token-prediction head;
     /// every other model starts as it always has.
@@ -160,6 +168,13 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub learning_model: Option<ModelRef>,
 
+    /// The model that audits a lesson's claims against their cited passages
+    /// before it publishes, for courses that opt in (lesson claim review
+    /// §14). May name a cloud model. `None` means not set, and an opted-in
+    /// audit refuses until it is; it never borrows another role's model.
+    #[serde(default)]
+    pub verifier_model: Option<ModelRef>,
+
     /// Additional directories to scan for externally managed local models
     #[serde(default)]
     pub external_model_directories: Vec<String>,
@@ -173,6 +188,34 @@ pub struct LLMSettingsDto {
     /// evaluated separately from deterministic provenance and budget guarantees.
     #[serde(default = "default_bounded_memory")]
     pub bounded_conversation_memory: bool,
+}
+
+/// A user's statement that a model takes pictures, and how its encoder
+/// resizes and charges for them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VisionDeclarationDto {
+    pub enabled: bool,
+    pub geometry: VisionGeometry,
+}
+
+impl LLMSettingsDto {
+    /// The vision declaration saved for `model`, if any.
+    pub fn vision_declaration(&self, model: &ModelRef) -> Option<&VisionDeclarationDto> {
+        self.vision_declarations.get(&model.to_string())
+    }
+
+    /// Problems with the saved vision declarations, each a sentence for the
+    /// settings check.
+    pub fn vision_problems(&self) -> Vec<String> {
+        self.vision_declarations
+            .iter()
+            .filter_map(|(model, declaration)| {
+                let problem = declaration.geometry.problem()?;
+                Some(format!("vision declaration for {model}: {problem}"))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -192,6 +235,37 @@ impl Default for LlamaCppSettingsDto {
             auth_header_name: String::new(),
             auth_header_value: String::new(),
         }
+    }
+}
+
+impl LlamaCppSettingsDto {
+    /// The OpenAI-compatible base URL, ending in `/v1`, these settings point
+    /// at, or why they can't be used to reach a server: the URL must be plain
+    /// HTTP(S) without credentials, query or fragment, and the authentication
+    /// header fields must be set together or not at all.
+    pub fn validated_base_url(&self) -> Result<String> {
+        let raw = self.url.trim().trim_end_matches('/');
+        let parsed = url::Url::parse(raw)
+            .map_err(|_| AppError::InvalidConfig("Invalid llama.cpp server URL".into()))?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(AppError::InvalidConfig("Use an HTTP(S) server URL without credentials, query, or fragment; configure authentication in the header fields".into()));
+        }
+        if self.auth_header_name.trim().is_empty() ^ self.auth_header_value.trim().is_empty() {
+            return Err(AppError::InvalidConfig(
+                "Set both authentication header fields, or clear both".into(),
+            ));
+        }
+        Ok(if raw.ends_with("/v1") {
+            raw.to_owned()
+        } else {
+            format!("{raw}/v1")
+        })
     }
 }
 
@@ -453,6 +527,7 @@ impl Default for LLMSettingsDto {
             context_window: 131072,
             local_context_window: None,
             local_model_configs: BTreeMap::new(),
+            vision_declarations: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,
@@ -467,6 +542,7 @@ impl Default for LLMSettingsDto {
             tool_output: ToolOutputSettingsDto::default(),
             router: RouterSettingsDto::default(),
             learning_model: None,
+            verifier_model: None,
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
             bounded_conversation_memory: true,

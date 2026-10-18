@@ -22,7 +22,7 @@ pub async fn set_conversation_model_choice_impl(
         check_available(
             model,
             &settings.llm,
-            container.ai.downloaded_model_repo().as_ref(),
+            container.downloaded_models().as_ref(),
             |provider| Ok(keys.cloud_api_key(provider)?.is_some()),
         )
         .await?;

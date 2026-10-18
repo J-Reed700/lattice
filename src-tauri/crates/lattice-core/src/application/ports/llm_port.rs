@@ -19,14 +19,17 @@
 
 use crate::application::contracts::settings::LLMSettingsDto;
 use crate::domain::models::model_ref::{CloudProvider, ModelRef};
+use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+mod multimodal;
 mod tools;
 
+pub use multimodal::{ContentPart, ImagePart};
 pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
 
 /// Lazily resolves an optional model without exposing the application's container.
@@ -223,6 +226,13 @@ pub trait LLMPort: Send + Sync {
         false
     }
 
+    /// The geometry this model's vision encoder was declared with, or `None`
+    /// for a model that cannot see. Declared (catalog, Settings, provider
+    /// default), never probed.
+    fn vision(&self) -> Option<VisionGeometry> {
+        None
+    }
+
     /// The provider behind this port (e.g. "ollama", "llamacpp",
     /// "local-sidecar"), for logs and diagnostics.
     ///
@@ -251,6 +261,12 @@ pub enum CompletionInput {
     Message {
         role: String,
         content: String,
+    },
+    /// A message with pictures. Only `role == "user"` may carry images; every
+    /// adapter refuses any other role with `AppError::InvalidInput`.
+    Multimodal {
+        role: String,
+        parts: Vec<ContentPart>,
     },
     ToolCall {
         id: String,
@@ -532,6 +548,12 @@ impl CompletionRequest {
                 CompletionInput::Message { role, content } if role == "user" => {
                     Some(content.as_str())
                 }
+                CompletionInput::Multimodal { role, parts } if role == "user" => {
+                    parts.iter().rev().find_map(|part| match part {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        ContentPart::Image(_) => None,
+                    })
+                }
                 _ => None,
             })
             .unwrap_or_default()
@@ -615,6 +637,9 @@ pub enum ModelRole {
     Router,
     Learning,
     Maintenance,
+    /// The final grounded audit of a lesson's claims before it publishes
+    /// (lesson claim review §14). The one role that may name a cloud model.
+    Verifier,
 }
 
 /// Why a turn or job runs on the model it runs on.
@@ -629,6 +654,8 @@ pub enum ModelOrigin {
     RequestOverride,
     /// The Learning model set in Settings.
     LearningRole,
+    /// The Verifier model set in Settings.
+    VerifierRole,
 }
 
 /// Whether the work needs the model to call tools.

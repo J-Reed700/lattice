@@ -171,6 +171,11 @@ impl ContextPlan {
                     text.push('\n');
                     text.push_str(&arguments.to_string());
                 }
+                CompletionInput::Multimodal { role, .. } => {
+                    text.push_str(role);
+                    text.push('\n');
+                    text.push_str(&message.text());
+                }
                 CompletionInput::ToolResult { output, .. } => text.push_str(output),
                 CompletionInput::Native { value } => text.push_str(&value.to_string()),
             }
@@ -180,7 +185,8 @@ impl ContextPlan {
 
     /// Replace the estimated total with one counted by the provider's own
     /// tokenizer: `text_tokens` for [`Self::tokenizable_text`], plus the same
-    /// per-message framing and tool schemas the estimate charged. The pool
+    /// per-message framing and tool schemas the estimate charged, plus what
+    /// any attached pictures cost by their declared geometry. The pool
     /// figures stay the estimates selection ran on; the total, which decides
     /// whether the request fits, is now exact.
     pub fn settle_exact_count(&mut self, text_tokens: usize, tool_schema_tokens: usize) {
@@ -190,7 +196,13 @@ impl ContextPlan {
                     .len()
                     .saturating_mul(super::MESSAGE_FRAMING_TOKENS),
             )
-            .saturating_add(tool_schema_tokens);
+            .saturating_add(tool_schema_tokens)
+            .saturating_add(
+                self.messages
+                    .iter()
+                    .map(CompletionInput::image_tokens)
+                    .sum::<usize>(),
+            );
         self.accounting.accounting_method = Some(TokenAccounting::Exact);
     }
 }

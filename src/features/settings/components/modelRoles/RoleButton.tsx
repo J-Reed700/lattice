@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { useModelRoles } from './ModelRolesContext';
-import { canModelFulfillRole, type RoleDescriptor } from './roleConfig';
+import { canModelFulfillRole, isReferenceRole, type RoleDescriptor } from './roleConfig';
 
 
 interface RoleButtonProps {
@@ -38,9 +38,9 @@ export function RoleButton({ model, role }: RoleButtonProps) {
   }
 
   const isActive = role.isActive(model, llmSettings);
-  // Chat writes the provider and Learning writes a model reference, so both
-  // wait for the settings they write into.
-  const waitsForSettings = (role.id === 'chat' && !chatProvider) || (role.id === 'learning' && !llmSettings);
+  // Chat writes the provider, and Learning and Verifier write a model
+  // reference, so each waits for the settings it writes into.
+  const waitsForSettings = (role.id === 'chat' && !chatProvider) || (isReferenceRole(role.id) && !llmSettings);
 
   const handleClick = async () => {
     if (pending) return;

@@ -397,7 +397,8 @@ Nothing else. A 9B model does not need examples here; the tool result's `markdow
 
 ## 9. Vision
 
-No. The chat sidecar runs without `--mmproj`; `ocr_port.rs` explains the projector cannot be shared with the chat process, and no chat request type carries image parts. Relevance therefore rests on (a) Commons search ranking with `filetype:bitmap`, (b) the model choosing among candidates by caption and title (the result carries both), and (c) the caption being the Commons description, not the query. The design does not depend on a relevance check and gains one for free if a vision-capable chat recipe ever lands (`find_and_store` could then call it before storing).
+Superseded by `2026-10-17-chat-vision.md`: a declared per-model vision capability, `CompletionInput::Multimodal`, attached pictures the model sees, and a side-request relevance pick for `find_image` candidates (its §9).
+Until that lands, relevance rests on Commons ranking, the model choosing by caption and title, and the caption being the Commons description.
 
 ## 10. Testing
 
@@ -421,7 +422,7 @@ Frontend (`npx vitest run <paths>`):
 - `src/features/chat/controller/__tests__/…`: stream `images` merge into the optimistic message; `metadata.images` parsed on load.
 - `src/utils/__tests__/assistantMarkdown.test.ts`: `hasUnclosedFence`.
 
-UI rig: copy `~/.claude/projects/-Users-josh-Code-lattice-temp/ui-rig/` (`shots.mjs`, `tauri-mock.js`, `typeof.mjs`, `contact-sheet.mjs`) into the scratchpad, symlink this worktree's `node_modules`, run vite from this worktree root. Add fixtures: a conversation whose last answer has a flowchart and a sequence diagram (one with a deliberate syntax error), and one with a picture whose `metadata.images` points at a fixture file; extend `tauri-mock.js` so `convertFileSrc(path, 'lattice-image')` returns a vite-served fixture PNG. No new Tauri commands exist, so no new IPC mocks beyond the stream event shape. Shoot both themes; check the contact sheet for the figure border, caption contrast and lightbox.
+UI screenshots (headless browser with mocked Tauri IPC), run against vite from the repo root. Add fixtures: a conversation whose last answer has a flowchart and a sequence diagram (one with a deliberate syntax error), and one with a picture whose `metadata.images` points at a fixture file; extend `tauri-mock.js` so `convertFileSrc(path, 'lattice-image')` returns a vite-served fixture PNG. No new Tauri commands exist, so no new IPC mocks beyond the stream event shape. Shoot both themes; check the contact sheet for the figure border, caption contrast and lightbox.
 
 ## 11. File-by-file change list
 
@@ -449,14 +450,14 @@ Backend, conversation + function_calling: `function_calling/registry.rs` (defini
 
 Generated: `src/lib/bindings.ts` (`ChatImageDto`, `ImageOrigin`, `TurnStepKind`, `ChatStreamEventDto`) via `export_bindings`; `src-tauri/gen/schemas/*` unchanged (no new commands, no capability change).
 
-Frontend: `src/types/conversation.ts` (`ChatImageSchema`, `images`, `'find_image'` step kind), `src/features/chat/controller/messageMetadata.ts`, `src/features/chat/controller/useConversationTurnLifecycle.ts`, `src/features/chat/images/chatImageUrl.ts` (new), `src/components/TiptapEditor/extensions/chatImage.tsx` (new), `extensions/index.ts`, `TiptapViewer.tsx` (`images`, `imageCitationNumbers`), `Message.tsx` (compute and pass), `tiptap.css`, `src/features/chat/components/turn/{research.ts,StepRow.tsx}`, UI-rig fixtures (scratchpad, copied back to the rig folder if improved).
+Frontend: `src/types/conversation.ts` (`ChatImageSchema`, `images`, `'find_image'` step kind), `src/features/chat/controller/messageMetadata.ts`, `src/features/chat/controller/useConversationTurnLifecycle.ts`, `src/features/chat/images/chatImageUrl.ts` (new), `src/components/TiptapEditor/extensions/chatImage.tsx` (new), `extensions/index.ts`, `TiptapViewer.tsx` (`images`, `imageCitationNumbers`), `Message.tsx` (compute and pass), `tiptap.css`, `src/features/chat/components/turn/{research.ts,StepRow.tsx}`, UI screenshot fixtures.
 
 ## 12. PR split and build tracks
 
 PR 1 `feat: render mermaid diagrams in chat answers` — frontend only, Track A, wave 1.
 PR 2 `feat: web pictures in chat answers (find_image, lattice-image scheme)` — Tracks B and C in wave 1, Track A in wave 2 (after PR 1 is merged or at least its files are final, since the same frontend files move again). Both branch from `feat/chat-images-diagrams`; PR 2 builds on PR 1.
 
-At most three agents at once; each owns the files listed and touches no other. Every cargo invocation is `lockf -k /Users/josh/Code/.lattice-cargo.lock cargo …` with `--manifest-path /Users/josh/Code/lattice-images/src-tauri/Cargo.toml` and the worktree's own target dir; `cargo check` and targeted `--lib` tests only, no integration tests until the end, no `cargo fmt` (use `rustfmt <file>` on changed files). Frontend commands run from `/Users/josh/Code/lattice-images`.
+At most three agents at once; each owns the files listed and touches no other. Rust work runs `cargo check` and targeted `--lib` tests only, integration tests once at the end; changed files are formatted with `rustfmt <file>` (not `cargo fmt`, which rewrites files other tracks own). Frontend commands run from the repo root.
 
 Track A — frontend (wave 1: PR 1; wave 2: PR 2 frontend)
 

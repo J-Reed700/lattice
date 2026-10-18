@@ -186,3 +186,79 @@ fn the_learning_model_loads_with_or_without_the_field() {
         chosen
     );
 }
+
+#[test]
+fn vision_declarations_default_empty_and_name_a_degenerate_geometry() {
+    use crate::domain::models::model_ref::ModelRef;
+    use crate::domain::models::vision::{VisionGeometry, VisionPreset};
+    let mut saved = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+    saved.as_object_mut().unwrap().remove("visionDeclarations");
+    let mut llm: LLMSettingsDto = serde_json::from_value(saved).unwrap();
+    assert!(llm.vision_declarations.is_empty());
+    let model = ModelRef::LlamaCpp {
+        model: "qwen-vl".into(),
+    };
+    llm.vision_declarations.insert(
+        model.to_string(),
+        VisionDeclarationDto {
+            enabled: true,
+            geometry: VisionPreset::Qwen3Vl.geometry(),
+        },
+    );
+    assert!(llm.vision_problems().is_empty());
+    assert_eq!(
+        llm.vision_declaration(&model).map(|d| d.geometry),
+        Some(VisionPreset::Qwen3Vl.geometry())
+    );
+    let json = serde_json::to_value(&llm.vision_declarations).unwrap();
+    assert_eq!(json["llamacpp:qwen-vl"]["geometry"]["kind"], "grid");
+    llm.vision_declarations.insert(
+        "ollama:llava".into(),
+        VisionDeclarationDto {
+            enabled: true,
+            geometry: VisionGeometry::Fixed { side: 0, tokens: 1 },
+        },
+    );
+    assert_eq!(
+        llm.vision_problems(),
+        ["vision declaration for ollama:llava: a fixed geometry needs a side above 0"]
+    );
+}
+
+#[test]
+fn a_local_models_vision_switch_defaults_to_unset() {
+    let config: LocalModelConfigDto = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert_eq!(config.vision, None);
+}
+
+/// The Verifier model is unset until the user chooses one, loads unset from
+/// a file written before the field existed, and keeps a cloud model through
+/// the round trip under `llm.verifierModel`.
+#[test]
+fn the_verifier_model_loads_with_or_without_the_field() {
+    use crate::domain::models::model_ref::{CloudProvider, ModelRef};
+
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let llm = value
+        .pointer_mut("/llm")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("llm settings are serialized under llm");
+    assert_eq!(llm.remove("verifierModel"), Some(serde_json::Value::Null));
+    let loaded: SettingsDto = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(loaded.llm.verifier_model, None);
+
+    let chosen = serde_json::json!({"kind": "cloud", "provider": "anthropic", "model": "claude-x"});
+    value["llm"]["verifierModel"] = chosen.clone();
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        loaded.llm.verifier_model,
+        Some(ModelRef::Cloud {
+            provider: CloudProvider::Anthropic,
+            model: "claude-x".into()
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap()["llm"]["verifierModel"],
+        chosen
+    );
+}

@@ -43,6 +43,7 @@ use std::time::Duration;
 
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
 use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
+use lattice_core::domain::models::selection::EmbeddingCompatibility;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::http::reqwest_client_builder;
 
@@ -554,13 +555,13 @@ impl HuggingFaceModel {
         // the user has wasted bandwidth on a multi-GB transfer. The
         // catalog must promise only what the runtime can actually deliver.
         let embedding_compatibility = if self.is_embedding_model() {
-            let arch_compat = crate::features::embedding::compatibility::detect_from_tags(&tags);
+            let arch_compat = EmbeddingCompatibility::from_tags(&tags);
             let has_weights = self.select_preferred_weights_file().is_some();
             let final_compat = match arch_compat {
-                crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible {
+                EmbeddingCompatibility::Compatible {
                     architecture,
                 } if !has_weights => {
-                    crate::features::embedding::compatibility::EmbeddingCompatibility::Incompatible {
+                    EmbeddingCompatibility::Incompatible {
                         architecture,
                         reason: "Repo doesn't ship a single model.safetensors or pytorch_model.bin at its root. The local Candle runtime cannot load sharded weights yet — look for a single-file upstream or conversion of this model.".to_string(),
                     }

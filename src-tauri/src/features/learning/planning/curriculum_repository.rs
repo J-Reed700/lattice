@@ -30,6 +30,8 @@ pub(in crate::features::learning) use generation_recovery::{
 mod diagnostics;
 mod jobs;
 mod preparation;
+mod programs;
+pub(crate) use programs::ProgramVerifierAudit;
 
 use diagnostics::decode_diagnostic_row;
 

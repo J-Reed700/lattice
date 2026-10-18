@@ -1,23 +1,26 @@
 /**
  * Role configuration for model assignment.
  *
- * A single source of truth for the four roles a model can fulfill:
+ * A single source of truth for the five roles a model can fulfill:
  * - `chat`      — primary LLM used for user-facing conversation
  * - `utility`   — fast small model for HyDE expansion, routing, intent
  * - `embedding` — semantic vector generator for search
  * - `learning`  — the model every learning job runs on; never a chat's
+ * - `verifier`  — audits a lesson's claims before it publishes, for courses
+ *                 that opt in; the one role that may be a cloud model
  *
  * Adding a role is a one-object append here: every consumer picks it up.
- * Chat, utility and embedding live as flags on the model rows; Learning lives
- * in Settings as a model reference, which can name an Ollama tag or a
- * llama.cpp model as well as a downloaded file.
+ * Chat, utility and embedding live as flags on the model rows; Learning and
+ * Verifier live in Settings as model references, which can name an Ollama
+ * tag or a llama.cpp model as well as a downloaded file (and, for the
+ * Verifier, a cloud model).
  */
 
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import { modelRefForRow, sameModelRef } from '@/utils/chatModelSelection';
 
-export type RoleId = 'chat' | 'utility' | 'embedding' | 'learning';
+export type RoleId = 'chat' | 'utility' | 'embedding' | 'learning' | 'verifier';
 
 export interface RoleDescriptor {
   id: RoleId;
@@ -49,6 +52,16 @@ export function isChatModelSelected(
 /** The row names the model Settings saved as the Learning model. */
 export function isLearningModel(model: DownloadedModel, settings: LLMSettings | undefined): boolean {
   return sameModelRef(settings?.learningModel, modelRefForRow(model, settings));
+}
+
+/** The row names the model Settings saved as the Verifier model. */
+export function isVerifierModel(model: DownloadedModel, settings: LLMSettings | undefined): boolean {
+  return sameModelRef(settings?.verifierModel, modelRefForRow(model, settings));
+}
+
+/** Roles saved in Settings as a model reference rather than a row flag. */
+export function isReferenceRole(role: RoleId): role is 'learning' | 'verifier' {
+  return role === 'learning' || role === 'verifier';
 }
 
 export const ROLES: ReadonlyArray<RoleDescriptor> = [
@@ -91,6 +104,16 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     isActive: isLearningModel,
     allowedTypes: ['language_model', 'chat'],
     hint: 'Prepares lessons, outlines, practice and study decks. Needs a large context window.',
+  },
+  {
+    id: 'verifier',
+    label: 'Verifier',
+    assignLabel: 'Set as Verifier',
+    pendingLabel: 'Setting…',
+    activeLabel: 'Active (Verifier)',
+    isActive: isVerifierModel,
+    allowedTypes: ['language_model', 'chat', 'cloud'],
+    hint: 'Audits every claim of a lesson against its cited passages before it publishes. May be a cloud model.',
   },
 ];
 

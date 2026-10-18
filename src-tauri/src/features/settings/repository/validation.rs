@@ -197,7 +197,8 @@ impl SettingsRepository {
             )
             .into_iter()
             .chain(settings.llm.thinking_sampling.problems("thinking_sampling"))
-            .chain(settings.llm.speculative_decoding.problem());
+            .chain(settings.llm.speculative_decoding.problem())
+            .chain(settings.llm.vision_problems());
         for problem in generation_problems {
             result.add_error("llm", problem);
         }
@@ -215,9 +216,7 @@ impl SettingsRepository {
                 result.add_error("llm", "model cannot be empty".to_string());
             }
         }
-        if let Err(error) =
-            crate::features::llm::llama_cpp::validate_connection(&settings.llm.llama_cpp)
-        {
+        if let Err(error) = settings.llm.llama_cpp.validated_base_url() {
             result.add_error("llm", error.to_string());
         }
         let auth_name = settings.llm.ollama_auth_header_name.trim();

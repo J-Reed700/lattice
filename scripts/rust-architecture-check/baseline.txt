@@ -18,8 +18,10 @@
 # Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
 # then split it by responsibility.
 #
-# A feature edge that is one feature built on a lower-level one may instead be
-# allowed in scripts/rust-architecture-check/feature-graph.txt, one
+# feature-edge is held at zero and never appears here: a reference from one
+# feature into another fails. Depend on a core port or move the code; only an
+# edge that is one feature built on a lower-level one may instead be allowed in
+# scripts/rust-architecture-check/feature-graph.txt, one
 # `allow features::<a> features::<b>  # <reason>` line each. Its references
 # leave feature-edge but still count toward feature-cycle. To see every site
 # of a rule, baselined or not:
@@ -28,7 +30,8 @@
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another,
-#                                                         except edges in feature-graph.txt
+#                                                         except edges in feature-graph.txt; held at
+#                                                         zero, so never listed here
 #   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
 #                                                         its strongly connected component
 #   feature-reexport <file> <lattice_core|features::b>    a `use` in a feature, visible outside it,
@@ -44,19 +47,7 @@
 #   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
 
-feature-edge features::embedding features::download 2
-feature-edge features::file features::indexing 4
-feature-edge features::initialization features::download 1
-feature-edge features::llm features::download 9
-feature-edge features::llm features::embedding 2
-feature-edge features::llm features::model_management 2
-feature-edge features::model_management features::download 21
-feature-edge features::model_management features::embedding 4
-feature-edge features::settings features::llm 2
-feature-edge features::transcription features::download 2
-
 feature-reexport features/conversation/chat/ports.rs lattice_core 2
-feature-reexport features/embedding/compatibility.rs lattice_core 1
 feature-reexport features/favorites/dto.rs lattice_core 1
 feature-reexport features/file/commands.rs lattice_core 2
 feature-reexport features/indexing/outcome.rs lattice_core 1

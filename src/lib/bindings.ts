@@ -358,6 +358,48 @@ async getLearningLessonEvidence(programId: string, lessonId: string) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningProgramVerifierAudit(programId: string) : Promise<Result<LearningVerifierAuditDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_program_verifier_audit", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Turns the course's audit on or off. Turning it on for a cloud Verifier
+ * needs `consent_confirmed`: the user confirmed the dialog naming the
+ * provider. Turning it off clears the consent and stops a running audit at
+ * its next batch.
+ */
+async setLearningProgramVerifierAudit(programId: string, on: boolean, webSearch: boolean, consentConfirmed: boolean) : Promise<Result<LearningVerifierAuditDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_learning_program_verifier_audit", { programId, on, webSearch, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningLessonAudit(programId: string, lessonId: string) : Promise<Result<LearningLessonAuditDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_audit", { programId, lessonId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Audits a lesson on demand ("Audit this lesson now"), for a course with
+ * the audit on. A dispute sends a ready lesson back to Needs review.
+ */
+async auditLearningLessonNow(programId: string, lessonId: string, operationId: string) : Promise<Result<LearningLessonAuditResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|audit_learning_lesson_now", { programId, lessonId, operationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningOutlineEvidence(programId: string) : Promise<Result<LearningOutlineEvidenceDto | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_outline_evidence", { programId }) };
@@ -6657,6 +6699,12 @@ localContextWindow: number | null;
  */
 localModelConfigs: { [key in string]: LocalModelConfigDto };
 /**
+ * What remote llama.cpp, Ollama and cloud models see pictures with, keyed
+ * by `ModelRef::to_string()`. A cloud model with no entry falls back to its
+ * provider's documented default; any other model without one cannot see.
+ */
+visionDeclarations: { [key in string]: VisionDeclarationDto };
+/**
  * Speculative decoding for the bundled local server. Experimental, and
  * applied only to a model that carries a multi-token-prediction head;
  * every other model starts as it always has.
@@ -6725,6 +6773,13 @@ router: RouterSettingsDto;
  */
 learningModel: ModelRef | null;
 /**
+ * The model that audits a lesson's claims against their cited passages
+ * before it publishes, for courses that opt in (lesson claim review
+ * §14). May name a cloud model. `None` means not set, and an opted-in
+ * audit refuses until it is; it never borrows another role's model.
+ */
+verifierModel: ModelRef | null;
+/**
  * Additional directories to scan for externally managed local models
  */
 externalModelDirectories: string[];
@@ -6784,6 +6839,24 @@ export type LearningAttemptDto = { id: string; moduleId: string; lessonId: strin
  * Module tests only: the share of the module the test covered.
  */
 coverage: LearningModuleTestCoverageDto | null }
+export type LearningAuditOutcome =
+/**
+ * Every claim carries a current Verifier verdict.
+ */
+"completed" |
+/**
+ * The audit refused or stopped: `message` says why, `fix` what to do.
+ */
+"stopped" |
+/**
+ * A provider or network failure; the next audit continues where this
+ * one stopped.
+ */
+"deferred"
+/**
+ * Tokens a course's audits sent and received, as the provider reported.
+ */
+export type LearningAuditUsageDto = { audits: number; inputTokens: number; outputTokens: number }
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
 export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
 export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
@@ -6923,6 +6996,41 @@ export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
 export type LearningLabRunStatus = "passed" | "failed" | "timed_out" | "cancelled" | "runtime_unavailable"
 export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; available: boolean; version: string | null; reason: string | null }
+/**
+ * A lesson's latest audit: "Audit: 7 batches · 118,420 tokens sent ·
+ * 6,140 received · Anthropic".
+ */
+export type LearningLessonAuditDto = { lessonId: string; state: LearningLessonAuditState;
+/**
+ * The Verifier that audited, as its checks name it (`cloud:anthropic/claude-x`).
+ */
+verifierModel: string; batchesDone: number;
+/**
+ * Batches planned by the latest pass; 0 before the first batch.
+ */
+batchesPlanned: number; inputTokens: number; outputTokens: number;
+/**
+ * The last batch's error when it failed, sanitized.
+ */
+lastError: string | null;
+/**
+ * Why web search was not used, when it was allowed.
+ */
+webNote: string | null; startedAt: number; finishedAt: number | null }
+/**
+ * What "Audit this lesson now" did.
+ */
+export type LearningLessonAuditResultDto = { outcome: LearningAuditOutcome; message: string | null; fix: string | null;
+/**
+ * Claims the Verifier disputes, now waiting in the review.
+ */
+disputes: number;
+/**
+ * Whether the audit lets the lesson publish; a dispute sends a ready
+ * lesson back to Needs review.
+ */
+publishable: boolean; audit: LearningLessonAuditDto | null }
+export type LearningLessonAuditState = "running" | "completed" | "stopped"
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
 /**
@@ -7238,6 +7346,43 @@ export type LearningTangentDto = { conversationId: string; programId: string; pr
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
 export type LearningTutorRequestKind = "hint" | "question" | "critique"
 /**
+ * The audit switch of one course, with what turning it on would send where.
+ */
+export type LearningVerifierAuditDto = { programId: string; on: boolean;
+/**
+ * The Verifier may search the web during this course's audits.
+ */
+webSearch: boolean;
+/**
+ * When sending lesson text to `consentProvider` was confirmed.
+ */
+consentAt: number | null;
+/**
+ * The cloud provider consented to (`openai`, `anthropic`, `google`).
+ */
+consentProvider: string | null;
+/**
+ * The Verifier set in Settings → Models; null when none is.
+ */
+verifier: ModelRef | null;
+/**
+ * Where an audit sends lesson text, in words: "Anthropic (claude-x)",
+ * "your llama.cpp server (qwen3.5-27b)". Null when no Verifier is set.
+ */
+destination: string | null;
+/**
+ * The provider whose name the consent dialog must show and the user
+ * must confirm before the switch turns on; null for a Verifier that is
+ * not a cloud model.
+ */
+consentRequiredFor: string | null;
+/**
+ * Why an audit that is on would refuse before sending: consent for
+ * another provider ("Consent was for Anthropic; confirm again for
+ * OpenAI"), or no Verifier set.
+ */
+blocked: string | null; usage: LearningAuditUsageDto }
+/**
  * The last learning work refused because the Learning model's window was
  * too small, while that model has not covered the window since. Settings →
  * Models shows it beside the model that holds the Learning role.
@@ -7366,7 +7511,13 @@ seed?: number | null;
  * Quantize the KV cache (`-ctk q8_0 -ctv q8_0`) to roughly halve KV cache
  * memory usage and allow a larger context window to fit in memory.
  */
-kvCacheQuantization?: boolean }
+kvCacheQuantization?: boolean;
+/**
+ * Whether the model is started with its vision projector. `None` means on
+ * once the catalog's projector is downloaded; `Some(false)` keeps a model
+ * with a projector text-only.
+ */
+vision?: boolean | null }
 export type MatchLearningSourceSelectorRequestDto = { programId: string; selectorId: string; targetVersionId: string }
 /**
  * One quoted passage behind a memory item.
@@ -7583,7 +7734,11 @@ export type ModelOrigin =
 /**
  * The Learning model set in Settings.
  */
-"learning_role"
+"learning_role" |
+/**
+ * The Verifier model set in Settings.
+ */
+"verifier_role"
 /**
  * Model recommendation DTO for frontend.
  */
@@ -9285,6 +9440,38 @@ verification: JsonValue;
  */
 turn?: TurnRecordDto | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
+/**
+ * A user's statement that a model takes pictures, and how its encoder
+ * resizes and charges for them.
+ */
+export type VisionDeclarationDto = { enabled: boolean; geometry: VisionGeometry }
+/**
+ * How a model's vision encoder takes a picture: what size it is resized to
+ * and what that costs in prompt tokens. Declared per model (catalog, Settings
+ * or provider default), never measured from a server.
+ */
+export type VisionGeometry =
+/**
+ * Dynamic resolution on a token grid (Qwen2-VL, Qwen2.5-VL, Qwen3-VL and
+ * the Qwen3.5+ chat models built on them). The picture is resized so both
+ * sides are multiples of `token_side` pixels (vision patch × spatial
+ * merge: 28 for Qwen2/2.5-VL, 32 for Qwen3-VL and later) with its area
+ * held within `min_pixels..=max_pixels`; one token per `token_side²`
+ * square plus `overhead_tokens` (vision start/end markers).
+ */
+{ kind: "grid"; token_side: number; min_pixels: number; max_pixels: number; overhead_tokens: number } |
+/**
+ * A fixed input (SigLIP-style encoders: Gemma 3/4, PaliGemma, most LLaVA
+ * builds): resized to fit `side`×`side`, always `tokens` tokens.
+ */
+{ kind: "fixed"; side: number; tokens: number } |
+/**
+ * Tiled encoders (OpenAI "high" detail, Gemini, Llama 3.2 Vision): the
+ * picture is scaled so its long side is at most `max_side`, cut into
+ * `tile_side` tiles (at most `max_tiles`), `tokens_per_tile` each plus
+ * `base_tokens` for the overview.
+ */
+{ kind: "tiles"; tile_side: number; tokens_per_tile: number; base_tokens: number; max_tiles: number; max_side: number }
 /**
  * Response from web ingestion command
  */

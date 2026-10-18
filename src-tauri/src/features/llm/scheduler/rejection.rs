@@ -22,15 +22,20 @@ const ECHO_RUN_WORDS: usize = 6;
 const SERVER_WORDS_SHOWN: usize = 240;
 
 /// What one request asks of the context window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct RequestSize {
-    /// The prompt's tokens.
+    /// The prompt's tokens, pictures included.
     pub prompt_tokens: usize,
-    /// Whether the backend's tokenizer counted the prompt. Otherwise
-    /// `prompt_tokens` is the estimate.
+    /// Whether the backend's tokenizer counted the prompt's text. Otherwise
+    /// the text is the estimate. Pictures are never counted by a tokenizer.
     pub counted_exactly: bool,
     /// Tokens reserved for the answer.
     pub output_tokens: u32,
+    /// What the prompt's pictures cost by the model's declared geometry,
+    /// already inside `prompt_tokens`.
+    pub image_tokens: usize,
+    /// How many pictures the prompt carries.
+    pub image_count: usize,
 }
 
 impl RequestSize {
@@ -40,12 +45,25 @@ impl RequestSize {
             .saturating_add(usize::try_from(self.output_tokens).unwrap_or(usize::MAX))
     }
 
-    fn counted(&self) -> &'static str {
-        if self.counted_exactly {
+    /// How the prompt was measured, naming the pictures when it has any.
+    fn counted(&self) -> String {
+        let text = if self.counted_exactly {
             "counted exactly"
         } else {
             "estimated"
+        };
+        if self.image_count == 0 {
+            return text.into();
         }
+        let pictures = if self.image_count == 1 {
+            "1 picture".to_string()
+        } else {
+            format!("{} pictures", self.image_count)
+        };
+        format!(
+            "text {text}; {} tokens for {pictures} estimated from the model's declared geometry",
+            self.image_tokens
+        )
     }
 
     fn describe(&self) -> String {
@@ -152,12 +170,21 @@ pub(crate) fn digest(server: &str) -> String {
 
 /// Every string a request body carries: messages, tool schemas, arguments.
 /// Whatever a server quotes back can only have come from one of them.
+/// Pictures are skipped: a data URI (OpenAI-compatible), Ollama's `images`
+/// list and Anthropic's base64 `data` are bytes no server quotes as words.
 pub(crate) fn request_texts(body: &Value) -> Vec<&str> {
     fn collect<'a>(value: &'a Value, texts: &mut Vec<&'a str>) {
         match value {
+            Value::String(text) if text.starts_with("data:") => {}
             Value::String(text) => texts.push(text),
             Value::Array(items) => items.iter().for_each(|item| collect(item, texts)),
-            Value::Object(fields) => fields.values().for_each(|item| collect(item, texts)),
+            Value::Object(fields) => {
+                let base64_source = fields.get("type").and_then(Value::as_str) == Some("base64");
+                fields
+                    .iter()
+                    .filter(|(key, _)| *key != "images" && !(base64_source && *key == "data"))
+                    .for_each(|(_, item)| collect(item, texts));
+            }
             _ => {}
         }
     }

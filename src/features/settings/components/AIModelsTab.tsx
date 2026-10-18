@@ -6,7 +6,8 @@
  * Learning). Chat selection also updates the LLM provider, which takes
  * precedence over the stored local model assignment; this is the app-wide
  * default every chat on the default follows. Learning is a model reference
- * in Settings. llama.cpp uses its saved connection.
+ * in Settings. llama.cpp uses its saved connection. Each connected or cloud
+ * model also carries its vision declaration.
  *
  * Layout: hairline rows. {@link ROLES} drives the toggles;
  * `ModelRolesContext` holds the shared state and mutations.
@@ -18,9 +19,13 @@ import { ArrowUpRight, HardDrive, Network } from 'lucide-react';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { PageHeader, SettingsSection, SidebarSearch, TooltipProvider } from '@/components/ui';
+import type { ModelRef } from '@/lib/bindings';
+import type { LLMSettings } from '@/types/api/settings';
+import { isCloudProvider, sameModelRef } from '@/utils/chatModelSelection';
 import { configuredConnections } from '@/utils/configuredConnections';
 
 import { useSettingsQuery } from '../hooks/useSettingsQuery';
+import { CloudMetaRow } from './modelRoles/CloudMetaRow';
 import { LearningModelBanner } from './modelRoles/LearningModelBanner';
 import { LlamaCppMetaRow } from './modelRoles/LlamaCppMetaRow';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
@@ -30,11 +35,30 @@ import { OllamaMetaRow } from './modelRoles/OllamaMetaRow';
 import { SECONDARY_BUTTON_CLASS } from './settingsStyles';
 
 
+type CloudModelRef = Extract<ModelRef, { kind: 'cloud' }>;
+
+/** Each configured cloud model once, with the roles it fills. */
+function configuredCloudModels(llm: LLMSettings | undefined): Array<{ ref: CloudModelRef; roles: string[] }> {
+  const rows: Array<{ ref: CloudModelRef; roles: string[] }> = [];
+  const add = (ref: CloudModelRef, role: string) => {
+    const existing = rows.find((row) => sameModelRef(row.ref, ref));
+    if (existing) existing.roles.push(role);
+    else rows.push({ ref, roles: [role] });
+  };
+  if (llm && isCloudProvider(llm.provider) && llm.model.trim()) {
+    add({ kind: 'cloud', provider: llm.provider, model: llm.model.trim() }, 'Chat model');
+  }
+  if (llm?.learningModel?.kind === 'cloud') add(llm.learningModel, 'Learning model');
+  if (llm?.verifierModel?.kind === 'cloud') add(llm.verifierModel, 'Verifier model');
+  return rows;
+}
+
 function AIModelsTabContent() {
   const { localModels, isLoading, error, refresh } = useModelRoles();
   const { data: settings } = useSettingsQuery();
   const [searchQuery, setSearchQuery] = useState('');
   const connections = configuredConnections(settings?.llm);
+  const cloudModels = configuredCloudModels(settings?.llm);
 
   const filteredLocal = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -105,10 +129,13 @@ function AIModelsTabContent() {
         />
       )}
       </SettingsSection>
-      {!isLoading && (connections.llamaCpp || connections.ollama) ? (
+      {!isLoading && (connections.llamaCpp || connections.ollama || cloudModels.length > 0) ? (
         <SettingsSection title="Connected servers" description="Use models served by your configured connections." actions={<Network className="h-4 w-4 text-text-muted" aria-hidden="true" />}>
           {connections.llamaCpp ? <LlamaCppMetaRow /> : null}
           {connections.ollama ? <OllamaMetaRow /> : null}
+          {cloudModels.map(({ ref, roles }) => (
+            <CloudMetaRow key={`${ref.provider}/${ref.model}`} modelRef={ref} roles={roles} />
+          ))}
         </SettingsSection>
       ) : null}
     </>
