@@ -11,6 +11,7 @@ pub mod dto;
 pub mod gc;
 pub mod job;
 pub mod protocol;
+mod reference;
 pub mod repository;
 pub mod store;
 

@@ -177,6 +177,15 @@ impl Container {
         Arc::clone(&self.web_page_snapshots)
     }
 
+    /// Frozen copies of pages saved as learning references, as the port the
+    /// learning feature asks for them through.
+    pub fn reference_snapshots(
+        &self,
+    ) -> Arc<dyn lattice_core::application::ports::ReferenceSnapshotPort> {
+        Arc::clone(&self.web_page_snapshots)
+            as Arc<dyn lattice_core::application::ports::ReferenceSnapshotPort>
+    }
+
     /// Pictures in chat answers, as the port the conversation feature
     /// finds, attaches and releases them through.
     pub fn chat_images(&self) -> Arc<dyn lattice_core::application::ports::ChatImagesPort> {
