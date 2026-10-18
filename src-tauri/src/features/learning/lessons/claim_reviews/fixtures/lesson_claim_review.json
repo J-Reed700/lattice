@@ -1,0 +1,207 @@
+{
+  "lessonId": "lesson-1",
+  "programId": "program-1",
+  "state": "needs_review",
+  "revision": 7,
+  "counts": {
+    "verified": 12,
+    "confirmed": 3,
+    "generalKnowledge": 2,
+    "queued": 1,
+    "open": 0,
+    "removed": 1
+  },
+  "pass": 3,
+  "stopReason": null,
+  "claims": [
+    {
+      "claimId": "claim-1",
+      "location": {
+        "unitIndex": 0,
+        "unitKind": "block",
+        "unitTitle": "Phase changes",
+        "field": "body",
+        "quote": "Water boils at 100 °C.",
+        "span": [
+          42,
+          65
+        ]
+      },
+      "statement": "Water boils at 100 °C at sea level.",
+      "state": {
+        "state": "queued"
+      },
+      "verdictKind": {
+        "kind": "contradicted"
+      },
+      "reason": "The passage gives 99.97 °C at one atmosphere.",
+      "evidence": [
+        {
+          "passage": {
+            "sourceVersionId": "v1",
+            "title": "Thermodynamics, ch. 4",
+            "url": "https://example.org/thermo",
+            "text": "At one atmosphere, pure water boils at 99.97 °C.",
+            "startByte": 120,
+            "endByte": 184,
+            "retrievalKind": "vector"
+          },
+          "addedBy": "user"
+        }
+      ],
+      "supportingQuote": null,
+      "research": [
+        {
+          "queries": [
+            "boiling point of water at sea level"
+          ],
+          "sourcesAdded": [
+            {
+              "sourceVersionId": "v2",
+              "title": "Steam tables",
+              "url": null,
+              "addedBy": "research"
+            }
+          ],
+          "passagesFound": 2,
+          "at": 1760000002000
+        }
+      ],
+      "repairs": [
+        {
+          "attempt": 1,
+          "escalated": false,
+          "before": "Water boils at 100 °C.",
+          "after": "Water boils at about 100 °C.",
+          "outcome": {
+            "outcome": "rewritten"
+          },
+          "at": 1760000003000
+        },
+        {
+          "attempt": 2,
+          "escalated": true,
+          "before": "Water boils at about 100 °C.",
+          "after": null,
+          "outcome": {
+            "outcome": "superseded_by_user"
+          },
+          "at": 1760000004000
+        }
+      ],
+      "executions": [],
+      "human": null,
+      "availableActions": [
+        "confirm",
+        "edit",
+        "remove",
+        "attach_evidence",
+        "research_with_hint"
+      ],
+      "history": [
+        {
+          "ordinal": 0,
+          "actor": "machine",
+          "at": 1760000000000,
+          "jobId": "job-1",
+          "appVersion": "1.0.0",
+          "checkerModel": "qwen3.5-27b",
+          "event": {
+            "kind": "extracted",
+            "field": "explanation",
+            "quote": "boils at 100 °C",
+            "span": [
+              6,
+              22
+            ],
+            "statement": "Water boils at 100 °C at sea level."
+          }
+        },
+        {
+          "ordinal": 1,
+          "actor": "machine",
+          "at": 1760000000001,
+          "jobId": "job-1",
+          "appVersion": "1.0.0",
+          "checkerModel": "qwen3.5-27b",
+          "event": {
+            "kind": "checked",
+            "check": {
+              "checker": {
+                "role": "local",
+                "model": "qwen3.5-27b"
+              },
+              "result": {
+                "verdict": "failed",
+                "kind": {
+                  "kind": "contradicted"
+                }
+              },
+              "reason": "The passage gives 99.97 °C at one atmosphere.",
+              "fingerprint": "fp-1",
+              "evidence": [
+                {
+                  "sourceVersionId": "v1",
+                  "startByte": 120,
+                  "endByte": 184,
+                  "textSha256": "4f2a"
+                }
+              ],
+              "windowTokens": 32768
+            }
+          }
+        }
+      ]
+    },
+    {
+      "claimId": "claim-2",
+      "location": {
+        "unitIndex": 3,
+        "unitKind": "question",
+        "unitTitle": "Question 1",
+        "field": "options/1",
+        "quote": "print(sorted([3, 1, 2]))",
+        "span": null
+      },
+      "statement": "The snippet prints [1, 2, 3].",
+      "state": {
+        "state": "confirmed",
+        "at": 1760000300000
+      },
+      "verdictKind": null,
+      "reason": null,
+      "evidence": [],
+      "supportingQuote": null,
+      "research": [],
+      "repairs": [],
+      "executions": [
+        {
+          "observationId": "obs-1",
+          "runtime": "python",
+          "code": "print(sorted([3, 1, 2]))",
+          "result": {
+            "status": "runtime_unavailable",
+            "exitCode": null,
+            "stdout": "",
+            "stderr": "",
+            "outputTruncated": false,
+            "durationMs": 0
+          }
+        }
+      ],
+      "human": {
+        "at": 1760000300000,
+        "note": "Ran it myself.",
+        "boundSources": []
+      },
+      "availableActions": [
+        "edit",
+        "remove",
+        "attach_evidence",
+        "unconfirm",
+        "undo"
+      ],
+      "history": []
+    }
+  ]
+}
