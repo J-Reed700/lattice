@@ -5,6 +5,7 @@ mod document_evidence;
 mod document_progress;
 mod final_round;
 mod generation;
+mod image_pick;
 mod images;
 #[cfg(test)]
 mod loop_tests;
@@ -165,6 +166,7 @@ pub(super) async fn run_agentic_tool_loop(
         conv_service,
         conversation_id: conv_id,
         request_id,
+        message: question,
         llm,
         highlight_terms,
         focus,
@@ -274,6 +276,8 @@ pub(super) async fn run_agentic_tool_loop(
             clock: &clock,
             window_chars: window,
             tool_schema_chars,
+            llm,
+            question,
         },
         // Pages are remembered for the whole turn — and the turn started
         // before this loop did: retrieval has usually opened the top results
