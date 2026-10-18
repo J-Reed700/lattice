@@ -12,6 +12,7 @@
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §4, §6, §9.
 
 mod observe;
+mod receipts;
 
 use super::general_knowledge::Resolution;
 use super::support_gate::{CheckerVerdict, SupportGate};

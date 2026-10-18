@@ -177,6 +177,11 @@ async fn prepare(
             true,
         ));
     }
+    // Resolved by evidence the user brought: that check is the receipt.
+    if let Some(finding) = retained.settled_finding(unit, &claim) {
+        let key = ClaimChecks::key(unit, &claim, &finding.evidence);
+        return Ok(PreparedClaim::Complete((ordinal, key, finding, true), true));
+    }
     let evidence = evidence_selection::select(
         llm, &claim, unit, references, sources, executions, retained, sharing, citations,
     )

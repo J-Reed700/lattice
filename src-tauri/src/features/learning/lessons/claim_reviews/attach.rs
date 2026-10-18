@@ -32,8 +32,10 @@ use sqlx::SqlitePool;
 
 use self::acquire::Acquired;
 use self::report::{ClaimAttachReportDto, OtherClaimsCheckedDto};
+use super::checker_examples::CheckerExamples;
 use super::dto::ClaimActionRequestDto;
-use crate::features::learning::reference_collection::ReferenceCollection;
+use super::repository::{ClaimReviewRepository, ShownPassage};
+use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 
 /// What the user attaches (§5.1 "Attach evidence").
@@ -164,6 +166,42 @@ async fn append_current(
     }
 }
 
+/// After a check is on the ledger: the card shows the passages it compared,
+/// and a flag the new source overturned is a labelled example of the
+/// checker's accuracy (§15). `flagged` is the claim as it was before the
+/// check; `in_collection` says whether the source was already a reference.
+async fn record_check(
+    deps: &AttachDeps<'_>,
+    (program_id, lesson_id): (&str, &str),
+    flagged: &ClaimLedgerEntry,
+    passages: &[ReferencePassage],
+    outcome: &AttachOutcome,
+    in_collection: bool,
+) -> Result<()> {
+    let AttachOutcome::Checked(check) = outcome else {
+        return Ok(());
+    };
+    let shown: Vec<ShownPassage> = passages
+        .iter()
+        .map(|passage| ShownPassage {
+            source_version_id: passage.source_id.clone(),
+            start_byte: passage.start_byte,
+            end_byte: passage.end_byte,
+            text: passage.text.clone(),
+            retrieval_kind: passage.retrieval_kind.clone(),
+        })
+        .collect();
+    ClaimReviewRepository::new(deps.pool.clone())
+        .show_passages(lesson_id, flagged.claim_id(), &shown)
+        .await?;
+    if matches!(check.result, CheckResult::Supported { .. }) {
+        CheckerExamples::new(deps.pool.clone())
+            .record_evidence_added(program_id, lesson_id, flagged, &shown, in_collection)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Attaches the user's evidence to one claim and reports the result (§5.4).
 pub async fn attach(
     deps: &AttachDeps<'_>,
@@ -225,12 +263,23 @@ pub async fn attach(
                 .into(),
         )
     })?;
+    let lesson = (request.program_id, request.lesson_id);
+    record_check(
+        deps,
+        lesson,
+        entry,
+        &passages,
+        &outcome,
+        source.already_saved,
+    )
+    .await?;
     let (others, after) = check_others(
         deps,
         &references,
         &version_id,
-        request.lesson_id,
+        lesson,
         request.claim_id,
+        source.already_saved,
     )
     .await?;
     if let Some(after) = after {
@@ -253,26 +302,27 @@ async fn check_others(
     deps: &AttachDeps<'_>,
     references: &ReferenceCollection<'_>,
     version_id: &str,
-    lesson_id: &str,
+    (program_id, lesson_id): (&str, &str),
     attached_to: &ClaimId,
+    in_collection: bool,
 ) -> Result<(OtherClaimsCheckedDto, Option<Revision>)> {
     let ledger = deps.store.load(lesson_id).await?;
-    let candidates: Vec<(ClaimId, String)> = ledger
+    let candidates: Vec<&ClaimLedgerEntry> = ledger
         .claims
         .iter()
         .filter(|entry| entry.claim_id() != attached_to && open_for_recheck(entry.state()))
-        .map(|entry| (entry.claim_id().clone(), entry.statement().to_owned()))
         .collect();
     let mut tally = OtherClaimsCheckedDto::default();
     let mut revision = None;
-    for (claim_id, statement) in candidates {
+    for flagged in candidates {
+        let (claim_id, statement) = (flagged.claim_id(), flagged.statement());
         tally.tried += 1;
-        let passages = check::passages_from(deps.llm, references, version_id, &statement).await?;
+        let passages = check::passages_from(deps.llm, references, version_id, statement).await?;
         if passages.is_empty() {
             tally.no_passage += 1;
             continue;
         }
-        let outcome = match check::judge(deps.llm, &statement, &passages).await {
+        let outcome = match check::judge(deps.llm, statement, &passages).await {
             Ok(outcome) => outcome,
             Err(error) => {
                 tally.tried -= 1;
@@ -288,15 +338,24 @@ async fn check_others(
         let appended = append_current(
             deps.store,
             lesson_id,
-            &claim_id,
+            claim_id,
             deps.provenance(Actor::Machine),
-            ClaimEvent::Checked(check),
+            ClaimEvent::Checked(check.clone()),
             |entry| open_for_recheck(entry.state()),
         )
         .await?;
         match appended {
             Some(after) => {
                 revision = Some(after);
+                record_check(
+                    deps,
+                    (program_id, lesson_id),
+                    flagged,
+                    &passages,
+                    &AttachOutcome::Checked(check),
+                    in_collection,
+                )
+                .await?;
                 if supported {
                     tally.verified += 1;
                 } else {

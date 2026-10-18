@@ -13,13 +13,9 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::learning::lessons::content_verification::{
-    bank_tokens, claim_share, judge_for_publication,
+    bank_tokens, claim_share, evidence_policy, judge_for_publication,
 };
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
-
-/// The check policy a user-attached source is judged under: the strict
-/// publication policy, as in a pass. Fingerprints name it.
-pub(super) const CHECK_POLICY: &str = "strict";
 
 /// The passages of `source_version_id` the claim's check may read: those
 /// that mention the claim's terms, best first, within the single-claim
@@ -141,7 +137,9 @@ pub(super) async fn judge(
         },
         result,
         reason,
-        fingerprint: EvidenceFingerprint::of(CHECK_POLICY, llm.model_name(), &evidence),
+        // A pass's own checks name the same policy, so a pass finds nothing
+        // new in this check and reuses it (`claim_ledger::receipts`).
+        fingerprint: EvidenceFingerprint::of(evidence_policy(), llm.model_name(), &evidence),
         evidence,
         window_tokens: llm.max_context_tokens(),
     }))
