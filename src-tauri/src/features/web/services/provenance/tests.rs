@@ -6,7 +6,7 @@ use crate::features::web::mocks::web::MockWebService;
 use crate::features::web::services::reference_text;
 use chrono::DateTime;
 use lattice_core::application::contracts::web::{
-    ArchivedFrom, NamedEntity, OriginKey, OutboundLink, TldRegistry,
+    ArchivedFrom, CanonicalElsewhere, NamedEntity, OriginKey, OutboundLink, TldRegistry,
 };
 use lattice_core::application::ports::web_service::NO_PROVENANCE_READER;
 use lattice_core::application::ports::WebServiceTrait;
@@ -96,6 +96,7 @@ fn a_documentation_page_yields_its_canonical_generator_and_links_outside_code() 
     assert_eq!(signals.language.as_deref(), Some("en"));
     assert_eq!(signals.declared_types, vec!["website".to_string()]);
     assert_eq!(signals.origin.canonical_url.as_deref(), Some(url));
+    assert_eq!(signals.canonical_elsewhere, None);
     assert_eq!(signals.origin.key, OriginKey("web:example-lang.org".into()));
     // The page declares no publisher or author; none is invented.
     assert_eq!(signals.publisher, None);
@@ -295,6 +296,19 @@ fn a_page_claiming_to_be_official_is_recorded_saying_so_and_nothing_more() {
     );
     assert_eq!(signals.origin.archived, None);
     assert_eq!(signals.origin.canonical_url, None);
+    // The other site it names is kept as a declaration (a `CanonicalOf`
+    // relation at capture), with that site's origin after unwrapping the
+    // archive address: a claim to weigh, never a level by itself.
+    let declared =
+        "https://web.archive.org/web/20240101000000/https://www.revenue.gov.example/refunds";
+    assert_eq!(
+        signals.canonical_elsewhere,
+        Some(CanonicalElsewhere::of(declared).unwrap())
+    );
+    assert_ne!(
+        signals.canonical_elsewhere.as_ref().map(|c| &c.origin),
+        Some(&signals.origin.key)
+    );
     // What it declares is kept as declared, for the judgement to weigh.
     assert_eq!(
         signals.publisher,

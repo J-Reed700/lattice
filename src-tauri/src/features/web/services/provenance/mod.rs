@@ -19,10 +19,10 @@ mod parts_tests;
 mod tests;
 
 use lattice_core::application::contracts::web::{
-    DateBasis, HttpFacts, Origin, PageSignals, ProvenanceSignals, SourceDates, PAGE_SIGNALS_VERSION,
+    CanonicalElsewhere, DateBasis, HttpFacts, Origin, PageSignals, ProvenanceSignals, SourceDates,
+    PAGE_SIGNALS_VERSION,
 };
 use lattice_core::domain::provenance::{markdown_links, self_description, CanonicalLink};
-use tracing::debug;
 
 pub(crate) use dates::parse_http_date;
 pub(crate) use metadata::{read_metadata, PageMetadata};
@@ -101,18 +101,14 @@ fn page_signals(
         http,
         text: form,
     } = reading;
-    if let Some(canonical) = declared_canonical(&metadata, &origin) {
-        if let CanonicalLink::CrossOrigin { url } = origin.apply_canonical(&canonical) {
-            // The signals have no field for another origin's canonical: the
-            // origin stays the page's own (§7), and the declaration is not
-            // carried further (as-built notes, P2).
-            debug!(
-                resolved_url,
-                canonical = url.as_str(),
-                "Cross-origin canonical not recorded"
-            );
+    // A canonical on another site is syndication: the page's origin stays its
+    // own (§7) and capture records the declaration as a `CanonicalOf` relation.
+    let canonical_elsewhere = declared_canonical(&metadata, &origin).and_then(|canonical| {
+        match origin.apply_canonical(&canonical) {
+            CanonicalLink::CrossOrigin { url } => CanonicalElsewhere::of(&url),
+            CanonicalLink::SameOrigin | CanonicalLink::Ignored => None,
         }
-    }
+    });
     let dates = source_dates(&metadata, &origin, &http, fetched_at);
     let links = match form {
         TextForm::Markdown => markdown_links(text),
@@ -136,6 +132,7 @@ fn page_signals(
         dates,
         generator: metadata.generator,
         license: metadata.license,
+        canonical_elsewhere,
         links,
         http,
         self_description,
