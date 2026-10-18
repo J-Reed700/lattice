@@ -215,6 +215,7 @@ impl WebServiceTrait for MockWebService {
             unique_url_count: total_results,
             unique_domain_count: total_results,
             followup_queries: Vec::new(),
+            outcomes: Vec::new(),
         })
     }
 
@@ -232,6 +233,7 @@ impl WebServiceTrait for MockWebService {
                 fetch_time_ms: 10.0,
                 content_type: Some("text/html".to_string()),
                 from_cache: false,
+                read_via: Default::default(),
             })
         }
     }

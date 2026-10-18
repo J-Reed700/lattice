@@ -45,6 +45,7 @@ pub(super) async fn archived_page(
         fetch_time_ms: 0.0,
         content_type: Some("text/html".to_string()),
         from_cache: true,
+        read_via: Default::default(),
     })
 }
 

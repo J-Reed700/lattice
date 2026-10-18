@@ -117,6 +117,7 @@ impl WebServiceTrait for ResearchWeb {
             fetch_time_ms: 1.,
             content_type: None,
             from_cache: false,
+            read_via: Default::default(),
         })
     }
     async fn fetch_url_content(&self, _: &str) -> Result<FetchUrlContentOutput> {

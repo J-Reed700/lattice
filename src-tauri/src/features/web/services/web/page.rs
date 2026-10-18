@@ -184,6 +184,7 @@ impl WebService {
                         fetch_time_ms: lookup_start.elapsed().as_secs_f64() * 1000.0,
                         content_type: page.content_type,
                         from_cache: true,
+                        read_via: Default::default(),
                     },
                     fetched_at,
                 });
@@ -409,6 +410,7 @@ impl WebService {
                 fetch_time_ms,
                 content_type,
                 from_cache: false,
+                read_via: Default::default(),
             },
             fetched_at,
         }

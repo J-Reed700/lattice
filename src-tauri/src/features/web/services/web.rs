@@ -412,6 +412,7 @@ impl WebServiceTrait for WebService {
             unique_domain_count: seen_domains.len(),
             // The first executed query is the one that was asked for.
             followup_queries: executed_queries.into_iter().skip(1).collect(),
+            outcomes: Vec::new(),
         };
         if !output.results.is_empty() {
             self.search_cache.store(input, &output);

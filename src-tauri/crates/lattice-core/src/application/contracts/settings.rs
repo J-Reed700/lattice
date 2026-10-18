@@ -14,6 +14,7 @@ mod generation;
 mod llm;
 mod preferences;
 mod retrieval;
+mod sourcing;
 
 pub use generation::{
     presence_penalty_problem, LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto,
@@ -36,6 +37,7 @@ pub use retrieval::{
     VectorQuantizationDto, DEFAULT_VECTOR_COMPRESSION_DIMS, MAX_VECTOR_COMPRESSION_DIMS,
     MIN_VECTOR_COMPRESSION_DIMS,
 };
+pub use sourcing::{FinderSettingDto, SourcingSettingsDto};
 
 /// Complete application settings structure.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

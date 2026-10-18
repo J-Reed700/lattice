@@ -440,6 +440,7 @@ mod fetched_page_tests {
                 fetch_time_ms: 137.67,
                 content_type: Some("text/html".to_string()),
                 from_cache: false,
+                read_via: Default::default(),
             })
             .unwrap_or_default(),
         )

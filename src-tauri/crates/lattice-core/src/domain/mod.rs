@@ -14,6 +14,7 @@ pub mod ports;
 pub mod qa;
 pub mod repositories;
 pub mod services;
+pub mod sourcing;
 pub mod value_objects;
 
 pub use entities::document::{Document, DocumentStatus};
