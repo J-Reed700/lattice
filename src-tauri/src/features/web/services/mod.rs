@@ -4,6 +4,7 @@ pub mod browser_reader;
 pub mod capture;
 pub mod ingestion;
 pub(crate) mod page_cache;
+pub(crate) mod provenance;
 mod reference_text;
 pub mod snapshot;
 pub(crate) mod stealth;
