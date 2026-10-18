@@ -344,7 +344,7 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Desktop advisories
         working-directory: crates/lattice-desktop
-        run: cargo audit --deny yanked
+        run: cargo audit --deny yanked --file ../../Cargo.lock
 
   frontend:
     name: frontend (type-check, lint, test)

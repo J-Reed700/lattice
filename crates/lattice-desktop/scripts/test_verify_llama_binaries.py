@@ -663,7 +663,7 @@ class ExecutableBitTests(TempDirTestCase):
 class SingleSourceOfTruthTests(unittest.TestCase):
     """The file list lives in TARGETS; nothing else may repeat it."""
 
-    REPO_ROOT = SCRIPT_DIR.parents[1]
+    REPO_ROOT = SCRIPT_DIR.parents[2]
     CONSUMERS = (SCRIPT_DIR / "fetch-llama-binaries.sh",
                  REPO_ROOT / ".github/workflows/llama-build.yml")
 

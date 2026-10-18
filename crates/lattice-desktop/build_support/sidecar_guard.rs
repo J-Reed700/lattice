@@ -761,9 +761,8 @@ mod tests {
         let evaluation = evaluate(root, WINDOWS, None);
         assert_eq!(evaluation.problems, Vec::<String>::new());
         assert_eq!(evaluation.placeholders.len(), 1, "{evaluation:?}");
-        assert!(
-            evaluation.placeholders[0].starts_with(&format!("crates/lattice-desktop/binaries/{cpu} is empty"))
-        );
+        assert!(evaluation.placeholders[0]
+            .starts_with(&format!("crates/lattice-desktop/binaries/{cpu} is empty")));
         fs::write(root.join("binaries").join(&cpu), "hello").unwrap();
 
         fs::write(root.join(LOCK_PATH), "bogus line\n").unwrap();
