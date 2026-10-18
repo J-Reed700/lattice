@@ -36,7 +36,19 @@ struct PendingClaim {
     receipt_key: String,
     unit: usize,
     claim: Claim,
+    /// The claim's statement as the checker reads it (see [`as_checked`]).
+    checked: String,
     evidence: Vec<EvidencePassage>,
+}
+
+/// `claim` as the checker reads it: each "Source N" of the lesson's text
+/// written as that source's title, so the index cannot be read as passage N.
+/// Its key names this text, so a check of the bare index is not restored.
+fn as_checked(claim: &Claim, citations: &Citations, references: &ReferenceCollection<'_>) -> Claim {
+    Claim {
+        quote: claim.quote.clone(),
+        statement: citations.label(&claim.statement, references),
+    }
 }
 
 /// First-stage entailment is useful saved work, but never publication approval.
@@ -154,14 +166,30 @@ async fn prepare(
     ordinal: usize,
     located_claim: (usize, Claim),
     sharing: usize,
-    cited: &[EvidencePassage],
+    citations: &Citations,
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
+    // A quotation found in the source it names is settled by the match.
+    if let Some(finding) = quote_claims::settle(references, citations, unit, &claim)? {
+        let key = ClaimChecks::key(unit, &claim, &finding.evidence);
+        return Ok(PreparedClaim::Complete(
+            (ordinal, key, finding, false),
+            true,
+        ));
+    }
     let evidence = evidence_selection::select(
-        llm, &claim, unit, references, sources, executions, retained, sharing, cited,
+        llm, &claim, unit, references, sources, executions, retained, sharing, citations,
     )
     .await?;
-    let key = ClaimChecks::key(unit, &claim, &evidence);
+    let checked = as_checked(&claim, citations, references).statement;
+    let key = ClaimChecks::key(
+        unit,
+        &Claim {
+            statement: checked.clone(),
+            quote: claim.quote.clone(),
+        },
+        &evidence,
+    );
     if let Some(finding) = retained.get(&key, unit, &claim, &evidence) {
         return Ok(PreparedClaim::Complete((ordinal, key, finding, true), true));
     }
@@ -214,6 +242,7 @@ async fn prepare(
         receipt_key,
         unit,
         claim,
+        checked,
         evidence,
     };
     if let Some(judgment) = local {
@@ -278,7 +307,7 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
 
 fn target(pending: &PendingClaim) -> LocatedClaim {
     LocatedClaim {
-        claim: pending.claim.statement.clone(),
+        claim: pending.checked.clone(),
         passages: pending.evidence.iter().map(|p| p.text.clone()).collect(),
     }
 }
@@ -454,7 +483,7 @@ pub(super) async fn check(
         inventory,
         executions,
         retained,
-        &Citations::new(),
+        &Citations::default(),
     )
     .await
 }
@@ -512,7 +541,7 @@ pub(super) async fn check_with_citations(
                     ordinal,
                     (unit, claim),
                     sharing,
-                    citations.get(&unit).map_or(&[][..], Vec::as_slice),
+                    citations,
                 )
             })
             .buffered(BATCH_SIZE)
@@ -619,7 +648,7 @@ async fn deepen(
             // Cited passages of the section that did not fit an earlier page
             // lead this one; retrieved passages not yet shown fill the rest.
             let mut page: Vec<EvidencePassage> = Vec::new();
-            for passage in citations.get(&walk.unit).into_iter().flatten() {
+            for passage in citations.of(walk.unit) {
                 if walk
                     .shown
                     .iter()
@@ -635,11 +664,16 @@ async fn deepen(
             }
             let cited_left = !page.is_empty();
             let shown: Vec<_> = walk.shown.iter().chain(&page).cloned().collect();
-            let (retrieved, _) = references
-                .verification_page(&walk.claim.statement, &shown, |passages| {
-                    within_share(llm, share, page.iter().chain(passages))
-                })
-                .await?;
+            let retrieved = lesson_sources_first(
+                llm,
+                references,
+                &walk.claim.statement,
+                share,
+                &page,
+                &shown,
+                citations,
+            )
+            .await?;
             page.extend(retrieved);
             // A page that only shares the subject's common words, or only
             // vector neighbours, ends the walk; the section's own citations
@@ -652,7 +686,8 @@ async fn deepen(
                 continue;
             }
             canonicalize_evidence(&mut page);
-            let key = ClaimChecks::key(walk.unit, &walk.claim, &page);
+            let checked = as_checked(&walk.claim, citations, references);
+            let key = ClaimChecks::key(walk.unit, &checked, &page);
             let receipt_key = claim_receipt_key(llm, &key);
             if let Some(finding) =
                 crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
@@ -668,6 +703,7 @@ async fn deepen(
                     receipt_key,
                     unit: walk.unit,
                     claim: walk.claim.clone(),
+                    checked: checked.statement,
                     evidence: page.clone(),
                 });
             }

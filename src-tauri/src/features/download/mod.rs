@@ -7,13 +7,10 @@
 //!
 //! ## Public surface
 //!
-//! - `crate::features::download::artifact_identity` — compute/establish an
-//!   embedding model's artifact identity
 //! - `crate::features::download::download_repository` — download state repo
-//! - `crate::features::download::downloaded_model_repository` —
-//!   DownloadedModelRepository (implements the domain port)
 //! - `crate::features::download::engine` — DownloadEngine
-//! - `crate::features::download::manager` — DownloadManager, DownloadEvent
+//! - `crate::features::download::manager` — DownloadManagerService, which
+//!   implements core's `DownloadManager` port
 //! - `crate::features::download::saga` — DownloadSaga
 //! - `crate::features::download::commands` — Tauri command handlers
 //! - `crate::features::download::plugin::init()` — Tauri plugin
@@ -25,15 +22,15 @@
 //! Domain types (DownloadSession, DownloadError, DownloadedModel, the
 //! DownloadedModelRepository port) live in the domain layer under
 //! `lattice_core::domain::{download, models, repositories}` because the application layer and several other
-//! features depend on them.
+//! features depend on them. The SQLite store of downloaded models is
+//! `crate::infrastructure::persistence::repositories::downloaded_models`, and
+//! artifact identity hashing is `crate::infrastructure::ml::artifact_identity`.
 //!
 //! No use cases here — download is orchestrated *through* the LLM and
 //! model-management features, which own the model-download use cases.
 
-pub mod artifact_identity;
 pub mod commands;
 pub mod download_repository;
-pub mod downloaded_model_repository;
 pub mod engine;
 pub mod events;
 pub mod manager;

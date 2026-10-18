@@ -67,7 +67,7 @@ impl DownloadModelUseCase {
             ),
         ];
 
-        let sparse_head = crate::features::embedding::sparse_head::SPARSE_HEAD_PT;
+        let sparse_head = lattice_core::domain::models::checkpoint::SPARSE_HEAD_PT;
         let sparse_url = format!("{}/{}", base_url, sparse_head);
         if Self::remote_file_exists(&sparse_url, auth_token).await {
             files.push(ModelFileMetadata::new(

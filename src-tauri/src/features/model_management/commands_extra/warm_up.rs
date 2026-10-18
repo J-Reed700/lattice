@@ -8,9 +8,9 @@ use super::*;
 /// its cause, and choosing another model is the user's call, made in
 /// Settings.
 pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let active_models = container.active_models();
 
-    let use_case = GetActiveChatModelUseCase::new(repository);
+    let use_case = GetActiveChatModelUseCase::new(active_models);
     let active_model = use_case.execute().await?.ok_or_else(|| {
         AppError::InvalidState("No active chat model is selected. Set one first.".to_string())
     })?;

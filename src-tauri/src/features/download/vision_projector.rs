@@ -9,10 +9,10 @@
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-use crate::features::download::manager::{DownloadManager, DownloadRequest};
+use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
 use lattice_core::domain::download::{Checksum, ChecksumAlgorithm};
 use lattice_core::domain::models::curated::chat_model_vision;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
 
 /// What asking for a projector started.
@@ -28,7 +28,7 @@ pub struct VisionProjectorDownloadDto {
 /// downloaded model's own id, as `delete_model` takes).
 pub async fn start_vision_projector_download_impl(
     manager: &dyn DownloadManager,
-    repository: &DownloadedModelRepository,
+    repository: &dyn DownloadedModelRepository,
     id: &str,
 ) -> Result<VisionProjectorDownloadDto> {
     let model = repository

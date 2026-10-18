@@ -1,9 +1,10 @@
 //! Deletes a downloaded model record and optionally the file.
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use lattice_core::domain::models::curated::chat_model_vision;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
 use tokio::time::sleep;
@@ -100,11 +101,11 @@ fn is_safe_model_directory(path: &Path, model_id: &str) -> Result<bool> {
 
 /// Deletes a downloaded model record and, optionally, the backing file.
 pub struct DeleteDownloadedModelUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
 }
 
 impl DeleteDownloadedModelUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
+    pub fn new(repository: Arc<dyn DownloadedModelRepository>) -> Self {
         Self { repository }
     }
 
@@ -280,13 +281,14 @@ impl DeleteDownloadedModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;
     use tempfile::{tempdir, TempDir};
 
-    async fn setup_repo() -> DownloadedModelRepository {
+    async fn setup_repo() -> Arc<DownloadedModelRepository> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -296,7 +298,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        DownloadedModelRepository::new(pool)
+        Arc::new(DownloadedModelRepository::new(pool))
     }
 
     /// Builds a realistic on-disk layout: `<tmp>/models/<model_id>/model.gguf`.

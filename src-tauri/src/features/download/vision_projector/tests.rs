@@ -2,8 +2,9 @@
 //! nothing is started.
 
 use super::*;
-use crate::features::download::manager::{DownloadBatchItem, DownloadEvent};
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository as SqliteModels;
 use async_trait::async_trait;
+use lattice_core::application::ports::download_manager::{DownloadBatchItem, DownloadEvent};
 use lattice_core::domain::download::{DownloadError, DownloadSession};
 use lattice_core::domain::models::downloaded::ModelLocation;
 use lattice_core::domain::DownloadedModel;
@@ -86,14 +87,14 @@ impl DownloadManager for Recorder {
 }
 
 /// A migrated in-memory repository holding one local model at `path`.
-async fn repository_with(path: PathBuf) -> DownloadedModelRepository {
+async fn repository_with(path: PathBuf) -> SqliteModels {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let repository = DownloadedModelRepository::new(pool);
+    let repository = SqliteModels::new(pool);
     let row = DownloadedModel::new(
         "row-1".into(),
         "Qwen 3.5 9B".into(),

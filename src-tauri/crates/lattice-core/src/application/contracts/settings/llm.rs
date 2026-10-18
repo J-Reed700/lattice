@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::models::model_ref::ModelRef;
 use crate::domain::models::vision::VisionGeometry;
+use crate::shared::error::{AppError, Result};
 
 use super::generation::{
     LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
@@ -227,6 +228,37 @@ impl Default for LlamaCppSettingsDto {
             auth_header_name: String::new(),
             auth_header_value: String::new(),
         }
+    }
+}
+
+impl LlamaCppSettingsDto {
+    /// The OpenAI-compatible base URL, ending in `/v1`, these settings point
+    /// at, or why they can't be used to reach a server: the URL must be plain
+    /// HTTP(S) without credentials, query or fragment, and the authentication
+    /// header fields must be set together or not at all.
+    pub fn validated_base_url(&self) -> Result<String> {
+        let raw = self.url.trim().trim_end_matches('/');
+        let parsed = url::Url::parse(raw)
+            .map_err(|_| AppError::InvalidConfig("Invalid llama.cpp server URL".into()))?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(AppError::InvalidConfig("Use an HTTP(S) server URL without credentials, query, or fragment; configure authentication in the header fields".into()));
+        }
+        if self.auth_header_name.trim().is_empty() ^ self.auth_header_value.trim().is_empty() {
+            return Err(AppError::InvalidConfig(
+                "Set both authentication header fields, or clear both".into(),
+            ));
+        }
+        Ok(if raw.ends_with("/v1") {
+            raw.to_owned()
+        } else {
+            format!("{raw}/v1")
+        })
     }
 }
 

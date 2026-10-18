@@ -1,6 +1,6 @@
 //! Embedding model compatibility detection.
 //!
-//! Used by the HF catalog adapter to mark models as compatible /
+//! `EmbeddingCompatibility::from_tags` is used by the HF catalog adapter to mark models as compatible /
 //! incompatible with the local Candle inference path. Lets the UI badge
 //! and disable models that won't load instead of letting users start
 //! a 1GB+ download that will fail at first inference.
@@ -14,7 +14,7 @@
 //! (Gemma, Qwen, Llama, Mistral) are reserved for a follow-up PR with
 //! last-token pooling.
 
-pub use lattice_core::domain::models::selection::EmbeddingCompatibility;
+use super::EmbeddingCompatibility;
 
 /// Architecture tags that the local CandleEmbeddingService can actually
 /// load today. Each entry corresponds to a wired `ModelVariant` case in
@@ -73,35 +73,38 @@ const KNOWN_INCOMPATIBLE_TAGS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Inspect HF model tags and return a compatibility verdict.
-///
-/// Tags are case-insensitive; we normalize before comparing.
-pub fn detect_from_tags(tags: &[String]) -> EmbeddingCompatibility {
-    let normalized: Vec<String> = tags.iter().map(|t| t.to_ascii_lowercase()).collect();
+impl EmbeddingCompatibility {
+    /// Inspect HF model tags and return a compatibility verdict.
+    ///
+    /// Tags are case-insensitive; we normalize before comparing.
+    pub fn from_tags(tags: &[String]) -> Self {
+        let normalized: Vec<String> = tags.iter().map(|t| t.to_ascii_lowercase()).collect();
 
-    // Scan incompatibles FIRST. HF often auto-tags inheritance — a DistilBERT
-    // checkpoint may carry both "distilbert" and "bert" tags. The specific
-    // architecture (distilbert) is the source of truth; the generic "bert"
-    // tag would otherwise falsely promote it to Compatible and the loader
-    // would crash at runtime.
-    for tag in &normalized {
-        if let Some((_, reason)) = KNOWN_INCOMPATIBLE_TAGS.iter().find(|(name, _)| name == tag) {
-            return EmbeddingCompatibility::Incompatible {
-                architecture: tag.clone(),
-                reason: (*reason).to_string(),
-            };
+        // Scan incompatibles FIRST. HF often auto-tags inheritance — a DistilBERT
+        // checkpoint may carry both "distilbert" and "bert" tags. The specific
+        // architecture (distilbert) is the source of truth; the generic "bert"
+        // tag would otherwise falsely promote it to Compatible and the loader
+        // would crash at runtime.
+        for tag in &normalized {
+            if let Some((_, reason)) = KNOWN_INCOMPATIBLE_TAGS.iter().find(|(name, _)| name == tag)
+            {
+                return EmbeddingCompatibility::Incompatible {
+                    architecture: tag.clone(),
+                    reason: (*reason).to_string(),
+                };
+            }
         }
-    }
 
-    for tag in &normalized {
-        if SUPPORTED_TAGS.contains(&tag.as_str()) {
-            return EmbeddingCompatibility::Compatible {
-                architecture: tag.clone(),
-            };
+        for tag in &normalized {
+            if SUPPORTED_TAGS.contains(&tag.as_str()) {
+                return EmbeddingCompatibility::Compatible {
+                    architecture: tag.clone(),
+                };
+            }
         }
-    }
 
-    EmbeddingCompatibility::Unknown
+        EmbeddingCompatibility::Unknown
+    }
 }
 
 #[cfg(test)]
@@ -114,7 +117,8 @@ mod tests {
 
     #[test]
     fn bert_tag_is_compatible() {
-        let result = detect_from_tags(&tags(&["sentence-transformers", "pytorch", "bert"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "pytorch", "bert"]));
         assert!(matches!(
             result,
             EmbeddingCompatibility::Compatible { ref architecture } if architecture == "bert"
@@ -123,7 +127,8 @@ mod tests {
 
     #[test]
     fn xlm_roberta_is_compatible() {
-        let result = detect_from_tags(&tags(&["xlm-roberta", "feature-extraction"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["xlm-roberta", "feature-extraction"]));
         assert!(
             result.is_compatible(),
             "expected Compatible, got {:?}",
@@ -133,7 +138,8 @@ mod tests {
 
     #[test]
     fn nomic_bert_is_compatible() {
-        let result = detect_from_tags(&tags(&["sentence-transformers", "nomic_bert"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "nomic_bert"]));
         assert!(
             result.is_compatible(),
             "expected Compatible, got {:?}",
@@ -143,7 +149,8 @@ mod tests {
 
     #[test]
     fn modernbert_is_compatible() {
-        let result = detect_from_tags(&tags(&["sentence-transformers", "modernbert"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "modernbert"]));
         assert!(
             result.is_compatible(),
             "expected Compatible, got {:?}",
@@ -153,7 +160,8 @@ mod tests {
 
     #[test]
     fn distilbert_is_compatible() {
-        let result = detect_from_tags(&tags(&["sentence-transformers", "distilbert"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "distilbert"]));
         assert!(
             result.is_compatible(),
             "expected Compatible, got {:?}",
@@ -164,7 +172,7 @@ mod tests {
     #[test]
     fn mpnet_remains_incompatible() {
         // mpnet has no Candle loader available — should still be Incompatible.
-        let result = detect_from_tags(&tags(&["sentence-transformers", "mpnet"]));
+        let result = EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "mpnet"]));
         match result {
             EmbeddingCompatibility::Incompatible { architecture, .. } => {
                 assert_eq!(architecture, "mpnet");
@@ -175,20 +183,25 @@ mod tests {
 
     #[test]
     fn qwen3_is_supported() {
-        let result = detect_from_tags(&tags(&["sentence-transformers", "qwen3", "safetensors"]));
+        let result = EmbeddingCompatibility::from_tags(&tags(&[
+            "sentence-transformers",
+            "qwen3",
+            "safetensors",
+        ]));
         assert!(matches!(result, EmbeddingCompatibility::Compatible { .. }));
     }
 
     #[test]
     fn no_recognized_arch_is_unknown() {
-        let result = detect_from_tags(&tags(&["sentence-transformers", "wav2vec2-bert"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "wav2vec2-bert"]));
         assert!(matches!(result, EmbeddingCompatibility::Unknown));
     }
 
     #[test]
     fn empty_tags_are_unknown() {
         assert!(matches!(
-            detect_from_tags(&[]),
+            EmbeddingCompatibility::from_tags(&[]),
             EmbeddingCompatibility::Unknown
         ));
     }
@@ -200,7 +213,8 @@ mod tests {
         // the bert tag). The specific incompatible arch must win over the
         // generic compatible one — otherwise we'd falsely promote and the
         // BertModel loader would crash at load (MPNet has no Candle loader).
-        let result = detect_from_tags(&tags(&["sentence-transformers", "mpnet", "bert"]));
+        let result =
+            EmbeddingCompatibility::from_tags(&tags(&["sentence-transformers", "mpnet", "bert"]));
         match result {
             EmbeddingCompatibility::Incompatible { architecture, .. } => {
                 assert_eq!(architecture, "mpnet");

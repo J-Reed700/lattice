@@ -199,7 +199,7 @@ for reverse dependencies.
 
 It also ratchets outer-ring rules against
 `scripts/rust-architecture-check/baseline.txt`: infrastructure importing
-features, feature-to-feature edges and cycles, feature re-exports of
+features, feature cycles, feature re-exports of
 `lattice_core` or another feature (`pub use`/`pub(crate) use`; callers should
 import from the source), `Container` imports outside adapter files, the
 composition root (`bootstrap`) referenced outside the entry points, raw spawns
@@ -209,13 +209,18 @@ falling one, until `bash scripts/check-rust-layer-boundaries.sh --write-baseline
 records it. That command also rewrites `scripts/tauri-command-orphans.baseline`.
 Commit the smaller file; never add lines to get a change through.
 
-Feature edges are meant to reach zero, except a few where one feature is built
-on a lower-level one. Those are allowed in
+Feature-to-feature edges (`feature-edge`) are held at zero: the rule has no
+baseline, `--write-baseline` does not record it, and any reference from one
+feature into another fails. A feature reaches another through a core port
+(`lattice_core::application::ports`) or a core contract, and the composition
+root (`interfaces/di`) wires the adapter in. The only exceptions are edges
+where one feature is built on a lower-level one, allowed in
 `scripts/rust-architecture-check/feature-graph.txt`, one
-`allow features::<a> features::<b>  # <reason>` line each, reason required.
-Their references leave `feature-edge` but still count toward `feature-cycle`;
-the allowed edges must not form a cycle, and an allowed edge with no
-references left fails as stale. The plan for the rest is
+`allow features::<a> features::<b>  # <reason>` line each, reason required;
+adding one is a design decision for review. Their references leave
+`feature-edge` but still count toward `feature-cycle`; the allowed edges must
+not form a cycle, and an allowed edge with no references left fails as stale.
+How the edges reached zero is in
 `docs/design/2026-10-16-feature-coupling-plan.md`. To see every site of a
 rule, baselined, allowed or new, run
 `bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`; the

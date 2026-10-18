@@ -1,5 +1,5 @@
 use crate::features::download::download_repository::DownloadRepository;
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use chrono::{DateTime, Utc};
 use lattice_core::domain::download::{DownloadError, DownloadState};
 use std::path::Path;

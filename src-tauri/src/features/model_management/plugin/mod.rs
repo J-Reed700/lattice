@@ -4,6 +4,7 @@
 
 pub mod commands;
 
+use lattice_core::application::ports::download_manager::DownloadEvent;
 use serde::Serialize;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -33,10 +34,8 @@ pub enum DownloadEventDto {
     Cancelled { id: String },
 }
 
-impl From<crate::features::download::manager::DownloadEvent> for DownloadEventDto {
-    fn from(event: crate::features::download::manager::DownloadEvent) -> Self {
-        use crate::features::download::manager::DownloadEvent;
-
+impl From<DownloadEvent> for DownloadEventDto {
+    fn from(event: DownloadEvent) -> Self {
         match event {
             DownloadEvent::Started { id } => Self::Started { id },
             DownloadEvent::Progress {

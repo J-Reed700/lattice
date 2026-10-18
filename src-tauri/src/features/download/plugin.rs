@@ -121,8 +121,8 @@ pub async fn start_vision_projector_download(
     id: String,
 ) -> Result<VisionProjectorDownloadDto, ApiError> {
     let manager = container.download_manager().map_err(ApiError::from)?;
-    let repository = container.downloaded_model_repository();
-    start_vision_projector_download_impl(manager.as_ref(), &repository, &id)
+    let repository = container.downloaded_models();
+    start_vision_projector_download_impl(manager.as_ref(), repository.as_ref(), &id)
         .await
         .map_err(ApiError::from)
 }

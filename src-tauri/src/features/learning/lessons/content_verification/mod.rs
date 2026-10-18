@@ -1,6 +1,5 @@
 //! Fail-closed lesson publication checks. Evidence and execution reduce errors;
 //! the claim inventory and its coverage audit are still fallible model judgments.
-#[cfg(test)]
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
@@ -20,7 +19,10 @@ use std::collections::{HashMap, HashSet};
 
 mod challenge;
 mod citations;
-use citations::{overlaps, section_citations, take_cited, Citations, CITED};
+use citations::{
+    lesson_sources_first, overlaps, section_citations, source_mentions, take_cited, Citations,
+    CITED,
+};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
@@ -33,6 +35,7 @@ mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
 mod portability;
+mod quote_claims;
 #[cfg(test)]
 pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;
 #[cfg(test)]
@@ -243,6 +246,7 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
             &json!({
                 "policy": POLICY, "model": llm.model_name(),
                 "context": llm.max_context_tokens(), "comparison": comparison,
+                "challenge": challenge::POLICY,
             })
             .to_string()
         )
@@ -417,13 +421,23 @@ async fn evidence_for(
     observations: &[execution::Observation],
     sharing: usize,
 ) -> Result<Vec<EvidencePassage>> {
-    first_page(llm, claim, unit, references, observations, sharing, &[]).await
+    first_page(
+        llm,
+        claim,
+        unit,
+        references,
+        observations,
+        sharing,
+        &Citations::default(),
+    )
+    .await
 }
 
 /// [`evidence_for`] with the passages the claim's section cites placed first,
 /// in citation order while they fit its share; the rest of the share is
-/// filled with retrieved passages that overlap none of them. Cited passages
-/// that do not fit lead the claim's next page.
+/// filled with retrieved passages that overlap none of them, those of the
+/// sources the lesson cites first. Cited passages that do not fit lead the
+/// claim's next page.
 async fn first_page(
     llm: &dyn LLMPort,
     claim: &str,
@@ -431,7 +445,7 @@ async fn first_page(
     references: &ReferenceCollection<'_>,
     observations: &[execution::Observation],
     sharing: usize,
-    cited: &[EvidencePassage],
+    citations: &Citations,
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = Vec::new();
     for observation in observations
@@ -452,12 +466,9 @@ async fn first_page(
     // Execution output must not erase retrieved references when it is lengthy.
     // The checker batches by its actual context budget, not a character count.
     let share = claim_share(llm, claim, sharing);
-    let shown = take_cited(llm, share, &mut evidence, cited);
-    let (page, _) = references
-        .verification_page(claim, &shown, |passages| {
-            within_share(llm, share, evidence.iter().chain(passages))
-        })
-        .await?;
+    let shown = take_cited(llm, share, &mut evidence, citations.of(unit));
+    let page =
+        lesson_sources_first(llm, references, claim, share, &evidence, &shown, citations).await?;
     evidence.extend(page);
     canonicalize_evidence(&mut evidence);
     Ok(evidence)
@@ -467,22 +478,21 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
     // Retrieval still chooses the current evidence, including conflicts. Once
     // selected, use a stable order for BOTH the actual judge input and its key.
     // Corpus-dependent ranking changes must not repeat an identical comparison.
-    // The section's own cited passages come first.
+    // What research found for the claim comes first, then the section's own
+    // cited passages.
+    let lead = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
+        evidence_selection::RESEARCHED => 0,
+        CITED => 1,
+        _ => 2,
+    };
     evidence.sort_by(|a, b| {
-        (
-            a.retrieval_kind != CITED,
-            &a.source_id,
-            a.start_byte,
-            a.end_byte,
-            &a.text,
-        )
-            .cmp(&(
-                b.retrieval_kind != CITED,
-                &b.source_id,
-                b.start_byte,
-                b.end_byte,
-                &b.text,
-            ))
+        (lead(a), &a.source_id, a.start_byte, a.end_byte, &a.text).cmp(&(
+            lead(b),
+            &b.source_id,
+            b.start_byte,
+            b.end_byte,
+            &b.text,
+        ))
     });
 }
 

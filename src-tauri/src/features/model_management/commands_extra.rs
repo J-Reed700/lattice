@@ -10,7 +10,6 @@
 //! Async functions store their state on the heap (in Future objects), not the stack.
 //! Deep async call chains don't cause stack overflow - that's the whole point of async.
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
@@ -29,6 +28,7 @@ use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::metadata::ModelType;
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::models::vision::VisionGeometry;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -212,9 +212,9 @@ impl DownloadedModelResponse {
 pub async fn get_models_with_metadata_impl(container: &Container) -> Result<String, AppError> {
     info!("Command: get_models_with_metadata - ENTRY");
 
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
 
-    if let Err(e) = sync_external_model_directories(container, &repository).await {
+    if let Err(e) = sync_external_model_directories(container, repository.as_ref()).await {
         warn!(error = %e, "External model directory sync failed");
     }
 
@@ -249,7 +249,7 @@ pub async fn is_model_already_downloaded_impl(
     container: &Container,
     model_id: &str,
 ) -> Result<bool, AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
     let validated_model_id = container
         .security_context()
         .input_validator()
@@ -268,7 +268,7 @@ pub async fn delete_downloaded_model_and_file_impl(
     model_id: &str,
     delete_file: bool,
 ) -> Result<(), AppError> {
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
 
     if model_id.trim().is_empty() {
         return Err(AppError::InvalidInput(

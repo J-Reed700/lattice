@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::WhisperTranscriptionService;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::TranscriptionPort;
 use lattice_core::shared::runtime::background::BackgroundTasks;
@@ -24,7 +24,7 @@ pub struct TranscriptionDi {
 pub fn build(db_pool: SqlitePool, background: Arc<BackgroundTasks>) -> TranscriptionDi {
     TranscriptionDi {
         port: Arc::new(WhisperTranscriptionService::new(
-            DownloadedModelRepository::new(db_pool),
+            Arc::new(DownloadedModelRepository::new(db_pool)),
             background,
         )) as Arc<dyn TranscriptionPort>,
     }
