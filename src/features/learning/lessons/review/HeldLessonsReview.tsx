@@ -12,10 +12,12 @@ export function HeldLessonsReview({ lessonIds, programId, revision }: {
 }) {
   return (
     <section aria-label="Lesson preparation progress" className="my-4 rounded-2xl border border-accent/30 bg-accent/5 p-5">
-      <h3 role="status" className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-        <ClipboardCheck size={18} className="shrink-0 text-accent" aria-hidden="true" />
-        Lesson preparation is waiting for you
-      </h3>
+      <div role="status">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+          <ClipboardCheck size={18} className="shrink-0 text-accent" aria-hidden="true" />
+          Lesson preparation is waiting for you
+        </h3>
+      </div>
       <p className="mt-2 text-sm leading-6 text-text-secondary">Every check that could run has run; the draft and all completed checks are saved. What holds {lessonIds.length === 1 ? 'the lesson' : 'each lesson'} is shown below.</p>
       {lessonIds.map((lessonId) => (
         <LessonClaimReviewPanel key={lessonId} programId={programId} lessonId={lessonId} courseRevision={revision} />
