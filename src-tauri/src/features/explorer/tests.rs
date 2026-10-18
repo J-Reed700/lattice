@@ -342,6 +342,7 @@ mod model_tools {
     use super::*;
     use crate::features::explorer::{prompt, tools};
     use lattice_core::application::contracts::explorer::{ExplorerFocusDto, ExplorerLineRangeDto};
+    use lattice_core::application::contracts::tools::explorer as explorer_tools;
     use serde_json::json;
 
     fn numbered_file(scope: &Scope, relative: &str, lines: u32) {
@@ -468,22 +469,22 @@ mod model_tools {
     #[test]
     fn step_labels_are_plain() {
         assert_eq!(
-            tools::activity_label("read_file", &json!({"path": "src/foo.rs"})),
+            explorer_tools::activity_label("read_file", &json!({"path": "src/foo.rs"})),
             "Read src/foo.rs from line 1"
         );
         assert_eq!(
-            tools::activity_label(
+            explorer_tools::activity_label(
                 "read_file",
                 &json!({"path": "src/foo.rs", "start_line": 10, "end_line": 24})
             ),
             "Read src/foo.rs 10–24"
         );
         assert_eq!(
-            tools::activity_label("search_files", &json!({"query": "fn main"})),
+            explorer_tools::activity_label("search_files", &json!({"query": "fn main"})),
             "Searched for \"fn main\""
         );
         assert_eq!(
-            tools::activity_label("list_directory", &json!({})),
+            explorer_tools::activity_label("list_directory", &json!({})),
             "Listed the folder"
         );
     }

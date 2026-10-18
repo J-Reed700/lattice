@@ -359,6 +359,13 @@ pub trait ChatRetrieval: Send + Sync {
     /// windows, learned across every turn this runtime runs — and never
     /// shared with a test's runtime.
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
+    /// The turn's query interpreter, on `llm` and stopped by `cancel`: built
+    /// for one turn with that turn's token, never kept across turns.
+    fn query_interpreter(
+        &self,
+        llm: Arc<dyn LLMPort>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Arc<dyn lattice_core::application::ports::query_interpreter::QueryInterpreter>;
 }
 
 #[async_trait]
