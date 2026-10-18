@@ -17,6 +17,7 @@ import {
   verdictMeaning,
   type CheckerSide,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { ClaimSufficiency } from '@/features/learning/sources/trust/ClaimSufficiency';
 import type {
   ClaimActionKindDto,
   ClaimActionRequestDto,
@@ -213,6 +214,8 @@ export function ClaimReviewCard({
                 onOpenPassage={(passage) => onOpenPassage(passage)} />
             ))}</div>}
         </div>
+
+        <ClaimSufficiency item={item} programId={programId} />
 
         {(item.research.length > 0 || item.repairs.length > 0) && <div>
           <Heading>What was tried</Heading>

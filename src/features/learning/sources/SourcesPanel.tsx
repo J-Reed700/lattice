@@ -7,6 +7,10 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
+import { SourceTrustSection } from '@/features/learning/sources/trust/SourceTrustSection';
+import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
+import { LEVEL_WORD, TRUST_LEVELS } from '@/features/learning/sources/trust/trustPresentation';
+import { useSourceTrust } from '@/features/learning/sources/trust/useSourceTrust';
 import {
   useAddLearningDocumentSource,
   useAddLearningTextSource,
@@ -27,6 +31,7 @@ import type {
   AdoptLearningSourceVersionRequestDto,
   LearningSourceLibraryItemDto,
   LearningSourcePolicy,
+  LearningTrustLevel,
   RefreshLearningSourceRequestDto,
   UpdateLearningSourcePolicyRequestDto,
 } from '@/lib/bindings';
@@ -88,11 +93,12 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const [readerOpen, setReaderOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
+  const [levelFilter, setLevelFilter] = useState<LearningTrustLevel | 'any'>('any');
   const [query, setQuery] = useState('');
   const [searchText, setSearchText] = useState('');
   const [pageSize, setPageSize] = useState(readPageSize);
   // The page belongs to one filter and search; changing either starts again at page 1.
-  const [listPage, setListPage] = useState(() => ({ key: `${filter}\n${query}`, page: 1 }));
+  const [listPage, setListPage] = useState(() => ({ key: `${filter}\n${levelFilter}\n${query}`, page: 1 }));
   const [addOpen, setAddOpen] = useState(false);
   const [addKind, setAddKind] = useState<AddKind>('web');
   const [webUrl, setWebUrl] = useState('');
@@ -132,16 +138,24 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
   const selectedVersion = selected?.versions.find((item) => item.id === selectedVersionId) ?? null;
   const detailRequest = active && selected && selectedVersionId ? { programId, sourceId: selected.id, versionId: selectedVersionId } : null;
   const detail = useLearningSourceVersion(detailRequest);
+  // Levels as the gate reads them, from judgements already made (§19).
+  const trust = useSourceTrust(active ? { programId, sourceIds: [], claim: null, includeImpact: false } : null);
+  const trustBySource = useMemo(() => new Map((trust.data?.sources ?? []).map((entry) => [entry.sourceId, entry])), [trust.data]);
+  const titleOfVersion = (versionId: string) => {
+    const owner = sources.find((source) => source.versions.some((version) => version.id === versionId));
+    return owner?.versions.find((version) => version.id === versionId)?.title ?? (owner ? sourceTitle(owner) : null);
+  };
   const visibleSources = useMemo(() => {
     const haystack = query ? new Set((search.data ?? []).map((result) => result.sourceId)) : null;
     return sources.filter((source) => {
       if (filter === 'updates' && !source.pendingVersionId) return false;
       if (filter === 'pinned' && source.freshnessPolicy !== 'fixed') return false;
       if (filter === 'attention' && source.latestCheck?.status !== 'failed' && !source.pendingVersionId && !isLegacy(source)) return false;
+      if (levelFilter !== 'any' && trustBySource.get(source.id)?.trust.level !== levelFilter) return false;
       return !haystack || haystack.has(source.id);
     });
-  }, [filter, query, search.data, sources]);
-  const listKey = `${filter}\n${query}`;
+  }, [filter, levelFilter, query, search.data, sources, trustBySource]);
+  const listKey = `${filter}\n${levelFilter}\n${query}`;
   if (listPage.key !== listKey) setListPage({ key: listKey, page: 1 });
   const pageCount = Math.max(1, Math.ceil(visibleSources.length / pageSize));
   const page = Math.min(listPage.key === listKey ? listPage.page : 1, pageCount);
@@ -279,7 +293,7 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-serif text-xl text-text-primary">Library</h3><span className="text-xs text-text-muted">{sources.length} {sources.length === 1 ? 'source' : 'sources'}</span></div>
         <label className="mt-4 flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2.5"><Search size={15} className="shrink-0 text-text-muted" /><input aria-label="Search saved source text" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search saved text" className="min-w-0 flex-1 bg-transparent text-sm outline-hidden placeholder:text-text-muted" /></label>
         {query && <p className="mt-2 text-[10px] text-text-muted">Searching saved versions only · never opens the web</p>}
-        <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Source filters">{([['all', 'All'], ['updates', 'Updates'], ['pinned', 'Pinned'], ['attention', 'Attention']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`rounded-full px-3 py-1.5 text-[10px] font-medium ${filter === value ? 'bg-accent text-accent-fg' : 'bg-background text-text-muted hover:text-text-primary'}`}>{label}</button>)}</div>
+        <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Source filters">{([['all', 'All'], ['updates', 'Updates'], ['pinned', 'Pinned'], ['attention', 'Attention']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`rounded-full px-3 py-1.5 text-[10px] font-medium ${filter === value ? 'bg-accent text-accent-fg' : 'bg-background text-text-muted hover:text-text-primary'}`}>{label}</button>)}<label className="ml-auto flex items-center gap-1.5 text-[10px] text-text-muted">Level<select aria-label="Filter by trust level" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value as LearningTrustLevel | 'any')} className="rounded-lg border border-border bg-background px-1.5 py-1 text-[10px] text-text-primary"><option value="any">Any</option>{TRUST_LEVELS.map((level) => <option key={level} value={level}>{LEVEL_WORD[level]}</option>)}</select></label></div>
         {query && search.isLoading && <p role="status" className="mt-4 text-xs text-text-muted">Searching saved text…</p>}
         {query && search.error && <div className="mt-4 rounded-lg bg-rose-500/5 p-3 text-xs text-rose-700"><p role="alert">Search failed: {search.error.message}</p><button type="button" onClick={() => void search.refetch()} className="mt-2 underline">Retry search</button></div>}
         {visibleSources.length > SOURCE_PAGE_SIZES[0] && <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
@@ -294,7 +308,7 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
         </div>}
         <div className="mt-3 space-y-1.5" aria-label="Source list">{pageSources.map((source) => {
           const title = sourceTitle(source); const status = statusLabel(source); const active = selectedId === source.id;
-          return <button key={source.id} type="button" onClick={() => openSource(source.id)} aria-current={active ? 'true' : undefined} className={`w-full min-w-0 rounded-xl border px-3 py-3 text-left transition ${active ? 'border-accent/45 bg-accent/5' : 'border-transparent hover:border-border hover:bg-background'}`}><span className="flex min-w-0 items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-accent">{source.kind === 'web' ? <Globe2 size={15} /> : source.kind === 'document' ? <BookOpen size={15} /> : <FileText size={15} />}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-text-primary">{title}</span><span className="mt-1 block truncate text-[10px] text-text-muted">{status}</span><span className="mt-1 inline-block rounded-full border border-border px-1.5 py-px text-[10px] text-text-secondary">{addedByLabel(source.addedBy, source.kind)}</span></span><ChevronRight size={14} className="shrink-0 text-text-muted" /></span></button>;
+          return <button key={source.id} type="button" onClick={() => openSource(source.id)} aria-current={active ? 'true' : undefined} className={`w-full min-w-0 rounded-xl border px-3 py-3 text-left transition ${active ? 'border-accent/45 bg-accent/5' : 'border-transparent hover:border-border hover:bg-background'}`}><span className="flex min-w-0 items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-accent">{source.kind === 'web' ? <Globe2 size={15} /> : source.kind === 'document' ? <BookOpen size={15} /> : <FileText size={15} />}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-text-primary">{title}</span><span className="mt-1 block truncate text-[10px] text-text-muted">{status}</span><span className="mt-1 flex flex-wrap gap-1"><span className="inline-block rounded-full border border-border px-1.5 py-px text-[10px] text-text-secondary">{addedByLabel(source.addedBy, source.kind)}</span>{trustBySource.get(source.id) && <TrustLevelChip trust={trustBySource.get(source.id)!.trust} />}</span></span><ChevronRight size={14} className="shrink-0 text-text-muted" /></span></button>;
         })}{!visibleSources.length && <p className="rounded-xl bg-background p-4 text-xs leading-5 text-text-muted">{sources.length ? query ? 'No saved text matches this search and filter.' : 'No sources match this filter.' : 'No materials have been saved to this program yet.'}</p>}</div>
       </aside>
 
@@ -320,6 +334,7 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
               onOpenInReader={() => setReaderOpen(true)}
             />
             <div className="mt-4 grid gap-3 sm:grid-cols-2"><section className="rounded-xl bg-background p-4"><h4 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Provenance</h4><dl className="mt-2 space-y-1.5 text-xs text-text-secondary"><div><dt className="inline text-text-muted">Requested: </dt><dd className="inline break-all">{selected.requestedUrl ?? selected.origin}</dd></div><div><dt className="inline text-text-muted">Resolved: </dt><dd className="inline break-all">{detail.data.version.resolvedUrl ?? 'Not applicable'}</dd></div><div><dt className="inline text-text-muted">Captured: </dt><dd className="inline">{date(detail.data.version.acquiredAt)}</dd></div><div><dt className="inline text-text-muted">Words: </dt><dd className="inline">{detail.data.version.wordCount.toLocaleString()}</dd></div><div><dt className="inline text-text-muted">SHA-256: </dt><dd className="inline break-all font-mono text-[10px]">{detail.data.version.contentSha256}</dd></div><div><dt className="inline text-text-muted">Extractor: </dt><dd className="inline">{detail.data.version.extractionVersion}</dd></div></dl></section><section className="rounded-xl bg-background p-4"><h4 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Used in this program</h4>{detail.data.usage.length ? <ul className="mt-2 space-y-2">{detail.data.usage.map((usage, index) => <li key={`${usage.lessonId}-${usage.referenceKind}-${index}`} className="border-l-2 border-accent/35 pl-3"><p className="text-xs font-medium text-text-primary">{usage.lessonTitle}</p><p className="mt-0.5 text-[10px] text-text-muted">{usage.referenceKind}: {usage.referenceTitle}</p></li>)}</ul> : <p className="mt-2 text-xs leading-5 text-text-muted">No current lesson or assessment references this version.</p>}</section></div>
+            <div className="mt-3"><SourceTrustSection programId={programId} sourceId={selected.id} sourceTitle={sourceTitle(selected)} titleOf={titleOfVersion} /></div>
           </> : <p className="py-8 text-sm text-text-muted">Select a version to read.</p>}
         </>}
       </main>
