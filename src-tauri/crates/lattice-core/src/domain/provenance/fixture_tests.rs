@@ -3,6 +3,8 @@
 //! sufficiency, contradiction, temporal and calibration case, citation-chain
 //! ranking and injection detection. The README there describes the files.
 
+#![cfg(test)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
