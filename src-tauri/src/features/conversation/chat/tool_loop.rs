@@ -639,13 +639,19 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
 /// that asked for it, so a nearly full window still gets this much.
 const MIN_TOOL_RESULT_CHARS: usize = 1_500;
 
-/// Roughly how many characters the next generation already has to read.
+/// Roughly how many characters the next generation already has to read. A
+/// picture counts as the characters its declared tokens stand for, never as
+/// its bytes.
 fn chars_in_flight(input: &[lattice_core::application::ports::llm_port::CompletionInput]) -> usize {
-    use lattice_core::application::ports::llm_port::CompletionInput;
+    use lattice_core::application::ports::llm_port::{CompletionInput, DEFAULT_CHARS_PER_TOKEN};
     input
         .iter()
         .map(|item| match item {
             CompletionInput::Message { content, .. } => content.chars().count(),
+            CompletionInput::Multimodal { .. } => {
+                item.text().chars().count()
+                    + (item.image_tokens() as f64 * DEFAULT_CHARS_PER_TOKEN) as usize
+            }
             CompletionInput::ToolResult { output, .. } => output.chars().count(),
             CompletionInput::ToolCall {
                 name, arguments, ..

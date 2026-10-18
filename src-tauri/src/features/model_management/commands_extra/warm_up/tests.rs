@@ -21,9 +21,9 @@ async fn container_with_a_chat_model_that_cannot_load(
         None,
     )
     .unwrap();
-    let repository = container.downloaded_model_repository();
-    repository.save(&row).await.unwrap();
-    repository
+    container.downloaded_models().save(&row).await.unwrap();
+    container
+        .active_models()
         .set_active_chat_model(row.model_id())
         .await
         .unwrap();
@@ -44,7 +44,7 @@ async fn settings_of(container: &Container) -> serde_json::Value {
 
 async fn still_active_for_chat(container: &Container, model_id: &str) -> bool {
     container
-        .downloaded_model_repository()
+        .downloaded_models()
         .find_by_model_id(model_id)
         .await
         .unwrap()

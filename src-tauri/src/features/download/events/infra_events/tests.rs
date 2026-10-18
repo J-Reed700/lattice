@@ -7,8 +7,9 @@ use super::{
 };
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
-use crate::features::download::manager::{
-    DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
+use crate::features::download::manager::DownloadManagerService;
+use lattice_core::application::ports::download_manager::{
+    DownloadEvent, DownloadManager, DownloadRequest,
 };
 use lattice_core::domain::download::DownloadSession;
 use std::sync::Arc;
@@ -64,7 +65,7 @@ impl crate::features::download::engine::DownloadEngine for GatedEngine {
 
 #[test]
 fn queue_promotion_is_requested_after_terminal_events_only() {
-    use crate::features::download::manager::DownloadEvent;
+    use lattice_core::application::ports::download_manager::DownloadEvent;
     assert!(super::is_terminal_manager_event(
         &DownloadEvent::Completed { id: "done".into() }
     ));

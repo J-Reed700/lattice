@@ -40,9 +40,13 @@ pub fn get_version() -> String {
 /// This async function is called directly by the gateway.
 pub async fn health_check_impl(container: &Container) -> std::result::Result<String, String> {
     let use_case = container.health_check_use_case();
+    let llm_ready = container
+        .loaded_models()
+        .iter()
+        .any(|model| model.degraded.is_none());
 
     let response = use_case
-        .execute()
+        .execute(llm_ready)
         .await
         .map_err(|e| format!("Health check failed: {}", e))?;
 

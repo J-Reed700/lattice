@@ -263,7 +263,7 @@ mod tests {
     //! observe filesystem-side effects.
 
     use super::*;
-    use crate::features::download::downloaded_model_repository::DownloadedModelRepository as ConcreteRepo;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository as ConcreteRepo;
     use chrono::Utc;
     use lattice_core::application::ports::model_storage::{
         DownloadedModel as StoredModel, MockModelStoragePort,

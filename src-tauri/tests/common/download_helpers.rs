@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use lattice::features::download::manager::DownloadEvent;
+use lattice_core::application::ports::download_manager::DownloadEvent;
 use std::future::Future;
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};

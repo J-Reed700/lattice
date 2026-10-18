@@ -95,4 +95,36 @@ pub trait DownloadedModelRepository: Send + Sync {
         model_id: &str,
         active_model_id: &str,
     ) -> Result<bool>;
+
+    /// Find a downloaded model by its record id (not its model_id)
+    ///
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) if found, None otherwise
+    async fn find_by_id(&self, id: &str) -> Result<Option<DownloadedModel>>;
+
+    /// Insert or update a downloaded model record
+    ///
+    /// The stored embedding artifact identity is written as the model
+    /// carries it, so a freshly constructed model clears it.
+    async fn save(&self, model: &DownloadedModel) -> Result<()>;
+
+    /// Whether a model with this model_id is recorded as fully downloaded
+    async fn is_downloaded(&self, model_id: &str) -> Result<bool>;
+
+    /// Whether any embedding model is registered and downloaded
+    async fn has_any_embedding_model(&self) -> Result<bool>;
+
+    /// Delete a downloaded model by its record id unless it is active for
+    /// chat or embedding, in one atomic statement
+    ///
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) with the deleted model, or None if no record
+    /// has this id (deleting is idempotent)
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` if the model is active for chat or embedding
+    async fn delete_if_not_active(&self, id: &str) -> Result<Option<DownloadedModel>>;
 }

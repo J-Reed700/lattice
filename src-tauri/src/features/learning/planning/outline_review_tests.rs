@@ -326,7 +326,7 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
             ),
         ]),
         judged("supported", Some(0)),
-        no_questions(),
+        no_objections(),
         changed_module(&initial, 0, objective),
         no_links(),
         verdicts(

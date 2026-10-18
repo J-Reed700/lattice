@@ -1,7 +1,7 @@
 use super::*;
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::instances::SidecarBudget;
 use crate::features::llm::loading::LlmRuntime;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::contracts::settings::{LlamaCppSettingsDto, SettingsDto};
 use lattice_core::application::ports::MockSettingsRepository;
 use lattice_core::domain::models::downloaded::ModelLocation;
@@ -18,7 +18,7 @@ async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>)
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let models = DownloadedModelRepository::new(pool);
+    let models = Arc::new(DownloadedModelRepository::new(pool));
     if let Some(row) = utility {
         models.save(&row).await.unwrap();
         models
@@ -29,7 +29,8 @@ async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>)
     RoleModels {
         instances: Arc::new(LlmInstances::new()),
         loader: Arc::new(ModelLoader::new(
-            Arc::new(models),
+            models.clone(),
+            models,
             None,
             LlmRuntime::default(),
         )),

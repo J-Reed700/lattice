@@ -15,6 +15,11 @@ pub const WEIGHTS_SAFETENSORS: &str = "model.safetensors";
 /// made the model impossible to download or load at all.
 pub const WEIGHTS_PYTORCH_BIN: &str = "pytorch_model.bin";
 
+/// The PyTorch pickle of the sparse lexical head the BGE-M3 repository
+/// publishes. Downloading fetches it when the repository has one, and the
+/// Candle runtime loads it.
+pub const SPARSE_HEAD_PT: &str = "sparse_linear.pt";
+
 /// The weights file to load out of `model_dir`, or `None` when it holds
 /// neither candidate.
 ///

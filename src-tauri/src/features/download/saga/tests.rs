@@ -95,10 +95,10 @@ fn model_location_returns_directory_for_config_json() {
 
 #[tokio::test]
 async fn first_embedding_download_is_activated_with_its_identity() {
-    use crate::features::download::artifact_identity;
-    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
     use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
     use crate::infrastructure::events::event_bus::EventBus;
+    use crate::infrastructure::ml::artifact_identity;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use std::sync::Arc;
@@ -187,8 +187,8 @@ async fn saga_with_one_file(
     model_status: &str,
     file_status: &str,
 ) -> (DownloadSaga, sqlx::SqlitePool) {
-    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
     use crate::infrastructure::events::event_bus::EventBus;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use std::sync::Arc;

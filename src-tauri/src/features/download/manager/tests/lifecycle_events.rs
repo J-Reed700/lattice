@@ -4,8 +4,9 @@ use super::{temp_file, temp_root};
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
-use crate::features::download::manager::{
-    DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
+use crate::features::download::manager::DownloadManagerService;
+use lattice_core::application::ports::download_manager::{
+    DownloadEvent, DownloadManager, DownloadRequest,
 };
 use lattice_core::domain::download::{DownloadSession, DownloadState};
 use std::sync::Arc;

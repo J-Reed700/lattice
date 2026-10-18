@@ -18,11 +18,15 @@ struct SourceText {
 }
 impl SourceText {
     fn new(text: &str) -> Self {
+        Self::folded(text, typography)
+    }
+
+    fn folded(text: &str, fold: impl Fn(char) -> char) -> Self {
         let mut comparable = String::new();
         let mut spans: Vec<(usize, usize)> = Vec::new();
         for (start, character) in text.char_indices() {
             let end = start + character.len_utf8();
-            let folded = typography(character);
+            let folded = fold(character);
             if folded == ' ' && comparable.ends_with(' ') {
                 if let Some(span) = spans.last_mut() {
                     span.1 = end;
@@ -45,6 +49,30 @@ impl SourceText {
         let end = start + needle.chars().count() - 1;
         source.get(self.spans.get(start)?.0..self.spans.get(end)?.1)
     }
+}
+
+/// Where `quote` is in `source` at or after byte `from`, apart from
+/// typography, spacing and letter case: its byte span in `source`.
+pub(in crate::features::learning) fn caseless_quote_span(
+    source: &str,
+    quote: &str,
+    from: usize,
+) -> Option<(usize, usize)> {
+    let caseless = |character: char| {
+        let folded = typography(character);
+        folded.to_lowercase().next().unwrap_or(folded)
+    };
+    let text = SourceText::folded(source, caseless);
+    let needle = SourceText::folded(quote.trim(), caseless).comparable;
+    if needle.is_empty() {
+        return None;
+    }
+    let skip = text.spans.iter().position(|(start, _)| *start >= from)?;
+    let skip = text.comparable.char_indices().nth(skip)?.0;
+    let offset = skip + text.comparable.get(skip..)?.find(&needle)?;
+    let start = text.comparable.get(..offset)?.chars().count();
+    let end = start + needle.chars().count() - 1;
+    Some((text.spans.get(start)?.0, text.spans.get(end)?.1))
 }
 
 /// Recover original source bytes for a typography-only mismatch. The copied

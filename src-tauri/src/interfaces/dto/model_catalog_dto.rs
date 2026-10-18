@@ -188,11 +188,11 @@ pub enum EmbeddingCompatibilityDto {
     Unknown,
 }
 
-impl From<crate::features::embedding::compatibility::EmbeddingCompatibility>
+impl From<lattice_core::domain::models::selection::EmbeddingCompatibility>
     for EmbeddingCompatibilityDto
 {
-    fn from(domain: crate::features::embedding::compatibility::EmbeddingCompatibility) -> Self {
-        use crate::features::embedding::compatibility::EmbeddingCompatibility as E;
+    fn from(domain: lattice_core::domain::models::selection::EmbeddingCompatibility) -> Self {
+        use lattice_core::domain::models::selection::EmbeddingCompatibility as E;
         match domain {
             E::Compatible { architecture } => Self::Compatible { architecture },
             E::Incompatible {

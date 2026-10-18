@@ -38,12 +38,11 @@ use std::path::{Path, PathBuf};
 use candle_core::{DType, Device, Module, Tensor};
 use tokenizers::Tokenizer;
 
+use lattice_core::domain::models::checkpoint::SPARSE_HEAD_PT;
 use lattice_core::domain::value_objects::SparseEmbedding;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 
-/// The PyTorch pickle the BGE-M3 repository publishes.
-pub const SPARSE_HEAD_PT: &str = "sparse_linear.pt";
 /// A locally converted safetensors copy, preferred when present.
 pub const SPARSE_HEAD_SAFETENSORS: &str = "sparse_linear.safetensors";
 
