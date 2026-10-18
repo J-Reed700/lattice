@@ -65,7 +65,9 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
 mod passes;
 use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
-pub(in crate::features::learning) use provenance_gate::{gate_reason, relevel, with_trust};
+pub(in crate::features::learning) use provenance_gate::{
+    gate_reason, relevel, weigh_claim, with_trust,
+};
 mod repair;
 mod repair_loop;
 mod repair_work;

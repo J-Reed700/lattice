@@ -600,3 +600,28 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn outside_a_trust_scope_an_outline_assertion_is_not_weighed() -> Result<()> {
+    let checker = CountingChecker {
+        calls: AtomicUsize::new(0),
+    };
+    let page = vec![passage(
+        "v1",
+        "The API returns JSON when strict mode is on.",
+    )];
+    let weighed = weigh_claim(
+        &checker,
+        0,
+        "The API returns JSON in strict mode.",
+        &page,
+        SupportedBy {
+            source_version_id: "v1".into(),
+            supporting_quote: "returns JSON".into(),
+        },
+    )
+    .await?;
+    assert!(weighed.is_none(), "no course to weigh it in");
+    assert_eq!(checker.calls.load(Ordering::SeqCst), 0, "no model call");
+    Ok(())
+}

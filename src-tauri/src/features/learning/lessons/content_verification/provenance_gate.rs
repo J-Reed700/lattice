@@ -428,22 +428,77 @@ pub(super) async fn weigh(
         let Some((_, _, finding, _)) = results.get_mut(index) else {
             continue;
         };
-        let versions: Vec<String> = supporting_passages(finding)
-            .into_iter()
-            .map(|passage| passage.source_id.clone())
-            .collect();
-        let facts = judgements.facts(Some(llm), &versions, &profile).await?;
-        let trust = assess(
-            &profile,
-            finding,
-            &Evidence {
-                facts: &facts,
-                relations: judgements.relations(),
-                bars: judgements.bars(),
-                policy: &lattice_core::domain::provenance::POLICY,
-            },
-        );
-        finding.trust = Some(trust);
+        finding.trust = Some(weighed(&mut judgements, llm, &profile, finding).await?);
     }
     Ok(())
+}
+
+/// One supported finding weighed for its profile: each supporting version
+/// levelled for the claim's subject, then `assess`.
+async fn weighed(
+    judgements: &mut context::Judgements,
+    llm: &dyn LLMPort,
+    profile: &ClaimProfile,
+    finding: &Finding,
+) -> Result<FindingTrust> {
+    let versions: Vec<String> = supporting_passages(finding)
+        .into_iter()
+        .map(|passage| passage.source_id.clone())
+        .collect();
+    let facts = judgements.facts(Some(llm), &versions, profile).await?;
+    Ok(assess(
+        profile,
+        finding,
+        &Evidence {
+            facts: &facts,
+            relations: judgements.relations(),
+            bars: judgements.bars(),
+            policy: &lattice_core::domain::provenance::POLICY,
+        },
+    ))
+}
+
+/// Weighs one claim the checker supported outside a lesson's checks: the
+/// outline's factual repair (P7). The same profile, levels and `decide` as
+/// [`weigh`], inside the trust scope the job installed. `supported` names
+/// the version and quotation the verdict rests on; the supports are the
+/// passages of `page` that hold the quotation. `None` outside a trust
+/// scope, or when no passage of the page holds the quotation.
+pub(in crate::features::learning) async fn weigh_claim(
+    llm: &dyn LLMPort,
+    unit: usize,
+    statement: &str,
+    page: &[EvidencePassage],
+    supported: SupportedBy,
+) -> Result<Option<TrustAssessment>> {
+    let finding = Finding {
+        unit,
+        quote: String::new(),
+        statement: statement.to_owned(),
+        verdict: ClaimVerdict::Supported,
+        reason: String::new(),
+        evidence: page.to_vec(),
+        supporting_quote: Some(supported.supporting_quote.clone()),
+        resolution: None,
+        trust: None,
+    };
+    if supporting_passages(&finding).is_empty() {
+        return Ok(None);
+    }
+    let Some(mut judgements) = context::Judgements::open(llm).await? else {
+        return Ok(None);
+    };
+    let Some(profile) = judgements
+        .profiles(llm, &[(unit, statement)])
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let trust = weighed(&mut judgements, llm, &profile, &finding).await?;
+    Ok(Some(trust.assessment(
+        &supported.source_version_id,
+        &supported.supporting_quote,
+    )))
 }
