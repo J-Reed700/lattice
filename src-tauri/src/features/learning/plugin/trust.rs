@@ -10,6 +10,7 @@
 
 use super::*;
 
+use crate::features::learning::lessons::claim_reviews::trust_overrides;
 use crate::features::learning::references::trust::{
     calibration_view, eval_export, judgements, override_changes, source_view,
     SqliteSourceTrustStore,
@@ -36,28 +37,29 @@ pub async fn get_learning_source_trust(
     request: GetLearningSourceTrustRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningSourceTrustViewDto, ApiError> {
-    Ok(source_view::view(&store(&container), &request).await?)
+    Ok(trust_overrides::view(&store(&container), &request).await?)
 }
 
-/// Creates or replaces one override and reports the waiting claims it sends
-/// back to be re-decided.
+/// Creates or replaces one override, re-decides the claims it touches with
+/// no model call, and reports what that did.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_source_trust_override(
     request: LearningTrustOverrideInputDto,
     container: State<'_, Container>,
 ) -> Result<LearningTrustChangeResultDto, ApiError> {
-    Ok(override_changes::set(&store(&container), &request).await?)
+    Ok(trust_overrides::set(&store(&container), &request).await?)
 }
 
-/// Removes the override at `scope`; `None` when there was none.
+/// Removes the override at `scope` and re-decides the claims it touched;
+/// `None` when there was none.
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_source_trust_override(
     scope: LearningTrustOverrideScopeDto,
     container: State<'_, Container>,
 ) -> Result<Option<LearningTrustChangeResultDto>, ApiError> {
-    Ok(override_changes::clear(&store(&container), &scope).await?)
+    Ok(trust_overrides::clear(&store(&container), &scope).await?)
 }
 
 /// Every site and site-for-subject override, with the track record of the
@@ -77,7 +79,7 @@ pub async fn list_source_trust_overrides(
 pub async fn get_source_trust_calibration(
     container: State<'_, Container>,
 ) -> Result<LearningSourceTrustCalibrationDto, ApiError> {
-    Ok(calibration_view::calibration(&store(&container)).await?)
+    Ok(calibration_view::calibration(container.db_pool()).await?)
 }
 
 /// Judges a source's publisher again with the Learning model, then answers

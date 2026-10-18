@@ -8,6 +8,7 @@ import type {
   LearningSufficiencyDto,
   LearningTrustImpactDto,
   LearningTrustLevel,
+  LearningTrustRedecidedDto,
   LearningTrustOverrideDto,
 } from '@/lib/bindings';
 
@@ -168,11 +169,22 @@ export function overrideLines(overrides: LearningTrustOverrideDto[]): string[] {
   return lines;
 }
 
-/** What an override change sends back to be re-decided (§19). */
+/** What an override change sends back to be re-decided (§18.7, §19). */
 export function impactLine(impact: LearningTrustImpactDto, target: 'source' | 'site'): string {
   const subject = target === 'source' ? 'this source' : 'this site';
-  if (impact.claims === 0) return `No claim waiting for review cites ${subject}; later checks use the new level.`;
-  return `${plural(impact.claims, 'claim')} waiting for review in ${plural(impact.lessons, 'lesson')} ${impact.claims === 1 ? 'cites' : 'cite'} ${subject}; ${impact.claims === 1 ? 'it' : 'they'} will be re-decided.`;
+  if (impact.claims === 0) return `No checked claim rests on ${subject}; later checks use the new level.`;
+  return `${plural(impact.claims, 'checked claim')} in ${plural(impact.lessons, 'lesson')} ${impact.claims === 1 ? 'rests' : 'rest'} on ${subject}; ${impact.claims === 1 ? 'it' : 'they'} will be re-decided.`;
+}
+
+/** What re-deciding did after an override change: "2 claims verified · 1 reopened for you". */
+export function redecidedLine(redecided: LearningTrustRedecidedDto): string {
+  const parts = [
+    redecided.verified ? `${plural(redecided.verified, 'claim')} verified` : null,
+    redecided.reopened ? `${plural(redecided.reopened, 'claim')} reopened for you` : null,
+    redecided.stillFailing ? `${plural(redecided.stillFailing, 'claim')} still short of the bar` : null,
+    redecided.notLevelled ? `${plural(redecided.notLevelled, 'claim')} left as ${redecided.notLevelled === 1 ? 'it was' : 'they were'}: a source in ${redecided.notLevelled === 1 ? 'it' : 'them'} was never assessed` : null,
+  ].filter(Boolean);
+  return parts.length ? `${parts.join(' · ')}.` : 'No claim’s decision changed.';
 }
 
 /** The lowest level accepted alone for a kind now, in words. */
@@ -188,16 +200,15 @@ export function barLine(bar: LearningKindBarDto): string {
 
 /** The best support level among a claim's supports, if any were levelled. */
 export function bestLevel(trust: LearningClaimTrustDto): LearningTrustLevel | null {
-  return trust.supports.reduce<LearningTrustLevel | null>(
-    (best, support) => (best === null || levelRank(support.trust.level) > levelRank(best) ? support.trust.level : best),
-    null,
-  );
+  return bestOf(trust.supports.map((support) => support.trust.level));
 }
 
-/** Whether any support is accepted alone under the bar in force. */
-export function meetsBarAlone(trust: LearningClaimTrustDto): boolean {
-  const accepted = new Set(trust.bar?.levels.filter((level) => level.acceptedAlone).map((level) => level.level) ?? []);
-  return trust.supports.some((support) => accepted.has(support.trust.level));
+/** The best of some levels, if any. */
+export function bestOf(levels: readonly LearningTrustLevel[]): LearningTrustLevel | null {
+  return levels.reduce<LearningTrustLevel | null>(
+    (best, level) => (best === null || levelRank(level) > levelRank(best) ? level : best),
+    null,
+  );
 }
 
 /**
@@ -217,17 +228,21 @@ export function sufficiencyHeadline(trust: LearningClaimTrustDto): string | null
 }
 
 /**
- * Why the support was not enough, in plain words: "An established source (an
- * identified author, such as a blog) isn't enough for how an API, standard or
- * rule is defined; looking for the owner's documentation."
+ * Why the gate held the claim back, in plain words: "An established source
+ * (an identified author, such as a blog) isn't enough for how an API,
+ * standard or rule is defined; looking for the owner's documentation." The
+ * decision is the gate's (`sufficiency`, from the claim ledger); `best` is the
+ * best level among the supports it weighed.
  */
-export function insufficiencyExplanation(trust: LearningClaimTrustDto, waitingFor: 'machine' | 'you'): string | null {
-  const profile = trust.profile;
-  const best = bestLevel(trust);
-  if (!profile || !best || meetsBarAlone(trust)) return null;
-  const kind = KIND_PHRASE[profile.claimKind] ?? 'this kind of claim';
+export function insufficiencyExplanation(
+  sufficiency: LearningSufficiencyDto,
+  best: LearningTrustLevel | null,
+  waitingFor: 'machine' | 'you',
+): string | null {
+  if (sufficiency.sufficient || !best) return null;
+  const kind = KIND_PHRASE[sufficiency.claimKind] ?? 'this kind of claim';
   const next = waitingFor === 'machine'
-    ? LOOKING_FOR[profile.claimKind] ?? 'looking for a stronger source'
+    ? LOOKING_FOR[sufficiency.claimKind] ?? 'looking for a stronger source'
     : 'waiting for you: accept this source for this claim, add evidence, edit the claim or remove it';
   return `${capitalised(LEVEL_PHRASE[best])} isn’t enough for ${kind}; ${next}.`;
 }

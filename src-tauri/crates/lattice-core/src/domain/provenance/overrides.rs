@@ -155,6 +155,21 @@ impl TrustOverride {
     }
 }
 
+/// The subject classes `entries`' site-for-subject overrides name, sorted
+/// and once each: claim profiles are keyed with them and reuse their wording
+/// (§25 "Judgements").
+pub fn known_classes(entries: &[TrustOverride]) -> Vec<String> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            TrustOverride::SiteSubject { class, .. } => Some(class.label.clone()),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 impl Overrides {
     /// The override for one source in one course.
     pub fn source(

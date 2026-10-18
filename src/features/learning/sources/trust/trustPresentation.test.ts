@@ -6,13 +6,14 @@ import {
   impactLine,
   insufficiencyExplanation,
   overrideLines,
+  redecidedLine,
   sufficiencyHeadline,
   sufficiencyNote,
   TRUST_LEVELS,
   verifiedByLevel,
 } from '@/features/learning/sources/trust/trustPresentation';
-import { blogOnlyClaim, entryOf, SPECIFICATION_BAR, trustOf } from '@/features/learning/sources/trust/trustTestData';
-import type { LearningClaimEvidenceDto } from '@/lib/bindings';
+import { blogOnlyClaim, SPECIFICATION_BAR, trustOf } from '@/features/learning/sources/trust/trustTestData';
+import type { LearningClaimEvidenceDto, LearningSufficiencyDto } from '@/lib/bindings';
 
 describe('trust presentation', () => {
   it('names every level in words', () => {
@@ -41,10 +42,16 @@ describe('trust presentation', () => {
     ]);
   });
 
-  it('says how many waiting claims an override re-decides', () => {
-    expect(impactLine({ versions: 1, claims: 3, lessons: 2 }, 'source')).toBe('3 claims waiting for review in 2 lessons cite this source; they will be re-decided.');
-    expect(impactLine({ versions: 4, claims: 1, lessons: 1 }, 'site')).toBe('1 claim waiting for review in 1 lesson cites this site; it will be re-decided.');
-    expect(impactLine({ versions: 4, claims: 0, lessons: 0 }, 'site')).toBe('No claim waiting for review cites this site; later checks use the new level.');
+  it('says how many checked claims an override re-decides', () => {
+    expect(impactLine({ versions: 1, claims: 3, lessons: 2 }, 'source')).toBe('3 checked claims in 2 lessons rest on this source; they will be re-decided.');
+    expect(impactLine({ versions: 4, claims: 1, lessons: 1 }, 'site')).toBe('1 checked claim in 1 lesson rests on this site; it will be re-decided.');
+    expect(impactLine({ versions: 4, claims: 0, lessons: 0 }, 'site')).toBe('No checked claim rests on this site; later checks use the new level.');
+  });
+
+  it('says what re-deciding did after an override change', () => {
+    expect(redecidedLine({ verified: 2, reopened: 1, stillFailing: 0, notLevelled: 1, lessons: 2 }))
+      .toBe('2 claims verified · 1 claim reopened for you · 1 claim left as it was: a source in it was never assessed.');
+    expect(redecidedLine({ verified: 0, reopened: 0, stillFailing: 0, notLevelled: 0, lessons: 0 })).toBe('No claim’s decision changed.');
   });
 
   it('states the bar in force, and says when only corroboration meets it', () => {
@@ -55,10 +62,11 @@ describe('trust presentation', () => {
   it('explains in plain words why a blog is not enough for an API specification', () => {
     const claim = blogOnlyClaim();
     expect(sufficiencyHeadline(claim)).toBe('Specification claim about OpenAI API · supported only by an established source · accepted alone: a primary or authoritative source');
-    expect(insufficiencyExplanation(claim, 'machine')).toBe('An established source (an identified author, such as a blog) isn’t enough for how an API, standard or rule is defined; looking for the owner’s documentation.');
-    expect(insufficiencyExplanation(claim, 'you')).toMatch(/waiting for you: accept this source for this claim/);
-    const primary = { ...claim, supports: [entryOf(trustOf('primary', { subject: 'OpenAI API' }))] };
-    expect(insufficiencyExplanation(primary, 'machine')).toBeNull();
+    // The decision is the gate's, as the claim ledger recorded it.
+    const held: LearningSufficiencyDto = { claimKind: 'specification', subject: 'OpenAI API', sufficient: false, bar: 'primary', label: null, reasons: [] };
+    expect(insufficiencyExplanation(held, 'established', 'machine')).toBe('An established source (an identified author, such as a blog) isn’t enough for how an API, standard or rule is defined; looking for the owner’s documentation.');
+    expect(insufficiencyExplanation(held, 'established', 'you')).toMatch(/waiting for you: accept this source for this claim/);
+    expect(insufficiencyExplanation({ ...held, sufficient: true, bar: null }, 'established', 'machine')).toBeNull();
   });
 
   it('shows a published claim’s kind, subject and label', () => {

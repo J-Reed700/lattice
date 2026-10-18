@@ -14,7 +14,11 @@ vi.mock('@/lib/api', () => ({
 
 const changed = (claims: number) => ({
   ok: true,
-  data: { change: { scope: { scope: 'site', registrableDomain: 'example-dev.net' }, sourceVersionIds: ['version-1'] }, impact: { versions: 1, claims, lessons: 1 } },
+  data: {
+    change: { scope: { scope: 'site', registrableDomain: 'example-dev.net' }, sourceVersionIds: ['version-1'] },
+    impact: { versions: 1, claims, lessons: 1 },
+    redecided: { verified: claims, reopened: 0, stillFailing: 0, notLevelled: 0, lessons: claims ? 1 : 0 },
+  },
 });
 
 function show(entry: LearningSourceTrustEntryDto = entryOf(trustOf('established', { subject: 'OpenAI API' })), subjectOptions: string[] = []) {
@@ -35,7 +39,7 @@ describe('Trust override menu', () => {
     toggle.focus();
     await userEvent.keyboard('{Enter}');
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('status')).toHaveTextContent('3 claims waiting for review in 2 lessons cite this source; they will be re-decided.');
+    expect(screen.getByRole('status')).toHaveTextContent('3 checked claims in 2 lessons rest on this source; they will be re-decided.');
     expect(screen.getByRole('button', { name: 'Apply and re-decide 3 claims' })).toBeVisible();
     await userEvent.keyboard('{Escape}');
     expect(toggle).toHaveAttribute('aria-expanded', 'false');

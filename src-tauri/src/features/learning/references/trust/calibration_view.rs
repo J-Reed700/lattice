@@ -3,20 +3,17 @@
 //! when, every automatic change with its numbers, and the stated policy
 //! parameters with their derivations (`domain::provenance::policy`).
 //!
-//! The bars are lattice-core's `effective_bars` over every recorded outcome,
-//! recomputed on read as the gate computes them.
-//! INTEGRATION (P5/P7): when `references::trust::calibration` lands, read
-//! the bars and outcomes through it so Settings and the gate share one
-//! loader.
+//! The bars, their changes and the verdict counts are read through
+//! [`super::calibration::view`], the loader the gate reads its bars from.
 
+use super::calibration;
 use super::dto_map;
-use super::repository::SqliteSourceTrustStore;
 use crate::features::learning::dto::{
     LearningSourceTrustCalibrationDto, LearningTrustPolicyParameterDto,
 };
-use lattice_core::application::ports::SourceTrustStore;
-use lattice_core::domain::provenance::{effective_bars, Calibration, Policy, StaticBars, POLICY};
+use lattice_core::domain::provenance::{Policy, POLICY};
 use lattice_core::shared::error::Result;
+use sqlx::SqlitePool;
 
 /// The parameters calibration and the copy rule compare against, each with
 /// the derivation `policy.rs` states for it.
@@ -55,25 +52,18 @@ fn parameters(policy: &Policy) -> Vec<LearningTrustPolicyParameterDto> {
     ]
 }
 
-pub async fn calibration(
-    store: &SqliteSourceTrustStore,
-) -> Result<LearningSourceTrustCalibrationDto> {
-    let outcomes: Vec<_> = store
-        .outcomes()
-        .await?
-        .into_iter()
-        .map(|record| record.outcome)
-        .collect();
-    let calibration = Calibration::from_outcomes(&outcomes);
-    let bars = effective_bars(&StaticBars::table(), &calibration, &POLICY);
+pub async fn calibration(pool: &SqlitePool) -> Result<LearningSourceTrustCalibrationDto> {
+    let view = calibration::view(pool).await?;
     Ok(LearningSourceTrustCalibrationDto {
-        policy_version: bars.policy.clone(),
+        policy_version: view.bars.policy.clone(),
         parameters: parameters(&POLICY),
-        kinds: bars
+        kinds: view
+            .bars
             .bars
             .iter()
-            .map(|bar| dto_map::kind_bar(bar, &calibration, &POLICY))
+            .map(|bar| dto_map::kind_bar(bar, &view.calibration, &POLICY))
             .collect(),
-        verdicts: u32::try_from(outcomes.len()).unwrap_or(u32::MAX),
+        changes: view.changes.iter().map(dto_map::bar_change).collect(),
+        verdicts: u32::try_from(view.verdicts).unwrap_or(u32::MAX),
     })
 }

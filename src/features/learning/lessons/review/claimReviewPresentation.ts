@@ -110,6 +110,7 @@ export function verdictLabel(kind: VerdictKindDto | null): string {
     case 'could_not_judge': return 'Could not judge';
     case 'general_knowledge_proposed': return 'General knowledge proposed';
     case 'disputed': return `Disputed by the Verifier · ${verdictLabel(kind.verifier).toLowerCase()}`;
+    case 'insufficient_standing': return 'Support not enough for its kind';
   }
 }
 
@@ -123,6 +124,7 @@ export function verdictMeaning(kind: VerdictKindDto | null): string {
     case 'could_not_judge': return 'The checker could not give a usable answer for this claim.';
     case 'general_knowledge_proposed': return 'The checker proposes this is general knowledge. It was not checked against a source.';
     case 'disputed': return 'The local checker verified this claim; the Verifier audit disagrees.';
+    case 'insufficient_standing': return 'A passage supports the claim, but its source alone is not enough for this kind of claim.';
   }
 }
 
@@ -153,6 +155,7 @@ const REOPEN_CAUSES: Record<ReopenCauseDto['cause'], string> = {
   source_replaced: 'Reopened: its source was replaced',
   unconfirmed: 'Reopened: you unconfirmed it',
   verifier_dispute: 'Reopened: the Verifier disputes it',
+  trust_changed: 'Reopened: a source’s trust or a bar changed',
 };
 
 function date(at: number): string {
@@ -224,6 +227,12 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
+    case 'standing_assessed': {
+      const { assessment } = payload;
+      const decided = assessment.sufficient ? 'support meets the bar for its kind' : 'support is not enough for its kind';
+      const why = assessment.cause ? (assessment.cause.change === 'override' ? ' after a trust override' : ' after a bar moved') : '';
+      return `Standing: ${decided}${why}${assessment.reason ? ` · ${assessment.reason}` : ''}`;
+    }
     case 'stopped': return `Stopped: ${payload.reason.message}`;
   }
 }

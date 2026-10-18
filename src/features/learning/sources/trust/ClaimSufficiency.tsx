@@ -1,5 +1,5 @@
 import { TrustBadge } from '@/features/learning/sources/trust/TrustBadge';
-import { insufficiencyExplanation, sufficiencyHeadline } from '@/features/learning/sources/trust/trustPresentation';
+import { bestLevel, bestOf, insufficiencyExplanation, sufficiencyHeadline } from '@/features/learning/sources/trust/trustPresentation';
 import { TrustOverrideMenu } from '@/features/learning/sources/trust/TrustOverrideMenu';
 import { useReprofileClaim, useSourceTrust } from '@/features/learning/sources/trust/useSourceTrust';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
@@ -10,7 +10,9 @@ const EXECUTION = 'execution';
 /**
  * The review card's support block (§19): each supporting source's level for
  * the claim's subject, the claim's kind and the bar it must meet, and, for a
- * claim still waiting, why its support was not enough and what happens next.
+ * claim the provenance gate held back (`item.sufficiency`, the ledger's
+ * record of its decision), why its support was not enough and what happens
+ * next. The block never decides sufficiency itself.
  * Each source can be trusted from here, scoped to this source, its site, or
  * its site for the claim's subject.
  */
@@ -32,7 +34,10 @@ export function ClaimSufficiency({
   if (!versionIds.length) return null;
   const waiting = item.state.state === 'open' ? 'machine' : item.state.state === 'queued' ? 'you' : null;
   const headline = claim ? sufficiencyHeadline(claim) : null;
-  const explanation = claim && waiting ? insufficiencyExplanation(claim, waiting) : null;
+  // The levels the gate weighed, else the levels the sources have now.
+  const best = bestOf(item.evidence.flatMap(({ passage }) => (passage.trust ? [passage.trust.level] : [])))
+    ?? (claim ? bestLevel(claim) : null);
+  const explanation = item.sufficiency && waiting ? insufficiencyExplanation(item.sufficiency, best, waiting) : null;
   const subject = claim?.profile?.subject ?? null;
   const subjectOptions = subject ? [subject.name, ...subject.aliases, ...subject.classes] : [];
   return (

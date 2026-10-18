@@ -4,42 +4,15 @@ use super::general_knowledge::Resolution;
 use super::provenance_gate::FindingTrust;
 use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
-    dto::{
-        LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto, LearningTrustLevel,
-        LearningTrustReasonDto,
-    },
+    dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
     lesson_evidence::{
         LearningClaimEvidenceDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
         LearningLessonEvidenceDto, SavedEvidenceVersion,
     },
+    references::trust::dto_map,
 };
-use lattice_core::domain::provenance::{Decision, Reason, TrustLevel};
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
-
-fn level(level: TrustLevel) -> LearningTrustLevel {
-    match level {
-        TrustLevel::Primary => LearningTrustLevel::Primary,
-        TrustLevel::Authoritative => LearningTrustLevel::Authoritative,
-        TrustLevel::Established => LearningTrustLevel::Established,
-        TrustLevel::Community => LearningTrustLevel::Community,
-        TrustLevel::Unknown => LearningTrustLevel::Unknown,
-        TrustLevel::Distrusted => LearningTrustLevel::Distrusted,
-    }
-}
-
-fn reasons(reasons: &[Reason]) -> Vec<LearningTrustReasonDto> {
-    reasons
-        .iter()
-        .map(|reason| LearningTrustReasonDto {
-            code: serde_json::to_value(reason.code)
-                .ok()
-                .and_then(|code| code.as_str().map(str::to_owned))
-                .unwrap_or_default(),
-            text: reason.text.clone(),
-        })
-        .collect()
-}
 
 /// The level of `source_version_id` for the claim's subject, when it
 /// supports the claim.
@@ -48,55 +21,12 @@ fn passage_trust(trust: &FindingTrust, source_version_id: &str) -> Option<Learni
         .supports
         .iter()
         .find(|support| support.source_version_id == source_version_id)
-        .map(|support| LearningSourceTrustDto {
-            source_version_id: source_version_id.to_owned(),
-            level: level(support.trust.level),
-            subject: trust
-                .profile
-                .subject
-                .as_ref()
-                .map(|subject| subject.name.clone()),
-            reasons: reasons(&support.trust.reasons),
-            override_scope: None,
-        })
-}
-
-fn wire<T: serde::Serialize>(value: &T, field: &str) -> Option<String> {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.get(field).and_then(|v| v.as_str()).map(str::to_owned))
+        .map(|support| dto_map::support_trust(&trust.profile, support))
 }
 
 /// Whether the claim's support met the bar for its kind (§18.9).
 fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
-    let (sufficient, bar, label, decided) = match &trust.decision {
-        Decision::Sufficient { label, reasons, .. } => (
-            true,
-            None,
-            label.as_ref().and_then(|label| wire(label, "label")),
-            reasons,
-        ),
-        Decision::Insufficient { bar, reasons, .. } => (
-            false,
-            serde_json::to_value(bar)
-                .ok()
-                .and_then(|bar| bar.as_str().map(str::to_owned)),
-            None,
-            reasons,
-        ),
-    };
-    LearningSufficiencyDto {
-        claim_kind: trust.profile.kind.as_str().to_owned(),
-        subject: trust
-            .profile
-            .subject
-            .as_ref()
-            .map(|subject| subject.name.clone()),
-        sufficient,
-        bar,
-        label,
-        reasons: reasons(decided),
-    }
+    dto_map::sufficiency(&trust.profile, &trust.decision)
 }
 
 fn unavailable() -> AppError {

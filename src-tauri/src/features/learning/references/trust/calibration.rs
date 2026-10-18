@@ -19,6 +19,8 @@ use super::SqliteSourceTrustStore;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CalibrationView {
     pub bars: EffectiveBars,
+    /// Each cell's verdicts and posterior, which the bars were moved by.
+    pub calibration: Calibration,
     pub changes: Vec<BarChange>,
     pub verdicts: usize,
     /// The reliability a level must show to be accepted alone.
@@ -30,27 +32,45 @@ pub struct CalibrationView {
     pub policy: &'static str,
 }
 
+/// The bars in force and the calibration that moved them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Calibrated {
+    pub bars: EffectiveBars,
+    pub calibration: Calibration,
+}
+
+fn calibrated_of(outcomes: &[OutcomeRecord]) -> Calibrated {
+    let outcomes: Vec<_> = outcomes.iter().map(|record| record.outcome).collect();
+    let calibration = Calibration::from_outcomes(&outcomes);
+    Calibrated {
+        bars: effective_bars(&StaticBars::table(), &calibration, &POLICY),
+        calibration,
+    }
+}
+
 /// The bars `outcomes` calibrate the static table to.
 pub fn bars_of(outcomes: &[OutcomeRecord]) -> EffectiveBars {
-    let outcomes: Vec<_> = outcomes.iter().map(|record| record.outcome).collect();
-    effective_bars(
-        &StaticBars::table(),
-        &Calibration::from_outcomes(&outcomes),
-        &POLICY,
-    )
+    calibrated_of(outcomes).bars
 }
 
 /// The bars in force now.
 pub async fn bars(pool: &SqlitePool) -> Result<EffectiveBars> {
+    Ok(calibrated(pool).await?.bars)
+}
+
+/// The bars in force now, with each cell's verdicts.
+pub async fn calibrated(pool: &SqlitePool) -> Result<Calibrated> {
     let outcomes = SqliteSourceTrustStore::new(pool.clone()).outcomes().await?;
-    Ok(bars_of(&outcomes))
+    Ok(calibrated_of(&outcomes))
 }
 
 /// Calibration as Settings shows it.
 pub async fn view(pool: &SqlitePool) -> Result<CalibrationView> {
     let outcomes = SqliteSourceTrustStore::new(pool.clone()).outcomes().await?;
+    let Calibrated { bars, calibration } = calibrated_of(&outcomes);
     Ok(CalibrationView {
-        bars: bars_of(&outcomes),
+        bars,
+        calibration,
         changes: bar_changes(&StaticBars::table(), &outcomes, &POLICY),
         verdicts: outcomes.len(),
         accept_reliability: POLICY.accept_reliability,

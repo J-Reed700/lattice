@@ -85,7 +85,9 @@ pub use links::markdown_links;
 pub use origin::{
     ArchivedFrom, CanonicalLink, Origin, OriginError, OriginKey, RegistryKind, TldRegistry,
 };
-pub use overrides::{OverrideRef, OverrideScope, Overrides, SiteStanding, TrustOverride};
+pub use overrides::{
+    known_classes, OverrideRef, OverrideScope, Overrides, SiteStanding, TrustOverride,
+};
 pub use overturn::{overturn, Overturn};
 pub use policy::{Policy, POLICY, TRUST_POLICY_VERSION};
 pub use reason::{AddedBy, Reason, ReasonCode};

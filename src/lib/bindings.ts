@@ -759,8 +759,8 @@ async getLearningSourceTrust(request: GetLearningSourceTrustRequestDto) : Promis
 }
 },
 /**
- * Creates or replaces one override and reports the waiting claims it sends
- * back to be re-decided.
+ * Creates or replaces one override, re-decides the claims it touches with
+ * no model call, and reports what that did.
  */
 async setSourceTrustOverride(request: LearningTrustOverrideInputDto) : Promise<Result<LearningTrustChangeResultDto, ApiError>> {
     try {
@@ -771,7 +771,8 @@ async setSourceTrustOverride(request: LearningTrustOverrideInputDto) : Promise<R
 }
 },
 /**
- * Removes the override at `scope`; `None` when there was none.
+ * Removes the override at `scope` and re-decides the claims it touched;
+ * `None` when there was none.
  */
 async clearSourceTrustOverride(scope: LearningTrustOverrideScopeDto) : Promise<Result<LearningTrustChangeResultDto | null, ApiError>> {
     try {
@@ -5095,7 +5096,11 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
 lines: string[] }
 export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number }
 export type ClaimEventDto = { ordinal: number; actor: ActorDto; at: number; jobId: string | null; appVersion: string; checkerModel: string | null; event: ClaimEventPayloadDto }
-export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto }
+export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
+/**
+ * What the provenance gate weighed (source provenance §18.7).
+ */
+{ kind: "standing_assessed"; assessment: StandingAssessedDto }
 /**
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
@@ -5127,7 +5132,13 @@ localCheck: CheckerVerdictDto | null;
  * The Verifier audit's latest verdict: the "Verifier said" column. Null
  * until the audit has checked the claim.
  */
-verifierCheck: CheckerVerdictDto | null }
+verifierCheck: CheckerVerdictDto | null;
+/**
+ * The provenance gate's decision while the claim's state is the gate's
+ * (`StandingAssessed`): whether its support met the bar for its kind,
+ * and why. Null when the gate did not decide the claim's state.
+ */
+sufficiency: LearningSufficiencyDto | null }
 /**
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
@@ -5578,6 +5589,11 @@ export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grow
  * One row of the vault's type mix.
  */
 export type CorpusTypeCountDto = { type: string; count: number }
+/**
+ * One support as the gate counted it: `level` is `null` when it was
+ * excluded (distrusted, ruled out by its date).
+ */
+export type CountedSupportDto = { sourceVersionId: string; level: LearningTrustLevel | null }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
 export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
@@ -7014,6 +7030,23 @@ export type LearningBarBasis =
  * At or above the table's bar, no longer accepted alone.
  */
 "tightened"
+/**
+ * One level of one kind's bar changing whether it is accepted alone, and
+ * the verdict that tipped it (§13, decision 2).
+ */
+export type LearningBarChangeDto = { claimKind: string; level: LearningTrustLevel;
+/**
+ * When the verdict was given (unix seconds).
+ */
+at: number; acceptedAlone: boolean;
+/**
+ * Whether it moved the lowest level accepted alone for the kind.
+ */
+movesBar: boolean;
+/**
+ * Who gave the verdict (`user_confirm`, `verifier_agree`, …).
+ */
+labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
 export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
 export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
@@ -7617,6 +7650,10 @@ export type LearningSourceStanding = "institutional" | "identified" | "community
  */
 export type LearningSourceTrustCalibrationDto = { policyVersion: string; parameters: LearningTrustPolicyParameterDto[]; kinds: LearningKindBarDto[];
 /**
+ * Every automatic change, oldest first, with the verdict that made it.
+ */
+changes: LearningBarChangeDto[];
+/**
  * Verdicts recorded across every course.
  */
 verdicts: number }
@@ -7709,16 +7746,17 @@ export type LearningTrackRecordDto = { right: number; wrong: number }
  */
 export type LearningTrustChangeDto = { scope: LearningTrustOverrideScopeDto; sourceVersionIds: string[] }
 /**
- * An override change and what it sends back to be re-decided.
+ * An override change, the claims it touches, and what re-deciding them did.
  */
-export type LearningTrustChangeResultDto = { change: LearningTrustChangeDto; impact: LearningTrustImpactDto }
+export type LearningTrustChangeResultDto = { change: LearningTrustChangeDto; impact: LearningTrustImpactDto; redecided: LearningTrustRedecidedDto }
 /**
  * The claim a trust read is for: its statement and the versions it cites.
  */
 export type LearningTrustClaimRequestDto = { statement: string; sourceVersionIds: string[] }
 /**
- * The claims an override would send back to be re-decided: those waiting
- * in review that cite a version it covers (§19).
+ * The claims an override would send back to be re-decided (§18.7, §19):
+ * every claim whose state the provenance gate decided from a version it
+ * covers, waiting (the change may verify it) or verified (it may reopen).
  */
 export type LearningTrustImpactDto = { versions: number; claims: number; lessons: number }
 /**
@@ -7758,6 +7796,31 @@ export type LearningTrustPolicyParameterDto = { name: string; value: number; der
  * One rule that fired, shown verbatim.
  */
 export type LearningTrustReasonDto = { code: string; text: string }
+/**
+ * What re-deciding the claims a trust change touches did (§18.7).
+ */
+export type LearningTrustRedecidedDto = {
+/**
+ * Claims verified that were failing their bar.
+ */
+verified: number;
+/**
+ * Verified claims reopened for the user.
+ */
+reopened: number;
+/**
+ * Claims still failing, with the new decision's reason.
+ */
+stillFailing: number;
+/**
+ * Claims whose supports were never judged, so only a model could level
+ * them; left as they were.
+ */
+notLevelled: number;
+/**
+ * Lessons with a re-decided claim.
+ */
+lessons: number }
 export type LearningTutorRequestKind = "hint" | "question" | "critique"
 /**
  * The audit switch of one course, with what turning it on would send where.
@@ -8457,7 +8520,12 @@ message: string;
  * The new name that was applied
  */
 new_name: string }
-export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_deleted"; sourceVersionId: string } | { cause: "source_replaced"; from: string; to: string } | { cause: "unconfirmed" } | { cause: "verifier_dispute" }
+export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_deleted"; sourceVersionId: string } | { cause: "source_replaced"; from: string; to: string } | { cause: "unconfirmed" } | { cause: "verifier_dispute" } |
+/**
+ * An override or a calibrated bar changed and the gate's re-decision
+ * no longer verifies the claim.
+ */
+{ cause: "trust_changed"; trust: TrustCauseDto }
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
 export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
@@ -9198,6 +9266,18 @@ export type SpeculativeDecodingDto = { mode: "off" } |
  */
 { mode: "mtpDraft"; nMax: number }
 /**
+ * A `StandingAssessed` event's payload: the claim's kind, whether its
+ * support met the bar (and which bar it failed), each support's level for
+ * the claim's subject, the gate's reason, and the trust change that made
+ * the gate decide again (`null` for the check it followed).
+ */
+export type StandingAssessedDto = { claimKind: string; sufficient: boolean;
+/**
+ * `primary`, `origin`, `authoritative`, `established`, `attributed` or
+ * `any`, when the support failed it.
+ */
+bar: string | null; supports: CountedSupportDto[]; reason: string; cause: TrustCauseDto | null }
+/**
  * Request to start a batch file import job.
  *
  * Accepts 1-100 file paths for batch processing.
@@ -9594,6 +9674,19 @@ export type TruncateConversationAfterResponseDto = { conversationId: string; del
  */
 messages: MessageDto[] }
 /**
+ * What moved the trust a decision rested on.
+ */
+export type TrustCauseDto =
+/**
+ * An override was set or cleared on these source versions.
+ */
+{ change: "override"; sourceVersionIds: string[] } |
+/**
+ * Calibration moved the bar for this kind of claim (`specification`,
+ * `measurement`, …).
+ */
+{ change: "bar"; claimKind: string }
+/**
  * The model that answered **this** turn, which is not necessarily the one the
  * conversation is filed under: a chat can be re-pointed between turns.
  */
@@ -9845,7 +9938,12 @@ export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } 
 /**
  * The Verifier's verdict on a claim the local checker verified.
  */
-{ kind: "disputed"; verifier: VerdictKindDto }
+{ kind: "disputed"; verifier: VerdictKindDto } |
+/**
+ * The checker found support, but it is below the bar for the claim's
+ * kind (`bar`), counted as `have` (source provenance §6).
+ */
+{ kind: "insufficient_standing"; bar: string; have: CountedSupportDto[] }
 /**
  * A finished check, addressed to the message it belongs to.
  */

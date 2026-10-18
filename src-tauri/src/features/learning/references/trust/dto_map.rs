@@ -2,18 +2,22 @@
 //! and the user's override input as the core override it states (§16, §19).
 //! A site override carries a standing and never a level; a level, Primary
 //! included, comes only with a source or a site for a subject class.
+//!
+//! The one mapping: the trust commands, the learner view and the review
+//! card all show the gate's levels, decisions and bars through it.
 
 use crate::features::learning::dto::{
-    LearningBarBasis, LearningClaimProfileDto, LearningClaimSubjectDto, LearningKindBarDto,
-    LearningLevelBarDto, LearningSiteStanding, LearningSourceProvenanceDto,
+    LearningBarBasis, LearningBarChangeDto, LearningClaimProfileDto, LearningClaimSubjectDto,
+    LearningKindBarDto, LearningLevelBarDto, LearningSiteStanding, LearningSourceProvenanceDto,
     LearningSourceRelationDto, LearningSourceRelationKind, LearningSourceStanding,
-    LearningSubjectClassDto, LearningTrustLevel, LearningTrustOverrideDto,
-    LearningTrustOverrideInputDto, LearningTrustOverrideScopeDto, LearningTrustReasonDto,
+    LearningSourceTrustDto, LearningSubjectClassDto, LearningSufficiencyDto, LearningTrustLevel,
+    LearningTrustOverrideDto, LearningTrustOverrideInputDto, LearningTrustOverrideScopeDto,
+    LearningTrustReasonDto,
 };
 use lattice_core::domain::provenance::{
-    BarBasis, Calibration, ClaimProfile, EffectiveBar, OverrideScope, Policy, ProvenanceRecord,
-    ProvenanceSignals, Reason, RelationKind, RelationTarget, SiteStanding, SourceRelation,
-    Standing, SubjectClass, SubjectKey, TrustLevel, TrustOverride,
+    BarBasis, BarChange, Calibration, ClaimProfile, Decision, EffectiveBar, OverrideScope, Policy,
+    ProvenanceRecord, ProvenanceSignals, Reason, RelationKind, RelationTarget, SiteStanding,
+    SourceRelation, Standing, SubjectClass, SubjectKey, Support, TrustLevel, TrustOverride,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -68,16 +72,14 @@ fn core_site_standing(standing: LearningSiteStanding) -> SiteStanding {
 
 /// The reasons verbatim, each with its rule's wire name.
 pub fn reasons(reasons: &[Reason]) -> Vec<LearningTrustReasonDto> {
-    reasons
-        .iter()
-        .map(|reason| LearningTrustReasonDto {
-            code: serde_json::to_value(reason.code)
-                .ok()
-                .and_then(|code| code.as_str().map(str::to_owned))
-                .unwrap_or_default(),
-            text: reason.text.clone(),
-        })
-        .collect()
+    reasons.iter().map(reason).collect()
+}
+
+fn reason(reason: &Reason) -> LearningTrustReasonDto {
+    LearningTrustReasonDto {
+        code: wire_name(&reason.code, None).unwrap_or_default(),
+        text: reason.text.clone(),
+    }
 }
 
 fn class(class: &SubjectClass) -> LearningSubjectClassDto {
@@ -377,5 +379,66 @@ pub fn kind_bar(
             })
             .collect(),
         reasons: reasons(&bar.reasons),
+    }
+}
+
+/// A support as the gate levelled it for the claim's subject.
+pub fn support_trust(profile: &ClaimProfile, support: &Support) -> LearningSourceTrustDto {
+    LearningSourceTrustDto {
+        source_version_id: support.source_version_id.clone(),
+        level: level(support.trust.level),
+        subject: profile.authority_subject().map(|subject| subject.name),
+        reasons: reasons(&support.trust.reasons),
+        override_scope: support.trust.override_.as_ref().map(|by| scope(&by.scope)),
+    }
+}
+
+/// A serialised enum's tag or name, as the wire spells it.
+fn wire_name<T: serde::Serialize>(value: &T, tag: Option<&str>) -> Option<String> {
+    let value = serde_json::to_value(value).ok()?;
+    let name = match tag {
+        Some(tag) => value.get(tag)?.as_str()?.to_owned(),
+        None => value.as_str()?.to_owned(),
+    };
+    Some(name)
+}
+
+/// The gate's decision on a claim (§18.9): whether its support met the bar
+/// for its kind, the bar it failed, the label it is shown with, and the
+/// rules that decided.
+pub fn sufficiency(profile: &ClaimProfile, decision: &Decision) -> LearningSufficiencyDto {
+    let (sufficient, bar, label, decided) = match decision {
+        Decision::Sufficient { label, reasons, .. } => (
+            true,
+            None,
+            label
+                .as_ref()
+                .and_then(|label| wire_name(label, Some("label"))),
+            reasons,
+        ),
+        Decision::Insufficient { bar, reasons, .. } => (false, wire_name(bar, None), None, reasons),
+    };
+    LearningSufficiencyDto {
+        claim_kind: profile.kind.as_str().to_owned(),
+        subject: profile.subject.as_ref().map(|subject| subject.name.clone()),
+        sufficient,
+        bar,
+        label,
+        reasons: reasons(decided),
+    }
+}
+
+/// One automatic bar change with the verdict that made it.
+pub fn bar_change(change: &BarChange) -> LearningBarChangeDto {
+    LearningBarChangeDto {
+        claim_kind: change.kind.as_str().to_owned(),
+        level: level(change.level),
+        at: change.at,
+        accepted_alone: change.accepted_alone,
+        moves_bar: change.moves_bar(),
+        label_source: change.label_source.as_str().to_owned(),
+        lesson_id: change.lesson_id.clone(),
+        claim_id: change.claim_id.clone(),
+        reason: reason(&change.reason),
     }
 }

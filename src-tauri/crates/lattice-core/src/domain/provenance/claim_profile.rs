@@ -149,6 +149,26 @@ pub struct ClaimProfile {
     pub model: String,
 }
 
+impl ClaimProfile {
+    /// The subject a claim's supports are levelled against (§6.1): the
+    /// measurement's origin, as an organisation, for a measurement that
+    /// names one; otherwise the claim's subject. The gate, the trust view
+    /// and re-levelling all read it here.
+    pub fn authority_subject(&self) -> Option<ClaimSubject> {
+        match (&self.kind, &self.measurement_origin) {
+            (ClaimKind::Measurement, Some(origin)) if !origin.trim().is_empty() => {
+                Some(ClaimSubject::new(
+                    origin.trim(),
+                    SubjectKind::Organization,
+                    Vec::new(),
+                    Vec::new(),
+                ))
+            }
+            _ => self.subject.clone(),
+        }
+    }
+}
+
 impl SubjectKey {
     /// The key of a subject or class name: Unicode NFKC, lower case, every
     /// character other than a letter, a digit, `#` or `+` (which tell `C#`

@@ -18,6 +18,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::features::learning::dto::LearningSufficiencyDto;
 use crate::features::learning::lesson_evidence::LearningEvidencePassageDto;
 use crate::features::learning::runtime::lab_runtime::LearningLabExecutionResult;
 
@@ -107,6 +108,10 @@ pub struct ClaimReviewItemDto {
     /// The Verifier audit's latest verdict: the "Verifier said" column. Null
     /// until the audit has checked the claim.
     pub verifier_check: Option<CheckerVerdictDto>,
+    /// The provenance gate's decision while the claim's state is the gate's
+    /// (`StandingAssessed`): whether its support met the bar for its kind,
+    /// and why. Null when the gate did not decide the claim's state.
+    pub sufficiency: Option<LearningSufficiencyDto>,
 }
 
 /// One checker's latest verdict on a claim.

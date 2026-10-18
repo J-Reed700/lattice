@@ -7,6 +7,7 @@ import {
   LEVEL_MEANING,
   LEVEL_WORD,
   overrideLines,
+  redecidedLine,
   SITE_STANDINGS,
   STANDING_MEANING,
   STANDING_WORD,
@@ -88,7 +89,7 @@ export function TrustOverrideMenu({
     }
   };
   const reported = (result: LearningTrustChangeResultDto | null, target: 'source' | 'site') =>
-    setDone(result ? `Saved. ${impactLine(result.impact, target)}` : 'There was no override to reset.');
+    setDone(result ? `Saved. ${result.impact.claims ? redecidedLine(result.redecided) : impactLine(result.impact, target)}` : 'There was no override to reset.');
 
   const apply = async (event: FormEvent) => {
     event.preventDefault();

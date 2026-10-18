@@ -27,7 +27,7 @@ fn request(
         program_id: course.program_id.clone(),
         source_ids: Vec::new(),
         claim,
-        include_impact: true,
+        include_impact: false,
     }
 }
 
@@ -164,88 +164,6 @@ async fn a_site_override_is_listed_on_its_sites_sources_only() -> Result<()> {
         .map(|entry| entry.overrides.len())
         .collect();
     assert_eq!(listed.iter().sum::<usize>(), 1);
-    Ok(())
-}
-
-async fn waiting_claim(
-    course: &Course,
-    lesson_id: &str,
-    claim: &str,
-    state: &str,
-    version_id: &str,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO learning_lesson_claims (claim_id, lesson_id, unit_index, unit_kind, field, quote, statement, state_json, evidence_json, updated_at) \
-         VALUES (?, ?, 0, 'block', 'body', 'quote', 'statement', ?, ?, 1)",
-    )
-    .bind(claim)
-    .bind(lesson_id)
-    .bind(json!({ "state": state, "kind": { "kind": "unsupported" }, "reason": "r" }).to_string())
-    .bind(
-        json!([{ "sourceVersionId": version_id, "startByte": 0, "endByte": 1, "text": "t", "retrievalKind": "lexical" }])
-            .to_string(),
-    )
-    .execute(&course.pool)
-    .await
-    .map_err(crate::features::learning::persistence::db)?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_menu_counts_the_waiting_claims_an_override_reopens() -> Result<()> {
-    let course = course().await?;
-    let chosen = page(&course, "https://docs.example.org/a").await?;
-    let other = page(&course, "https://elsewhere.example.net/b").await?;
-    let lesson_id: String =
-        sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? LIMIT 1")
-            .bind(&course.program_id)
-            .fetch_one(&course.pool)
-            .await
-            .map_err(crate::features::learning::persistence::db)?;
-    let db = crate::features::learning::persistence::db;
-    sqlx::query(
-        "INSERT INTO jobs (id, kind, subject_id, operation_id, payload_hash, status, requested_json, progress_total, progress_message, created_at) \
-         VALUES ('j1', 'lesson_preparation', ?, 'op-1', 'hash', 'pending', '{}', 1, 'Queued', 1000)",
-    )
-    .bind(&lesson_id)
-    .execute(&course.pool)
-    .await
-    .map_err(db)?;
-    sqlx::query("INSERT INTO learning_jobs (job_id, program_id) VALUES ('j1', ?)")
-        .bind(&course.program_id)
-        .execute(&course.pool)
-        .await
-        .map_err(db)?;
-    sqlx::query(
-        "INSERT INTO learning_lesson_reviews (lesson_id, program_id, job_id, state, draft_sha256, checker_model, stop_reason_json, opened_at, updated_at) \
-         VALUES (?, ?, 'j1', 'needs_review', 'draft', 'test-model', NULL, 1, 1)",
-    )
-    .bind(&lesson_id)
-    .bind(&course.program_id)
-    .execute(&course.pool)
-    .await
-    .map_err(db)?;
-    waiting_claim(&course, &lesson_id, "c1", "queued", &chosen.version_id).await?;
-    waiting_claim(&course, &lesson_id, "c2", "open", &chosen.version_id).await?;
-    waiting_claim(&course, &lesson_id, "c3", "removed", &chosen.version_id).await?;
-    waiting_claim(&course, &lesson_id, "c4", "queued", &other.version_id).await?;
-    let trust = view(&course.store, &request(&course, None)).await?;
-    let entry = trust
-        .sources
-        .iter()
-        .find(|entry| entry.source_id == chosen.source_id)
-        .expect("listed");
-    let impact = entry.impact.expect("asked for");
-    assert_eq!(
-        (
-            impact.source.versions,
-            impact.source.claims,
-            impact.source.lessons
-        ),
-        (1, 2, 1)
-    );
-    let site = impact.site.expect("a web source has a site");
-    assert_eq!((site.claims, site.lessons), (2, 1));
     Ok(())
 }
 

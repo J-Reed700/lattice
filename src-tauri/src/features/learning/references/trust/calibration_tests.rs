@@ -7,10 +7,14 @@ use super::calibration::{bars_of, view};
 use super::outcomes::{self, VerdictScope};
 use super::overrides;
 use super::test_support::{add_page, article, course, id, page_signals, Course};
+use crate::features::learning::dto::{
+    GetLearningSourceTrustRequestDto, LearningTrustLevel, LearningTrustOverrideInputDto,
+};
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::trust_changed::{
     affected, forget_verdict, override_changed, record_verdict,
 };
+use crate::features::learning::lessons::claim_reviews::trust_overrides;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::ports::source_trust::{SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::standing_key;
@@ -477,5 +481,85 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
         claim_entry(&course.pool, &lesson_id, &left).await.state(),
         ClaimState::Queued { .. }
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_menu_counts_the_claims_an_override_re_decides_and_applying_it_re_decides_them(
+) -> Result<()> {
+    let course = course().await?;
+    let lesson_id = waiting_lesson(&course).await?;
+    let url = "https://spec.example.org/json";
+    let chosen = add_page(
+        &course,
+        url,
+        &article("chosen", 8),
+        page_signals(url, json!({})),
+    )
+    .await?;
+    let record = course.store.provenance(&chosen.version_id).await?.unwrap();
+    let key = standing_key(&record.signals, MODEL);
+    course
+        .store
+        .save_standing(&StoredJudgement {
+            value: institutional(&key.input_sha256),
+            key,
+            input_tokens: 0,
+            output_tokens: 0,
+            assessed_at: 0,
+        })
+        .await?;
+    let other_url = "https://elsewhere.example.net/json";
+    let other = add_page(
+        &course,
+        other_url,
+        &article("other", 8),
+        page_signals(other_url, json!({})),
+    )
+    .await?;
+    for version in [&chosen.version_id, &chosen.version_id, &other.version_id] {
+        queued_below_the_bar(&course.pool, &lesson_id, below_the_bar(version)).await;
+    }
+
+    // Before the user commits: the claims the ledger would re-decide.
+    let request = GetLearningSourceTrustRequestDto {
+        program_id: course.program_id.clone(),
+        source_ids: Vec::new(),
+        claim: None,
+        include_impact: true,
+    };
+    let view = trust_overrides::view(&course.store, &request).await?;
+    let entry = view
+        .sources
+        .iter()
+        .find(|entry| entry.source_id == chosen.source_id)
+        .expect("listed");
+    let impact = entry.impact.expect("asked for");
+    assert_eq!(
+        (
+            impact.source.versions,
+            impact.source.claims,
+            impact.source.lessons
+        ),
+        (1, 2, 1)
+    );
+    assert_eq!(impact.site.expect("a web page has a site").claims, 2);
+
+    // Applying it re-decides those claims, with no model.
+    let applied = trust_overrides::set(
+        &course.store,
+        &LearningTrustOverrideInputDto::Source {
+            program_id: course.program_id.clone(),
+            source_id: chosen.source_id.clone(),
+            level: LearningTrustLevel::Primary,
+            note: None,
+        },
+    )
+    .await?;
+    assert_eq!(applied.impact.claims, 2);
+    assert_eq!(
+        (applied.redecided.verified, applied.redecided.lessons),
+        (2, 1)
+    );
     Ok(())
 }

@@ -6,14 +6,13 @@
 
 use super::dto_map;
 use super::repository::{unix_seconds, SqliteSourceTrustStore};
-use super::source_view::known_classes;
 use crate::features::learning::dto::LearningClaimProfileDto;
 use crate::features::learning::persistence::db;
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
     claim_profile_key, judge_standing, profile_claims, standing_key, ClaimToProfile, ProfileRequest,
 };
-use lattice_core::domain::provenance::{Judged, JudgementKey};
+use lattice_core::domain::provenance::{known_classes, Judged, JudgementKey};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 

@@ -64,7 +64,7 @@ export function SourceTrustSettings() {
   const clear = useClearSourceTrustOverride();
   const exported = useExportProvenanceEval();
   const levels = calibration.data?.kinds[0]?.levels.map((bar) => bar.level) ?? [];
-  const changes = calibration.data?.kinds.flatMap((kind) => kind.reasons.map((reason) => reason.text)) ?? [];
+  const changes = calibration.data?.changes ?? [];
 
   return (
     <>
@@ -127,7 +127,7 @@ export function SourceTrustSettings() {
             <h3 className="mt-4 text-sm font-medium text-text-primary">Automatic changes</h3>
             {changes.length === 0
               ? <p className="text-sm text-text-secondary">None: every bar is the design’s table.</p>
-              : <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-text-secondary">{changes.map((text) => <li key={text}>{text}</li>)}</ul>}
+              : <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-text-secondary">{changes.map((change) => <li key={`${change.claimKind}-${change.level}-${change.at}-${change.claimId}`}>{change.reason.text}</li>)}</ul>}
           </>
         )}
       </SettingsSection>

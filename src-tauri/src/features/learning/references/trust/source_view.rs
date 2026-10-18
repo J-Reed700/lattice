@@ -11,16 +11,14 @@
 //! `trust_level` with the same inputs the gate gives it, so the Sources tab
 //! and a claim card show what the gate decided on.
 
+use super::calibration;
 use super::dto_map;
-use super::overrides::{preview, CoveredVersion};
 use super::repository::SqliteSourceTrustStore;
 use super::rows::from_json;
-use super::waiting_claims::impact;
 use crate::features::learning::dto::{
     GetLearningSourceTrustRequestDto, LearningClaimTrustDto, LearningSourceTrustDto,
     LearningSourceTrustEntryDto, LearningSourceTrustViewDto, LearningTrackRecordDto,
-    LearningTrustClaimRequestDto, LearningTrustImpactsDto, LearningTrustLevel,
-    LearningTrustReasonDto,
+    LearningTrustClaimRequestDto, LearningTrustLevel, LearningTrustReasonDto,
 };
 use crate::features::learning::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
@@ -28,10 +26,10 @@ use lattice_core::application::services::source_trust::{
     claim_profile_key, CLAIM_PROFILE_POLICY, OWNERSHIP_POLICY, STANDING_POLICY,
 };
 use lattice_core::domain::provenance::{
-    containment, effective_bars, shingles, trust_level, AddedBy, AuthorityAssessment, Calibration,
-    ClaimKind, ClaimProfile, ClaimSubject, InheritedTrust, LevelInputs, OriginKey, OverrideScope,
-    Overrides, ProvenanceRecord, RelationEvidence, RelationKind, RelationTarget, SourceRelation,
-    StandingAssessment, StaticBars, SubjectKey, SubjectKind, TrackRecord, TrustOverride, POLICY,
+    containment, known_classes, shingles, trust_level, AddedBy, AuthorityAssessment, ClaimProfile,
+    ClaimSubject, InheritedTrust, LevelInputs, OriginKey, Overrides, ProvenanceRecord,
+    RelationEvidence, RelationKind, RelationTarget, SourceRelation, StandingAssessment, SubjectKey,
+    TrackRecord, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
@@ -79,44 +77,13 @@ pub async fn view(
     };
     let mut sources = Vec::new();
     for version in course.active_versions(&request.source_ids).await? {
-        sources.push(course.entry(&version, None, request.include_impact).await?);
+        sources.push(course.entry(&version, None).await?);
     }
     let claim = match &request.claim {
-        Some(claim) => Some(course.claim(claim, request.include_impact).await?),
+        Some(claim) => Some(course.claim(claim).await?),
         None => None,
     };
     Ok(LearningSourceTrustViewDto { sources, claim })
-}
-
-/// The subject classes the user's site-for-subject overrides name: claim
-/// profiles are keyed with them (§25 "Judgements").
-pub fn known_classes(overrides: &[TrustOverride]) -> Vec<String> {
-    overrides
-        .iter()
-        .filter_map(|entry| match entry {
-            TrustOverride::SiteSubject { class, .. } => Some(class.label.clone()),
-            _ => None,
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-/// The subject a claim's supports are judged against: the measurement's
-/// origin for a measurement that names one (§6.1), else the claim's subject.
-/// The gate applies the same rule (`provenance_gate::context`); LATER both
-/// read one core function.
-fn authority_subject(profile: &ClaimProfile) -> Option<ClaimSubject> {
-    match (&profile.kind, &profile.measurement_origin) {
-        (ClaimKind::Measurement, Some(origin)) if !origin.trim().is_empty() => Some(ClaimSubject {
-            name: origin.trim().to_owned(),
-            kind: SubjectKind::Organization,
-            aliases: Vec::new(),
-            classes: Vec::new(),
-            key: SubjectKey::of(origin),
-        }),
-        _ => profile.subject.clone(),
-    }
 }
 
 /// The latest profile of `statement` under the current class vocabulary.
@@ -240,18 +207,14 @@ impl Course<'_> {
         .map_err(db)
     }
 
-    async fn claim(
-        &self,
-        claim: &LearningTrustClaimRequestDto,
-        include_impact: bool,
-    ) -> Result<LearningClaimTrustDto> {
+    async fn claim(&self, claim: &LearningTrustClaimRequestDto) -> Result<LearningClaimTrustDto> {
         let profile = latest_profile(
             self.pool(),
             &claim.statement,
             &known_classes(&self.overrides.entries),
         )
         .await?;
-        let subject = profile.as_ref().and_then(authority_subject);
+        let subject = profile.as_ref().and_then(ClaimProfile::authority_subject);
         let mut supports = Vec::new();
         let mut seen = BTreeSet::new();
         for version_id in &claim.source_version_ids {
@@ -259,25 +222,16 @@ impl Course<'_> {
                 continue;
             }
             if let Some(version) = self.version(version_id).await? {
-                supports.push(
-                    self.entry(&version, subject.as_ref(), include_impact)
-                        .await?,
-                );
+                supports.push(self.entry(&version, subject.as_ref()).await?);
             }
         }
         let bar = match &profile {
             Some(profile) => {
-                let outcomes: Vec<_> = self
-                    .store
-                    .outcomes()
-                    .await?
-                    .into_iter()
-                    .map(|record| record.outcome)
-                    .collect();
-                let calibration = Calibration::from_outcomes(&outcomes);
-                let bars = effective_bars(&StaticBars::table(), &calibration, &POLICY);
-                bars.bar(profile.kind)
-                    .map(|bar| dto_map::kind_bar(bar, &calibration, &POLICY))
+                let calibrated = calibration::calibrated(self.pool()).await?;
+                calibrated
+                    .bars
+                    .bar(profile.kind)
+                    .map(|bar| dto_map::kind_bar(bar, &calibrated.calibration, &POLICY))
             }
             None => None,
         };
@@ -292,7 +246,6 @@ impl Course<'_> {
         &self,
         version: &Version,
         subject: Option<&ClaimSubject>,
-        include_impact: bool,
     ) -> Result<LearningSourceTrustEntryDto> {
         let record = self.store.provenance(&version.version_id).await?;
         let site = record
@@ -332,11 +285,6 @@ impl Course<'_> {
                 ),
             ),
         };
-        let impact = if include_impact {
-            Some(self.impacts(version, site.as_deref()).await?)
-        } else {
-            None
-        };
         Ok(LearningSourceTrustEntryDto {
             source_id: version.source_id.clone(),
             source_version_id: version.version_id.clone(),
@@ -362,7 +310,9 @@ impl Course<'_> {
                 .filter(|entry| touches(entry, &version.source_id, site.as_deref()))
                 .map(dto_map::trust_override)
                 .collect(),
-            impact,
+            // What an override would re-decide is the claim ledger's
+            // (`claim_reviews::trust_overrides::view` fills it).
+            impact: None,
         })
     }
 
@@ -448,29 +398,6 @@ impl Course<'_> {
             });
         }
         Ok(inherited)
-    }
-
-    async fn impacts(
-        &self,
-        version: &Version,
-        site: Option<&str>,
-    ) -> Result<LearningTrustImpactsDto> {
-        let source = OverrideScope::Source {
-            program_id: self.program_id.to_owned(),
-            source_id: version.source_id.clone(),
-        };
-        let source = impact(self.pool(), &preview(self.store, &source).await?).await?;
-        let site = match site {
-            Some(site) => {
-                let scope = OverrideScope::Site {
-                    registrable_domain: site.to_owned(),
-                };
-                let covered: Vec<CoveredVersion> = preview(self.store, &scope).await?;
-                Some(impact(self.pool(), &covered).await?)
-            }
-            None => None,
-        };
-        Ok(LearningTrustImpactsDto { source, site })
     }
 }
 

@@ -14,15 +14,15 @@ use lattice_core::application::services::source_trust::{
     standing_key, ClaimToProfile, OwnershipRequest, ProfileRequest, OWNERSHIP_POLICY,
 };
 use lattice_core::domain::provenance::{
-    containment, effective_date, markdown_links, shingles, trust_level, AddedBy,
-    AuthorityAssessment, ClaimKind, ClaimProfile, ClaimSubject, EffectiveBars, InheritedTrust,
-    Judged, LevelInputs, Origin, Overrides, ProvenanceRecord, Reason, ReasonCode, RelationEvidence,
-    RelationKind, RelationTarget, SourceDates, SourceRelation, StandingAssessment, SubjectKey,
-    SubjectKind, TrustLevel, TrustOverride, POLICY,
+    containment, effective_date, known_classes, markdown_links, shingles, trust_level, AddedBy,
+    AuthorityAssessment, ClaimProfile, ClaimSubject, EffectiveBars, InheritedTrust, Judged,
+    LevelInputs, Origin, Overrides, ProvenanceRecord, Reason, ReasonCode, RelationEvidence,
+    RelationKind, RelationTarget, SourceDates, SourceRelation, StandingAssessment, TrustLevel,
+    POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Milliseconds in a second: the library stores times in milliseconds, the
@@ -165,16 +165,7 @@ impl Judgements {
         let overrides = store.overrides(&course.program_id).await?;
         let relations = store.relations(&course.program_id).await?;
         let bars = calibration::bars_of(&store.outcomes().await?);
-        let known_classes = overrides
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                TrustOverride::SiteSubject { class, .. } => Some(class.label.clone()),
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let known_classes = known_classes(&overrides.entries);
         Ok(Self {
             store,
             pool: course.pool,
@@ -287,7 +278,7 @@ impl Judgements {
         versions: &[String],
         profile: &ClaimProfile,
     ) -> Result<HashMap<String, VersionFacts>> {
-        let subject = authority_subject(profile);
+        let subject = profile.authority_subject();
         let mut facts = HashMap::new();
         for version in versions {
             let record = self.version(llm, version).await?;
@@ -508,23 +499,6 @@ impl Judgements {
         let value = judged.value.clone();
         self.store.save_standing(&stored(key, judged)).await?;
         Ok(value)
-    }
-}
-
-/// The subject a claim's supports are judged against: the measurement's
-/// origin for a measurement that names one (§6.1), else the claim's subject.
-pub(in crate::features::learning::lessons::content_verification) fn authority_subject(
-    profile: &ClaimProfile,
-) -> Option<ClaimSubject> {
-    match (&profile.kind, &profile.measurement_origin) {
-        (ClaimKind::Measurement, Some(origin)) if !origin.trim().is_empty() => Some(ClaimSubject {
-            name: origin.trim().to_owned(),
-            kind: SubjectKind::Organization,
-            aliases: Vec::new(),
-            classes: Vec::new(),
-            key: SubjectKey::of(origin),
-        }),
-        _ => profile.subject.clone(),
     }
 }
 

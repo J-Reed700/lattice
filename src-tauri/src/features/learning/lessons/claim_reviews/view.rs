@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     AttachOutcome, Check, CheckResult, Checker, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimState, EvidenceSeen, Ledger, LessonReview, LessonReviewState,
+    ClaimState, EvidenceSeen, Ledger, LessonReview, LessonReviewState, TrustAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -23,6 +23,7 @@ use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
 use crate::features::learning::lesson_evidence::LearningEvidencePassageDto;
 use crate::features::learning::persistence::db;
+use crate::features::learning::references::trust::dto_map;
 use crate::features::learning::repository::LearningRepository;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 
@@ -258,13 +259,15 @@ impl ClaimReviewService {
     }
 }
 
-/// A compared passage as a card shows it.
+/// A compared passage as a card shows it, with its level for the claim's
+/// subject when it is one of the supports the gate weighed (`trust`).
 fn evidence_passage(
     source_version_id: &str,
     text: &str,
     (start_byte, end_byte): (usize, usize),
     retrieval_kind: &str,
     sources: &HashMap<String, SourceFacts>,
+    trust: Option<&TrustAssessment>,
 ) -> ClaimEvidencePassageDto {
     let facts = sources.get(source_version_id);
     ClaimEvidencePassageDto {
@@ -276,8 +279,13 @@ fn evidence_passage(
             start_byte,
             end_byte,
             retrieval_kind: retrieval_kind.into(),
-            // The review card's support levels are track P6's.
-            trust: None,
+            trust: trust.and_then(|trust| {
+                trust
+                    .supports
+                    .iter()
+                    .find(|support| support.source_version_id == source_version_id)
+                    .map(|support| dto_map::support_trust(&trust.profile, support))
+            }),
         },
         added_by: facts.map(|facts| facts.added_by),
     }
@@ -315,6 +323,7 @@ fn checker_verdict(
                     (seen.start_byte, seen.end_byte),
                     &found.retrieval_kind,
                     sources,
+                    None,
                 ))
             })
             .collect(),
@@ -408,6 +417,7 @@ fn item(
                     (passage.start_byte, passage.end_byte),
                     &passage.retrieval_kind,
                     sources,
+                    entry.trust(),
                 )
             })
             .collect(),
@@ -426,6 +436,9 @@ fn item(
         history: entry.events().iter().map(ClaimEventDto::from).collect(),
         local_check: checker_verdict(entry, false, sources, texts),
         verifier_check: checker_verdict(entry, true, sources, texts),
+        sufficiency: entry
+            .trust()
+            .map(|trust| dto_map::sufficiency(&trust.profile, &trust.decision)),
     }
 }
 

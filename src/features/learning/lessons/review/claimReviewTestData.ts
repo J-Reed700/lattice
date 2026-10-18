@@ -26,6 +26,7 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
     history: [],
     localCheck: null,
     verifierCheck: null,
+    sufficiency: null,
     ...overrides,
   };
 }

@@ -203,8 +203,9 @@ pub struct LearningTrackRecordDto {
     pub wrong: u32,
 }
 
-/// The claims an override would send back to be re-decided: those waiting
-/// in review that cite a version it covers (§19).
+/// The claims an override would send back to be re-decided (§18.7, §19):
+/// every claim whose state the provenance gate decided from a version it
+/// covers, waiting (the change may verify it) or verified (it may reopen).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningTrustImpactDto {
@@ -387,12 +388,30 @@ pub enum LearningTrustOverrideInputDto {
     },
 }
 
-/// An override change and what it sends back to be re-decided.
+/// What re-deciding the claims a trust change touches did (§18.7).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningTrustRedecidedDto {
+    /// Claims verified that were failing their bar.
+    pub verified: u32,
+    /// Verified claims reopened for the user.
+    pub reopened: u32,
+    /// Claims still failing, with the new decision's reason.
+    pub still_failing: u32,
+    /// Claims whose supports were never judged, so only a model could level
+    /// them; left as they were.
+    pub not_levelled: u32,
+    /// Lessons with a re-decided claim.
+    pub lessons: u32,
+}
+
+/// An override change, the claims it touches, and what re-deciding them did.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningTrustChangeResultDto {
     pub change: LearningTrustChangeDto,
     pub impact: LearningTrustImpactDto,
+    pub redecided: LearningTrustRedecidedDto,
 }
 
 /// A site override with what its sources' claims did since (§13: "you set
@@ -421,8 +440,29 @@ pub struct LearningSourceTrustCalibrationDto {
     pub policy_version: String,
     pub parameters: Vec<LearningTrustPolicyParameterDto>,
     pub kinds: Vec<LearningKindBarDto>,
+    /// Every automatic change, oldest first, with the verdict that made it.
+    pub changes: Vec<LearningBarChangeDto>,
     /// Verdicts recorded across every course.
     pub verdicts: u32,
+}
+
+/// One level of one kind's bar changing whether it is accepted alone, and
+/// the verdict that tipped it (§13, decision 2).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningBarChangeDto {
+    pub claim_kind: String,
+    pub level: LearningTrustLevel,
+    /// When the verdict was given (unix seconds).
+    pub at: i64,
+    pub accepted_alone: bool,
+    /// Whether it moved the lowest level accepted alone for the kind.
+    pub moves_bar: bool,
+    /// Who gave the verdict (`user_confirm`, `verifier_agree`, …).
+    pub label_source: String,
+    pub lesson_id: String,
+    pub claim_id: String,
+    pub reason: LearningTrustReasonDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

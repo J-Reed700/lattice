@@ -21,7 +21,7 @@ use sqlx::{Row, SqlitePool};
 
 /// Unix seconds now: the clock the trust tables keep, like the domain's
 /// dates and outcomes.
-pub(super) fn unix_seconds() -> i64 {
+pub(in crate::features::learning) fn unix_seconds() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
@@ -35,7 +35,7 @@ impl SqliteSourceTrustStore {
         Self { pool }
     }
 
-    pub(super) fn pool(&self) -> &SqlitePool {
+    pub(in crate::features::learning) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 }

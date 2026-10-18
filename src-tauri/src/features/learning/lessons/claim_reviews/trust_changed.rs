@@ -15,7 +15,7 @@
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimEvent, ClaimLedgerEntry, ClaimState, EventProvenance, GateVerdict,
-    LessonReview, LessonReviewState, TrustCause, TrustVerdict,
+    LessonReview, LessonReviewState, TrustAssessment, TrustCause, TrustVerdict,
 };
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
@@ -83,24 +83,58 @@ pub fn override_cause(change: &overrides::TrustChange) -> TrustCause {
     }
 }
 
+/// Every claim a trust change could re-decide, with the gate's assessment
+/// it would re-decide from, read once: the override menu counts what each
+/// of several scopes would reach from one read of the ledgers.
+pub struct Redecidable {
+    claims: Vec<(AffectedClaim, TrustAssessment)>,
+}
+
+impl Redecidable {
+    pub async fn load(pool: &SqlitePool) -> Result<Self> {
+        let store = ClaimReviewRepository::new(pool.clone());
+        let mut claims = Vec::new();
+        for lesson_id in weighed_lessons(pool).await? {
+            let ledger = store.load(&lesson_id).await?;
+            let Some(review) = &ledger.review else {
+                continue;
+            };
+            for entry in ledger.claims.iter().filter(|entry| entry.redecidable()) {
+                let Some(trust) = entry.trust() else {
+                    continue;
+                };
+                let claim = AffectedClaim {
+                    program_id: review.program_id.clone(),
+                    lesson_id: lesson_id.clone(),
+                    claim_id: entry.claim_id().0.clone(),
+                    verified: matches!(entry.state(), ClaimState::ResolvedByEvidence { .. }),
+                };
+                claims.push((claim, trust.clone()));
+            }
+        }
+        Ok(Self { claims })
+    }
+
+    /// The claims `cause` would re-decide.
+    pub fn affected<'a>(
+        &'a self,
+        cause: &'a TrustCause,
+    ) -> impl Iterator<Item = &'a AffectedClaim> + 'a {
+        self.claims
+            .iter()
+            .filter(move |(_, trust)| cause.affects(trust))
+            .map(|(claim, _)| claim)
+    }
+}
+
 /// The claims `cause` would re-decide, without changing anything: what
 /// the override menu counts before the user commits.
 pub async fn affected(pool: &SqlitePool, cause: &TrustCause) -> Result<Vec<AffectedClaim>> {
-    let store = ClaimReviewRepository::new(pool.clone());
-    let mut affected = Vec::new();
-    for lesson_id in weighed_lessons(pool).await? {
-        let ledger = store.load(&lesson_id).await?;
-        let Some(review) = &ledger.review else {
-            continue;
-        };
-        affected.extend(touched(&ledger.claims, cause).map(|entry| AffectedClaim {
-            program_id: review.program_id.clone(),
-            lesson_id: lesson_id.clone(),
-            claim_id: entry.claim_id().0.clone(),
-            verified: matches!(entry.state(), ClaimState::ResolvedByEvidence { .. }),
-        }));
-    }
-    Ok(affected)
+    Ok(Redecidable::load(pool)
+        .await?
+        .affected(cause)
+        .cloned()
+        .collect())
 }
 
 /// Re-decides every claim `cause` touches (§18.7), with no model call.

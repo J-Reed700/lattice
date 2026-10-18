@@ -1,63 +1,15 @@
-//! The override commands' work (§16, §19, decision 4): set or clear one
-//! override and report what it sends back to be re-decided, and list the
-//! user's site overrides with what the claims under them did since.
-//!
-//! INTEGRATION (P5/P7): after a change, the ledger reopens the waiting
-//! claims that cite `change.versions` (`ReopenCause::TrustChanged`) and the
-//! gate re-decides them without a model call. P5 owns that reopen; call it
-//! from `set` and `clear` with the `TrustChange` once it lands.
+//! The user's site overrides as Settings lists them (§13, §19), each with
+//! what the claims under it did since. Setting and clearing an override
+//! re-decides claims, so that work is the claim ledger's
+//! (`claim_reviews::trust_overrides`).
 
 use super::dto_map;
-use super::overrides::{self, TrustChange};
-use super::repository::{unix_seconds, SqliteSourceTrustStore};
-use super::waiting_claims::impact;
-use crate::features::learning::dto::{
-    LearningSiteTrustOverrideDto, LearningTrackRecordDto, LearningTrustChangeDto,
-    LearningTrustChangeResultDto, LearningTrustOverrideInputDto, LearningTrustOverrideScopeDto,
-};
+use super::repository::SqliteSourceTrustStore;
+use crate::features::learning::dto::{LearningSiteTrustOverrideDto, LearningTrackRecordDto};
 use crate::features::learning::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::provenance::{OriginKey, TrustOverride};
 use lattice_core::shared::error::Result;
-
-async fn result(
-    store: &SqliteSourceTrustStore,
-    change: TrustChange,
-) -> Result<LearningTrustChangeResultDto> {
-    let impact = impact(store.pool(), &change.versions).await?;
-    Ok(LearningTrustChangeResultDto {
-        change: LearningTrustChangeDto {
-            scope: dto_map::scope(&change.scope),
-            source_version_ids: change
-                .versions
-                .into_iter()
-                .map(|version| version.source_version_id)
-                .collect(),
-        },
-        impact,
-    })
-}
-
-/// Creates or replaces the override at its scope.
-pub async fn set(
-    store: &SqliteSourceTrustStore,
-    input: &LearningTrustOverrideInputDto,
-) -> Result<LearningTrustChangeResultDto> {
-    let entry = dto_map::override_input(input, unix_seconds())?;
-    let change = overrides::set(store, &entry).await?;
-    result(store, change).await
-}
-
-/// Removes the override at `scope`; `None` when there was none.
-pub async fn clear(
-    store: &SqliteSourceTrustStore,
-    scope: &LearningTrustOverrideScopeDto,
-) -> Result<Option<LearningTrustChangeResultDto>> {
-    match overrides::clear(store, &dto_map::core_scope(scope)).await? {
-        Some(change) => Ok(Some(result(store, change).await?)),
-        None => Ok(None),
-    }
-}
 
 /// Every site and site-for-subject override, each with the track record of
 /// the site's origins: the user's verdicts on claims its pages supported.

@@ -24,6 +24,9 @@ import type {
   LearningProgramDto,
   LearningPracticalWorkspaceDto,
   LearningTangentDto,
+  ClaimActionRequestDto,
+  ClaimEventPayloadDto,
+  LessonClaimReviewDto,
   StudyCardDto,
   StudyDeckSummaryDto,
   WorkspaceNoteDto,
@@ -78,15 +81,8 @@ type SourceCheck = {
   pendingVersionId: string | null;
   message: string | null;
 };
-/** The parts of `LessonClaimReviewDto` the claim review spec drives. */
-type ClaimReviewFixture = {
-  lessonId: string; programId: string; state: string; revision: number; pass: number; stopReason: null;
-  counts: { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number };
-  claims: Array<{
-    claimId: string; state: { state: string } & Record<string, unknown>; human: Record<string, unknown> | null;
-    availableActions: string[]; history: Array<Record<string, unknown>>;
-  } & Record<string, unknown>>;
-};
+/** A lesson's claim review as the claim review spec drives it. */
+type ClaimReviewFixture = LessonClaimReviewDto;
 type SourceLibraryItem = {
   id: string;
   kind: SourceKind;
@@ -1194,7 +1190,7 @@ export async function installLearningStudioBackend(page: Page) {
         return structuredClone(review);
       },
       resolve_learning_claim: (args: MockArgs) => {
-        const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: { action: string } & Record<string, unknown> }>(args);
+        const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: ClaimActionRequestDto }>(args);
         const review = state.claimReviews[request.lessonId];
         if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
         if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
@@ -1202,7 +1198,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
         const now = Date.now();
         const { action } = request;
-        const record = (event: Record<string, unknown>) => claim.history.push({ ordinal: claim.history.length, actor: "user", at: now, jobId: null, appVersion: "e2e", checkerModel: null, event });
+        const record = (event: ClaimEventPayloadDto) => claim.history.push({ ordinal: claim.history.length, actor: "user", at: now, jobId: null, appVersion: "e2e", checkerModel: null, event });
         let attach: Record<string, unknown> | null = null;
         if (action.action === "attach_link") {
           const url = String(action.url);
