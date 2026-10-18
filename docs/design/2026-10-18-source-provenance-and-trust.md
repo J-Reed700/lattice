@@ -222,9 +222,14 @@ Inputs: `StandingAssessment` (§12.1, cached per `signals_sha256`), `AuthorityAs
 ```
 level(version, subject):
   1. source-scope override for this source → that level; reason UserOverride{Source, note}.
-  2. site-scope override for this origin → standing := override.standing (overrides say who the publisher is, not what it owns);
-     continue (so "trust example.org as institutional" never makes it Primary for Python).
-  3. flags contain InjectionAttempt, or an override says Distrusted → Distrusted; stop.
+  2. site-scope override for this origin (no subject scope) → standing := override.standing (overrides say who the publisher is,
+     not what it owns); continue (so "trust example.org as institutional" never makes it Primary for Python).
+     A site override of Distrusted → Distrusted; stop.
+  3. flags contain InjectionAttempt (or a metadata field addresses a reader or a model) → Distrusted; stop.
+  3b. site-for-subject-class override for this origin whose class takes in the claim's subject (decision 4, §23) → that level,
+     Primary included; reason SiteSubjectOverride{class}; stop. The class matches when its normalised key equals the subject's
+     key, an alias's key or one of the subject's broader classes' keys (and the subject's kind is in the class's kinds, when
+     given); never by substring. Several sites may be primary for one class; the most specific matching class wins for a site.
   4. inherited: if a relation ArchiveOf/CopyOf/CanonicalOf points at a version whose level is known and the
      content matches (containment ≥ policy.containment_copy) → that level, reason Mirror{of}; stop.
      (An archived copy of a primary is primary. A mirror of unknown content is what its own signals say.)
@@ -529,16 +534,27 @@ CREATE TABLE source_relations (
 CREATE UNIQUE INDEX source_relations_edge ON source_relations(from_version_id, kind, COALESCE(to_version_id, to_url));
 CREATE INDEX source_relations_target ON source_relations(program_id, to_version_id);
 
--- User overrides: a source (per course) or a site (global).
+-- User overrides (decision 4, §23): a source (per course, any level), a site (global, standing only),
+-- or a site for a subject class (global, any level, Primary included).
 CREATE TABLE source_trust_overrides (
-    scope TEXT NOT NULL CHECK(scope IN ('source','site')),
-    key TEXT NOT NULL,                          -- source: learning_source_library.id ; site: registrable domain
-    program_id TEXT NOT NULL DEFAULT '',        -- '' for site scope (global)
-    level TEXT NOT NULL CHECK(level IN ('primary','authoritative','established','community','unknown','distrusted')),
+    scope TEXT NOT NULL CHECK(scope IN ('source','site','site_subject')),
+    key TEXT NOT NULL,                          -- source: learning_source_library.id ; site, site_subject: registrable domain (host when none)
+    program_id TEXT NOT NULL DEFAULT '',        -- '' for site and site_subject (global)
+    subject_class_key TEXT NOT NULL DEFAULT '', -- site_subject: SubjectKey of the class ; '' otherwise
+    subject_class_json TEXT CHECK(subject_class_json IS NULL OR json_valid(subject_class_json)), -- site_subject: SubjectClass {label, key, kinds}
+    level TEXT CHECK(level IN ('primary','authoritative','established','community','unknown','distrusted')),
+    standing TEXT CHECK(standing IN ('institutional','identified','community','distrusted')),
     note TEXT,
     set_at INTEGER NOT NULL,
-    PRIMARY KEY(scope, key, program_id),
-    CHECK((scope = 'site' AND program_id = '' AND level <> 'primary') OR (scope = 'source' AND program_id <> ''))
+    PRIMARY KEY(scope, key, program_id, subject_class_key),
+    CHECK(
+        (scope = 'source' AND program_id <> '' AND subject_class_key = '' AND subject_class_json IS NULL
+            AND level IS NOT NULL AND standing IS NULL)
+     OR (scope = 'site' AND program_id = '' AND subject_class_key = '' AND subject_class_json IS NULL
+            AND standing IS NOT NULL AND level IS NULL)
+     OR (scope = 'site_subject' AND program_id = '' AND subject_class_key <> '' AND subject_class_json IS NOT NULL
+            AND level IS NOT NULL AND standing IS NULL)
+    )
 );
 
 -- Labelled outcomes for calibration (§13). Kept when the lesson or claim goes; the course takes them with it.
@@ -563,7 +579,7 @@ CREATE INDEX source_trust_outcomes_cell ON source_trust_outcomes(level, claim_ki
 CREATE INDEX source_trust_outcomes_origin ON source_trust_outcomes(origin_key, at);
 ```
 
-Notes: a site override cannot be `primary` (the CHECK enforces §5 step 2: site overrides set standing; `primary` is relational and only a source-scope override may assert it). Packs (`portability/pack_repository/export.rs:239, 313`) export `source_provenance`, `source_relations` and source-scope overrides with the sources; assessments are re-derived on import (model-dependent); site overrides are the user's and are not exported. Backups carry the whole database as today.
+Notes: a site override without a subject scope cannot set a level at all, let alone `primary` (the CHECK enforces §5 step 2: it sets standing); `primary` stays relational, so only a source-scope override or a site override scoped to a subject class (§5 step 3b) may assert it. The row is the serde form of `domain::provenance::TrustOverride`, whose variants carry only the value their scope may set. **Migration ordering (P3):** the provenance migration must be versioned after both `20261017130000_learning_module_test_coverage.sql` (a separate PR) and L0's `20261017150000_lesson_claim_reviews.sql`, and unique; `20261018120000` satisfies both today. `judgement_json` (a `StandingAssessment`) carries the track record the judgement saw; the key does not (§25). Packs (`portability/pack_repository/export.rs:239, 313`) export `source_provenance`, `source_relations` and source-scope overrides with the sources; assessments are re-derived on import (model-dependent); site overrides are the user's and are not exported. Backups carry the whole database as today.
 
 ## 17. Ports, services, feature layout, ratchets
 
@@ -597,7 +613,7 @@ Notes: a site override cannot be `primary` (the CHECK enforces §5 step 2: site 
 ## 19. UI
 
 - **`TrustBadge`** (`src/features/learning/sources/trust/TrustBadge.tsx`): level word with a neutral shape per level (no colour-only encoding), "for *subject*" when relational; hover/click opens `TrustReasons` listing `reasons[]` verbatim, the publisher, author, dates with their basis, origin, relations, track record and the override state. Copy: "Primary for Python", "Authoritative", "Established", "Community", "Unknown standing", "Distrusted (you)", "Added by you · origin not stated", "Mirror of eur-lex.europa.eu (verified identical)", "Archived copy of python.org (web.archive.org, 2024-05-01)".
-- **Overrides** (`TrustOverrideMenu.tsx`): "Trust this source as… (this course)" with the level list and a note; "Treat <registrable domain> as… (everywhere)" with standing choices (institutional / identified / community / distrusted) and a note; "Reset". The menu shows what will change: "3 queued claims in 2 lessons cite this source; they will be re-decided."
+- **Overrides** (`TrustOverrideMenu.tsx`): "Trust this source as… (this course)" with the level list and a note; "Treat <registrable domain> as… (everywhere)" with standing choices (institutional / identified / community / distrusted) and a note; "Treat <registrable domain> as… for <subject class>" with the level list (Primary included) and the class picked from the claim's subject, its aliases and its broader classes ("Treat developer.mozilla.org as primary for *web platform APIs*"); "Reset". Settings lists site-for-subject overrides beside site overrides, one row per (site, class). The menu shows what will change: "3 queued claims in 2 lessons cite this source; they will be re-decided."
 - **Claim card** (F's `ClaimReviewCard.tsx`): a "Support" block per supporting passage with badge + reason; a sufficiency line: "Specification claim about OpenAI API · supported only by an established source · needs the owner's documentation or a second independent source"; actions: **Find the owner's page** (runs §8/§5 next steps once more), **Accept this source for this claim**, **Trust this source / site…**, plus CR §5.1's actions. Contradictions: two columns with level, date and reasons, and the resolution text ("python.org is primary and newer; the blog's statement is superseded").
 - **Settings → Source trust**: site overrides list; the calibration table (level × kind: verdicts, right %, effective bar and since when); the policy parameters with their derivations; "Export provenance eval" (§21).
 - **Sources tab**: badge in each row, filter by level, "Why?" popover.
@@ -645,7 +661,7 @@ Tests:
 
 ## 22. Implementation plan (Opus build agents)
 
-Rules: at most 3 agents at once; every cargo invocation as `lockf -k /Users/josh/Code/.lattice-cargo.lock cargo <args>`; `cargo check -p lattice-core -p lattice` and lib tests only until P7; `rustfmt <file>` never `cargo fmt`; grep before read; each worktree gets `src-tauri/binaries/`, `dist/` and a private target dir (memory: new-worktree prereqs); `bash scripts/check-rust-layer-boundaries.sh` before every PR; files ≤ 800 lines. Base: `main` for P1/P2; `feat/claim-review` for P5; the integration branch `feat/source-trust` in `/Users/josh/Code/lattice-trust`.
+Rules: at most 3 agents at once; every cargo invocation as `lockf -k /Users/josh/Code/.lattice-cargo.lock cargo <args>`; `cargo check -p lattice-core -p lattice-desktop` and lib tests only until P7; `rustfmt <file>` never `cargo fmt`; grep before read; each worktree gets `src-tauri/binaries/`, `dist/` and a private target dir (memory: new-worktree prereqs); `bash scripts/check-rust-layer-boundaries.sh` before every PR; files ≤ 800 lines. Base: `main` for P1/P2; `feat/claim-review` for P5; the integration branch `feat/source-trust` in `/Users/josh/Code/lattice-trust`.
 
 ```
 P1 core (now) ──┬─► P3 learning store + capture (after P1's contracts commit) ──┐
@@ -658,7 +674,7 @@ PR 6 ─► P6 commands + UI (after PR 6 and claim-review S/F) ─────�
 | Track | Owned files (exclusive) | Depends on | Tests | Done when |
 |---|---|---|---|---|
 | **P1 core** | `crates/lattice-core/src/domain/provenance/**`, `domain/mod.rs` (export), `application/ports/source_trust.rs` (+ `ports/mod.rs`), `application/services/source_trust/**` (+ `services/mod.rs`), `application/contracts/web.rs` (new types only), `crates/lattice-core/Cargo.toml` (`psl`), `evals/provenance/**` | nothing; **first commit** = contracts + port signatures so P2/P3 can branch | §21 core list | `cargo test -p lattice-core` green; sweep pins the constants; fixtures committed; no I/O in `domain/` |
-| **P2 web** | `features/web/services/provenance/**`, `web/traits/web.rs` (default method), `web/services/web.rs` (override), `web/services/web/page.rs` (`ReadPage.signals`), `web/services/browser_reader.rs` (DOM → reader), `web/mocks/web.rs` (configurable signals), their tests | P1's contracts commit | metadata/archive/link tests; mocks unchanged elsewhere compile | `cargo check -p lattice` green with **no edit** to `conversation/chat/test_runtime.rs`; a fixture page yields publisher, author, dates, canonical, links with offsets |
+| **P2 web** | `features/web/services/provenance/**`, `web/traits/web.rs` (default method), `web/services/web.rs` (override), `web/services/web/page.rs` (`ReadPage.signals`), `web/services/browser_reader.rs` (DOM → reader), `web/mocks/web.rs` (configurable signals), their tests | P1's contracts commit | metadata/archive/link tests; mocks unchanged elsewhere compile | `cargo check -p lattice-desktop` green with **no edit** to `conversation/chat/test_runtime.rs`; a fixture page yields publisher, author, dates, canonical, links with offsets |
 | **P3 learning store + capture** | `migrations/20261018120000_source_provenance_and_trust.sql`, `learning/references/trust/**`, `lessons/claim_profiles.rs`, `learning/dto/trust.rs` (DTOs, types only), `learning/portability/pack_repository/{export.rs, importers.rs}` (provenance rows) | P1 contracts; migration ordering after L0's (timestamp only) | repository, capture transaction, relations, overrides reopen, migration test (as L0's `migration_tests.rs`) | store round-trips; capture writes `publisher` + provenance + relations in one transaction via a hook function `trust::capture::record(tx, version, signals)` that the capture paths call |
 | **Capture hooks** (not a track: ≤ 10 lines each) | `source_workflows.rs`, `web_research.rs`, `sources.rs`, `source_library/capture.rs` | the **last** of {claim-review S, fix PR, P3} to land makes the edits, because S owns the first three and the fix PR touches `web_research.rs` | — | all five `publisher: None` sites gone: `grep -rn "publisher: None" src-tauri/src/features/learning` empty |
 | **P4 verification** | `content_verification/{provenance_gate.rs, scrutiny.rs}` (new), `challenge.rs` + `challenge/` (deleted), `evidence_checks.rs` (labels, gate call), `research.rs` (selector origin facts, next-step research), `references/web_research.rs` (planner inputs), `content_verification/mod.rs` (`POLICY` v21, receipt key), `report.rs`/`learner_view.rs`/`lesson_evidence.rs` (levels), `evidence_challenge_cases.json` → `sufficiency_cases` fixture | P1, P3, **fix PR merged**, **L1 merged** (these are L1's files) | gate unit tests with fake judgements; scrutiny only on Insufficient; receipts; labels | the function-calling lesson fixture (`live_fixtures`) passes its primary-backed claims without a challenge call; `grep -rn "A source repeating a claim" src-tauri/src` empty |
@@ -683,13 +699,13 @@ Concurrency: P1, P2, P3 now (P2 and P3 branch from P1's first commit, which is c
 | `conversation/chat/test_runtime.rs`, `interfaces/di/*`, `llm/**` | PR 6 | **none** (default trait method; pool-built store) | — |
 | `lessons/review/ClaimReviewCard.tsx` | F | P6 sufficiency block | after F |
 
-## 23. Open decisions for Josh (each with a recommendation)
+## 23. Decisions (taken by Josh, 2026-10-18)
 
-1. **Block on `InsufficientStanding`?** A claim whose only support fails its bar after research is `Queued` (blocks publication, CR §2.1) rather than published with a "secondary source" label. *Recommend: block.* The bars are lenient where leniency is coherent (Established suffices for practice, definition and historical kinds with corroboration), chain-following and owner searches resolve most specification claims automatically, and the card offers one-click Accept; the queue then holds real standing problems, not checker artefacts.
-2. **Site overrides set standing, never `primary`.** *Recommend: yes* (the CHECK in §16 enforces it); a per-source override may assert Primary for a course.
-3. **Calibration moves bars automatically in both directions** at `relax_probability = 0.9`, globally, shown in Settings. *Recommend: yes*; the alternative (report-only) would make the user's verdicts decorative.
-4. **Chat citations get the badge later, display only** (P8). *Recommend: yes.*
-5. **Chain-following fetches pages automatically during research** within the existing research budget. *Recommend: yes*; it is the same fetch the research already performs, and it is what turns "a blog says the docs say X" into "the docs say X".
+1. **DECIDED — block on `InsufficientStanding`.** A claim whose only support fails its bar after research and chain-following is `Queued` and the lesson cannot publish until the user resolves it (Accept the source, attach evidence, edit, remove).
+2. **DECIDED — calibration moves bars automatically in both directions**, globally, and Settings shows each change and why ("Established sources on specification claims: 41 verdicts, 95% held; accepted alone since 2026-11-02 (probability 0.93 …)"). The decision threshold is a named policy parameter with its rationale (`POLICY.bar_move_probability = 0.9`, with the reliability target `POLICY.accept_reliability = 0.9` and the prior weight `POLICY.prior_strength`, each documented in `policy.rs`), never an unexplained literal. As built in §25.
+3. **DECIDED — citation chains are followed automatically** during research, within the existing research budget (§8).
+4. **DECIDED, changed from the recommendation — site overrides are scoped to a subject or subject class.** "Trust this site" without a scope still sets only standing, never Primary. A site override with a subject scope ("treat MDN as primary for web platform APIs") may set Primary for that scope; several sites can be primary for the same class; Primary remains a relation to a subject, never a property of a site alone. `OverrideScope` is `Source {program, source}` (any level), `Site {registrable_domain}` (standing only) or `SiteSubject {registrable_domain, class}` (any level); a claim's subject matches a class by normalised key equality against the subject, its aliases and its broader classes (§5 step 3b). §16's table and CHECK and §19's menu follow; P3 owns the migration.
+5. **Chat citations get the badge later, display only** (P8). Recommended, unchanged.
 
 ## 24. Citation index
 
@@ -764,3 +780,30 @@ Capture paths now fetch with `fetch_reference_page` (the test fakes keep `fetch_
 **Overrides reopening.** `trust::overrides::{set, clear, preview}` answer with the versions an override covers (a source's versions; a site's versions in every course, for both site scopes). The reopen itself (`ReopenCause::TrustChanged`) is P5's ledger work; P6's menu counts the same versions.
 
 **Not done here.** `lessons/claim_profiles.rs` (the per-unit profile runner) is not written: it runs P1's `claim_profile` service, which is not committed on `feat/source-provenance` yet; the store side (`claim_profile`, `save_claim_profiles`) is ready for it.
+
+## 25. As built: P1 core (2026-10-18, `feat/source-provenance`)
+
+Contracts commit `40f2be17` (types and the `SourceTrustStore` port; P2 and P3 branch from it), then the rules, the eval set and the judgement services. Where the build departs from §3-§13, the code is the reference and the reasons are here.
+
+**Types (§3).** `ProvenanceSignals::Web` holds a `Box<PageSignals>` (clippy's large-variant rule). `PageSignals` gains `description`: the meta description, kept only so that injection can be detected in it. `DocumentSignals` and `PastedSignals` gain `dates`. `ContentNature` gains `Unknown`, which is the honest fallback. `ClaimSubject` gains `classes`, its broader subject classes with the most specific first, and `key` is a `SubjectKey`. `ClaimProfile` gains `reasons`, which is empty unless the profile is a fallback. `AuthorityAssessment` and `StandingAssessment` carry their keys, policy and model; `StandingAssessment` also carries the `track_record` it saw. `Support` gains `cited_urls` (ranked by `citation_candidates`) and `owner_hints`, so that `decide` can name its next steps. `Decision::Insufficient.have` is a typed `Vec<CountedSupport>` (id, cluster, level counted). `Overturn` gains `Escalated` for a contradiction that neither side outranks. `RelationEvidence` is an enum per relation kind. `trust_level` takes a `LevelInputs` struct. `shingles` and `page_relations` take the `Policy`, and `clusters` also takes passage-level merges. `Sketch` serialises as a sequence and is stored as 128 little-endian `u32`s. New supporting types: `ProvenanceRecord`, `ExtractedFrom`, `JudgementKey`, `Judged<T>`, `OutcomeRecord` and `LevelBar`.
+
+**Overrides (§5, decision 4).** `TrustOverride` is `Source {level}`, `Site {standing}` or `SiteSubject {class, level}`, so a site-wide Primary cannot be represented. The order is: a source override; then a site standing override (Distrusted stops); then injection, which stops; then a site-for-subject override, where the most specific matching class wins and ties go to the class key that sorts first; then the computed level. `SubjectClass::match_rank` compares whole normalised keys (NFKC, lower case, punctuation as spaces, `#` and `+` kept so that C# ≠ C ≠ C++) against the subject's key, its aliases' keys and its classes' keys. It never compares substrings.
+
+**Level procedure (§5).** Inheritance runs after the version's own level, and only upward. The design's step 4 ("that level; stop") would let a copy relation lower an original. Because the newer version points at the older one, a primary captured after its mirror would otherwise inherit the mirror's Unknown. `ContainsCopyOf` inherits too, as in §6.3 example 3. Community-edited content is Community for a non-owner whatever the publisher's standing, which covers an institution's wiki. When the owner publishes in any nature outside the primary natures, the result is Established, with the reason `OwnerMarketing` or `OwnerHostedCommunity`. `SelfDeclaredOfficial` also fires on the extracted `self_description`, not only when the judgement raises it, and metadata addressed to a reader or a model is detected deterministically (§14) as well as by the judgement.
+
+**Sufficiency (§6).** The static "accepted alone" levels are: Specification Authoritative, Measurement Primary, VersionBound Authoritative, Definition Established, Practice Established, Opinion Established, Historical Authoritative, General Established ("identified"). "Two independent" is the named constant `CORROBORATING_ORIGINS`. A contrary at or above the weakest corroborating level blocks corroboration. Contraries that the scope rules out (misdated, or unplaceable for a version claim) block nothing, since they would lose in `resolve`. For a version claim, `CannotPlace` supports are excluded. `Missing::OnlyStale` is used when every usable support is stale. Measurement corroboration groups testimonial reports by the normalised key of the origin they name.
+
+**Calibration (§13).** The design's tightening rule, P(θ_L\* ≤ θ_(L\*−1)) ≥ p, describes the same event as its relaxing rule for L\*−1, so it would tighten exactly when it relaxed. The build uses an absolute target instead. A level below the static bar is accepted alone when P(θ ≥ `accept_reliability`) ≥ `bar_move_probability`. A level at or above the bar stops being accepted when P(θ < `accept_reliability`) ≥ `bar_move_probability`. θ is the probability that a claim at that level holds, where held = (`decision_was_sufficient` == `right`). Each cell starts from a Beta prior whose median is the target and whose weight is `prior_strength = 16`. That weight is derived, and a test pins it: it is the smallest weight at which relaxing a cell with no verdicts takes as many straight held verdicts (21) as the design's uniform prior did. A uniform prior would tighten every accepted level before any verdict existed. With this prior, tightening a cell with no verdicts takes two straight failures. Probabilities come from the exact regularised incomplete beta function. The lowest accepted level is found by walking down from Primary while each level is accepted, so a relaxed level below a tightened one does not open the bar. `since` is the start of the latest uninterrupted run, and Settings shows it.
+
+**Judgements (§12).** The standing key is the sha256 of the canonical signals without `links`. The track record is part of the input but not of the key; "Reassess" re-judges. The claim-profile key is the sha256 of `{statement, sorted known class keys}`, not the statement alone, so that a new class vocabulary from site-for-subject overrides re-profiles claims against it and class matching stays exact. The profile asks for broader subject classes and reuses known class wording. No output reservation is fixed: answers may fill the window the request leaves (`output_fills_window`), and an answer that is unusable or cut off is asked for once more. A unit batch that the window cannot hold is split in halves until each part fits. A failed model call is an error and is not cached.
+
+**Origins (§4, §15).** `registry_suffixes.txt` lists restricted registries with their sources. A host whose suffix the Public Suffix List does not know (including reserved names such as `.example`) has no registrable domain, so its key is `web:<host>`. Short archive.today links and archives of archives are not unwrapped. Both `psl` and `unicode-normalization` are workspace dependencies, following the workspace convention, so the root `Cargo.toml` changed too.
+
+**One link reader (§4).** P2's scanner for the reference reader's link grammar is the only link reader. It is aware of escapes, code spans and fences, matches brackets, and accepts absolute http(s) URLs only. It moved from `features/web/services/provenance/links.rs` to `domain/provenance/links.rs` (`markdown_links`), because documents and pasted text need it as well, and pure parsing belongs in the core. The core's first regex reader was dropped, and shingling now strips link targets through the same reader. **P2 follow-up:** delete `links.rs` from the web feature and call `lattice_core::domain::provenance::markdown_links`.
+
+**Canonical on another site (§7).** `PageSignals` gains `canonical_elsewhere: Option<CanonicalElsewhere { url, origin }>` (built with `CanonicalElsewhere::of(url)`). A `rel=canonical` / `og:url` that names another origin is recorded there, so capture (P3) can write the `CanonicalOf` relation; the page's own origin is unchanged. **P2 follow-up:** where `apply_canonical` returns `CanonicalLink::CrossOrigin { url }`, set `canonical_elsewhere: CanonicalElsewhere::of(&url)` instead of logging and dropping it.
+
+**Citation chains (§8).** A footnote definition line (`[^1]: …` or `[1]: …`) cites the links on it. `follow_further` ends a chain at a Primary target or at a cluster already seen.
+
+**Evals (§21).** 120 sources in 8 languages, 219 constructed pairs (separable by construction, F1 1.0 over a range of thresholds; the policy takes the centre: resemblance 0.64, containment 0.60), 50 sufficiency cases, 12 chain cases and 30 injection and self-description cases. All are labelled by one author and await review (see `evals/provenance/README.md`). The live judgement eval (`live_provenance_eval.rs`) belongs to P7.
+
