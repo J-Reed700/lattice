@@ -42,6 +42,35 @@ impl Citations {
         self.by_index.get(&index).map(String::as_str)
     }
 
+    /// `text` with each "Source N" it names written as that source's title,
+    /// as `Source "Title"`, so a model reading it beside numbered passages
+    /// cannot take the lesson's source index for a passage number.
+    pub(super) fn label(&self, text: &str, references: &ReferenceCollection<'_>) -> String {
+        let mut labelled = String::with_capacity(text.len());
+        let mut copied = 0;
+        for mention in source_mentions(text) {
+            let Some(title) = self
+                .source_at(mention.index)
+                .and_then(|id| references.sources.iter().find(|source| source.id == id))
+                .map(|source| source.title.trim())
+                .filter(|title| !title.is_empty())
+            else {
+                continue;
+            };
+            let (Some(before), Some(word)) = (
+                text.get(copied..mention.start),
+                text.get(mention.start..mention.start + "source".len()),
+            ) else {
+                continue;
+            };
+            labelled.push_str(before);
+            labelled.push_str(&format!("{word} \"{title}\""));
+            copied = mention.end;
+        }
+        labelled.push_str(text.get(copied..).unwrap_or_default());
+        labelled
+    }
+
     /// The passages section `unit` cites.
     pub(super) fn of(&self, unit: usize) -> &[EvidencePassage] {
         self.by_unit.get(&unit).map_or(&[], Vec::as_slice)
@@ -125,6 +154,9 @@ pub(super) async fn lesson_sources_first(
 
 /// Where a text names one of the lesson's sources by its index.
 pub(super) struct SourceMention {
+    /// The byte span of the mention, as in "Source 2".
+    pub(super) start: usize,
+    pub(super) end: usize,
     pub(super) index: u64,
 }
 
@@ -166,7 +198,7 @@ pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
             continue;
         }
         if let Some(index) = number.get(..digits).and_then(|digits| digits.parse().ok()) {
-            mentions.push(SourceMention { index });
+            mentions.push(SourceMention { start, end, index });
         }
     }
     mentions

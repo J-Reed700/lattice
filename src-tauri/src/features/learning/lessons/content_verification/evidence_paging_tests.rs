@@ -14,6 +14,8 @@ struct PagingModel {
     inner: Model,
     window: usize,
     checks: Mutex<Vec<Vec<String>>>,
+    /// The claim each check was asked about.
+    claims: Mutex<Vec<String>>,
 }
 
 impl PagingModel {
@@ -22,12 +24,17 @@ impl PagingModel {
             inner: Model::new(),
             window,
             checks: Mutex::new(Vec::new()),
+            claims: Mutex::new(Vec::new()),
         }
     }
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if let Some(rest) = prompt.strip_prefix("Source passages:\n") {
-            let shown = rest.split("\n\nClaim: ").next().unwrap_or_default();
+            let (shown, claim) = rest.split_once("\n\nClaim: ").unwrap_or_default();
+            self.claims
+                .lock()
+                .unwrap()
+                .push(claim.split("\n\n").next().unwrap_or_default().to_owned());
             let passages: Vec<String> = shown
                 .split("[passage-")
                 .skip(1)
@@ -545,5 +552,53 @@ async fn a_claim_sees_the_lesson_sources_before_the_rest_of_the_course() -> Resu
         claim_share(&model, CLAIM, 1),
         page.iter()
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_checker_reads_a_source_index_as_its_title() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let citations = Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::from([(0, "marker".to_owned())]),
+    );
+    let statement = format!("Source 0 reports that {CLAIM}");
+    let results = evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &inventory(std::slice::from_ref(&statement)),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+    assert_eq!(
+        results[0].2.statement, statement,
+        "the finding keeps the lesson's words"
+    );
+    let claims = model.claims.lock().unwrap();
+    assert!(
+        claims[0].starts_with("Source \"Reference marker\" reports that"),
+        "{}",
+        claims[0]
+    );
+    assert!(claims.iter().all(|claim| !claim.contains("Source 0")));
+    Ok(())
+}
+
+#[test]
+fn only_a_known_source_index_is_labelled() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let citations = Citations::new(HashMap::new(), HashMap::from([(1, "related-1".to_owned())]));
+    assert_eq!(
+        citations.label(
+            "As source 1 notes, Source 7 and Resource 1 differ; see Source 1.",
+            &references
+        ),
+        "As source \"Reference related-1\" notes, Source 7 and Resource 1 differ; see Source \"Reference related-1\"."
+    );
     Ok(())
 }

@@ -36,7 +36,19 @@ struct PendingClaim {
     receipt_key: String,
     unit: usize,
     claim: Claim,
+    /// The claim's statement as the checker reads it (see [`as_checked`]).
+    checked: String,
     evidence: Vec<EvidencePassage>,
+}
+
+/// `claim` as the checker reads it: each "Source N" of the lesson's text
+/// written as that source's title, so the index cannot be read as passage N.
+/// Its key names this text, so a check of the bare index is not restored.
+fn as_checked(claim: &Claim, citations: &Citations, references: &ReferenceCollection<'_>) -> Claim {
+    Claim {
+        quote: claim.quote.clone(),
+        statement: citations.label(&claim.statement, references),
+    }
 }
 
 /// First-stage entailment is useful saved work, but never publication approval.
@@ -169,7 +181,15 @@ async fn prepare(
         llm, &claim, unit, references, sources, executions, retained, sharing, citations,
     )
     .await?;
-    let key = ClaimChecks::key(unit, &claim, &evidence);
+    let checked = as_checked(&claim, citations, references).statement;
+    let key = ClaimChecks::key(
+        unit,
+        &Claim {
+            statement: checked.clone(),
+            quote: claim.quote.clone(),
+        },
+        &evidence,
+    );
     if let Some(finding) = retained.get(&key, unit, &claim, &evidence) {
         return Ok(PreparedClaim::Complete((ordinal, key, finding, true), true));
     }
@@ -222,6 +242,7 @@ async fn prepare(
         receipt_key,
         unit,
         claim,
+        checked,
         evidence,
     };
     if let Some(judgment) = local {
@@ -286,7 +307,7 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
 
 fn target(pending: &PendingClaim) -> LocatedClaim {
     LocatedClaim {
-        claim: pending.claim.statement.clone(),
+        claim: pending.checked.clone(),
         passages: pending.evidence.iter().map(|p| p.text.clone()).collect(),
     }
 }
@@ -665,7 +686,8 @@ async fn deepen(
                 continue;
             }
             canonicalize_evidence(&mut page);
-            let key = ClaimChecks::key(walk.unit, &walk.claim, &page);
+            let checked = as_checked(&walk.claim, citations, references);
+            let key = ClaimChecks::key(walk.unit, &checked, &page);
             let receipt_key = claim_receipt_key(llm, &key);
             if let Some(finding) =
                 crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
@@ -681,6 +703,7 @@ async fn deepen(
                     receipt_key,
                     unit: walk.unit,
                     claim: walk.claim.clone(),
+                    checked: checked.statement,
                     evidence: page.clone(),
                 });
             }

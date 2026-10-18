@@ -179,6 +179,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             &report,
             &repair_history,
             repeated_defects,
+            expanded.as_ref().unwrap_or(references),
         )?;
         let pending = PendingRepair {
             fingerprint: repair_fingerprint(
@@ -387,13 +388,24 @@ impl PendingRepair {
 /// once instead of multiplying an entire retrieval result by every finding.
 /// This changes representation only: no conflicting or unsupported evidence is
 /// discarded, and the full candidate still undergoes independent verification.
+/// Each passage carries its source's title, and a failed claim names a
+/// "Source N" by title too, so a source index is not read as evidence N.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
     report: &LessonVerificationReport,
     repair_history: &[Value],
     repeated_defects: bool,
+    references: &ReferenceCollection<'_>,
 ) -> Result<Value> {
+    let citations = section_citations(candidate, references)?;
+    let title = |id: &str| {
+        references
+            .sources
+            .iter()
+            .find(|source| source.id == id)
+            .map(|source| source.title.clone())
+    };
     let mut locations = HashMap::new();
     let mut passages = Vec::new();
     let failed: Vec<_> = report.findings.iter()
@@ -403,12 +415,12 @@ pub(super) fn repair_context(
                 let key = (&passage.source_id, passage.start_byte, passage.end_byte, &passage.text);
                 let index = *locations.entry(key).or_insert_with(|| {
                     let index = passages.len();
-                    passages.push(json!({"id":format!("evidence-{index}"),"sourceId":passage.source_id,"startByte":passage.start_byte,"endByte":passage.end_byte,"text":passage.text}));
+                    passages.push(json!({"id":format!("evidence-{index}"),"sourceId":passage.source_id,"sourceTitle":title(&passage.source_id),"startByte":passage.start_byte,"endByte":passage.end_byte,"text":passage.text}));
                     index
                 });
                 format!("evidence-{index}")
             }).collect();
-            json!({"unit":finding.unit,"statement":finding.statement,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence})
+            json!({"unit":finding.unit,"statement":citations.label(&finding.statement, references),"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence})
         }).collect();
     Ok(json!({
         "requirements":crate::features::learning::generation::parse_json::<Value>(prompt)?,

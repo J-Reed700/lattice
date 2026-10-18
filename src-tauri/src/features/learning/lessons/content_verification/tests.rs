@@ -1061,7 +1061,8 @@ async fn contradictory_claim_is_repaired_and_rechecked_against_references() -> R
 async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() -> Result<()> {
     let model = Model::new();
     let candidate = candidate(BAD);
-    let mut report = verify(&model, &candidate, &[source()]).await?;
+    let reference = source();
+    let mut report = verify(&model, &candidate, std::slice::from_ref(&reference)).await?;
     let mut finding = report.findings[0].clone();
     let original = finding.evidence[0].clone();
     let mut conflicting = original.clone();
@@ -1075,12 +1076,14 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
             copy
         })
         .collect();
-    let payload = repair_context("{}", &candidate, &report, &[], false)?;
+    let references = ReferenceCollection::lexical(std::slice::from_ref(&reference))?;
+    let payload = repair_context("{}", &candidate, &report, &[], false, &references)?;
     assert_eq!(payload["failedClaims"].as_array().unwrap().len(), 107);
     assert_eq!(payload["evidence"].as_array().unwrap().len(), 2);
     assert_eq!(payload["evidence"][0]["text"], original.text);
     assert_eq!(payload["evidence"][1]["text"], conflicting.text);
     assert_eq!(payload["evidence"][1]["sourceId"], conflicting.source_id);
+    assert_eq!(payload["evidence"][0]["sourceTitle"], reference.title);
     for claim in payload["failedClaims"].as_array().unwrap() {
         assert_eq!(claim["evidence"], json!(["evidence-0", "evidence-1"]));
     }
