@@ -95,6 +95,16 @@ describe('LocalModelRow load status', () => {
     expect(alert).toHaveAttribute('title', UNUSABLE);
   });
 
+  it('shows a start the server refused, worded as the backend wrote it', () => {
+    const refusal = 'This llama-server cannot draft and see at once. Turn off either Vision '
+      + 'or Speculative decoding for this model in Settings → Models.';
+    useModelWarmupStore.getState().setRolePhase('utility', 'failed', refusal);
+
+    renderRow();
+
+    expect(screen.getByRole('alert')).toHaveTextContent(`Didn't load: ${refusal}`);
+  });
+
   it('ignores failures of roles the model does not hold', () => {
     useModelWarmupStore.getState().setRolePhase('chat', 'failed', UNUSABLE);
 

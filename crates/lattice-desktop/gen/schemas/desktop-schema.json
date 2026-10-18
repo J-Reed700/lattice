@@ -3789,6 +3789,12 @@
           "markdownDescription": "Enables the start_model_download command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_vision_projector_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "download:allow-start-vision-projector-download",
+          "markdownDescription": "Enables the start_vision_projector_download command without any pre-configured scope."
+        },
+        {
           "description": "Denies the cancel_download command without any pre-configured scope.",
           "type": "string",
           "const": "download:deny-cancel-download",
@@ -3841,6 +3847,12 @@
           "type": "string",
           "const": "download:deny-start-model-download",
           "markdownDescription": "Denies the start_model_download command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_vision_projector_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "download:deny-start-vision-projector-download",
+          "markdownDescription": "Denies the start_vision_projector_download command without any pre-configured scope."
         },
         {
           "description": "Enables the generate_embedding command without any pre-configured scope.",

@@ -318,6 +318,16 @@ export function useDownloadActions() {
   const fetchAllDownloads = useCallback(async (): Promise<void> => {
     await resyncFromBackend();
   }, [resyncFromBackend]);
+  /**
+   * A downloaded model's vision projector, by the model's own id. Resolves to
+   * the download to follow, or `null` when the whole file is already there.
+   */
+  const startVisionProjectorDownload = useCallback(async (modelId: string): Promise<string | null> => {
+    const result = await VaultAPI.startVisionProjectorDownload(modelId);
+    if (!result.ok) throw new Error(describeFailure(result));
+    if (result.data.downloadId !== null) await resyncFromBackend();
+    return result.data.downloadId;
+  }, [resyncFromBackend]);
 
   return {
     pauseDownload,
@@ -327,6 +337,7 @@ export function useDownloadActions() {
     removeDownload,
     clearCompletedDownloads,
     fetchAllDownloads,
+    startVisionProjectorDownload,
     downloads,
   };
 }

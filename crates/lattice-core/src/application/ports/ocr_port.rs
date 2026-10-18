@@ -31,9 +31,9 @@
 //! `features::ocr::VisionOcr` renders the page to a PNG, starts a dedicated
 //! `llama-server` with the OCR model and its vision projector (`--mmproj`) only
 //! when a page needs it, and asks `/v1/chat/completions` for the page's text.
-//! It is a separate process from the chat sidecar because `--mmproj` cannot
-//! share a server with MTP speculative decoding, and because the OCR model is
-//! wanted for minutes at a time while the chat model is resident for hours.
+//! It is a separate process from the chat sidecar because it serves a
+//! different model with its own window, wanted for minutes at a time while
+//! the chat model is resident for hours.
 //!
 //! Implementations must be `Send + Sync`, must not load a model until the
 //! first `recognize_page` call (nothing may block app startup), and must run

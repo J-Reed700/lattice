@@ -8,10 +8,12 @@
 
 import { Check, CircleCheck, Download, Loader2, TriangleAlert } from 'lucide-react';
 
+import { SeesImagesMark } from '@/features/model/components/SeesImagesMark';
 import { cn } from '@/lib/utils';
 import type { SystemCapabilities } from '@/types/api/models';
 import type { DownloadStatus } from '@/types/downloads';
 import type { ModelRecommendation } from '@/types/modelCatalog';
+import { VISION_CAPABILITY } from '@/utils/visionGeometry';
 
 import { computeModelFit, embeddingBlockReason, FIT_LABEL, formatCompact, formatSize, modelMetaLine } from './catalogUtils';
 import { hasModelVersions, modelQuantization } from './quantization';
@@ -140,6 +142,7 @@ export function ModelRow({
                 {FIT_LABEL[fit.verdict]}
               </span>
           ) : null}
+          {metadata.capabilities.includes(VISION_CAPABILITY) ? <SeesImagesMark /> : null}
           <span>{compact ? compactMeta : modelMetaLine(metadata, model.popularity_downloads)}</span>
         </div>
         {!compact ? <p className="mt-1 text-xs text-text-muted">

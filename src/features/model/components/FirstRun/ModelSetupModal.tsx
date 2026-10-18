@@ -14,11 +14,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { SeesImagesMark } from '@/features/model/components/SeesImagesMark';
 import { firstRunStatusQueryOptions, useFirstRunDownloads } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { router } from '@/routes';
 import { toast } from '@/stores/toastStore';
+import { VISION_CAPABILITY } from '@/utils/visionGeometry';
 
 interface ModelSetupModalProps {
   open: boolean;
@@ -51,10 +53,15 @@ export function ModelSetupModal({
   const loading = statusQuery.isFetching;
   const error = statusQuery.isError ? getErrorMessage(statusQuery.error) : null;
   const { downloadEmbeddingModel, downloadChatModel } = useFirstRunDownloads();
-  const { systemCapabilities } = useModelCatalog({
+  // The catalog says which of the picked models can see; the recommendation
+  // itself carries names and sizes only.
+  const { systemCapabilities, compatibleModels } = useModelCatalog({
     autoLoadCapabilities: true,
-    autoLoadModels: false,
+    autoLoadModels: open,
   });
+  const chatModelSees = Boolean(status?.chat_model && compatibleModels.some(
+    (entry) => entry.model.id === status.chat_model?.model_id && entry.model.capabilities.includes(VISION_CAPABILITY),
+  ));
 
   const handleSkip = () => {
     onDismiss();
@@ -148,6 +155,7 @@ export function ModelSetupModal({
                 label="Chat"
                 name={status.chat_model.display_name}
                 bytes={status.chat_model.estimated_size_bytes}
+                seesImages={chatModelSees}
               />
               <BundleRow
                 label="Embedding"
@@ -195,13 +203,15 @@ interface BundleRowProps {
   label: string;
   name: string;
   bytes: number;
+  seesImages?: boolean;
 }
 
-function BundleRow({ label, name, bytes }: BundleRowProps) {
+function BundleRow({ label, name, bytes, seesImages = false }: BundleRowProps) {
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-border-subtle py-2.5 last:border-b-0">
       <span className="w-20 shrink-0 text-xs text-text-muted">{label}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{name}</span>
+      {seesImages ? <SeesImagesMark /> : null}
       <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-text-secondary">
         {formatGb(bytes)}
       </span>

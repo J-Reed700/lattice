@@ -23,9 +23,11 @@ use chrono::Utc;
 use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::application::ports::llm_port::InvalidationCause;
 use lattice_core::application::ports::ModelFileInspector;
+use lattice_core::domain::models::curated::chat_model_vision;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::metadata::ModelType;
 use lattice_core::domain::models::model_ref::ModelRef;
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -75,9 +77,26 @@ pub struct DownloadedModelResponse {
     /// The context window saved for this model in Settings; `None` is Auto.
     #[serde(default)]
     pub configured_context_length: Option<u32>,
+    /// The catalog's vision projector for this model, when it has one.
+    #[serde(default)]
+    pub vision: Option<DownloadedVisionDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[specta(skip)]
     pub metadata: Option<serde_json::Value>,
+}
+
+/// A downloaded model's vision projector: whether it is on disk, whether the
+/// user lets the model see, and what it costs to fetch.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct DownloadedVisionDto {
+    /// The whole projector file is beside the weights.
+    pub projector_downloaded: bool,
+    /// Vision is on for this model: unless switched off, once downloaded.
+    pub enabled: bool,
+    /// How the model's encoder resizes and charges for a picture.
+    pub geometry: VisionGeometry,
+    /// The projector download's size, in bytes.
+    pub projector_bytes: u64,
 }
 
 /// A model loaded right now, for diagnostics.
@@ -151,10 +170,18 @@ impl DownloadedModelResponse {
             header.and_then(|path| facts.inspector.trained_context_length(path));
         let supports_tool_calling =
             header.and_then(|path| facts.inspector.supports_tool_calling(path));
-        let configured_context_length = facts
-            .configs
-            .get(model.model_id())
-            .and_then(|config| config.context_length);
+        let config = facts.configs.get(model.model_id());
+        let configured_context_length = config.and_then(|config| config.context_length);
+        let vision = header.and_then(chat_model_vision).map(|vision| {
+            // repository-barrier-allow: the projector is a sibling file the model record does not list; its full size is what makes it usable.
+            let on_disk = std::fs::metadata(&vision.projector_path).map_or(0, |file| file.len());
+            DownloadedVisionDto {
+                projector_downloaded: vision.is_complete(on_disk),
+                enabled: config.is_none_or(|config| config.vision != Some(false)),
+                geometry: vision.geometry,
+                projector_bytes: vision.projector.size_bytes,
+            }
+        });
         Self {
             id: model.id().to_string(),
             model_name: model.model_name().to_string(),
@@ -172,6 +199,7 @@ impl DownloadedModelResponse {
             trained_context_length,
             supports_tool_calling,
             configured_context_length,
+            vision,
             metadata: model.metadata().cloned(),
         }
     }

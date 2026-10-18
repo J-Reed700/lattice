@@ -127,7 +127,7 @@ export function sameModelRef(a: ModelRef | null | undefined, b: ModelRef | null 
  * Whether a remote model is declared to see pictures: its declaration in
  * Settings, else its cloud provider's published default. Nothing is asked of
  * a server. `null` before settings load, and for a downloaded model, whose
- * catalog entry declares it instead.
+ * catalog entry and projector decide instead (`buildChatModelOptions`).
  */
 export function remoteSeesImages(ref: ModelRef, settings: LLMSettings | null | undefined): boolean | null {
   if (!settings || ref.kind === 'local') return null;
@@ -267,7 +267,9 @@ export function buildChatModelOptions(
       backend: 'local',
       contextLabel: formatContextLabel(m),
       supportsTools: m.supports_tool_calling ?? null,
-      seesImages: null,
+      // A downloaded model sees once the catalog's projector is beside it and
+      // vision is not switched off.
+      seesImages: m.vision ? m.vision.projector_downloaded && m.vision.enabled : false,
       isDefault: defaultId === m.model_id,
     });
   }

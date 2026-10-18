@@ -71,6 +71,10 @@ pub struct SidecarConfig {
 
     /// Whether to quantize the KV cache (`-ctk q8_0 -ctv q8_0`), halving KV cache memory.
     pub kv_cache_quantization: bool,
+
+    /// The vision projector to load beside the model (`--mmproj`), when the
+    /// model may see and its catalog projector is downloaded.
+    pub projector_path: Option<PathBuf>,
 }
 
 /// Speculative decoding a bundled server can be launched with.
@@ -175,7 +179,7 @@ pub(super) fn auto_context_size_with_quantization(
             total_bytes: (capabilities.total_ram_gb * 1024.0 * 1024.0 * 1024.0) as u64,
         });
     let info = gguf_metadata::read_model_info(model_path)?;
-    let weights_bytes = std::fs::metadata(model_path).ok()?.len();
+    let weights_bytes = resident_weight_bytes(model_path)?;
 
     context_size_for_quantized(
         vram_gb,
@@ -203,11 +207,20 @@ impl Footprint {
     }
 }
 
+/// The weights a server of `model_path` holds: the GGUF, plus its catalog
+/// vision projector once that is downloaded. The projector is counted whether
+/// or not a start loads it, so switching Vision never changes the window a
+/// model is sized to. `None` when the model file cannot be read.
+fn resident_weight_bytes(model_path: &std::path::Path) -> Option<u64> {
+    let weights = std::fs::metadata(model_path).ok()?.len();
+    Some(weights + crate::features::llm::engine::vision::projector_bytes_on_disk(model_path))
+}
+
 /// What a server of `model_path` holds at a window of `context_size` tokens.
 /// A GGUF whose header cannot be read still counts its weights.
 pub(crate) fn footprint_of(model_path: &std::path::Path, context_size: u32) -> Footprint {
     Footprint {
-        weights: std::fs::metadata(model_path).map_or(0, |m| m.len()),
+        weights: resident_weight_bytes(model_path).unwrap_or(0),
         cache: crate::features::llm::engine::gguf_metadata::read_model_info(model_path)
             .and_then(|info| info.kv_cache_bytes(context_size))
             .unwrap_or(0),
@@ -325,6 +338,7 @@ impl SidecarConfig {
             parallel_slots: None,
             seed: None,
             kv_cache_quantization: false,
+            projector_path: None,
         }
     }
 
@@ -350,6 +364,7 @@ impl SidecarConfig {
             parallel_slots: self.parallel_slots,
             seed: self.seed,
             kv_cache_quantization: self.kv_cache_quantization,
+            projector_path: self.projector_path.clone(),
         }
     }
 
@@ -405,6 +420,7 @@ impl SidecarConfig {
             parallel_slots: None,
             seed: None,
             kv_cache_quantization: false,
+            projector_path: None,
         }
     }
 

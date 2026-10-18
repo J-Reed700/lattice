@@ -112,6 +112,7 @@ impl LlamaCppLlm {
         generation: GenerationConfig,
         supports_tools: bool,
         model_thinking: ThinkingPolicy,
+        vision: Option<VisionGeometry>,
     ) -> Result<Self> {
         let config = ServerConfig {
             model,
@@ -121,7 +122,7 @@ impl LlamaCppLlm {
             supports_tools,
             model_thinking,
             prefill_guard: true,
-            vision: None,
+            vision,
         };
         let mut client = Self::connect(process.endpoint(), process.api_token(), config)?;
         client.process = Some(process);

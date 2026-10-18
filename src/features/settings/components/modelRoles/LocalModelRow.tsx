@@ -27,6 +27,7 @@ import { modelRefForRow } from '@/utils/chatModelSelection';
 
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { LocalModelConfigModal } from './LocalModelConfigModal';
+import { LocalVisionControl } from './LocalVisionControl';
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
 import { isChatModelSelected, isLearningModel, ROLES } from './roleConfig';
@@ -178,6 +179,7 @@ export function LocalModelRow({ model }: Props) {
           <div className="truncate text-sm font-medium text-text-primary">{model.model_name}</div>
           <div className="truncate font-mono text-xs text-text-muted">{model.model_id}</div>
           <div className="mt-1.5 text-xs leading-relaxed tabular-nums text-text-muted">{meta}</div>
+          {model.vision ? <LocalVisionControl model={model} vision={model.vision} /> : null}
           {loadError ? (
             <div
               role="alert"
