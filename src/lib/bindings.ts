@@ -6573,7 +6573,11 @@ export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test
 export type LearningAssessmentResponse = { itemId: string; selectedIndex: number | null; text: string | null; orderedValues: string[]; artifactJson: JsonValue | null }
 export type LearningAssessmentSubmissionDto = { score: number; passed: boolean; gradeStatus: LearningAssessmentGradeStatus; graderModel: string | null; graderDisagreement: string[]; feedback: string; itemResults: LearningAssessmentItemResultDto[]; submittedAt: number }
 export type LearningAssessmentWorkspaceDto = { programId: string; outcomes: LearningOutcomeDefinitionDto[]; blueprints: LearningAssessmentBlueprintDto[]; forms: LearningAssessmentFormSummaryDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
-export type LearningAttemptDto = { id: string; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; correct: number; total: number; results: LearningQuestionResultDto[]; submittedAt: number }
+export type LearningAttemptDto = { id: string; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; correct: number; total: number; results: LearningQuestionResultDto[]; submittedAt: number;
+/**
+ * Module tests only: the share of the module the test covered.
+ */
+coverage: LearningModuleTestCoverageDto | null }
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
 export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
 export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
@@ -6682,6 +6686,11 @@ generalKnowledgeCount: number; executedExamples: number; unexecutedLanguages: st
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
+/**
+ * A module test asks about the module's prepared lessons, so it may cover
+ * only some of them; such a test does not stand for the whole module.
+ */
+export type LearningModuleTestCoverageDto = { coveredLessons: number; moduleLessons: number }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
 export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
 export type LearningOutlineCitationTarget = "module_summary" | "outcome" | "lesson_objective"

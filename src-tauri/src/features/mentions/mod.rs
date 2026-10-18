@@ -10,7 +10,7 @@
 //! - `crate::features::mentions::entity` — Mention, MentionType
 //! - `crate::features::mentions::mapper::MentionMapper`
 //! - `crate::features::mentions::use_cases` — CRUD, search, list, backlinks
-//! - `crate::features::mentions::repository::MentionRepository`
+//! - `crate::infrastructure::persistence::repositories::mentions::MentionRepository` — the SQLite adapter
 //! - `crate::features::mentions::commands` — Tauri command handlers
 //! - `crate::features::mentions::plugin::init()` — Tauri plugin
 //! - `crate::features::mentions::mocks::MockMentionRepository` — test mock
@@ -24,7 +24,6 @@ pub mod dto;
 pub mod entity;
 pub mod mapper;
 pub mod plugin;
-pub mod repository;
 pub mod use_cases;
 
 #[cfg(test)]

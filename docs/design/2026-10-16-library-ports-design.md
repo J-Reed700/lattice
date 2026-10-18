@@ -127,6 +127,15 @@ Feature edges 147 → 93 (−54, as estimated). Feature re-exports 17 → 15. `i
 - **Step 11.** Vault's own callers and the three `resolve_vault_root` tests moved to core as well. The delegating fn in `vault/writeback.rs` remains only for `settings_side_effects.rs`.
 - **`RemoteEmbeddingService`.** Deleting it also deletes `EmbeddingServiceTrait` (`trait_def.rs`), because it was the trait's last implementor. Until then, the trait stays alive only for it, so the deletion reviews on its own.
 
+## PR 4b as built
+
+The USearch adapter now lives in `src-tauri/src/infrastructure/vector_index/`: `usearch_index{.rs,/*}` (with the `SearchServiceTrait` and `VectorSearchPort` impls in `usearch_index/ports.rs`), `compression.rs`, `rescore_store.rs`, `dimension_metadata.rs`, `vector_ops.rs` and `vector_ops_test.rs`, all moved with `git mv`. `features/search/engine/vector_search/` keeps `manifest`, `persistence` and `runtime_index`, and no longer re-exports any adapter type; every caller imports from `crate::infrastructure::vector_index` (the retrieval eval from `lattice::infrastructure::vector_index`).
+
+Feature edges 93 → 89 (explorer→search −3, summaries→search −1). Feature re-exports stay 15. `infrastructure-imports-feature` stays 0. Deviations:
+
+- **`manifest_path_for` moved with `IndexConfig`.** The index invalidates the manifest before every save (`usearch_index/persistence.rs`) and `wipe_index_files` deletes it (`dimension_metadata.rs`), so both need the path. Both now sit in a new `vector_index/index_config.rs`; the manifest itself stays in search and imports them.
+- **`write_file_atomically` is `pub(crate)`** (was `pub(super)`), because `manifest::write_manifest` now reaches it across modules.
+
 ## PR 4c: notes
 
 Move the records and the repository to infrastructure using `try_map` (see Q5), and add `ports::WorkspaceNotesPort` with these methods:
@@ -138,6 +147,16 @@ Move the records and the repository to infrastructure using `try_map` (see Q5), 
 `capture.rs` stays in daily_notes. It needs `pub(crate) NOTE_COLUMNS` and `insert_in_transaction`.
 
 The owned `port_bindings.rs:77,86,141,157` gets path changes only.
+
+## PR 4c as built
+
+`WorkspaceNoteRecord`, `NoteTimestampRecord` and `VaultNoteUpsert<'a>` are in `contracts::notes`. The repository moved with `git mv` to `infrastructure/persistence/repositories/workspace_notes.rs`; it keeps the name `DailyNotesRepository`, the SQL and the columns. All 12 `query_as` calls (10 in the repository, 2 in capture) now use `try_map(note_from_row)` or `try_map(timestamp_from_row)`, and so does vault's `rescan_note_page`. `ports::WorkspaceNotesPort` has the four methods; the repository implements it by delegating to its inherent methods.
+
+Feature edges 89 → 82 (vault→daily_notes −4, learning→daily_notes −3; learning keeps one edge, to `hydrate_workspace_note`). Feature re-exports stay 15. `infrastructure-imports-feature` stays 0. Deviations:
+
+- **Capture moved inside daily_notes.** `daily_notes/repository/capture.rs` was an `impl DailyNotesRepository` block. It needs daily_notes DTOs, so it cannot follow the type into infrastructure, and extending an infrastructure type from a feature would hide part of its API there. It is now `daily_notes/capture_store.rs` (`git mv`), with `capture_reference(pool, …)` and `quick_capture(pool, …)` as free functions; `commands.rs` and the tests call them.
+- **Two more `pub(crate)` items.** Capture also decodes rows and updates inside its transaction, so `note_from_row` and `update_in_transaction` are `pub(crate)` next to `NOTE_COLUMNS`, `insert_in_transaction` and `timestamp_from_row`.
+- **Vault builds its port from the pool.** The vault writer and watcher are started from `container.rs` with a `SqlitePool`, so the port cannot be injected without changing that file. `vault/repository.rs::workspace_notes(pool) -> impl WorkspaceNotesPort` is the one place vault names the adapter; the writer, watcher and rescan see only the port's methods.
 
 ## Estimates
 

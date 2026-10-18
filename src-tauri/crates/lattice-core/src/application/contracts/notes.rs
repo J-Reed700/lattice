@@ -1,6 +1,5 @@
-//! Journal pages as the frontend, chat and learning exchange them. The
-//! `daily_notes_workspace` rows they are stored as stay with the daily-notes
-//! repository.
+//! Journal pages as the frontend, chat and learning exchange them, and the
+//! `daily_notes_workspace` rows they are stored as.
 
 use serde::{Deserialize, Serialize};
 
@@ -84,4 +83,43 @@ pub struct WorkspaceNoteDto {
     pub sources: Vec<SourceDto>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// One `daily_notes_workspace` row as stored: list columns are JSON text.
+/// No `sqlx::FromRow` here, because core does not depend on the database
+/// driver; the repository decodes rows with `try_map`.
+#[derive(Debug, Clone)]
+pub struct WorkspaceNoteRecord {
+    pub revision: i64,
+    pub id: String,
+    pub title: String,
+    /// Owning journal, or `None` for an unfiled page (quick capture, vault import).
+    pub journal_id: Option<String>,
+    pub content: String,
+    pub linked_document_ids: String,
+    pub linked_conversation_ids: String,
+    pub highlights_json: String,
+    pub sticky_notes_json: String,
+    pub conversation_snapshots_json: String,
+    pub sources_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// The fields of a note that round-trip through a vault markdown file.
+#[derive(Debug, Clone)]
+pub struct VaultNoteUpsert<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub created_at: &'a str,
+    pub updated_at: &'a str,
+}
+
+/// A note's identity and timestamps, for vault rescans.
+#[derive(Debug, Clone)]
+pub struct NoteTimestampRecord {
+    pub id: String,
+    pub updated_at: String,
+    pub created_at: String,
 }

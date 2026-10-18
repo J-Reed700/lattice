@@ -233,6 +233,7 @@ mod tests {
             total: 0,
             results: vec![],
             submitted_at: 7,
+            coverage: None,
         }
     }
 

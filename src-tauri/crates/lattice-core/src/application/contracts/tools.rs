@@ -3,6 +3,7 @@
 
 mod calls;
 mod dto;
+pub mod explorer;
 
 pub use calls::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 pub use dto::{

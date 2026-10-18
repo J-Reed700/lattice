@@ -40,6 +40,7 @@
 
 use crate::features::search::hyde::hyde_generator::HyDEGenerator;
 use crate::features::search::hyde::query_classifier::QueryClassifier;
+use lattice_core::application::ports::query_interpreter::QueryInterpreter;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use lattice_core::shared::error::{AppError, Result};
@@ -306,6 +307,47 @@ impl HyDEService {
             query_type
         );
         self.generator.generate(query_type, query).await
+    }
+}
+
+#[async_trait::async_trait]
+impl QueryInterpreter for HyDEService {
+    async fn interpret_with_context(
+        &self,
+        query: &str,
+        conversation_context: Option<&str>,
+    ) -> Result<HyDEInterpretation> {
+        self.interpret_query_with_context(query, conversation_context)
+            .await
+    }
+
+    async fn classify_with_context(
+        &self,
+        query: &str,
+        conversation_context: Option<&str>,
+    ) -> Result<QueryType> {
+        self.classify_query_with_context(query, conversation_context)
+            .await
+    }
+
+    async fn web_search_query_with_context(
+        &self,
+        query: &str,
+        conversation_context: Option<&str>,
+    ) -> Result<String> {
+        self.generate_web_search_query_with_context(query, conversation_context)
+            .await
+    }
+
+    async fn research_followups_with_context(
+        &self,
+        root: &str,
+        query: &str,
+        conversation_context: Option<&str>,
+        count: usize,
+    ) -> Result<Vec<String>> {
+        self.generate_research_followups_with_context(root, query, conversation_context, count)
+            .await
     }
 }
 

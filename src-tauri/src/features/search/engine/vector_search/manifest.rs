@@ -26,12 +26,13 @@
 //! The previous manifest is invalidated before saving either index file; its
 //! replacement is written last. A process crash mid-save forces a rebuild.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use super::compression::{VectorIndexCompression, VectorQuantization};
+use crate::infrastructure::vector_index::index_config::{manifest_path_for, IndexConfig};
+use crate::infrastructure::vector_index::usearch_index::write_file_atomically;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 
@@ -40,54 +41,6 @@ use lattice_core::shared::error::Result;
 /// rebuilt.
 // Version 1 could certify partial snapshots; do not reuse its assurances.
 pub const MANIFEST_FORMAT_VERSION: u32 = 2;
-
-/// Compute the manifest path from the index path
-/// (`foo.usearch` → `foo.usearch.manifest.json`).
-pub fn manifest_path_for(index_path: &Path) -> PathBuf {
-    let mut p = index_path.as_os_str().to_owned();
-    p.push(".manifest.json");
-    PathBuf::from(p)
-}
-
-/// The graph and vector layout the index was built with. Every field here
-/// changes what the persisted file means, so any difference forces a rebuild.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IndexConfig {
-    /// Embedding dimension callers hand in.
-    pub dimension: usize,
-    /// Dimension actually stored in USearch (smaller under truncation).
-    pub stored_dimension: usize,
-    pub metric: String,
-    pub quantization: String,
-    /// HNSW `M`.
-    pub connectivity: usize,
-    pub expansion_add: usize,
-    pub expansion_search: usize,
-}
-
-impl IndexConfig {
-    pub fn new(
-        dimension: usize,
-        compression: &VectorIndexCompression,
-        connectivity: usize,
-        expansion_add: usize,
-        expansion_search: usize,
-    ) -> Self {
-        Self {
-            dimension,
-            stored_dimension: compression.stored_dimension(dimension),
-            metric: "cos".to_string(),
-            quantization: match compression.quantization() {
-                VectorQuantization::F32 => "f32",
-                VectorQuantization::I8 => "i8",
-            }
-            .to_string(),
-            connectivity,
-            expansion_add,
-            expansion_search,
-        }
-    }
-}
 
 /// A cheap fingerprint of the SQLite embedding set backing one generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,13 +208,17 @@ pub fn write_manifest(index_path: &Path, manifest: &IndexManifest) -> Result<()>
     let path = manifest_path_for(index_path);
     let bytes = serde_json::to_vec_pretty(manifest)
         .map_err(|e| AppError::Serialization(format!("serialize index manifest: {e}")))?;
-    super::usearch_index::write_file_atomically(&path, &bytes)
+    write_file_atomically(&path, &bytes)
 }
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
+    use crate::infrastructure::vector_index::compression::{
+        VectorIndexCompression, VectorQuantization,
+    };
+    use std::path::PathBuf;
 
     fn config() -> IndexConfig {
         IndexConfig::new(1024, &VectorIndexCompression::None, 16, 128, 64)
