@@ -455,3 +455,40 @@ async fn a_floor_above_what_auto_can_reach_is_refused_before_loading() {
         Some((20_000, 8_192, false))
     );
 }
+
+fn verifier() -> ModelRequest {
+    ModelRequest {
+        role: ModelRole::Verifier,
+        selection: ModelSelection::Verifier,
+        requirements: ModelRequirements::default(),
+        work: String::new(),
+        conversation_id: None,
+    }
+}
+
+#[tokio::test]
+async fn the_verifier_runs_on_its_own_model_and_refuses_unset_without_loading() {
+    let server = ollama().await;
+    let unset = role_models(on_ollama(&server, "default-model"), None).await;
+    let refused = unset.llm_for(&verifier()).await;
+    assert!(
+        matches!(&refused, Err(AppError::InvalidConfig(message))
+            if message == "No Verifier model is set. Choose one in Settings → Models under Verifier."),
+        "never the chat default or the Learning model: {:?}",
+        refused.err()
+    );
+    assert!(unset.instances.snapshot().is_empty());
+
+    let settings = LLMSettingsDto {
+        learning_model: Some(ollama_model("default-model")),
+        verifier_model: Some(ollama_model("audit-model")),
+        ..on_ollama(&server, "default-model")
+    };
+    let models = role_models(settings, None).await;
+    let pinned = models.llm_for(&verifier()).await.unwrap();
+    assert_eq!(pinned.resolved.model, ollama_model("audit-model"));
+    assert_eq!(pinned.resolved.origin, ModelOrigin::VerifierRole);
+    let loaded = models.instances.snapshot();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].pinned_by, vec!["verifier".to_owned()]);
+}

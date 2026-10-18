@@ -4,6 +4,8 @@
 //!
 //! A chat runs on its request override, else its own choice, else the Settings
 //! default. Learning never follows a chat: it runs on its own role or refuses.
+//! The Verifier, likewise, runs on its own role or refuses, and is the one
+//! role that may name a cloud model.
 
 use crate::application::contracts::settings::{LLMProvider, LLMSettingsDto};
 use crate::application::ports::llm_port::{ModelOrigin, ResolvedModel};
@@ -94,6 +96,54 @@ pub fn resolve_learning(settings: &LLMSettingsDto) -> Result<ResolvedModel> {
         model,
         origin: ModelOrigin::LearningRole,
     })
+}
+
+/// The Verifier model, or a refusal: none is set, or it names a cloud model
+/// whose provider has no API key saved. `key_saved` answers that for a
+/// provider (the keyring is the caller's I/O). Nothing else is consulted.
+pub fn resolve_verifier(
+    settings: &LLMSettingsDto,
+    key_saved: impl FnOnce(CloudProvider) -> Result<bool>,
+) -> Result<ResolvedModel> {
+    let model = settings.verifier_model.clone().ok_or_else(|| {
+        AppError::InvalidConfig(
+            "No Verifier model is set. Choose one in Settings → Models under Verifier.".into(),
+        )
+    })?;
+    if let ModelRef::Cloud {
+        provider,
+        model: name,
+    } = &model
+    {
+        if !key_saved(*provider)? {
+            return Err(AppError::InvalidConfig(format!(
+                "Your Verifier model {}/{name} has no API key saved.",
+                cloud_provider_name(*provider)
+            )));
+        }
+    }
+    Ok(ResolvedModel {
+        model,
+        origin: ModelOrigin::VerifierRole,
+    })
+}
+
+/// A cloud provider as the user knows it: "OpenAI", "Anthropic", "Google".
+pub fn cloud_provider_name(provider: CloudProvider) -> &'static str {
+    match provider {
+        CloudProvider::Openai => "OpenAI",
+        CloudProvider::Anthropic => "Anthropic",
+        CloudProvider::Google => "Google",
+    }
+}
+
+/// A cloud provider's stored id, as Settings and the consent column spell it.
+pub fn cloud_provider_id(provider: CloudProvider) -> &'static str {
+    match provider {
+        CloudProvider::Openai => "openai",
+        CloudProvider::Anthropic => "anthropic",
+        CloudProvider::Google => "google",
+    }
 }
 
 #[cfg(test)]

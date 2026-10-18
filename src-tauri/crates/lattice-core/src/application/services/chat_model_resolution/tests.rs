@@ -166,3 +166,82 @@ fn a_set_learning_model_is_used_as_named() {
         }
     );
 }
+
+fn cloud(provider: CloudProvider, model: &str) -> ModelRef {
+    ModelRef::Cloud {
+        provider,
+        model: model.into(),
+    }
+}
+
+#[test]
+fn an_unset_verifier_model_refuses_instead_of_borrowing_another_role() {
+    let mut settings = settings(LLMProvider::Ollama);
+    settings.learning_model = Some(local("qwen3.5-27b"));
+    let error = resolve_verifier(&settings, |_| Ok(true)).unwrap_err();
+    assert!(matches!(
+        error,
+        AppError::InvalidConfig(message)
+            if message == "No Verifier model is set. Choose one in Settings → Models under Verifier."
+    ));
+}
+
+#[test]
+fn a_cloud_verifier_with_no_saved_key_refuses_naming_the_model() {
+    let mut settings = settings(LLMProvider::Local);
+    settings.verifier_model = Some(cloud(CloudProvider::Anthropic, "claude-x"));
+    let error = resolve_verifier(&settings, |provider| {
+        assert_eq!(provider, CloudProvider::Anthropic);
+        Ok(false)
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        AppError::InvalidConfig(message)
+            if message == "Your Verifier model Anthropic/claude-x has no API key saved."
+    ));
+}
+
+#[test]
+fn a_keyring_failure_is_reported_not_taken_for_a_missing_key() {
+    let mut settings = settings(LLMProvider::Local);
+    settings.verifier_model = Some(cloud(CloudProvider::Openai, "gpt-x"));
+    let error = resolve_verifier(&settings, |_| {
+        Err(AppError::InternalError("keyring locked".into()))
+    })
+    .unwrap_err();
+    assert!(matches!(error, AppError::InternalError(message) if message == "keyring locked"));
+}
+
+#[test]
+fn a_verifier_is_used_as_named_whatever_its_kind() {
+    for model in [
+        cloud(CloudProvider::Openai, "gpt-x"),
+        local("qwen3.5-27b"),
+        ollama("qwen3:32b"),
+        ModelRef::LlamaCpp {
+            model: "remote-27b".into(),
+        },
+    ] {
+        let mut settings = settings(LLMProvider::Local);
+        settings.verifier_model = Some(model.clone());
+        let key_checked = std::cell::Cell::new(false);
+        let resolved = resolve_verifier(&settings, |_| {
+            key_checked.set(true);
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(
+            resolved,
+            ResolvedModel {
+                model: model.clone(),
+                origin: ModelOrigin::VerifierRole
+            }
+        );
+        assert_eq!(
+            key_checked.get(),
+            matches!(model, ModelRef::Cloud { .. }),
+            "only a cloud model's key is looked up"
+        );
+    }
+}

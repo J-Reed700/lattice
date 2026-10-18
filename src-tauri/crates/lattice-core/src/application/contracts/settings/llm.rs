@@ -168,6 +168,13 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub learning_model: Option<ModelRef>,
 
+    /// The model that audits a lesson's claims against their cited passages
+    /// before it publishes, for courses that opt in (lesson claim review
+    /// §14). May name a cloud model. `None` means not set, and an opted-in
+    /// audit refuses until it is; it never borrows another role's model.
+    #[serde(default)]
+    pub verifier_model: Option<ModelRef>,
+
     /// Additional directories to scan for externally managed local models
     #[serde(default)]
     pub external_model_directories: Vec<String>,
@@ -535,6 +542,7 @@ impl Default for LLMSettingsDto {
             tool_output: ToolOutputSettingsDto::default(),
             router: RouterSettingsDto::default(),
             learning_model: None,
+            verifier_model: None,
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
             bounded_conversation_memory: true,

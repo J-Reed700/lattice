@@ -166,6 +166,10 @@ pub(crate) fn not_downloaded(role: ModelRole, origin: ModelOrigin, model_id: &st
             "Your Learning model, {model_id}, is not downloaded any more. Choose one in \
              Settings → Models under Learning."
         ),
+        (ModelRole::Verifier, _) | (_, ModelOrigin::VerifierRole) => format!(
+            "Your Verifier model, {model_id}, is not downloaded any more. Choose one in \
+             Settings → Models under Verifier."
+        ),
         (_, ModelOrigin::ChatOverride) => {
             format!("This chat is set to {model_id}, which is no longer downloaded.")
         }
@@ -181,6 +185,7 @@ fn subject(role: ModelRole) -> &'static str {
     match role {
         ModelRole::Chat => "This chat",
         ModelRole::Learning => "Learning work",
+        ModelRole::Verifier => "The Verifier audit",
         ModelRole::Utility | ModelRole::Router | ModelRole::Maintenance => "This work",
     }
 }
@@ -190,6 +195,7 @@ fn purpose(role: ModelRole) -> &'static str {
     match role {
         ModelRole::Chat => "for this chat",
         ModelRole::Learning => "as the Learning model",
+        ModelRole::Verifier => "as the Verifier model",
         ModelRole::Utility => "as the utility model",
         ModelRole::Router => "as the router model",
         ModelRole::Maintenance => "for this work",
@@ -199,6 +205,7 @@ fn purpose(role: ModelRole) -> &'static str {
 fn model_phrase(role: ModelRole, name: &str) -> String {
     match role {
         ModelRole::Learning => format!("Your Learning model, {name},"),
+        ModelRole::Verifier => format!("Your Verifier model, {name},"),
         _ => name.to_owned(),
     }
 }
@@ -207,6 +214,7 @@ fn larger(role: ModelRole) -> String {
     match role {
         ModelRole::Chat => "choose a larger model for this chat".into(),
         ModelRole::Learning => "choose a larger Learning model".into(),
+        ModelRole::Verifier => "choose a larger Verifier model".into(),
         _ => format!("choose a larger model {}", purpose(role)),
     }
 }
@@ -219,6 +227,7 @@ fn activities(holders: &[Holder]) -> String {
             ModelRole::Chat if !holder.work.is_empty() => format!("answering in '{}'", holder.work),
             ModelRole::Chat => "answering in a chat".to_owned(),
             ModelRole::Learning => "running a learning job".to_owned(),
+            ModelRole::Verifier => "auditing a lesson".to_owned(),
             ModelRole::Utility | ModelRole::Router | ModelRole::Maintenance => {
                 "running background work".to_owned()
             }

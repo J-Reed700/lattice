@@ -162,6 +162,7 @@ impl Holder {
             ModelRole::Router => "router",
             ModelRole::Learning => "learning",
             ModelRole::Maintenance => "maintenance",
+            ModelRole::Verifier => "verifier",
         };
         if self.work.is_empty() {
             role.to_owned()
