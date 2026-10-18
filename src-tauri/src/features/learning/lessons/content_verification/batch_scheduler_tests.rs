@@ -17,7 +17,6 @@ struct BatchModel {
     malformed_first: bool,
     block_individual: bool,
     block_batch: bool,
-    block_challenge: bool,
     max_batch_size: Option<usize>,
     batch_error: Option<AppError>,
     batch_sizes: Mutex<Vec<usize>>,
@@ -38,14 +37,6 @@ impl LLMPort for BatchModel {
     }
 
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let system = request
-            .input
-            .iter()
-            .find_map(|item| match item {
-                CompletionInput::Message { role, content } if role == "system" => Some(content),
-                _ => None,
-            })
-            .unwrap();
         let user = request
             .input
             .iter()
@@ -54,47 +45,34 @@ impl LLMPort for BatchModel {
                 _ => None,
             })
             .unwrap();
-        let challenge = system.starts_with("Review a provisional lesson claim approval");
         let batch = serde_json::from_str::<Value>(user)
             .ok()
             .filter(|input| input["claims"].is_array());
-        self.calls
-            .lock()
-            .unwrap()
-            .push(match (batch.is_some(), challenge) {
-                (true, false) => "batch-evidence",
-                (true, true) => "batch-challenge",
-                (false, false) => "individual-evidence",
-                (false, true) => "individual-challenge",
-            });
+        self.calls.lock().unwrap().push(if batch.is_some() {
+            "batch-evidence"
+        } else {
+            "individual-evidence"
+        });
         let text = if let Some(batch) = batch {
             let size = batch["claims"].as_array().unwrap().len();
-            if challenge && self.block_challenge {
+            self.batch_sizes.lock().unwrap().push(size);
+            if self.block_batch {
                 std::future::pending::<()>().await;
             }
-            if !challenge {
-                self.batch_sizes.lock().unwrap().push(size);
-                if self.block_batch {
-                    std::future::pending::<()>().await;
-                }
-                if self.max_batch_size.is_some_and(|max| size > max) {
-                    return Err(AppError::ServiceNotAvailable(
-                        "Fixture server cannot finish this group".into(),
-                    ));
-                }
-                if let Some(error) = &self.batch_error {
-                    return Err(error.clone());
-                }
+            if self.max_batch_size.is_some_and(|max| size > max) {
+                return Err(AppError::ServiceNotAvailable(
+                    "Fixture server cannot finish this group".into(),
+                ));
+            }
+            if let Some(error) = &self.batch_error {
+                return Err(error.clone());
             }
             // All ten fixture assertions use the same source: it is sent once.
             assert_eq!(batch["sourcePassages"].as_array().unwrap().len(), 1);
             let checks:Vec<_>=batch["claims"].as_array().unwrap().iter().map(|claim| {
-                if challenge {json!({"id":claim["id"],"objections":[]})}
-                else {json!({"id":claim["id"],"response":if self.malformed_first&&claim["id"]=="claim-0" {"incomplete response".into()}else{format!("Reason: The fixture passage states the claim.\nSource passage: {}\nVerdict: supported",claim["evidenceIds"][0].as_str().unwrap())}})}
+                json!({"id":claim["id"],"response":if self.malformed_first&&claim["id"]=="claim-0" {"incomplete response".into()}else{format!("Reason: The fixture passage states the claim.\nSource passage: {}\nVerdict: supported",claim["evidenceIds"][0].as_str().unwrap())}})
             }).collect();
             json!({"checks":checks}).to_string()
-        } else if challenge {
-            json!({"objections":[]}).to_string()
         } else {
             if self.block_individual {
                 std::future::pending::<()>().await;
@@ -131,97 +109,6 @@ impl LLMPort for BatchModel {
         on_text(response.text.clone())?;
         Ok(response)
     }
-}
-
-#[tokio::test]
-async fn interrupted_challenge_resumes_without_repeating_entailment() -> Result<()> {
-    let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("challenge-resume.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(2)
-        .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let (repo, job, lesson) = setup(&pool).await?;
-    let sources = vec![source()];
-    let references = ReferenceCollection::lexical(&sources)?;
-    let interrupted = BatchModel {
-        block_challenge: true,
-        ..Default::default()
-    };
-    crate::features::learning::lesson_progress::run(
-        &JobContext::detached(&JobStore::new(pool.clone()), &job).await?,
-        lesson_drafts::run(&repo, &job, &lesson, async {
-            let claims = inventory(8);
-            let retained = ClaimChecks::default();
-            let work = evidence_checks::check(&interrupted, &references, &claims, &[], &retained);
-            tokio::select! {
-                result = work => panic!("The challenge should still be running: {result:?}"),
-                result = tokio::time::timeout(Duration::from_secs(5), async {
-                    while !interrupted.calls.lock().unwrap().contains(&"batch-challenge") {
-                        tokio::task::yield_now().await;
-                    }
-                }) => result.expect("The challenge never started"),
-            }
-            Ok(())
-        }),
-    )
-    .await?;
-    assert_eq!(
-        *interrupted.calls.lock().unwrap(),
-        vec!["batch-evidence", "batch-challenge"]
-    );
-    assert!(
-        repo.job(&job)
-            .await?
-            .progress_message
-            .contains("Challenging 8 provisional approvals"),
-        "The durable UI should identify the challenge stage instead of appearing frozen"
-    );
-    drop(repo);
-    pool.close().await;
-
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(2)
-        .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    JobStore::new(pool.clone())
-        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
-        .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
-    let resumed = BatchModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
-        let results = evidence_checks::check(
-            &resumed,
-            &references,
-            &inventory(8),
-            &[],
-            &ClaimChecks::default(),
-        )
-        .await?;
-        assert_eq!(results.len(), 8);
-        assert!(results
-            .iter()
-            .all(|result| result.2.verdict == ClaimVerdict::Supported));
-        Ok(())
-    })
-    .await?;
-    assert_eq!(
-        *resumed.calls.lock().unwrap(),
-        vec!["batch-challenge"],
-        "Resume should reuse the durable entailment result and continue at the challenge"
-    );
-    pool.close().await;
-    Ok(())
 }
 
 #[tokio::test]
@@ -303,7 +190,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
             vec![4, 4],
             "Never replay the failed eight-claim group after reopening"
         );
-        // All eight decisions, including independent challenges, are reusable.
+        // All eight decisions are reusable.
         check_evidence(
             &model,
             &candidate(GOOD),
@@ -568,10 +455,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     })
     .await?;
     assert_eq!(*resumed.batch_sizes.lock().unwrap(), vec![3]);
-    assert_eq!(
-        *resumed.calls.lock().unwrap(),
-        vec!["batch-evidence", "batch-challenge"]
-    );
+    assert_eq!(*resumed.calls.lock().unwrap(), vec!["batch-evidence"]);
     pool.close().await;
     Ok(())
 }
@@ -650,10 +534,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         )
         .await?;
         assert!(report.issues.is_empty());
-        assert_eq!(
-            *model.calls.lock().unwrap(),
-            vec!["individual-evidence", "individual-challenge"]
-        );
+        assert_eq!(*model.calls.lock().unwrap(), vec!["individual-evidence"]);
         Ok(())
     })
     .await?;

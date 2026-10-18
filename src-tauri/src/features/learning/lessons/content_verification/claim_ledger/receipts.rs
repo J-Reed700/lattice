@@ -80,6 +80,7 @@ impl ClaimLedger {
                         evidence,
                         supporting_quote: Some(supporting_quote.clone()),
                         resolution: None,
+                        trust: None,
                     },
                 ))
             })

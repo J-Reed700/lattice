@@ -1,7 +1,7 @@
 //! Learning's structured model calls.
 //!
 //! Every generator — lessons, outlines, assessments, practice, practical
-//! activities, study decks and the evidence challenge — sends its strict-JSON
+//! activities and study decks — sends its strict-JSON
 //! request through the grounded-generation service, which divides the model's
 //! window and refuses a request that does not fit. A generator states what it
 //! needs (the answer's reservation, its priority and schema); it never does

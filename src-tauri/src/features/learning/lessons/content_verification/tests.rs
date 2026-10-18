@@ -72,7 +72,6 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     }
     let (system, user) = fixture_messages(request);
     if let Some(batch) = fixture_batch(user) {
-        let challenge = system.starts_with("Review a provisional lesson claim approval");
         return batch
             .into_iter()
             .map(|(claim, passages, _)| {
@@ -82,16 +81,11 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
                     .map(|(index, text)| format!("[passage-{index}]\n{text}"))
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                if challenge {
-                    format!("{system}\n\nSource passages:\n{evidence}\n\nClaim: {claim}")
-                } else {
-                    format!("Source passages:\n{evidence}\n\nClaim: {claim}\n\nCompare every factual part with the passages before deciding.")
-                }
+                format!("Source passages:\n{evidence}\n\nClaim: {claim}\n\nCompare every factual part with the passages before deciding.")
             })
             .collect();
     }
-    let challenge = system.starts_with("Review a provisional lesson claim approval");
-    if (is_claim_check(user) && !challenge) || system.is_empty() {
+    if is_claim_check(user) || system.is_empty() {
         return vec![user.to_owned()];
     }
     vec![format!("{system}\n\n{user}")]
@@ -111,21 +105,12 @@ pub(crate) fn fixture_completion(
     }
     let (system, user) = fixture_messages(request);
     let text = if let Some(batch) = fixture_batch(user) {
-        let challenge = system.starts_with("Review a provisional lesson claim approval");
         let checks: Vec<Value> = batch
             .iter()
             .enumerate()
             .zip(replies)
             .map(|((index, (_, _, evidence_ids)), reply)| {
-                let id = json!(format!("claim-{index}"));
-                if challenge {
-                    let objections = serde_json::from_str::<Value>(&reply)
-                        .map(|value| value["objections"].clone())
-                        .unwrap_or_else(|_| json!([]));
-                    json!({"id": id, "objections": objections})
-                } else {
-                    json!({"id": id, "response": verdict_last(&reply, evidence_ids)})
-                }
+                json!({"id": json!(format!("claim-{index}")), "response": verdict_last(&reply, evidence_ids)})
             })
             .collect();
         json!({ "checks": checks }).to_string()
@@ -281,9 +266,6 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if old == statement {Value::Null} else {json!(statement)}})
         }).collect();
         return Some(json!({"changes":changes,"nonFactualReason":""}).to_string());
-    }
-    if prompt.starts_with("Review a provisional lesson claim approval") {
-        return Some(json!({"objections":[]}).to_string());
     }
     if prompt.starts_with("Audit inventory fidelity.") {
         return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
@@ -1328,6 +1310,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 evidence: vec![],
                 supporting_quote: None,
                 resolution: None,
+                trust: None,
             })
         })
         .collect();

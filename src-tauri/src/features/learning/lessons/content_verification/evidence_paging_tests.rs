@@ -606,7 +606,8 @@ fn only_a_known_source_index_is_labelled() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_verdict_saved_under_an_earlier_challenge_policy_is_checked_again() -> Result<()> {
+async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_policy() -> Result<()>
+{
     use crate::features::learning::lesson_drafts;
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
@@ -619,15 +620,31 @@ async fn a_verdict_saved_under_an_earlier_challenge_policy_is_checked_again() ->
     );
     let claims = inventory(&[CLAIM.into()]);
     let evidence = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
-    // The same comparison, keyed as before the challenge's policy was part
-    // of the key, where the old challenge had overturned its approval.
+    // The same comparison, keyed as the evidence challenge keyed it, where
+    // the challenge had overturned its approval.
     let comparison = ClaimChecks::key(0, &claims.units[0].claims[0], &evidence);
     let earlier = format!(
         "claim-v1:{}",
         digest(
-            &json!({"policy": POLICY, "model": model.model_name(),
-                "context": model.max_context_tokens(), "comparison": comparison})
+            &json!({"policy": "lesson-evidence-v20", "model": model.model_name(),
+                "context": model.max_context_tokens(), "comparison": comparison,
+                "challenge": "challenge-contrary-evidence-v1"})
             .to_string()
+        )
+    );
+    // A receipt names the trust policy that weighs its verdict.
+    let current = claim_receipt_key(&model, &comparison);
+    assert_ne!(current, earlier);
+    assert_eq!(
+        current,
+        format!(
+            "claim-v1:{}",
+            digest(
+                &json!({"policy": POLICY, "model": model.model_name(),
+                    "context": model.max_context_tokens(), "comparison": comparison,
+                    "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION})
+                .to_string()
+            )
         )
     );
     lesson_drafts::run(&repo, &job, &lesson, async {
@@ -655,6 +672,10 @@ async fn a_verdict_saved_under_an_earlier_challenge_policy_is_checked_again() ->
         .await?;
         assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
         assert_eq!(model.checks.lock().unwrap().len(), 1, "checked again");
+        assert!(
+            lesson_drafts::checkpoint(&current).await?.is_some(),
+            "the new verdict is saved under the trust policy's key"
+        );
         Ok(())
     })
     .await

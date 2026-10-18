@@ -2,8 +2,8 @@
 //! Each pair becomes one claim whose only evidence is its passage, and pairs
 //! are sent in batches the way lesson verification sends them: a batch that
 //! does not fit is halved, and a claim the batch leaves unusable is rechecked
-//! on its own. The web challenge that follows a provisional verdict is not
-//! run, so this measures the passage judge alone.
+//! on its own. This is the whole model check a lesson claim gets; whether its
+//! support is enough is the provenance gate's decision, which makes no call.
 use super::*;
 
 #[tokio::test]

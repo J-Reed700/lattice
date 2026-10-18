@@ -170,10 +170,6 @@ pub(super) fn judged(label: &str, passage: Option<usize>) -> Value {
         passage.map_or("none".to_owned(), |i| format!("passage-{i}"))
     ))
 }
-/// The evidence challenge raising no objections.
-pub(super) fn no_objections() -> Value {
-    json!({"objections":[]})
-}
 /// A scripted model: JSON replies are serialized, string replies (a claim
 /// check's labelled lines) are sent as written.
 pub(super) fn model(outputs: Vec<Value>) -> ScriptedModel {

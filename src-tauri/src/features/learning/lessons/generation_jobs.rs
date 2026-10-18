@@ -313,6 +313,7 @@ impl LessonGenerationWorker {
                             &references,
                         ),
                     );
+                    let topic = format!("{}: {}", program.summary.goal, lesson.title);
                     let prepared = crate::features::learning::lesson_drafts::run(
                         repo,
                         job_id,
@@ -320,11 +321,18 @@ impl LessonGenerationWorker {
                         crate::features::learning::content_verification::research::run(
                             self.pool.clone(),
                             job.program_id.clone(),
-                            format!("{}: {}", program.summary.goal, lesson.title),
+                            topic.clone(),
                             self.research_web.clone(),
-                            crate::features::learning::lessons::verifier_audit::lesson::scope(
-                                self.verifier.clone(),
-                                preparation,
+                            // Source provenance and trust weigh every
+                            // supported claim's support (§6.2).
+                            crate::features::learning::content_verification::with_trust(
+                                self.pool.clone(),
+                                job.program_id.clone(),
+                                topic,
+                                crate::features::learning::lessons::verifier_audit::lesson::scope(
+                                    self.verifier.clone(),
+                                    preparation,
+                                ),
                             ),
                         ),
                     )

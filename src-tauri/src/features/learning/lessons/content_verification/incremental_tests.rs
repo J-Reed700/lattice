@@ -270,6 +270,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
                     evidence: Vec::new(),
                     supporting_quote: None,
                     resolution: None,
+                    trust: None,
                 }],
                 &transient,
             )

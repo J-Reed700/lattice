@@ -169,6 +169,7 @@ impl ClaimLedger {
                     source_version_id: &source,
                     supporting_quote: &quote,
                     passages: &finding.evidence,
+                    trust: finding.trust.as_ref(),
                 };
                 match self.gate.judge(&support) {
                     Sufficiency::Sufficient => (
@@ -181,6 +182,12 @@ impl ClaimLedger {
                     Sufficiency::Insufficient { reason } => (
                         CheckResult::Failed {
                             kind: VerdictKind::Unsupported,
+                        },
+                        reason,
+                    ),
+                    Sufficiency::Contradicted { reason } => (
+                        CheckResult::Failed {
+                            kind: VerdictKind::Contradicted,
                         },
                         reason,
                     ),

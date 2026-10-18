@@ -70,6 +70,7 @@ fn gap() -> Finding {
         evidence: vec![],
         supporting_quote: None,
         resolution: None,
+        trust: None,
     }
 }
 fn model() -> ScriptedModel {
