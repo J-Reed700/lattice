@@ -1,6 +1,6 @@
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::events::model_download_events::*;
 use crate::infrastructure::events::event_bus::EventBus;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use chrono::Utc;
 use lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort;
 use lattice_core::application::ports::UnitOfWorkFactory;
@@ -311,7 +311,7 @@ impl DownloadSaga {
                         // The completion write above has committed; hashing the
                         // artifacts happens off the runtime thread, outside it.
                         let activation = async {
-                            let identity = crate::features::download::artifact_identity::establish(
+                            let identity = crate::infrastructure::ml::artifact_identity::establish(
                                 &downloaded_model,
                             )
                             .await?;

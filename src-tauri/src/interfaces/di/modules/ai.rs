@@ -172,7 +172,7 @@ impl AIModule {
 
     pub fn downloaded_model_repo(
         &self,
-    ) -> &Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>
+    ) -> &Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>
     {
         &self.llm.downloaded_model_repo
     }

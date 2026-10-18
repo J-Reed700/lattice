@@ -45,8 +45,8 @@ impl GetTranscriptionStatusUseCase {
 )]
 mod tests {
     use super::*;
-    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
     use crate::features::transcription::engine::WhisperTranscriptionService;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 
     async fn empty_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();

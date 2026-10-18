@@ -5,13 +5,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::instances::LaunchProfile;
 use crate::features::llm::scheduler::SchedulerRegistry;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};

@@ -1,7 +1,7 @@
 use super::*;
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::instances::SidecarBudget;
 use crate::features::llm::loading::LlmRuntime;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::contracts::settings::{LlamaCppSettingsDto, SettingsDto};
 use lattice_core::application::ports::MockSettingsRepository;
 use lattice_core::domain::models::downloaded::ModelLocation;

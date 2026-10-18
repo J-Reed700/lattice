@@ -90,7 +90,7 @@ pub struct DownloadEventBridge {
     // bootstrap/app.rs; dropping it would change the public `new` signature.
     #[allow(dead_code)]
     downloaded_model_repository: Option<
-        Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,
+        Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>,
     >,
     event_bus: Option<
         Arc<
@@ -110,7 +110,7 @@ impl DownloadEventBridge {
             RwLock<Option<mpsc::Receiver<crate::features::download::manager::DownloadEvent>>>,
         >,
         downloaded_model_repository: Option<
-            Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,
+            Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>,
         >,
         event_bus: Option<
             Arc<

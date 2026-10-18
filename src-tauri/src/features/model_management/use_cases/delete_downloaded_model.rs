@@ -1,6 +1,6 @@
 //! Deletes a downloaded model record and optionally the file.
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
 use std::time::Duration;

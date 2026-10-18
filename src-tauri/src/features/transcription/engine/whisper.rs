@@ -19,8 +19,8 @@ use candle_transformers::models::whisper::{quantized_model, Config};
 use tokenizers::Tokenizer;
 use tracing::info;
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::ports::transcription_port::{Transcript, TranscriptionPort};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::runtime::background::BackgroundTasks;

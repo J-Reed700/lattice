@@ -1,5 +1,5 @@
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::infrastructure::ml::compute_device::gpu_acceleration_available;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::ports::system_info::SystemInfoPort;
 use lattice_core::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;

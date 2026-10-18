@@ -48,12 +48,9 @@ feature-edge features::conversation features::explorer 7
 feature-edge features::conversation features::function_calling 2
 feature-edge features::conversation features::search 1
 feature-edge features::conversation features::web 2
-feature-edge features::embedding features::download 2
-feature-edge features::initialization features::download 1
-feature-edge features::llm features::download 9
+feature-edge features::llm features::download 7
 feature-edge features::llm features::model_management 2
-feature-edge features::model_management features::download 21
-feature-edge features::transcription features::download 2
+feature-edge features::model_management features::download 6
 
 feature-reexport features/conversation/chat.rs features::explorer 1
 feature-reexport features/conversation/chat/ports.rs lattice_core 2

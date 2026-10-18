@@ -286,7 +286,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let reconcile_repo = download_repository.clone();
     let reconcile_startup_ts = Utc::now();
     let model_repo_for_cleanup = Arc::new(
-        crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
+        crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
             container.db_pool().clone(),
         ),
     );
@@ -448,7 +448,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     tracing::info!("EventBus created");
 
     let downloaded_model_repository = Arc::new(
-        crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
+        crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
             container.db_pool().clone(),
         ),
     );

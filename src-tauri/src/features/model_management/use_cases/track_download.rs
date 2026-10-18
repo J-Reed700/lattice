@@ -2,7 +2,7 @@
 //!
 //! Records a model download completion in the models table.
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::Result;
 use serde_json::Value as JsonValue;

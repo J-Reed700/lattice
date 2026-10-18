@@ -2,7 +2,7 @@
 //!
 //! Deactivates the currently active chat model.
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
 use tracing::info;
 

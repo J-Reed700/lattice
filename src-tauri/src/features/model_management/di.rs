@@ -26,7 +26,7 @@ impl Container {
 
     pub fn downloaded_model_repository(
         &self,
-    ) -> Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>
+    ) -> Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>
     {
         Arc::clone(self.ai.downloaded_model_repo())
     }
