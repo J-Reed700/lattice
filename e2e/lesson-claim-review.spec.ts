@@ -89,6 +89,8 @@ test('A lesson held for review lists each claim with what was compared, takes th
   await expect(first.getByText(/Repair rejected: The section came back with the wrong number of paragraphs/)).toBeVisible();
   await first.getByRole('button', { name: 'Open in reader' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  // A saved source version is not a file: the reader shows the passage as saved.
+  await expect(page.getByRole('dialog').getByText('A careful comparison records the chosen measure and the observation period.').first()).toBeVisible();
   await page.keyboard.press('Escape');
 
   // Confirming a contradiction needs a note; Undo takes it back.

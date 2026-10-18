@@ -1184,6 +1184,12 @@ export async function installLearningStudioBackend(page: Page) {
           ],
         };
       },
+      // The reader asks for a passage's file by its source version id; a
+      // learning source version is not a file, so the read fails as it does
+      // in the app and the reader shows the saved passage instead.
+      read_file_content: (args: MockArgs) => {
+        throw new Error(`File not found: ${String((args as { path?: string }).path)}`);
+      },
       get_learning_lesson_claim_review: (args: MockArgs) => {
         const review = state.claimReviews[String((args as { lessonId?: string }).lessonId)];
         return review ? structuredClone(review) : null;
