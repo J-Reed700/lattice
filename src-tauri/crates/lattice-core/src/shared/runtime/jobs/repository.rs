@@ -4,6 +4,7 @@
 //! cancellation is never overwritten by a late result. Functions ending in
 //! `_in` take a connection so a feature can commit a job transition together
 //! with its own writes.
+use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
@@ -41,40 +42,6 @@ fn not_found() -> AppError {
 
 fn reused_operation() -> AppError {
     AppError::InvalidInput("Operation ID was reused with different job data.".into())
-}
-
-/// What a new attempt of a job continues from (`retry_in`, `continue_in`).
-enum Attempt<'a> {
-    /// A failed, interrupted or cancelled job, rerun as it was requested.
-    Retry,
-    /// A completed job, for the work it left: `requested`, of `total` steps.
-    Continue {
-        requested: &'a serde_json::Value,
-        total: u32,
-    },
-}
-
-impl Attempt<'_> {
-    fn admits(&self, status: JobStatus) -> Result<()> {
-        let (admitted, refusal) = match self {
-            Self::Retry => (
-                matches!(
-                    status,
-                    JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled
-                ),
-                "Only failed, interrupted, or cancelled jobs can be retried.",
-            ),
-            Self::Continue { .. } => (
-                status == JobStatus::Completed,
-                "Only a completed job can continue; retry a failed or stopped one.",
-            ),
-        };
-        if admitted {
-            Ok(())
-        } else {
-            Err(AppError::InvalidState(refusal.into()))
-        }
-    }
 }
 
 fn count(row: &SqliteRow, column: &str) -> u32 {

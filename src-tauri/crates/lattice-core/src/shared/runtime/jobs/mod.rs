@@ -6,6 +6,7 @@
 //! cancellation always wins over a late worker result. Handlers own their
 //! cancellation points: terminal writes run to completion rather than being
 //! dropped mid-transaction.
+mod attempt;
 mod repository;
 mod runtime;
 
