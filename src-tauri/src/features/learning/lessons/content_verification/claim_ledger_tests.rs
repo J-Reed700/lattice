@@ -44,12 +44,21 @@ fn statement_in(text: &str) -> String {
 }
 
 /// A lesson of one-sentence sections.
+/// Practice that states nothing to check, so each section holds one claim.
+const PRACTICE: &str = " Try it yourself: open the sample file, read its first row, and compare each header name with the one you expected to see.";
+
+/// A section's body: its one claim, then enough practice to be a section
+/// the teaching review accepts (600 characters), as a real lesson's is.
+fn section(statement: &str) -> String {
+    format!("{statement}{}", PRACTICE.repeat(5))
+}
+
 fn lesson(statements: &[&str]) -> Value {
     let blocks: Vec<_> = statements
         .iter()
         .enumerate()
         .map(|(index, statement)| {
-            json!({"kind":"explanation","title":format!("Section {index}"),"body":statement,"rubric":[]})
+            json!({"kind":"explanation","title":format!("Section {index}"),"body":section(statement),"rubric":[]})
         })
         .collect();
     json!({"blocks":blocks,"questions":[]})
@@ -456,11 +465,12 @@ async fn an_edit_is_applied_on_resume_and_only_its_section_is_extracted_again() 
     let sources = [source()];
     let model = Figures::new();
     let raw = lesson(&[GOOD, BAD]).to_string();
-    assert!(
-        prepare(&repo, &job, &lesson_id, &model, Some(raw), &sources)
-            .await
-            .is_err()
-    );
+    let error = prepare(&repo, &job, &lesson_id, &model, Some(raw), &sources)
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
     let store = ClaimReviewRepository::new(pool.clone());
     let ledger = store.load(&lesson_id).await?;
     let edited = waiting(&ledger.claims)[0];
@@ -481,8 +491,8 @@ async fn an_edit_is_applied_on_resume_and_only_its_section_is_extracted_again() 
     let extractions = model.extracted.lock().unwrap().len();
     let (raw, report) = prepare(&repo, &job, &lesson_id, &model, None, &sources).await?;
     let lesson: Value = serde_json::from_str(&raw)?;
-    assert_eq!(lesson["blocks"][1]["body"], GOOD);
-    assert_eq!(lesson["blocks"][0]["body"], GOOD);
+    assert_eq!(lesson["blocks"][1]["body"], section(GOOD));
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
     // The untouched section's claims are reused, not extracted again.
     assert!(model.extracted.lock().unwrap()[extractions..]
         .iter()
@@ -572,8 +582,8 @@ async fn a_claim_confirmed_while_its_repair_was_interrupted_is_not_sent_on_resum
         "the confirmed claim's repair is dropped"
     );
     let lesson: Value = serde_json::from_str(&raw)?;
-    assert_eq!(lesson["blocks"][0]["body"], GOOD);
-    assert_eq!(lesson["blocks"][1]["body"], BAD);
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
+    assert_eq!(lesson["blocks"][1]["body"], section(BAD));
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     let confirmed = report.findings.iter().find(|f| f.unit == 1).unwrap();
     assert!(matches!(

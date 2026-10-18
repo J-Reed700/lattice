@@ -138,7 +138,7 @@ export function ClaimEvidenceAttach({ programId, onSubmit, onCancel }: {
             </div>
           )}
           {snapshot?.state === 'failed' && report.source && (
-            <button type="button" disabled={capture.isPending} onClick={() => capture.mutate({ versionId: report.source!.sourceVersionId })} className="min-h-9 rounded-full border border-border bg-background px-3 text-xs font-medium disabled:opacity-50">
+            <button type="button" disabled={capture.isPending} onClick={() => capture.mutate({ sourceId: report.source!.sourceId, versionId: report.source!.sourceVersionId })} className="min-h-9 rounded-full border border-border bg-background px-3 text-xs font-medium disabled:opacity-50">
               {capture.isPending ? 'Capturing…' : 'Capture again'}
             </button>
           )}

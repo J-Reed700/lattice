@@ -12,8 +12,8 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger, LessonReview,
-    LessonReviewState, Revision, TrustVerdict, UserAction, VerdictKind,
+    Actor, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger,
+    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -75,8 +75,11 @@ impl ClaimReviewService {
 
     /// Resume verification (§6.2): a new attempt of the lesson's job that
     /// carries the user's actions into the draft and checks what changed.
-    /// A lesson waiting for review continues its completed job, and is
-    /// refused while nothing changed since it stopped; a lesson whose job
+    /// A lesson waiting for review continues its completed job. While a
+    /// claim waits for the user it is refused until one changed; a lesson
+    /// held by the Verifier audit alone (its stop, or a hold with no claim
+    /// waiting) resumes at once, since its fix is made in Settings or with
+    /// the course's switch, not on a claim (§14.6). A lesson whose job
     /// failed or stopped retries it. `expected_revision` is the course's.
     pub async fn resume(
         &self,
@@ -105,7 +108,8 @@ impl ClaimReviewService {
         if !waiting {
             return self.drafts.retry_job(&request).await;
         }
-        if !self.changed_since_stop(lesson_id).await? {
+        let held_by_claims = ClaimCounts::tally(ledger.claims.iter()).queued > 0;
+        if held_by_claims && !self.changed_in(&ledger).await? {
             return Err(AppError::InvalidState(NOTHING_CHANGED.into()));
         }
         self.drafts.continue_review_job(&request).await
@@ -176,11 +180,17 @@ impl ClaimReviewService {
         Ok(revision.0)
     }
 
-    /// Whether anything about the lesson's claims changed since its last
+    /// Whether the user acted on a claim since the lesson's last
     /// preparation stopped (§6.2): "Resume verification" reruns nothing that
-    /// has not changed. A Verifier audit stop always resumes (§14.6).
+    /// has not changed while a claim waits for the user.
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
         let ledger = self.store.load(lesson_id).await?;
+        self.changed_in(&ledger).await
+    }
+
+    /// `changed_since_stop` over a loaded ledger: a user event at or after
+    /// the job's last write of the review row.
+    pub(super) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
         let Some(review) = &ledger.review else {
             return Ok(false);
         };
@@ -190,19 +200,12 @@ impl ClaimReviewService {
         ) {
             return Ok(false);
         }
-        // An audit stop is fixed in Settings or with the course's switch,
-        // not in the ledger (§14.6): Resume runs the audit again.
-        if review.stop_reason.as_ref().is_some_and(|stop| {
-            crate::features::learning::lessons::verifier_audit::AuditStop::is_audit_stop(&stop.code)
-        }) {
-            return Ok(true);
-        }
         let stopped_at = self
             .store
-            .review_written_at(lesson_id)
+            .review_written_at(&ledger.lesson_id)
             .await?
             .unwrap_or(i64::MAX);
-        Ok(changed_since(&ledger, stopped_at))
+        Ok(changed_since(ledger, stopped_at))
     }
 
     async fn accept_all_general_knowledge(

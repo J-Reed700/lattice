@@ -680,7 +680,7 @@ async searchLearningSourcesSemantically(request: SearchLearningSourcesSemantical
     else return { status: "error", error: e  as any };
 }
 },
-async getLearningLessonClaimReview(programId: string, lessonId: string) : Promise<Result<LessonClaimReviewDto, ApiError>> {
+async getLearningLessonClaimReview(programId: string, lessonId: string) : Promise<Result<LessonClaimReviewDto | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_claim_review", { programId, lessonId }) };
 } catch (e) {
@@ -7889,7 +7889,12 @@ revision: number; counts: ClaimCountsDto;
 /**
  * Verification passes run on a new candidate text (§6.3).
  */
-pass: number; stopReason: StopReasonDto | null; claims: ClaimReviewItemDto[] }
+pass: number; stopReason: StopReasonDto | null;
+/**
+ * The user acted on a claim since the job last stopped (§6.2): a lesson
+ * held by claims waiting for the user resumes only then.
+ */
+changedSinceStop: boolean; claims: ClaimReviewItemDto[] }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
@@ -9246,7 +9251,11 @@ citationId?: number | null;
  */
 webSnapshot?: WebSnapshotDto | null }
 export type SourceGroup = { id: string; title: string; edition: string | null; description: string | null; ordered: boolean; structure?: StructureMode }
-export type SourceRefDto = { sourceVersionId: string; title: string; url: string | null; addedBy: SourceAddedByDto }
+export type SourceRefDto = {
+/**
+ * The library source the version belongs to, for "Capture again" (§5.4).
+ */
+sourceId: string; sourceVersionId: string; title: string; url: string | null; addedBy: SourceAddedByDto }
 /**
  * One document a chat in this space is allowed to read.
  *

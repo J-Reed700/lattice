@@ -296,7 +296,7 @@ describe('Durable lesson preparation progress', () => {
     api.review.mockResolvedValue({ ok: true, data: review([claimItem()]) });
     const { client, unmount } = show();
     expect(await screen.findByRole('heading', { name: 'Lesson preparation is waiting for you' })).toBeVisible();
-    expect(screen.getByText(/Needs your review: 1 claim\. Every check that could run has run/)).toBeVisible();
+    expect(screen.getByText(/Every check that could run has run/)).toBeVisible();
     expect(await screen.findByRole('heading', { name: /Needs your review · 1 claim needs your review/ })).toBeVisible();
     expect(api.review).toHaveBeenCalledWith('program-1', 'lesson-1');
     expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
@@ -316,6 +316,18 @@ describe('Durable lesson preparation progress', () => {
     expect(await screen.findByText('Pass 3 · 2 claims being repaired · 5 waiting for you · 108 verified')).toBeVisible();
     expect(screen.getByText(/Claims waiting for you can be resolved now/)).toBeVisible();
     expect(screen.getByText(/the machine gives up on a claim after two tries on the same evidence/)).toBeVisible();
+    unmount(); client.clear();
+  });
+
+  it('shows a lesson held only by a Verifier audit stop with its reason, never "0 claims", and lets it resume', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 0 claims', finishedAt: Date.now() - 1_000 }] } });
+    api.review.mockResolvedValue({ ok: true, data: review([], { stopReason: { code: 'verifier_unset', message: 'Audit cannot run: no Verifier model is set.', fix: 'Choose one in Settings → Models under Verifier, or turn the audit off for this course.', at: 1, request: null } }) });
+    const { client, unmount } = show();
+    expect(await screen.findByRole('heading', { name: 'Waiting for the Verifier audit' })).toBeVisible();
+    expect(screen.getByText('Audit cannot run: no Verifier model is set.')).toBeVisible();
+    expect(screen.getByText(/Choose one in Settings → Models under Verifier/)).toBeVisible();
+    expect(screen.queryByText(/0 claims/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resume verification' })).toBeEnabled();
     unmount(); client.clear();
   });
 });

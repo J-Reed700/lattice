@@ -536,9 +536,10 @@ impl ClaimLedger {
 
 /// The error that unwinds a lesson's preparation when it waits for the user's
 /// review. It is not a failure: the job reads the review row and completes
-/// (§6.1, `generation_jobs`).
+/// (§6.1, `generation_jobs`). Its text is the hold's own words, with no
+/// failure category in front of them, wherever it is shown or logged.
 pub(in crate::features::learning) fn needs_review(claims: usize) -> AppError {
-    AppError::InvalidState(format!(
+    AppError::Other(format!(
         "Needs your review: {claims} claim{} could not be verified. Resolve each one, then resume verification.",
         if claims == 1 { "" } else { "s" }
     ))

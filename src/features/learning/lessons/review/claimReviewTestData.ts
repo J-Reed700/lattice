@@ -50,7 +50,7 @@ export function userActionAt(at: number): ClaimEventDto {
 
 export function review(claims: ClaimReviewItemDto[], overrides: Partial<LessonClaimReviewDto> = {}): LessonClaimReviewDto {
   return {
-    lessonId: 'lesson-1', programId: 'program-1', state: 'needs_review', revision: 7, pass: 3, stopReason: null,
+    lessonId: 'lesson-1', programId: 'program-1', state: 'needs_review', revision: 7, pass: 3, stopReason: null, changedSinceStop: false,
     counts: { verified: 12, confirmed: 0, generalKnowledge: 0, queued: claims.length, open: 0, removed: 0 },
     claims,
     ...overrides,

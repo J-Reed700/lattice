@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyFilter,
-  changedSince,
   checkerColumns,
   claimFilterOf,
   confirmNeedsNote,
@@ -13,10 +12,11 @@ import {
   heldLessonIds,
   initialFilter,
   jobHoldingLesson,
+  reviewHold,
   unitLabel,
   verdictLabel,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
-import { claimItem, review, STOPPED_AT, unsupportedItem, userActionAt } from '@/features/learning/lessons/review/claimReviewTestData';
+import { claimItem, review, STOPPED_AT, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
 import type { CheckerVerdictDto, ClaimEventDto, LearningGenerationJob } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
@@ -77,12 +77,6 @@ describe('claim review presentation', () => {
     expect(jobHoldingLesson([job({})], 'lesson-2')?.id).toBe('job-1');
   });
 
-  it('allows Resume only after a user event since the job stopped', () => {
-    expect(changedSince(review([claimItem()]), STOPPED_AT)).toBe(false);
-    expect(changedSince(review([claimItem({ history: [userActionAt(STOPPED_AT + 1)] })]), STOPPED_AT)).toBe(true);
-    expect(changedSince(review([claimItem()]), null)).toBe(true);
-  });
-
   it('puts the local checker and the Verifier side by side', () => {
     const passage = claimItem().evidence[0];
     const local: CheckerVerdictDto = { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported', sourceVersionId: 'v1', supportingQuote: 'boils at 100' }, reason: 'Entailed.', quotedSource: null, passages: [passage], at: 1 };
@@ -100,5 +94,13 @@ describe('claim review presentation', () => {
   it('summarises the counts without hiding confirmations', () => {
     expect(countsLine(review([claimItem()], { counts: { verified: 12, confirmed: 3, generalKnowledge: 2, queued: 1, open: 0, removed: 0 } })))
       .toBe('12 verified · 3 confirmed by you · 2 general knowledge · 1 waiting for you');
+  });
+
+  it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 claims"', () => {
+    const auditStop = { code: 'verifier_turned_off', message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
+    expect(reviewHold(review([claimItem()], { changedSinceStop: true }), 1)).toBe('claims');
+    expect(reviewHold(review([], { stopReason: auditStop }), 0)).toBe('audit_stop');
+    expect(reviewHold(review([]), 0)).toBe('audit');
+    expect(reviewHold(review([], { changedSinceStop: true }), 0)).toBe('resolved');
   });
 });

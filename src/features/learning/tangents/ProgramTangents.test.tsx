@@ -70,7 +70,7 @@ vi.mock('@/features/learning/api/client', () => ({
     createLearningTangent: vi.fn(),
     // The lesson card reads the plan's jobs and the lesson's claim review.
     getLearningPlan: vi.fn(async () => ({ ok: false, error: 'Not used in this test.' })),
-    getLearningLessonClaimReview: vi.fn(async () => ({ ok: false, error: 'No review.', details: { code: 'NOT_FOUND', message: 'No review.' } })),
+    getLearningLessonClaimReview: vi.fn(async () => ({ ok: true, data: null })),
   },
 }));
 

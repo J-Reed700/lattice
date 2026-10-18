@@ -18,8 +18,8 @@ import type { ModelRef } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 import { CLOUD_PROVIDER_NAMES, sameModelRef } from '@/utils/chatModelSelection';
 
-import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 import { ROLES } from './roleConfig';
+import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 
 const VERIFIER = ROLES.find((role) => role.id === 'verifier');
 

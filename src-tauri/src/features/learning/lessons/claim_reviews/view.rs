@@ -29,6 +29,7 @@ use crate::features::learning::source_library::LearningSourceLibraryRepository;
 
 /// What a card says about a source version.
 struct SourceFacts {
+    source_id: String,
     title: String,
     url: Option<String>,
     added_by: SourceAddedByDto,
@@ -37,6 +38,7 @@ struct SourceFacts {
 impl SourceFacts {
     fn reference(&self, source_version_id: &str) -> SourceRefDto {
         SourceRefDto {
+            source_id: self.source_id.clone(),
             source_version_id: source_version_id.into(),
             title: self.title.clone(),
             url: self.url.clone(),
@@ -84,15 +86,22 @@ fn latest_check(entry: &ClaimLedgerEntry, verifier: bool) -> Option<(&Check, i64
 }
 
 impl ClaimReviewService {
-    /// The review of `lesson_id` in `program_id`; not found before the
+    /// The review of `lesson_id` in `program_id`; `None` before the
     /// lesson's first verification pass.
-    pub async fn review(&self, program_id: &str, lesson_id: &str) -> Result<LessonClaimReviewDto> {
+    pub async fn review(
+        &self,
+        program_id: &str,
+        lesson_id: &str,
+    ) -> Result<Option<LessonClaimReviewDto>> {
         let ledger = self.store().load(lesson_id).await?;
-        let review = ledger
+        let Some(review) = ledger
             .review
             .clone()
             .filter(|review| review.program_id == program_id)
-            .ok_or_else(|| AppError::NotFound("This lesson has no claim review yet.".into()))?;
+        else {
+            return Ok(None);
+        };
+        let changed_since_stop = self.changed_in(&ledger).await?;
         let sources = self.sources(program_id).await?;
         let titles = self.unit_titles(&review, program_id, lesson_id).await?;
         let shown = self.store().shown_passages(lesson_id).await?;
@@ -112,7 +121,7 @@ impl ClaimReviewService {
                 item(entry, passages, &sources, &titles, &texts)
             })
             .collect();
-        Ok(LessonClaimReviewDto {
+        Ok(Some(LessonClaimReviewDto {
             lesson_id: ledger.lesson_id.clone(),
             program_id: review.program_id.clone(),
             state: review.state.into(),
@@ -120,8 +129,9 @@ impl ClaimReviewService {
             counts: ClaimCounts::tally(ledger.claims.iter()).into(),
             pass,
             stop_reason: review.stop_reason.as_ref().map(StopReasonDto::from),
+            changed_since_stop,
             claims,
-        })
+        }))
     }
 
     /// The text of every passage a card shows, and of every passage a
@@ -199,10 +209,12 @@ impl ClaimReviewService {
             .into_iter()
             .flat_map(|source| {
                 let added_by = source.added_by;
+                let source_id = source.id;
                 source.versions.into_iter().map(move |version| {
                     (
                         version.id,
                         SourceFacts {
+                            source_id: source_id.clone(),
                             title: version.title,
                             url: version.resolved_url,
                             added_by,
@@ -230,11 +242,17 @@ impl ClaimReviewService {
                 let candidate: Value = serde_json::from_str(&draft.candidate)
                     .map_err(|error| AppError::Serialization(error.to_string()))?;
                 let titles = |field: &str, key: &str| -> Vec<String> {
-                    candidate[field]
-                        .as_array()
+                    candidate
+                        .get(field)
+                        .and_then(Value::as_array)
                         .into_iter()
                         .flatten()
-                        .map(|unit| unit[key].as_str().unwrap_or_default().to_owned())
+                        .map(|unit| {
+                            unit.get(key)
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned()
+                        })
                         .collect()
                 };
                 let mut units = titles("blocks", "title");

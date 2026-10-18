@@ -4,25 +4,26 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
-
 import { CheckerAccuracy } from '@/features/learning/lessons/review/CheckerAccuracy';
 import { ClaimReviewCard, type ClaimActionHandler } from '@/features/learning/lessons/review/ClaimReviewCard';
-import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import {
+  AUDIT_STOP_PREFIX,
   CLAIM_FILTERS,
   FILTER_LABELS,
   NOTHING_CHANGED,
   announcement,
   applyFilter,
-  changedSince,
   claimsNoun,
   countsLine,
   filterCounts,
   groupBySection,
   initialFilter,
   isWaitingForYou,
+  reviewHold,
   type ClaimFilter,
+  type ReviewHold,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { useLessonClaimReview, useResolveLearningClaim, useResumeLearningLessonReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromLearningEvidencePassage, type ResolvedReaderTarget } from '@/features/reading/model/sourceAdapter';
@@ -55,17 +56,41 @@ function StopReason({ reason }: { reason: StopReasonDto }) {
   );
 }
 
-function Header({ review, waiting }: { review: LessonClaimReviewDto; waiting: number }) {
+function AuditStop({ reason }: { reason: StopReasonDto }) {
+  return (
+    <div className="mt-2 text-sm leading-6 text-text-secondary">
+      <p><span className="font-semibold text-text-primary">The Verifier audit couldn’t finish: </span>{reason.message}</p>
+      <p><span className="font-semibold text-text-primary">Fix: </span>{reason.fix}</p>
+    </div>
+  );
+}
+
+function Header({ review, waiting, hold }: { review: LessonClaimReviewDto; waiting: number; hold: ReviewHold }) {
   if (review.state === 'stopped' && review.stopReason) {
     return <><h3 className="text-base font-semibold text-text-primary">Lesson preparation stopped</h3><StopReason reason={review.stopReason} /></>;
   }
-  if (review.state === 'needs_review' && waiting === 0) {
+  const auditStop = review.stopReason?.code.startsWith(AUDIT_STOP_PREFIX) ? review.stopReason : null;
+  if (review.state === 'needs_review' && hold === 'audit_stop' && auditStop) {
+    return <>
+      <h3 className="text-base font-semibold text-text-primary">Waiting for the Verifier audit</h3>
+      <AuditStop reason={auditStop} />
+      <p className="mt-2 text-sm leading-6 text-text-secondary">No claim needs you. The lesson publishes once the audit completes, or once the audit is turned off for this course; after the fix, choose <span className="font-semibold">Resume verification</span>.</p>
+    </>;
+  }
+  if (review.state === 'needs_review' && hold === 'audit') {
+    return <>
+      <h3 className="text-base font-semibold text-text-primary">Waiting for the Verifier audit</h3>
+      <p className="mt-2 text-sm leading-6 text-text-secondary">No claim needs you, but the Verifier audit has not finished, so the lesson is held. The audit line below shows how far it got. Choose <span className="font-semibold">Resume verification</span> to run it again, or turn the audit off for this course on the Plan tab.</p>
+    </>;
+  }
+  if (review.state === 'needs_review' && hold === 'resolved') {
     return <><h3 className="text-base font-semibold text-text-primary">Ready to resume</h3><p className="mt-2 text-sm leading-6 text-text-secondary">Every claim that needed you is resolved. Choose <span className="font-semibold">Resume verification</span> to check your changes and publish the lesson.</p></>;
   }
   if (waiting > 0) {
     return <>
       <h3 className="text-base font-semibold text-text-primary">Needs your review · {waiting === 1 ? '1 claim needs your review' : `${claimsNoun(waiting)}`}</h3>
       <p className="mt-2 text-sm leading-6 text-text-secondary">Everything the lesson says was checked against your references. {waiting === 1 ? '1 claim' : `${waiting} claims`} could not be verified or {waiting === 1 ? 'was' : 'were'} contradicted; {waiting === 1 ? 'it is' : 'they are'} listed below with what was compared. Resolve each one, then choose <span className="font-semibold">Resume verification</span>. The lesson becomes ready only when every claim is verified, confirmed by you, removed, or edited and re-verified.</p>
+      {auditStop && <AuditStop reason={auditStop} />}
     </>;
   }
   if (review.state === 'verifying') {
@@ -78,13 +103,11 @@ function Header({ review, waiting }: { review: LessonClaimReviewDto; waiting: nu
  * The lesson's claims: what failed, why, against which passage, and the
  * user's fixes, then Resume (§10). Reads well at 1 claim and at 43.
  */
-export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, stoppedAt = null, jobActive = false, lessonAnchor = null }: {
+export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jobActive = false, lessonAnchor = null }: {
   programId: string;
   lessonId: string;
   /** The course revision, which Resume's job action checks. */
   courseRevision: number;
-  /** When the holding job finished; Resume is refused when nothing changed since (§6.2). */
-  stoppedAt?: number | null;
   /** A preparation attempt is running: act now, Resume is not needed. */
   jobActive?: boolean;
   /** `lesson-<id>-section-` when the lesson is published and its sections are on the page. */
@@ -185,15 +208,17 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
   if (query.isError) return <div role="alert" className="my-4 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700"><p>{query.error.message}</p><button type="button" onClick={() => void query.refetch()} className="mt-2 underline">Load the claim review again</button></div>;
   if (!review) return null;
 
-  const changed = changedSince(review, stoppedAt);
+  const hold = reviewHold(review, waiting);
   const resumable = review.state === 'needs_review' || review.state === 'stopped';
+  // An audit hold is fixed outside the claims (Settings, the course switch), so
+  // no claim event is needed before Resume (§6.2, §14.6); the backend agrees.
   const resumeBlocked = jobActive ? 'Verification is running; it takes your changes into account at its next step.'
-    : review.state === 'needs_review' && !changed ? NOTHING_CHANGED : null;
+    : review.state === 'needs_review' && hold === 'claims' && !review.changedSinceStop ? NOTHING_CHANGED : null;
   const resumeLabel = review.state === 'stopped' ? `Retry after fixing: ${review.stopReason?.fix ?? 'the cause above'}` : 'Resume verification';
 
   return (
     <section aria-label="Claim review" className="my-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
-      <Header review={review} waiting={waiting} />
+      <Header review={review} waiting={waiting} hold={hold} />
       <p className="mt-3 text-xs leading-5 text-text-muted"><span className="font-medium text-text-secondary">Pass {review.pass}</span> · {countsLine(review)}</p>
       <p className="mt-1 text-xs leading-5 text-text-muted">{PASS_BOUND}</p>
       <LessonAuditLine programId={programId} lessonId={lessonId} />

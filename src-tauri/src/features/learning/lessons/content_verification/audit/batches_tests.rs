@@ -111,7 +111,7 @@ fn a_claim_too_large_whole_is_split_by_passages_into_numbered_parts() {
             budget: 260,
         },
     );
-    let parts: Vec<(Vec<usize>, Option<(usize, usize)>)> = planned
+    let parts: Vec<_> = planned
         .batches
         .iter()
         .flatten()

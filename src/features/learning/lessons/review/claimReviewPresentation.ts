@@ -260,10 +260,21 @@ export function checkerColumns(item: ClaimReviewItemDto): { local: CheckerSide |
   return { local: item.localCheck ? side(item.localCheck) : null, verifier: side(item.verifierCheck) };
 }
 
-/** Whether a user event came after the job stopped: Resume reruns nothing unchanged (§6.2). */
-export function changedSince(review: LessonClaimReviewDto, stoppedAt: number | null): boolean {
-  if (stoppedAt == null) return true;
-  return review.claims.some((claim) => claim.history.some((event) => event.actor === 'user' && event.at >= stoppedAt));
+/** The code every Verifier audit stop starts with (`verifier_unset`, `verifier_turned_off`…). */
+export const AUDIT_STOP_PREFIX = 'verifier_';
+
+/** What holds a waiting lesson besides its claims: the audit stop, if any. */
+export type ReviewHold = 'claims' | 'audit_stop' | 'audit' | 'resolved';
+
+/**
+ * Why a lesson in Needs review is held. With no claim waiting it is held by
+ * the Verifier audit (its stop reason, or none recorded), unless the user has
+ * resolved everything since the job stopped (`changedSinceStop`, §6.2).
+ */
+export function reviewHold(review: LessonClaimReviewDto, waiting: number): ReviewHold {
+  if (waiting > 0) return 'claims';
+  if (review.stopReason?.code.startsWith(AUDIT_STOP_PREFIX)) return 'audit_stop';
+  return review.changedSinceStop ? 'resolved' : 'audit';
 }
 
 export const NOTHING_CHANGED = 'Nothing changed since the last pass. Resolve a claim or add evidence first.';

@@ -364,7 +364,7 @@ impl ScriptedVerifier {
     /// Answers every claim of every request with `verdict(statement, passages)`.
     pub(super) fn answering(
         window: usize,
-        verdict: impl Fn(&str, &[(String, String)]) -> Value + Send + Sync + 'static,
+        verdict: impl Fn(&str, &[Labelled]) -> Value + Send + Sync + 'static,
     ) -> Self {
         Self::new(window, move |request, _| {
             Ok(usage(CompletionResponse::from_text(answer_each(
@@ -420,9 +420,12 @@ pub(super) fn usage(mut response: CompletionResponse) -> CompletionResponse {
     response
 }
 
+/// A claim or passage of a rendered request: `(label, text)`.
+pub(super) type Labelled = (String, String);
+
 /// The request's claims as `(label, statement)` and passages as
 /// `(label, text)`, read back from the rendered task.
-pub(super) fn parse_request(user_text: &str) -> (Vec<(String, String)>, Vec<(String, String)>) {
+pub(super) fn parse_request(user_text: &str) -> (Vec<Labelled>, Vec<Labelled>) {
     let lines: Vec<&str> = user_text.lines().collect();
     let mut claims = Vec::new();
     let mut passages = Vec::new();
@@ -457,7 +460,7 @@ pub(super) fn sent_claims(user_text: &str) -> Vec<String> {
 /// returns `{verdict, reason?, passagesUsed?}`.
 pub(super) fn answer_each(
     request: &CompletionRequest,
-    verdict: &dyn Fn(&str, &[(String, String)]) -> Value,
+    verdict: &dyn Fn(&str, &[Labelled]) -> Value,
 ) -> String {
     let (claims, passages) = parse_request(request.user_text());
     let verdicts: Vec<Value> = claims
@@ -478,7 +481,7 @@ pub(super) fn answer_each(
 }
 
 /// "supported", quoting the first passage's first sentence.
-pub(super) fn supports(_: &str, passages: &[(String, String)]) -> Value {
+pub(super) fn supports(_: &str, passages: &[Labelled]) -> Value {
     let (label, text) = passages.first().cloned().unwrap_or_default();
     let quote = text
         .split_inclusive('.')

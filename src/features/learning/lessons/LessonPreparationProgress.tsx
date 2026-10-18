@@ -43,7 +43,7 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   }, [client, job?.id, job?.status, programId]);
   const held = heldLessonIds(job);
   // Lessons held for review are not a failure: the claim lists take over (§6.1).
-  if (job && held.length > 0) return <HeldLessonsReview job={job} lessonIds={held} programId={programId} revision={revision} />;
+  if (job && held.length > 0) return <HeldLessonsReview lessonIds={held} programId={programId} revision={revision} />;
   if (!active && (!job || job.status === 'completed')) return null;
   const elapsed = Math.max(0, (now - (job?.startedAt ?? job?.createdAt ?? now)) / 1000);
   const request = () => ({ operationId: crypto.randomUUID(), programId, jobId: job!.id, expectedRevision: revision });

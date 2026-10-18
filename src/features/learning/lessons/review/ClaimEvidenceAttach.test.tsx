@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaimEvidenceAttach } from '@/features/learning/lessons/review/ClaimEvidenceAttach';
 import type { AttachFailureDto, ClaimAttachReportDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ workspace: vi.fn(), capture: vi.fn() }));
+const api = vi.hoisted(() => ({ capture: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
-  getLearningSourceWorkspace: api.workspace, captureLearningSourceSnapshot: api.capture,
+  captureLearningSourceSnapshot: api.capture,
 } }));
 
 const others = { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null };
@@ -61,7 +61,7 @@ describe('Adding evidence to a claim', () => {
     expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
     expect(screen.getByText(/Saving your text to your references and checking this claim/)).toBeVisible();
     finish({
-      revision: 8, source: { sourceVersionId: 'pasted-1', title: 'Pasted text', url: null, addedBy: 'user' }, alreadySaved: false,
+      revision: 8, source: { sourceId: 'source-1', sourceVersionId: 'pasted-1', title: 'Pasted text', url: null, addedBy: 'user' }, alreadySaved: false,
       outcome: { outcome: 'no_passage' }, failure: null, snapshot: { state: 'not_applicable' }, others: { ...others, tried: 4, verified: 1, noPassage: 3 },
       lines: ['Verified against Pasted text.', 'Also checked 4 other open claims against this source: 1 verified, 3 no passage.'],
     });
@@ -77,10 +77,9 @@ describe('Adding evidence to a claim', () => {
   });
 
   it('captures a frozen copy again when the first capture failed', async () => {
-    api.workspace.mockResolvedValue({ ok: true, data: { programId: 'program-1', sources: [{ id: 'source-9', versions: [{ id: 'version-9' }] }] } });
     api.capture.mockResolvedValue({ ok: true, data: { state: 'pending' } });
     show(vi.fn().mockResolvedValue({
-      revision: 8, source: { sourceVersionId: 'version-9', title: 'Example', url: 'https://example.org', addedBy: 'user' }, alreadySaved: false,
+      revision: 8, source: { sourceId: 'source-9', sourceVersionId: 'version-9', title: 'Example', url: 'https://example.org', addedBy: 'user' }, alreadySaved: false,
       outcome: { outcome: 'no_passage' }, failure: null, snapshot: { state: 'failed', reason: 'the page timed out' }, others,
       lines: ['No passage in Example mentions this claim’s terms.', 'Frozen copy not captured: the page timed out; the text was saved.'],
     }));

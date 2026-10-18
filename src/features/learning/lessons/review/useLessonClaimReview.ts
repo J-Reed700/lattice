@@ -12,7 +12,6 @@ import type {
   SnapshotNoteDto,
 } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
-import { ErrorCode } from '@/types/api/errorCodes';
 
 function unwrap<T>(result: ApiResult<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -21,18 +20,11 @@ function unwrap<T>(result: ApiResult<T>): T {
 
 const operationId = () => crypto.randomUUID();
 
-/**
- * The lesson's claim review; null before its first verification pass, when
- * the backend has no review to show (NOT_FOUND).
- */
+/** The lesson's claim review; null before its first verification pass. */
 export function useLessonClaimReview(programId: string, lessonId: string, enabled = true) {
   return useQuery<LessonClaimReviewDto | null>({
     queryKey: learningClaimReviewKey(programId, lessonId),
-    queryFn: async () => {
-      const result = await VaultAPI.getLearningLessonClaimReview(programId, lessonId);
-      if (!result.ok && result.details?.code === ErrorCode.NOT_FOUND) return null;
-      return unwrap(result);
-    },
+    queryFn: async () => unwrap(await VaultAPI.getLearningLessonClaimReview(programId, lessonId)),
     enabled: enabled && Boolean(programId && lessonId),
     retry: false,
   });
@@ -92,22 +84,15 @@ export function useResumeLearningLessonReview(programId: string, lessonId: strin
 }
 
 /**
- * "Capture again" for a frozen copy that failed (§5.4). The attach report
- * names the version only, so the source is found in the course's workspace.
+ * "Capture again" for a frozen copy that failed (§5.4), named by the attach
+ * report's source and version.
  */
 export function useCaptureSourceSnapshot(programId: string) {
   const client = useQueryClient();
-  return useMutation<SnapshotNoteDto, Error, { versionId: string }>({
+  return useMutation<SnapshotNoteDto, Error, { sourceId: string; versionId: string }>({
     retry: false,
-    mutationFn: async ({ versionId }) => {
-      const workspace = await client.fetchQuery({
-        queryKey: learningSourcesKey(programId),
-        queryFn: async () => unwrap(await VaultAPI.getLearningSourceWorkspace(programId)),
-      });
-      const source = workspace.sources.find((item) => item.versions.some((version) => version.id === versionId));
-      if (!source) throw new Error('That source is no longer in this course’s references.');
-      return unwrap(await VaultAPI.captureLearningSourceSnapshot({ programId, sourceId: source.id, versionId }));
-    },
+    mutationFn: async ({ sourceId, versionId }) =>
+      unwrap(await VaultAPI.captureLearningSourceSnapshot({ programId, sourceId, versionId })),
     onSuccess: () => client.invalidateQueries({ queryKey: learningSourcesKey(programId) }),
   });
 }

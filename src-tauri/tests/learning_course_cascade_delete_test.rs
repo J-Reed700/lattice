@@ -164,10 +164,18 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     // Apply the rest, including the delete-cascades migration.
     migrator.run(&pool).await?;
 
-    let after = learning_row_counts(&pool).await?;
+    // Later migrations may add learning tables; they add no rows.
+    let (after, created): (BTreeMap<_, _>, BTreeMap<_, _>) = learning_row_counts(&pool)
+        .await?
+        .into_iter()
+        .partition(|(table, _)| before.contains_key(table));
     assert_eq!(
         before, after,
         "the migration must not drop or add learning rows"
+    );
+    assert!(
+        created.values().all(|rows| *rows == 0),
+        "a table a later migration creates starts empty: {created:?}"
     );
 
     let fk_status: i64 = sqlx::query_scalar("PRAGMA foreign_keys;")

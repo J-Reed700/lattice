@@ -110,7 +110,7 @@ describe('Learning Studio Sources workspace', () => {
     renderSources({ programId: 'program-1', sources: many });
 
     const list = await screen.findByLabelText('Source list');
-    const titles = () => within(list).getAllByRole('button').map((row) => row.textContent?.replace(/(Update available|Stored for offline reading)$/, ''));
+    const titles = () => within(list).getAllByRole('button').map((row) => row.textContent?.replace(/(Update available|Stored for offline reading)(Added by you)?$/, ''));
     await waitFor(() => expect(titles()).toHaveLength(10));
     expect(titles()[0]).toBe('Archive 1');
     expect(screen.getByText('1–10 of 23')).toBeVisible();

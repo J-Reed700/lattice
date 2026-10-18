@@ -25,7 +25,7 @@ const held: LearningGenerationJob = {
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 3 claims', activity: null,
   resultId: 'needs_review:lesson-1', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
 };
-const notFound = { ok: false, error: 'This lesson has no claim review yet.', details: { code: 'NOT_FOUND', message: 'This lesson has no claim review yet.' } };
+const noReview = { ok: true, data: null };
 
 function show(card: LearningLessonDto) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -53,7 +53,7 @@ describe('Lesson card review state', () => {
 
   it('keeps an outline lesson with no review as it was', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
-    api.review.mockResolvedValue(notFound);
+    api.review.mockResolvedValue(noReview);
     show(lesson);
     expect(await screen.findByText('Outline')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: /Phase changes/ }));
