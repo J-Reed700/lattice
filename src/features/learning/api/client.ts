@@ -93,6 +93,37 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningOutlineEvidenceDto | null>> =>
     learningCall('get_learning_outline_evidence', { programId }),
 
+  /** NOT_FOUND before the lesson's first verification pass. */
+  getLearningLessonClaimReview: (
+    programId: string,
+    lessonId: string,
+  ): Promise<ApiResult<Wire.LessonClaimReviewDto>> =>
+    learningCall('get_learning_lesson_claim_review', { programId, lessonId }),
+
+  resolveLearningClaim: (
+    request: Wire.ResolveLearningClaimRequestDto,
+  ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
+    learningCall('resolve_learning_claim', { request }),
+
+  resumeLearningLessonReview: (
+    request: Wire.ResumeLearningLessonReviewRequestDto,
+  ): Promise<ApiResult<Wire.LearningGenerationJob>> =>
+    learningCall('resume_learning_lesson_review', { request }),
+
+  captureLearningSourceSnapshot: (
+    request: Wire.CaptureLearningSourceSnapshotRequestDto,
+  ): Promise<ApiResult<Wire.SnapshotNoteDto>> =>
+    learningCall('capture_learning_source_snapshot', { request }),
+
+  getLearningCheckerAccuracy: (): Promise<ApiResult<Wire.CheckerAccuracyDto[]>> =>
+    learningCall('get_learning_checker_accuracy'),
+
+  /** Null when the user dismissed the save dialog. */
+  exportLearningCheckerExamples: (
+    request: Wire.ExportLearningCheckerExamplesRequestDto,
+  ): Promise<ApiResult<Wire.ExportedLearningCheckerExamplesDto | null>> =>
+    learningCall('export_learning_checker_examples', { request }),
+
   generateLearningProgram: (
     request: Wire.GenerateLearningProgramRequestDto,
     options?: {
