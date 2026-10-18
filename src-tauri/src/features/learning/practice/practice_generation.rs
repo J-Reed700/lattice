@@ -467,6 +467,7 @@ mod window_tests {
                 truncated: false,
                 extraction_version: "test".into(),
                 acquired_at: 0,
+                snapshot_hash: None,
             },
             full_text: text,
             usage: vec![],

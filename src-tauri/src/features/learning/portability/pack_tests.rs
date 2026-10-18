@@ -192,7 +192,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
     let source_id = id();
     let first_version_id = id();
     sources
-        .add(
+        .add_by(
             crate::features::learning::source_library::NewLearningSource {
                 operation_id: &id(),
                 source_id: &source_id,
@@ -206,7 +206,11 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
             },
             captured("First immutable passage. A quoted rule appears here."),
             "source-add-payload".into(),
+            lattice_core::domain::learning::claim_review::SourceAddedBy::User,
         )
+        .await?;
+    sources
+        .link_snapshot(&program.summary.id, &first_version_id, "frozen-page-sha")
         .await?;
     let quote_start = "First immutable passage. A quoted rule appears here."
         .find("quoted rule")
@@ -300,6 +304,15 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         .iter()
         .find(|version| version.version_number == 1)
         .expect("first immutable version");
+    // Who added a source and its frozen page travel with it (claim review §5.4).
+    assert!(matches!(
+        imported_source.added_by,
+        crate::features::learning::lessons::claim_reviews::dto::SourceAddedByDto::User
+    ));
+    assert_eq!(
+        imported_first_version.snapshot_hash.as_deref(),
+        Some("frozen-page-sha")
+    );
     let imported_selector: (String, String, String, String, Option<i64>, Option<i64>) =
         sqlx::query_as("SELECT id,source_id,source_version_id,status,start_byte,end_byte FROM learning_source_selectors WHERE program_id=?")
             .bind(&copy_id)

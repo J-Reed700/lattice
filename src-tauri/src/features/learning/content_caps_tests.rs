@@ -37,6 +37,7 @@ fn version(id: &str, full_text: String) -> LearningSourceVersionDto {
             truncated: false,
             extraction_version: "fixture".into(),
             acquired_at: 1,
+            snapshot_hash: None,
         },
         full_text,
         usage: vec![],
