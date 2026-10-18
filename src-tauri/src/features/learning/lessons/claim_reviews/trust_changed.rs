@@ -14,8 +14,9 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    end_state, Actor, ClaimEvent, ClaimLedgerEntry, ClaimState, EventProvenance, GateVerdict,
-    LessonReview, LessonReviewState, TrustAssessment, TrustCause, TrustVerdict,
+    end_state, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLedgerEntry, ClaimState,
+    EventProvenance, GateVerdict, Ledger, LessonReview, LessonReviewState, TrustAssessment,
+    TrustCause, TrustVerdict,
 };
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
@@ -178,6 +179,50 @@ pub async fn forget_verdict(
 ) -> Result<Redecided> {
     let moved = outcomes::forget(pool, claim_id, verdict).await?;
     redecide_kinds(pool, moved).await
+}
+
+/// Records the Verifier's agreement with claims the gate accepted (§13:
+/// "Verifier agrees with an accepted claim" is `true, true`): each claim
+/// with a supported Verifier check appended since `before` is scored as it
+/// stood in `before`, then the kinds whose bar that moved are re-decided.
+/// `trust_outcomes` gives nothing for a claim the gate held back or did not
+/// weigh: the Verifier judges entailment, not standing.
+pub async fn record_verifier_agreements(
+    pool: &SqlitePool,
+    scope: VerdictScope<'_>,
+    before: &Ledger,
+) -> Result<Redecided> {
+    let after = ClaimReviewRepository::new(pool.clone())
+        .load(scope.lesson_id)
+        .await?;
+    let mut report = Redecided::default();
+    for entry in &after.claims {
+        let Some(prior) = before
+            .claims
+            .iter()
+            .find(|prior| prior.claim_id() == entry.claim_id())
+        else {
+            continue;
+        };
+        let agreed = entry
+            .events()
+            .iter()
+            .skip(prior.events().len())
+            .any(|record| {
+                matches!(
+                    &record.event,
+                    ClaimEvent::Checked(Check {
+                        checker: Checker::Verifier { .. },
+                        result: CheckResult::Supported { .. },
+                        ..
+                    })
+                )
+            });
+        if agreed {
+            report.merge(record_verdict(pool, scope, prior, TrustVerdict::VerifierAgreed).await?);
+        }
+    }
+    Ok(report)
 }
 
 async fn redecide_kinds(pool: &SqlitePool, kinds: Vec<ClaimKind>) -> Result<Redecided> {

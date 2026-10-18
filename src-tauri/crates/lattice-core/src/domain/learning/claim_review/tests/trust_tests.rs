@@ -513,6 +513,11 @@ fn only_the_gates_claims_and_supports_the_user_did_not_add_are_calibrated() {
     mine.added_by = AddedBy::User;
     let entry = gated_verified_claim("c2", vec![mine], &static_bars());
     assert!(trust_outcomes(&entry, TrustVerdict::Remove, 1).is_empty());
+
+    // The Verifier judges entailment, not standing: agreeing with a claim
+    // the gate held back says nothing about the bar.
+    let held_back = gated_queued_claim("c3");
+    assert!(trust_outcomes(&held_back, TrustVerdict::VerifierAgreed, 1).is_empty());
 }
 
 #[test]

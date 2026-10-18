@@ -166,6 +166,10 @@ pub struct CalibrationOutcome {
 /// | Remove / Edit | insufficient | (false, true) | as above |
 /// | EvidenceAdded | insufficient | (false, false) | `evidence_added` |
 /// | VerifierAgreed | sufficient | (true, true) | `verifier_agree` |
+///
+/// The Verifier agreeing with a claim the gate held back gives none: the
+/// Verifier judges entailment, not standing, so it says nothing about the
+/// bar (§13 has no such row).
 pub fn trust_outcomes(
     entry: &ClaimLedgerEntry,
     verdict: TrustVerdict,
@@ -175,6 +179,9 @@ pub fn trust_outcomes(
         return Vec::new();
     };
     let sufficient = matches!(trust.decision, Decision::Sufficient { .. });
+    if verdict == TrustVerdict::VerifierAgreed && !sufficient {
+        return Vec::new();
+    }
     let label_source = match verdict {
         TrustVerdict::Confirm => LabelSource::UserConfirm,
         TrustVerdict::Remove | TrustVerdict::Edit if verifier_disputed(entry.state()) => {
