@@ -75,8 +75,8 @@ pub struct Policy {
 ///   claims that hold nine times in ten. The calibration tests derive both
 ///   counts and pin this value.
 pub const POLICY: Policy = Policy {
-    resemblance_copy: 0.65,
-    containment_copy: 0.65,
+    resemblance_copy: 0.64,
+    containment_copy: 0.6,
     shingle_words: 5,
     shingle_chars: 5,
     word_break_ratio: 0.1,

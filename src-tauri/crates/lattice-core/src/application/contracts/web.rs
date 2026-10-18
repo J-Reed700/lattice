@@ -6,9 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use crate::domain::provenance::{
-    ArchivedFrom, DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts, NamedEntity, Origin,
-    OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals, RegistryKind,
-    SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
+    ArchivedFrom, CanonicalElsewhere, DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts,
+    NamedEntity, Origin, OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals,
+    RegistryKind, SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
 };
 
 /// The version stamped on every reference text the web reader extracts for a

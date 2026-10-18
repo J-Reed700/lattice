@@ -13,6 +13,7 @@ use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use unicode_normalization::UnicodeNormalization;
 
+use super::links::markdown_links;
 use super::origin::OriginKey;
 use super::policy::Policy;
 
@@ -465,16 +466,23 @@ fn splitmix64(state: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Markdown links become their anchors; bare URLs go. A link target is
-/// where text points, not text it shares.
+/// Markdown links become their anchors and bare URLs go: a link target is
+/// where text points, not text it shares. Links are read by the one link
+/// reader (`markdown_links`).
 fn strip_link_targets(text: &str) -> String {
-    let links = Regex::new(r"\[([^\]]*)\]\([^)]*\)");
-    let urls = Regex::new(r"https?://\S+");
-    match (links, urls) {
-        (Ok(links), Ok(urls)) => urls
-            .replace_all(&links.replace_all(text, "$1"), " ")
-            .into_owned(),
-        _ => text.to_owned(),
+    let mut plain = String::with_capacity(text.len());
+    let mut at = 0;
+    for link in markdown_links(text) {
+        plain.push_str(text.get(at..link.start_byte).unwrap_or_default());
+        plain.push(' ');
+        plain.push_str(&link.anchor);
+        plain.push(' ');
+        at = link.end_byte;
+    }
+    plain.push_str(text.get(at..).unwrap_or_default());
+    match Regex::new(r"https?://\S+") {
+        Ok(urls) => urls.replace_all(&plain, " ").into_owned(),
+        Err(_) => plain,
     }
 }
 

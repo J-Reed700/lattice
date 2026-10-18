@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::provenance::signals::markdown_links;
+use crate::domain::provenance::markdown_links;
 
 #[test]
 fn the_owners_link_ranks_first_then_the_nearest() {

@@ -86,6 +86,9 @@ pub enum ContentNature {
     Discussion,
     Marketing,
     Aggregation,
+    /// The signals do not say; also the honest fallback when a judgement
+    /// failed.
+    Unknown,
 }
 
 wire_names!(ContentNature {
@@ -98,6 +101,7 @@ wire_names!(ContentNature {
     Discussion => "discussion",
     Marketing => "marketing",
     Aggregation => "aggregation",
+    Unknown => "unknown",
 });
 
 /// A concrete risk signal. Each lowers or blocks the level (§5 steps 3, 8).

@@ -52,6 +52,7 @@ mod contradiction;
 mod independence;
 mod judgement;
 mod level;
+mod links;
 mod origin;
 mod overrides;
 mod overturn;
@@ -80,6 +81,7 @@ pub use independence::{
 };
 pub use judgement::{canonical_json, sha256_hex, Judged, JudgementKey};
 pub use level::{trust_level, LevelInputs};
+pub use links::markdown_links;
 pub use origin::{
     ArchivedFrom, CanonicalLink, Origin, OriginError, OriginKey, RegistryKind, TldRegistry,
 };
@@ -88,10 +90,10 @@ pub use overturn::{overturn, Overturn};
 pub use policy::{Policy, POLICY, TRUST_POLICY_VERSION};
 pub use reason::{AddedBy, Reason, ReasonCode};
 pub use record::{ExtractedFrom, ProvenanceRecord};
-pub use signals::{addresses_reader, markdown_links, self_description};
+pub use signals::{addresses_reader, self_description};
 pub use signals::{
-    DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts, NamedEntity, OutboundLink, PageSignals,
-    PastedSignals, ProvenanceSignals, SourceDates, PAGE_SIGNALS_VERSION,
+    CanonicalElsewhere, DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts, NamedEntity,
+    OutboundLink, PageSignals, PastedSignals, ProvenanceSignals, SourceDates, PAGE_SIGNALS_VERSION,
 };
 pub use standing::{
     ContentNature, EditorialProcess, PublisherKind, RiskFlag, Standing, StandingAssessment,
@@ -102,3 +104,6 @@ pub use sufficiency::{
     Support,
 };
 pub use temporal::{effective_date, validity, EffectiveDate, TemporalValidity};
+
+#[cfg(test)]
+mod fixture_tests;
