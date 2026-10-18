@@ -35,6 +35,7 @@ fn page(url: &str, text: &str) -> ReferencePage {
             fetch_time_ms: 0.0,
             content_type: None,
             from_cache: false,
+            read_via: Default::default(),
         },
         signals,
         fetched_at: 1_760_000_000,

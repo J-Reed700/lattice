@@ -214,14 +214,15 @@ impl WebService {
             }
             Err(ReplayMiss::Unanswered(note)) => return Err(ArchiveMiss::unanswered(note)),
         };
-        let unreadable = |error| {
+        let snapshot_url = Url::parse(&replayed.snapshot_url).map_err(|error| {
             ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
-        };
-        let snapshot_url = Url::parse(&replayed.snapshot_url).map_err(unreadable)?;
+        })?;
         let (title, content, metadata, text_form) = self
             .extract(replayed.html, snapshot_url, read)
             .await
-            .map_err(unreadable)?;
+            .map_err(|error| {
+                ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
+            })?;
         if content.trim().is_empty() {
             return Err(ArchiveMiss::nothing(
                 "The archived copy has no readable text",
