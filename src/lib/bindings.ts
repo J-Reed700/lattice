@@ -638,6 +638,45 @@ async searchLearningSourcesSemantically(request: SearchLearningSourcesSemantical
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningLessonClaimReview(programId: string, lessonId: string) : Promise<Result<LessonClaimReviewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_claim_review", { programId, lessonId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Result<ResolveLearningClaimResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resolve_learning_claim", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Resume verification (§6.2): a new attempt of the lesson's job, refused
+ * while nothing changed since it ended.
+ */
+async resumeLearningLessonReview(request: ResumeLearningLessonReviewRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resume_learning_lesson_review", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Capture again" on an attached page whose frozen copy failed (§5.4).
+ */
+async captureLearningSourceSnapshot(request: CaptureLearningSourceSnapshotRequestDto) : Promise<Result<SnapshotNoteDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|capture_learning_source_snapshot", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningRecallWorkspace(programId: string) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_recall_workspace", { programId }) };
@@ -4008,6 +4047,7 @@ async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
 export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
+export type ActorDto = "machine" | "user"
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }
 export type AddLearningTextSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; title: string; publisher: string | null; text: string }
@@ -4460,6 +4500,42 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
+export type AttachFailureDto = { kind: AttachFailureKindDto; message: string; nextSteps: AttachNextStepDto[] }
+export type AttachFailureKindDto =
+/**
+ * HTTP 401, 403 or 429.
+ */
+"refused" |
+/**
+ * A sign-in or subscription wall.
+ */
+"paywall" |
+/**
+ * Too little static text, or none.
+ */
+"thin" | "browser_unavailable" |
+/**
+ * A private or local address (SSRF guard).
+ */
+"blocked" |
+/**
+ * Any other failure to read the page.
+ */
+"unreachable"
+/**
+ * What the card offers after a failure.
+ */
+export type AttachNextStepDto =
+/**
+ * "Open it in your browser, then paste the relevant text"; the pasted
+ * text input is prefilled with `origin` as its source.
+ */
+{ step: "paste_text"; origin: string | null } |
+/**
+ * "Save it as PDF and add the file."
+ */
+{ step: "add_file" } | { step: "retry" }
+export type AttachOutcomeDto = { outcome: "checked"; check: CheckDto } | { outcome: "no_passage" }
 /**
  * One line of the backend's file log. Lines that do not match the log format
  * carry only `message` (the raw line) and an `Unknown` level.
@@ -4633,6 +4709,7 @@ export type CancelBatchJobResponseDto = {
 cancelledCount: number }
 export type CancelLearningPackImportPreviewRequestDto = { operationId: string; previewId: string }
 export type CancelLearningPracticalRunRequestDto = { operationId: string; programId: string; runId: string }
+export type CaptureLearningSourceSnapshotRequestDto = { programId: string; sourceId: string; versionId: string }
 export type CaptureReferenceRequestDto = { conversationId: string; conversationTitle: string; messageId: string; messageRole: string; messageContent: string; documentIds: string[]; capturedAt: string;
 /**
  * Display title based on the user's local date.
@@ -4766,11 +4843,76 @@ captured?: CapturedSourcesDto | null;
  * message carries the attached ones in `metadata.images`.
  */
 images?: ChatImageDto[] | null }
+export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
+export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+export type CheckerDto = { role: CheckerRoleDto; model: string }
+export type CheckerRoleDto = "local" | "verifier"
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
+export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "general_knowledge" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
+/**
+ * What the user asked for on a claim (§5.1, §5.4); `resolve_learning_claim`
+ * carries it with the lesson's `expected_revision`.
+ */
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "accept_all_general_knowledge" } | { action: "research_with_hint"; hint: string } | { action: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { action: "attach_link"; url: string } | { action: "attach_document"; documentId: string } | { action: "attach_text"; title: string; text: string } | { action: "undo" }
+/**
+ * What `resolve_learning_claim` returns for an attach action.
+ */
+export type ClaimAttachReportDto = {
+/**
+ * The review's revision after the attach: send it with the next action.
+ */
+revision: number;
+/**
+ * The saved source the claim was checked against; null when the link
+ * could not be saved.
+ */
+source: SourceRefDto | null;
+/**
+ * The evidence was already in the course's references.
+ */
+alreadySaved: boolean;
+/**
+ * The targeted check of the claim; null when nothing was saved.
+ */
+outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: SnapshotNoteDto; others: OtherClaimsCheckedDto;
+/**
+ * The card's lines, in order.
+ */
+lines: string[] }
+export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number }
+export type ClaimEventDto = { ordinal: number; actor: ActorDto; at: number; jobId: string | null; appVersion: string; checkerModel: string | null; event: ClaimEventPayloadDto }
+export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto }
+/**
+ * A compared passage and who added its source; `addedBy` is null for an
+ * execution, which has no source.
+ */
+export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null }
+export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitTitle: string; field: string; quote: string;
+/**
+ * Byte span of `quote` in the field; null when it occurs more than once.
+ */
+span: [number, number] | null }
+/**
+ * One claim card.
+ */
+export type ClaimReviewItemDto = { claimId: string; location: ClaimLocationDto; statement: string; state: ClaimStateDto;
+/**
+ * The latest failing verdict, kept after the claim closes.
+ */
+verdictKind: VerdictKindDto | null; reason: string | null;
+/**
+ * What was compared.
+ */
+evidence: ClaimEvidencePassageDto[]; supportingQuote: string | null; research: ResearchAttemptDto[]; repairs: RepairAttemptDto[]; executions: ExecutionDto[]; human: HumanVerdictDto | null; availableActions: ClaimActionKindDto[]; history: ClaimEventDto[] }
+/**
+ * Where a claim stands. The verdict, reason, supporting passage and the
+ * user's note are the item's own fields, so they are not repeated here.
+ */
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Clean article content extracted from HTML (reader mode).
  *
@@ -5746,6 +5888,11 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
+/**
+ * A code example's run, as the checker saw it (§5.5).
+ */
+export type ExecutionDto = { observationId: string; runtime: string; code: string; result: LearningLabExecutionResult }
 export type ExplorerEntryDto = { name: string; path: string; kind: ExplorerEntryKind;
 /**
  * Bytes on disk; `None` for directories.
@@ -6167,6 +6314,7 @@ export type GetLearningSourceVersionRequestDto = { programId: string; sourceId: 
 export type GetMentionsForDocumentResultDto = { documentId: string; mentions: MentionWithContextDto[]; count: number }
 export type HealthStatus = { status: string; database: boolean; embedding_model: boolean; llm: boolean; timestamp: string }
 export type HfTokenStatus = { isSet: boolean }
+export type HumanVerdictDto = { at: number; note: string | null; boundSources: SourceRefDto[] }
 export type HybridSearchArgs = { query: string; limit: number; search_mode: string }
 /**
  * Where a stored picture came from.
@@ -6666,8 +6814,10 @@ export type LearningGenerationJobStatus = "pending" | "running" | "completed" | 
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
 export type LearningItemFormat = "multiple_choice" | "short_answer" | "explanation" | "ordering" | "artifact"
+export type LearningLabExecutionResult = { status: LearningLabRunStatus; exitCode: number | null; stdout: string; stderr: string; outputTruncated: boolean; durationMs: number }
 export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
+export type LearningLabRunStatus = "passed" | "failed" | "timed_out" | "cancelled" | "runtime_unavailable"
 export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; available: boolean; version: string | null; reason: string | null }
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
@@ -6957,14 +7107,23 @@ export type LearningSourceCheckDto = { operationId: string; status: LearningSour
 export type LearningSourceCheckStatus = "unchanged" | "update_available" | "failed"
 export type LearningSourceDto = { id: string; title: string; url: string | null; excerpt: string; acquiredAt: number }
 export type LearningSourceKind = "web" | "document" | "pasted"
-export type LearningSourceLibraryItemDto = { id: string; kind: LearningSourceKind; origin: string; requestedUrl: string | null; freshnessPolicy: LearningSourcePolicy; activeVersionId: string | null; pendingVersionId: string | null; revision: number; deletedAt: number | null; deletionReason: string | null; activeVersion: LearningSourceVersionSummaryDto | null; pendingVersion: LearningSourceVersionSummaryDto | null; versions: LearningSourceVersionSummaryDto[]; latestCheck: LearningSourceCheckDto | null; checks: LearningSourceCheckDto[]; createdAt: number; updatedAt: number }
+export type LearningSourceLibraryItemDto = { id: string; kind: LearningSourceKind;
+/**
+ * Who added the source: the Sources chip (claim review §5.4).
+ */
+addedBy: SourceAddedByDto; origin: string; requestedUrl: string | null; freshnessPolicy: LearningSourcePolicy; activeVersionId: string | null; pendingVersionId: string | null; revision: number; deletedAt: number | null; deletionReason: string | null; activeVersion: LearningSourceVersionSummaryDto | null; pendingVersion: LearningSourceVersionSummaryDto | null; versions: LearningSourceVersionSummaryDto[]; latestCheck: LearningSourceCheckDto | null; checks: LearningSourceCheckDto[]; createdAt: number; updatedAt: number }
 export type LearningSourcePolicy = "fixed" | "manual" | "before_use"
 export type LearningSourceSearchResultDto = { sourceId: string; versionId: string; title: string; excerpt: string }
 export type LearningSourceSelectorDto = { id: string; sourceId: string; sourceVersionId: string; selector: LearningTextQuoteSelector; matchStatus: LearningQuoteMatchStatus; startByte: number | null; endByte: number | null; candidateCount: number; createdAt: number }
 export type LearningSourceSemanticSearchResultDto = { sourceId: string; version: LearningSourceVersionSummaryDto; excerpt: string; score: number; retrievalKind: string; selector: LearningTextQuoteSelector }
 export type LearningSourceUsageDto = { lessonId: string; lessonTitle: string; referenceKind: string; referenceTitle: string }
 export type LearningSourceVersionDto = { sourceId: string; version: LearningSourceVersionSummaryDto; fullText: string; usage: LearningSourceUsageDto[] }
-export type LearningSourceVersionSummaryDto = { id: string; versionNumber: number; title: string; publisher: string | null; resolvedUrl: string | null; excerpt: string; contentSha256: string; wordCount: number; truncated: boolean; extractionVersion: string; acquiredAt: number }
+export type LearningSourceVersionSummaryDto = { id: string; versionNumber: number; title: string; publisher: string | null; resolvedUrl: string | null; excerpt: string; contentSha256: string; wordCount: number; truncated: boolean; extractionVersion: string; acquiredAt: number;
+/**
+ * The frozen copy of the page this version was read from, once captured
+ * (claim review §5.4); the reader opens it by its page URL.
+ */
+snapshotHash: string | null }
 export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[] }
 export type LearningTangentDto = { conversationId: string; programId: string; programTitle: string; spaceId: string; moduleId: string; moduleTitle: string; lessonId: string; lessonTitle: string; sectionIndex: number | null; sectionTitle: string | null; selectedText: string; title: string; createdAt: number; updatedAt: string; messageCount: number; contextMessageCount: number }
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
@@ -6988,6 +7147,19 @@ window_tokens: number;
  * Models, rather than what Auto or the model's server gave it.
  */
 window_is_saved: boolean }
+/**
+ * Everything the review panel shows for one lesson.
+ */
+export type LessonClaimReviewDto = { lessonId: string; programId: string; state: LessonReviewStateDto;
+/**
+ * Send back as `expected_revision` with an action.
+ */
+revision: number; counts: ClaimCountsDto;
+/**
+ * Verification passes run on a new candidate text (§6.3).
+ */
+pass: number; stopReason: StopReasonDto | null; claims: ClaimReviewItemDto[] }
+export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -7428,6 +7600,27 @@ contentPath: string;
  */
 title?: string | null }
 export type OpenLearningPracticeSourceRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; sourceId: string; versionId: string }
+/**
+ * The other open claims of the lesson checked against the attached source.
+ */
+export type OtherClaimsCheckedDto = {
+/**
+ * Open claims tried against the source.
+ */
+tried: number; verified: number;
+/**
+ * Checked and still not supported (or not judged).
+ */
+notVerified: number;
+/**
+ * No passage of the source mentions the claim's terms.
+ */
+noPassage: number;
+/**
+ * Why the remaining claims were not checked, when the model stopped
+ * answering part-way.
+ */
+stopped: string | null }
 export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 /**
  * Response for wikilink parsing (for frontend compatibility).
@@ -7481,6 +7674,7 @@ telemetryEnabled: boolean;
  * Send crash reports. Off by default.
  */
 crashReporting: boolean }
+export type ProvenanceDto = { input: "saved_passage"; startByte: number; endByte: number } | { input: "link"; url: string } | { input: "document"; documentId: string } | { input: "pasted_text" }
 /**
  * Where a quick capture landed, so the UI can name the destination
  * instead of saying "saved" and leaving the user to guess.
@@ -7584,7 +7778,11 @@ message: string;
  * The new name that was applied
  */
 new_name: string }
+export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_deleted"; sourceVersionId: string } | { cause: "source_replaced"; from: string; to: string } | { cause: "unconfirmed" } | { cause: "verifier_dispute" }
+export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
+export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
+export type RequestFactsDto = { promptTokensExact: number | null; promptTokensEstimated: number | null; windowTokens: number; outputReserved: number; serverKind: string; serverMessageSanitized: string | null; attempts: number; step: string }
 export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**
  * Whether reranking is switched on, and whether it could run if it were.
@@ -7607,6 +7805,21 @@ enabled: boolean;
  */
 active: boolean; modelName: string; downloadBytes: number }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
+export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
+export type ResolveLearningClaimRequestDto = { programId: string; lessonId: string; claimId: string; action: ClaimActionRequestDto;
+/**
+ * The review's revision the user acted on.
+ */
+expectedRevision: number; operationId: string }
+export type ResolveLearningClaimResultDto = {
+/**
+ * The review's revision after the action: send it with the next one.
+ */
+revision: number;
+/**
+ * What attaching evidence found; null for the other actions.
+ */
+attach: ClaimAttachReportDto | null }
 /**
  * Response for link resolution (for frontend compatibility).
  */
@@ -7629,6 +7842,11 @@ vaultRestoredTo: string | null; filesRestored: number }
 export type RestoreBackupRequestDto = { backupPath: string }
 export type RestoreBackupResultDto = { success: boolean; restoredCount: number; message: string | null }
 export type RestoreLearningCanvasSnapshotRequestDto = { operationId: string; preRestoreSnapshotId: string; programId: string; canvasId: string; snapshotId: string; expectedRevision: number }
+export type ResumeLearningLessonReviewRequestDto = { programId: string; lessonId: string;
+/**
+ * The course's revision, as `retry_learning_generation_job` takes it.
+ */
+expectedRevision: number; operationId: string }
 export type RetrievalSubTimingMetrics = { kbTotalMs: number; kbScopeLoadMs: number; kbHydeInterpretationMs: number; kbSearchPlanMs: number; kbShortlistPlanningMs: number; kbQueryExecutionMs: number; kbMergeShortlistGateMs: number; kbPostFiltersMs: number; kbRerankMs: number;
 /**
  * Cost of the post-rerank sufficiency check. Local and cheap by design —
@@ -8123,6 +8341,23 @@ export type SimilarDocumentDto = { documentId: string; title: string; filePath: 
 export type SkipLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null }
 /**
+ * Where the frozen copy of an attached page stands.
+ */
+export type SnapshotNoteDto =
+/**
+ * Not a web page.
+ */
+{ state: "not_applicable" } | { state: "ready" } |
+/**
+ * Being captured; the reader shows the saved text until it is ready.
+ */
+{ state: "pending" } |
+/**
+ * The text was saved; "Capture again" retries the copy.
+ */
+{ state: "failed"; reason: string }
+export type SourceAddedByDto = "user" | "research" | "outline" | "import" | "verifier"
+/**
  * Source citation for Q&A response.
  *
  * Represents a document chunk used as context for the answer.
@@ -8259,6 +8494,7 @@ citationId?: number | null;
  */
 webSnapshot?: WebSnapshotDto | null }
 export type SourceGroup = { id: string; title: string; edition: string | null; description: string | null; ordered: boolean; structure?: StructureMode }
+export type SourceRefDto = { sourceVersionId: string; title: string; url: string | null; addedBy: SourceAddedByDto }
 /**
  * One document a chat in this space is allowed to read.
  *
@@ -8361,6 +8597,10 @@ export type StartLearningPracticalRunRequestDto = { operationId: string; runId: 
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
 export type StickyItemDto = { id: string; text: string; color: string; createdAt: string }
+/**
+ * Why a lesson's preparation stopped, verbatim for "Copy details" (§8.4).
+ */
+export type StopReasonDto = { code: string; message: string; fix: string; at: number; request: RequestFactsDto | null }
 export type StructureMode = "sections" | "pages"
 export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
 /**
@@ -8796,6 +9036,7 @@ resultsPerPage: number;
  */
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
+export type UnitKindDto = "block" | "question" | "answer_key"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
@@ -8860,6 +9101,11 @@ contentType?: string | null;
  * Keywords/tags extracted from meta keywords
  */
 keywords?: string[] }
+/**
+ * A recorded user action. A confirmation shows the sources it was bound
+ * to; the quote digest it is bound to stays on the backend.
+ */
+export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "research_with_hint"; hint: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.
@@ -8911,6 +9157,11 @@ export type VectorQuantizationDto =
  * searches rescore against full-precision vectors.
  */
 "i8"
+export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } | { kind: "general_knowledge_proposed" } |
+/**
+ * The Verifier's verdict on a claim the local checker verified.
+ */
+{ kind: "disputed"; verifier: VerdictKindDto }
 /**
  * A finished check, addressed to the message it belongs to.
  */

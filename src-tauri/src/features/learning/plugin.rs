@@ -49,6 +49,8 @@ mod canvas;
 pub use canvas::*;
 mod sources;
 pub use sources::*;
+mod claims;
+pub use claims::*;
 mod recall;
 pub use recall::*;
 mod practice;
@@ -163,6 +165,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_learning_source_selector,
             match_learning_source_selector,
             search_learning_sources_semantically,
+            get_learning_lesson_claim_review,
+            resolve_learning_claim,
+            resume_learning_lesson_review,
+            capture_learning_source_snapshot,
             get_learning_recall_workspace,
             save_learning_recall_card,
             decide_learning_recall_duplicate,
