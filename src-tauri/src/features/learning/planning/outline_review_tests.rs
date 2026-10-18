@@ -355,13 +355,14 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     );
     assert!(review.issues.is_empty());
     let prompts = calls(&llm);
-    assert_eq!(prompts.len(), 6);
-    assert!(prompts[4].starts_with("Repair a saved curriculum module"));
-    let recheck = payload(&prompts[5]);
+    // The strict judgment is the only check: no challenge call follows it.
+    assert_eq!(prompts.len(), 5);
+    assert!(prompts[3].starts_with("Repair a saved curriculum module"));
+    let recheck = payload(&prompts[4]);
     assert_eq!(recheck["verifiedAssertions"], json!([ADDITIONAL]));
     assert_eq!(recheck["openFindings"].as_array().unwrap().len(), 1);
     assert_eq!(recheck["openFindings"][0]["id"], "finding-2");
-    assert!(prompts[5].contains("do not raise them again"));
+    assert!(prompts[4].contains("do not raise them again"));
     // Two findings were raised by the first review; the repeat got no id.
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.findings_raised, 2);

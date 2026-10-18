@@ -202,7 +202,8 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         )
         .await?;
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![4, 4]);
-        assert_eq!(model.calls.lock().unwrap().len(), 4);
+        // One check per group: no second call follows a check.
+        assert_eq!(model.calls.lock().unwrap().len(), 2);
         Ok(())
     })
     .await?;
@@ -328,11 +329,11 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
                 .findings
                 .iter()
                 .all(|f| f.verdict == ClaimVerdict::Supported));
-            let expected = if pass < 2 { 4 } else { 8 };
+            let expected = if pass < 2 { 2 } else { 4 };
             assert_eq!(
                 model.calls.lock().unwrap().len(),
                 expected,
-                "Two requests for each group, then zero requests for unchanged checkpoints"
+                "One request for each group, then zero requests for unchanged checkpoints"
             );
             assert_eq!(
                 model

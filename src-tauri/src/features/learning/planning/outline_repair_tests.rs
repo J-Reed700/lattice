@@ -521,7 +521,8 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     assert!(review.issues.is_empty());
     assert_eq!(repaired.sources.len(), 3);
     let prompts = calls(&llm);
-    assert_eq!(prompts.len(), 5);
+    // The strict judgment is the only check: no challenge call follows it.
+    assert_eq!(prompts.len(), 4);
     assert_eq!(payload(&prompts[0])["openFindings"][0]["attempts"], 0);
     assert_eq!(
         payload(&prompts[0])["reviewScope"]["mode"],
