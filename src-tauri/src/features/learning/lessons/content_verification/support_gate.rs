@@ -29,8 +29,11 @@ pub(in crate::features::learning) struct Support<'a> {
 pub(in crate::features::learning) enum Sufficiency {
     Sufficient,
     /// Not enough to verify the claim; the reason is the claim's reason.
+    /// `kind` is the ledger's failure when the gate's bar decided it
+    /// (`InsufficientStanding`); `None` is a plain unsupported claim.
     Insufficient {
         reason: String,
+        kind: Option<lattice_core::domain::learning::claim_review::VerdictKind>,
     },
     /// Contrary evidence outranks the support (§11); the reason is the
     /// claim's reason.

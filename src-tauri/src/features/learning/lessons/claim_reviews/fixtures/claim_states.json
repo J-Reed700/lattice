@@ -42,5 +42,18 @@
       "state": "confirmed",
       "at": 1760000300000
     }
+  },
+  {
+    "state": "reopened",
+    "cause": {
+      "cause": "trust_changed",
+      "trust": {
+        "change": "bar",
+        "claimKind": "specification"
+      }
+    },
+    "previous": {
+      "state": "resolved_by_evidence"
+    }
   }
 ]

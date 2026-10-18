@@ -1,6 +1,7 @@
 //! Observing a pass: which claim each finding and failed example is, what is
 //! new about it, and what research found for it (§3, §4 `ledger.observe`).
 
+use super::super::provenance_gate::gate_reason;
 use super::super::support_gate::{Sufficiency, Support};
 use super::super::*;
 use super::{is_gone, ClaimLedger, RepairRecord};
@@ -9,8 +10,26 @@ use lattice_core::domain::learning::claim_review::{
     identities, new_information, reopen_cause, text_sha256, Check, CheckResult, Checker,
     ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceFingerprint,
     EvidenceSeen, ExtractedClaim, NewInformation, Observation, RepairOutcome, SourceChange,
-    UnitKind, VerdictKind,
+    TrustAssessment, UnitKind, VerdictKind,
 };
+
+/// A claim of one pass: as extracted, its check, the passages its card
+/// shows, and what the provenance gate weighed for the check, when it did.
+type Found = (
+    ExtractedClaim,
+    Check,
+    Vec<ShownPassage>,
+    Option<TrustAssessment>,
+);
+
+/// The ledger's record of the gate's weighing, after the check it decided.
+fn assessed(trust: TrustAssessment) -> ClaimEvent {
+    ClaimEvent::StandingAssessed {
+        reason: gate_reason(&trust),
+        trust: Box::new(trust),
+        cause: None,
+    }
+}
 
 /// The statement a code example's claim makes (§2.1: an example that cannot
 /// run is a claim like any other).
@@ -148,13 +167,19 @@ fn shown(passage: &EvidencePassage) -> ShownPassage {
 }
 
 impl ClaimLedger {
-    /// The check a finding records, through the support gate (P4's seam).
-    /// `propose_general_knowledge`: research has had its chance, so an
-    /// unsupported claim without invented specifics is proposed as general
-    /// knowledge (D1) rather than researched or repaired.
-    fn check_of(&self, finding: &Finding, propose_general_knowledge: bool) -> Check {
+    /// The check a finding records, through the support gate (P4's seam),
+    /// with the gate's assessment when the gate decided the check (a
+    /// supported claim whose support it weighed). `propose_general_knowledge`:
+    /// research has had its chance, so an unsupported claim without invented
+    /// specifics is proposed as general knowledge (D1) rather than researched
+    /// or repaired.
+    fn check_of(
+        &self,
+        finding: &Finding,
+        propose_general_knowledge: bool,
+    ) -> (Check, Option<TrustAssessment>) {
         let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
-        let (result, reason) = match finding.verdict {
+        let ((result, reason), trust) = match finding.verdict {
             ClaimVerdict::Supported => {
                 let quote = finding.supporting_quote.clone().unwrap_or_default();
                 let source = finding
@@ -171,25 +196,40 @@ impl ClaimLedger {
                     passages: &finding.evidence,
                     trust: finding.trust.as_ref(),
                 };
+                let trust = finding
+                    .trust
+                    .as_ref()
+                    .map(|trust| trust.assessment(&source, &quote));
                 match self.gate.judge(&support) {
                     Sufficiency::Sufficient => (
-                        CheckResult::Supported {
-                            source_version_id: source,
-                            supporting_quote: quote,
-                        },
-                        finding.reason.clone(),
+                        (
+                            CheckResult::Supported {
+                                source_version_id: source,
+                                supporting_quote: quote,
+                            },
+                            finding.reason.clone(),
+                        ),
+                        trust,
                     ),
-                    Sufficiency::Insufficient { reason } => (
-                        CheckResult::Failed {
-                            kind: VerdictKind::Unsupported,
-                        },
-                        reason,
+                    // Only the bar's failure is the gate's; a quotation that
+                    // is not in its passage is a plain unsupported claim.
+                    Sufficiency::Insufficient { reason, kind } => (
+                        (
+                            CheckResult::Failed {
+                                kind: kind.clone().unwrap_or(VerdictKind::Unsupported),
+                            },
+                            reason,
+                        ),
+                        trust.filter(|_| kind.is_some()),
                     ),
                     Sufficiency::Contradicted { reason } => (
-                        CheckResult::Failed {
-                            kind: VerdictKind::Contradicted,
-                        },
-                        reason,
+                        (
+                            CheckResult::Failed {
+                                kind: VerdictKind::Contradicted,
+                            },
+                            reason,
+                        ),
+                        trust,
                     ),
                 }
             }
@@ -203,10 +243,10 @@ impl ClaimLedger {
                     _ if finding.evidence.is_empty() => VerdictKind::NoSource,
                     _ => VerdictKind::Unsupported,
                 };
-                (CheckResult::Failed { kind }, finding.reason.clone())
+                ((CheckResult::Failed { kind }, finding.reason.clone()), None)
             }
         };
-        self.check(result, reason, evidence)
+        (self.check(result, reason, evidence), trust)
     }
 
     /// The check an example's run records: it completed, or it did not.
@@ -281,15 +321,17 @@ impl ClaimLedger {
         report: &LessonVerificationReport,
     ) -> Result<()> {
         // What this pass found, each with its check and the passages shown.
-        let mut found: Vec<(ExtractedClaim, Check, Vec<ShownPassage>)> = Vec::new();
+        let mut found: Vec<Found> = Vec::new();
         for finding in &report.findings {
+            let (check, trust) = self.check_of(finding, false);
             found.push((
                 ExtractedClaim {
                     location: locate(candidate, finding.unit, &finding.quote),
                     statement: finding.statement.clone(),
                 },
-                self.check_of(finding, false),
+                check,
                 finding.evidence.iter().map(shown).collect(),
+                trust,
             ));
         }
         let mut example_ids = Vec::new();
@@ -316,6 +358,7 @@ impl ClaimLedger {
                     text: check.reason.clone(),
                     retrieval_kind: "execution".into(),
                 }],
+                None,
             ));
             example_ids.push(observation.id.clone());
         }
@@ -338,7 +381,7 @@ impl ClaimLedger {
             })
             .collect();
         let extracted: Vec<ExtractedClaim> =
-            found.iter().map(|(claim, _, _)| claim.clone()).collect();
+            found.iter().map(|(claim, ..)| claim.clone()).collect();
         let mut assigned = {
             let prior: Vec<&ClaimLedgerEntry> =
                 prior_ids.iter().filter_map(|id| self.entry(id)).collect();
@@ -381,7 +424,7 @@ impl ClaimLedger {
             .collect();
         let active: HashSet<&str> = report.sources.iter().map(|s| s.id.as_str()).collect();
         let mut claim_ids = Vec::with_capacity(found.len());
-        for ((claim, check, passages), prior) in found.into_iter().zip(assigned.assigned) {
+        for ((claim, check, passages, trust), prior) in found.into_iter().zip(assigned.assigned) {
             let edited = prior.as_ref().is_some_and(|id| self.edited_now.remove(id));
             let id = match prior {
                 Some(id) if edited => {
@@ -393,17 +436,18 @@ impl ClaimLedger {
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, check).await?;
+                    self.start(&successor, claim, check, trust).await?;
                     successor
                 }
                 Some(id) => {
-                    self.carry_on(&id, candidate, claim, check, records.get(&id), &active)
+                    let seen = (claim, check, trust);
+                    self.carry_on(&id, candidate, seen, records.get(&id), &active)
                         .await?;
                     id
                 }
                 None => {
                     let id = ClaimId::generate();
-                    self.start(&id, claim, check).await?;
+                    self.start(&id, claim, check, trust).await?;
                     id
                 }
             };
@@ -443,8 +487,15 @@ impl ClaimLedger {
         Ok(())
     }
 
-    /// A claim seen for the first time: extracted, then checked.
-    async fn start(&mut self, id: &ClaimId, claim: ExtractedClaim, check: Check) -> Result<()> {
+    /// A claim seen for the first time: extracted, then checked (and the
+    /// gate's assessment, when it decided the check).
+    async fn start(
+        &mut self,
+        id: &ClaimId,
+        claim: ExtractedClaim,
+        check: Check,
+        trust: Option<TrustAssessment>,
+    ) -> Result<()> {
         self.append(
             id,
             ClaimEvent::Extracted {
@@ -454,22 +505,25 @@ impl ClaimLedger {
         )
         .await?;
         self.append(id, ClaimEvent::Checked(check)).await?;
+        if let Some(trust) = trust {
+            self.append(id, assessed(trust)).await?;
+        }
         Ok(())
     }
 
     /// A claim seen before: record what changed, then a check only when
-    /// something about it is new or a repair awaits its verdict.
+    /// something about it is new (a different decision of the gate counts,
+    /// source provenance §18.7) or a repair awaits its verdict.
     async fn carry_on(
         &mut self,
         id: &ClaimId,
         candidate: &Value,
-        claim: ExtractedClaim,
-        check: Check,
+        (claim, check, trust): (ExtractedClaim, Check, Option<TrustAssessment>),
         repair: Option<&RepairRecord>,
         active: &HashSet<&str>,
     ) -> Result<()> {
         let Some(entry) = self.entry(id).cloned() else {
-            return self.start(id, claim, check).await;
+            return self.start(id, claim, check, trust).await;
         };
         let observation = Observation {
             quote: claim.location.quote.clone(),
@@ -479,6 +533,7 @@ impl ClaimLedger {
             source_changes: Self::source_changes(&entry, active),
             hint: None,
             attached_source_version_id: None,
+            gate: trust.as_ref().map(TrustAssessment::verdict),
         };
         let mut information = new_information(&entry, &observation);
         // A confirmation is bound to its sentence, not to the quote an
@@ -532,6 +587,9 @@ impl ClaimLedger {
         let unchecked = matches!(entry.state(), ClaimState::Unchecked);
         if unchecked || decides_repair || information.is_some() {
             self.append(id, ClaimEvent::Checked(check)).await?;
+            if let Some(trust) = trust {
+                self.append(id, assessed(trust)).await?;
+            }
         }
         Ok(())
     }
@@ -612,7 +670,7 @@ impl ClaimLedger {
                         entry.state().verdict(),
                         Some(VerdictKind::Unsupported | VerdictKind::NoSource)
                     );
-                researched.then(|| (id.clone(), self.check_of(finding, true)))
+                researched.then(|| (id.clone(), self.check_of(finding, true).0))
             })
             .collect();
         for (id, check) in proposals {

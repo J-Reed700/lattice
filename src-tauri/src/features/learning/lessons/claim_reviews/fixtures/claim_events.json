@@ -263,5 +263,34 @@
         "windowTokens": 32768
       }
     }
+  },
+  {
+    "ordinal": 12,
+    "actor": "machine",
+    "at": 1760000000012,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "standing_assessed",
+      "assessment": {
+        "claimKind": "specification",
+        "sufficient": false,
+        "bar": "primary",
+        "supports": [
+          {
+            "sourceVersionId": "v1",
+            "level": "established"
+          }
+        ],
+        "reason": "Its support does not come from the subject's owner.",
+        "cause": {
+          "change": "override",
+          "sourceVersionIds": [
+            "v1"
+          ]
+        }
+      }
+    }
   }
 ]

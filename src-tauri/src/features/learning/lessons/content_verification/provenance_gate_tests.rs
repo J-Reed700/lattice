@@ -186,7 +186,7 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
     ));
     assert!(trust.needs_scrutiny());
     claim.trust = Some(trust);
-    let Sufficiency::Insufficient { reason } = judge(&claim) else {
+    let Sufficiency::Insufficient { reason, .. } = judge(&claim) else {
         panic!("the ledger records an insufficient support as unsupported");
     };
     assert!(reason.starts_with("Its support "), "{reason}");
@@ -411,7 +411,10 @@ fn a_contrary_that_outranks_the_support_contradicts_the_claim() {
         quote: "The current stable release is Python 3.14.".into(),
     });
     assert!(trust.needs_scrutiny());
-    assert!(matches!(trust.overturn(), Overturn::Contradicted { .. }));
+    assert!(matches!(
+        trust.assessment("v1", "").overturn(),
+        Overturn::Contradicted { .. }
+    ));
     claim.trust = Some(trust);
     assert!(matches!(judge(&claim), Sufficiency::Contradicted { .. }));
 }

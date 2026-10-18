@@ -7,18 +7,18 @@
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16.
 
 use super::{SavedText, VersionFacts};
-use crate::features::learning::references::trust::SqliteSourceTrustStore;
+use crate::features::learning::references::trust::{calibration, SqliteSourceTrustStore};
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
     claim_profile_key, judge_ownership, judge_standing, ownership_key, profile_claims,
     standing_key, ClaimToProfile, OwnershipRequest, ProfileRequest, OWNERSHIP_POLICY,
 };
 use lattice_core::domain::provenance::{
-    containment, effective_bars, effective_date, markdown_links, shingles, trust_level, AddedBy,
-    AuthorityAssessment, Calibration, ClaimKind, ClaimProfile, ClaimSubject, EffectiveBars,
-    InheritedTrust, Judged, LevelInputs, Origin, Overrides, ProvenanceRecord, Reason, ReasonCode,
-    RelationEvidence, RelationKind, RelationTarget, SourceDates, SourceRelation,
-    StandingAssessment, StaticBars, SubjectKey, SubjectKind, TrustLevel, TrustOverride, POLICY,
+    containment, effective_date, markdown_links, shingles, trust_level, AddedBy,
+    AuthorityAssessment, ClaimKind, ClaimProfile, ClaimSubject, EffectiveBars, InheritedTrust,
+    Judged, LevelInputs, Origin, Overrides, ProvenanceRecord, Reason, ReasonCode, RelationEvidence,
+    RelationKind, RelationTarget, SourceDates, SourceRelation, StandingAssessment, SubjectKey,
+    SubjectKind, TrustLevel, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
@@ -85,6 +85,13 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// A judgement a cache-only read needed and the store does not hold.
+fn not_judged(what: &str, origin: &str) -> AppError {
+    AppError::NotFound(format!(
+        "No saved {what} judgement for {origin}; re-deciding without a model cannot level it."
+    ))
+}
+
 fn stored<T>(
     key: lattice_core::domain::provenance::JudgementKey,
     judged: Judged<T>,
@@ -133,20 +140,31 @@ impl Judgements {
         let Some(course) = course() else {
             return Ok(None);
         };
+        Self::load(course, llm.model_name()).await.map(Some)
+    }
+
+    /// The judgements already made for a course under `model`, with the
+    /// course's overrides, relations and bars as they are now: what a trust
+    /// change re-decides from. Nothing here calls a model; a judgement the
+    /// store lacks is an error (`facts` with no model).
+    pub(in crate::features::learning::lessons::content_verification) async fn cached(
+        pool: SqlitePool,
+        program_id: &str,
+        model: &str,
+    ) -> Result<Self> {
+        let course = Course {
+            pool,
+            program_id: program_id.to_owned(),
+            topic: String::new(),
+        };
+        Self::load(course, model).await
+    }
+
+    async fn load(course: Course, model: &str) -> Result<Self> {
         let store = SqliteSourceTrustStore::new(course.pool.clone());
         let overrides = store.overrides(&course.program_id).await?;
         let relations = store.relations(&course.program_id).await?;
-        let outcomes: Vec<_> = store
-            .outcomes()
-            .await?
-            .into_iter()
-            .map(|record| record.outcome)
-            .collect();
-        let bars = effective_bars(
-            &StaticBars::table(),
-            &Calibration::from_outcomes(&outcomes),
-            &POLICY,
-        );
+        let bars = calibration::bars_of(&store.outcomes().await?);
         let known_classes = overrides
             .entries
             .iter()
@@ -157,18 +175,18 @@ impl Judgements {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        Ok(Some(Self {
+        Ok(Self {
             store,
             pool: course.pool,
             program_id: course.program_id,
             topic: course.topic,
-            model: llm.model_name().to_owned(),
+            model: model.to_owned(),
             overrides,
             relations,
             bars,
             known_classes,
             versions: HashMap::new(),
-        }))
+        })
     }
 
     pub(in crate::features::learning::lessons::content_verification) fn relations(
@@ -261,10 +279,11 @@ impl Judgements {
 
     /// The facts of each of `versions` for `profile`'s subject: the version's
     /// level from its standing, its ownership of the subject, its copy
-    /// relations and the overrides (§5).
+    /// relations and the overrides (§5). With no `llm`, only judgements
+    /// already stored are read, and a missing one is an error.
     pub(in crate::features::learning::lessons::content_verification) async fn facts(
         &mut self,
-        llm: &dyn LLMPort,
+        llm: Option<&dyn LLMPort>,
         versions: &[String],
         profile: &ClaimProfile,
     ) -> Result<HashMap<String, VersionFacts>> {
@@ -287,7 +306,7 @@ impl Judgements {
     /// version of the course, each that version's own level for the subject.
     async fn inherited(
         &mut self,
-        llm: &dyn LLMPort,
+        llm: Option<&dyn LLMPort>,
         version: &str,
         record: &VersionRecord,
         subject: Option<&ClaimSubject>,
@@ -331,7 +350,7 @@ impl Judgements {
 
     async fn facts_of(
         &self,
-        llm: &dyn LLMPort,
+        llm: Option<&dyn LLMPort>,
         version: &str,
         record: &VersionRecord,
         subject: Option<&ClaimSubject>,
@@ -395,7 +414,7 @@ impl Judgements {
     /// course, origin and subject.
     async fn authority(
         &self,
-        llm: &dyn LLMPort,
+        llm: Option<&dyn LLMPort>,
         provenance: &ProvenanceRecord,
         subject: &ClaimSubject,
     ) -> Result<AuthorityAssessment> {
@@ -412,6 +431,7 @@ impl Judgements {
         {
             return Ok(saved.value);
         }
+        let llm = llm.ok_or_else(|| not_judged("ownership", &provenance.origin.key.0))?;
         let request = OwnershipRequest {
             subject,
             origin: &provenance.origin,
@@ -429,7 +449,11 @@ impl Judgements {
 
     /// A version's text, library facts, provenance and standing: read once
     /// per pass, the standing judged once per distinct signals (§12.1).
-    async fn version(&mut self, llm: &dyn LLMPort, version: &str) -> Result<Arc<VersionRecord>> {
+    async fn version(
+        &mut self,
+        llm: Option<&dyn LLMPort>,
+        version: &str,
+    ) -> Result<Arc<VersionRecord>> {
         if let Some(record) = self.versions.get(version) {
             return Ok(record.clone());
         }
@@ -471,13 +495,14 @@ impl Judgements {
 
     async fn standing(
         &self,
-        llm: &dyn LLMPort,
+        llm: Option<&dyn LLMPort>,
         provenance: &ProvenanceRecord,
     ) -> Result<StandingAssessment> {
         let key = standing_key(&provenance.signals, &self.model);
         if let Some(saved) = self.store.standing(&key).await? {
             return Ok(saved.value);
         }
+        let llm = llm.ok_or_else(|| not_judged("standing", &provenance.origin.key.0))?;
         let track_record = self.store.track_record(&provenance.origin.key).await?;
         let judged = judge_standing(llm, &provenance.signals, track_record).await?;
         let value = judged.value.clone();

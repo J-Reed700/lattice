@@ -19,5 +19,19 @@
     "verifier": {
       "kind": "contradicted"
     }
+  },
+  {
+    "kind": "insufficient_standing",
+    "bar": "primary",
+    "have": [
+      {
+        "sourceVersionId": "v1",
+        "level": "established"
+      },
+      {
+        "sourceVersionId": "v2",
+        "level": null
+      }
+    ]
   }
 ]

@@ -19,17 +19,23 @@
 
 use super::support_gate::{Sufficiency, Support as Supported, SupportGate};
 use super::*;
+use lattice_core::domain::learning::claim_review::{
+    GateVerdict, SupportedBy, TrustAssessment, VerdictKind,
+};
+use lattice_core::domain::provenance::TRUST_POLICY_VERSION;
 use lattice_core::domain::provenance::{
-    citation_candidates, clusters, decide, effective_date, overturn, passage_merges, resolve_all,
-    AddedBy, ClaimProfile, ClusterId, Contrary, Decision, EffectiveBars, LinkStanding, Missing,
-    OriginKey, OutboundLink, Overturn, PassageKind, Policy, Reason, SourceDates, SourceRelation,
-    Support, TemporalScope, Trust, TrustLevel,
+    citation_candidates, clusters, decide, effective_date, passage_merges, AddedBy, ClaimProfile,
+    ClusterId, Contrary, Decision, EffectiveBars, LinkStanding, Missing, OriginKey, OutboundLink,
+    Overturn, PassageKind, Policy, Reason, SourceDates, SourceRelation, Support, TemporalScope,
+    Trust, TrustLevel,
 };
 use std::sync::Arc;
 
 mod context;
+mod relevel;
 pub(super) use context::passage_labels;
 pub(in crate::features::learning) use context::with_trust;
+pub(in crate::features::learning) use relevel::relevel;
 
 #[cfg(test)]
 #[path = "provenance_gate_tests.rs"]
@@ -56,15 +62,6 @@ pub(in crate::features::learning) struct FindingTrust {
 }
 
 impl FindingTrust {
-    /// The overturn rule (§11): contrary evidence that wins, a contradiction
-    /// neither side outranks, or support that fails the bar for the kind.
-    pub(super) fn overturn(&self) -> Overturn {
-        overturn(
-            &self.decision,
-            &resolve_all(&self.profile, &self.supports, &self.contrary),
-        )
-    }
-
     /// Whether research should look further for this claim (§11: scrutiny
     /// runs only on an insufficient decision or a contrary).
     pub(super) fn needs_scrutiny(&self) -> bool {
@@ -75,17 +72,56 @@ impl FindingTrust {
     /// then the rules that fired, verbatim (the first names the claim's kind,
     /// its subject and the bar).
     pub(super) fn explain(&self) -> String {
-        match &self.decision {
-            Decision::Sufficient { reasons, .. } => {
-                format!(
-                    "Its support meets the bar for its kind.{}",
-                    reason_lines(reasons)
-                )
-            }
-            Decision::Insufficient {
-                missing, reasons, ..
-            } => format!("Its support {}.{}", lacks(missing), reason_lines(reasons)),
+        explain(&self.decision)
+    }
+
+    /// The claim ledger's record of this weighing, for the supported
+    /// verdict it decided (`source_version_id` holds `supporting_quote`).
+    pub(super) fn assessment(
+        &self,
+        source_version_id: &str,
+        supporting_quote: &str,
+    ) -> TrustAssessment {
+        TrustAssessment {
+            profile: self.profile.clone(),
+            supports: self.supports.clone(),
+            contrary: self.contrary.clone(),
+            decision: self.decision.clone(),
+            supported: SupportedBy {
+                source_version_id: source_version_id.to_owned(),
+                supporting_quote: supporting_quote.to_owned(),
+            },
+            policy: TRUST_POLICY_VERSION.to_owned(),
         }
+    }
+}
+
+/// The claim's reason for what the gate made of its support: the contrary
+/// that outranks it, or what the support lacks, then the rules that fired,
+/// verbatim (the first names the claim's kind, its subject and the bar).
+pub(in crate::features::learning) fn gate_reason(trust: &TrustAssessment) -> String {
+    match trust.overturn() {
+        Overturn::Contradicted { by, reasons } | Overturn::Escalated { by, reasons } => {
+            format!(
+                "A passage of {by} says otherwise.{}",
+                reason_lines(&reasons)
+            )
+        }
+        Overturn::None | Overturn::InsufficientStanding { .. } => explain(&trust.decision),
+    }
+}
+
+fn explain(decision: &Decision) -> String {
+    match decision {
+        Decision::Sufficient { reasons, .. } => {
+            format!(
+                "Its support meets the bar for its kind.{}",
+                reason_lines(reasons)
+            )
+        }
+        Decision::Insufficient {
+            missing, reasons, ..
+        } => format!("Its support {}.{}", lacks(missing), reason_lines(reasons)),
     }
 }
 
@@ -130,6 +166,7 @@ impl SupportGate for ProvenanceGate {
                     "The checker supported \"{}\" with a quotation that is not in the passage it names.",
                     support.claim
                 ),
+                kind: None,
             };
         }
         // A finding the gate did not weigh: a quotation settled by its match,
@@ -138,19 +175,18 @@ impl SupportGate for ProvenanceGate {
         let Some(trust) = support.trust else {
             return Sufficiency::Sufficient;
         };
-        match trust.overturn() {
-            Overturn::None => Sufficiency::Sufficient,
-            Overturn::InsufficientStanding { .. } => Sufficiency::Insufficient {
-                reason: trust.explain(),
-            },
-            Overturn::Contradicted { by, reasons } | Overturn::Escalated { by, reasons } => {
-                Sufficiency::Contradicted {
-                    reason: format!(
-                        "A passage of {by} says otherwise.{}",
-                        reason_lines(&reasons)
-                    ),
+        let assessed = trust.assessment(support.source_version_id, support.supporting_quote);
+        match assessed.verdict() {
+            GateVerdict::Sufficient => Sufficiency::Sufficient,
+            GateVerdict::Fails(kind @ VerdictKind::InsufficientStanding { .. }) => {
+                Sufficiency::Insufficient {
+                    reason: gate_reason(&assessed),
+                    kind: Some(kind),
                 }
             }
+            GateVerdict::Fails(_) => Sufficiency::Contradicted {
+                reason: gate_reason(&assessed),
+            },
         }
     }
 }
@@ -396,7 +432,7 @@ pub(super) async fn weigh(
             .into_iter()
             .map(|passage| passage.source_id.clone())
             .collect();
-        let facts = judgements.facts(llm, &versions, &profile).await?;
+        let facts = judgements.facts(Some(llm), &versions, &profile).await?;
         let trust = assess(
             &profile,
             finding,

@@ -25,7 +25,7 @@ use lattice_core::application::ports::{
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, CheckResult, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimState, EventProvenance, Revision,
+    ClaimState, EventProvenance, Revision, TrustVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -36,7 +36,9 @@ use self::report::{ClaimAttachReportDto, OtherClaimsCheckedDto};
 use super::checker_examples::CheckerExamples;
 use super::dto::ClaimActionRequestDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
+use super::trust_changed::{record_verdict, Redecided};
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
+use crate::features::learning::references::trust::outcomes::VerdictScope;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 
 /// What the user attaches (§5.1 "Attach evidence").
@@ -274,6 +276,23 @@ pub async fn attach(
         source.already_saved,
     )
     .await?;
+    // The user's evidence verified the claim: calibration learns that the
+    // claim held (source provenance §13); a bar it moves re-decides claims.
+    let redecided = match &outcome {
+        AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. }) => {
+            record_verdict(
+                deps.pool,
+                VerdictScope {
+                    program_id: request.program_id,
+                    lesson_id: request.lesson_id,
+                },
+                entry,
+                TrustVerdict::EvidenceAdded,
+            )
+            .await?
+        }
+        _ => Redecided::default(),
+    };
     let (others, after) = check_others(
         deps,
         &references,
@@ -285,6 +304,13 @@ pub async fn attach(
     .await?;
     if let Some(after) = after {
         revision = after;
+    }
+    if redecided
+        .lessons
+        .iter()
+        .any(|lesson| lesson == request.lesson_id)
+    {
+        revision = deps.store.load(request.lesson_id).await?.revision;
     }
     Ok(report::checked(
         revision,

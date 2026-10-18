@@ -4,14 +4,16 @@
 //! here: an edit or a removal is applied to the draft by the next pass's
 //! review step, so a waiting lesson's draft changes only inside a job. Every
 //! verdict on a claim the local checker flagged is also a labelled example of
-//! the checker's accuracy (§15).
+//! the checker's accuracy (§15), and every verdict on a claim the provenance
+//! gate decided is an outcome calibration learns from (source provenance
+//! §13); a bar that outcome moves re-decides its claims at once.
 //! Attaching evidence (§5.4) is the attach pipeline's, not this service's.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §5.1, §6.2, §9, §15.
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger, LessonReview,
-    LessonReviewState, Revision, UserAction, VerdictKind,
+    LessonReviewState, Revision, TrustVerdict, UserAction, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -20,10 +22,12 @@ use sqlx::SqlitePool;
 use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
 use super::repository::ClaimReviewRepository;
+use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 use crate::features::learning::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::persistence::now;
 use crate::features::learning::plan_dto::LearningGenerationJobActionRequestDto;
+use crate::features::learning::references::trust::outcomes::VerdictScope;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
@@ -38,10 +42,13 @@ pub struct ClaimReviewService {
     drafts: LearningCurriculumRepository,
 }
 
-/// One claim's event, and the accuracy label it gives (§15).
+/// One claim's event, the accuracy label it gives (§15), and the verdict
+/// calibration records (`trust`) or forgets on Undo (`forget`).
 struct Resolution {
     event: ClaimEvent,
     label: Option<LabelSource>,
+    trust: Option<TrustVerdict>,
+    forget: Option<TrustVerdict>,
 }
 
 impl ClaimReviewService {
@@ -151,6 +158,21 @@ impl ClaimReviewService {
                 .record_human_verdict(&review.program_id, lesson_id, entry, &passages, label)
                 .await?;
         }
+        let scope = VerdictScope {
+            program_id: &review.program_id,
+            lesson_id,
+        };
+        let mut redecided = Redecided::default();
+        if let Some(verdict) = resolution.trust {
+            redecided = record_verdict(&self.pool, scope, entry, verdict).await?;
+        }
+        if let Some(verdict) = resolution.forget {
+            redecided = forget_verdict(&self.pool, &entry.claim_id().0, verdict).await?;
+        }
+        // A bar the verdict moved may have re-decided this lesson's claims.
+        if redecided.lessons.iter().any(|lesson| lesson == lesson_id) {
+            return Ok(self.store.load(lesson_id).await?.revision.0);
+        }
         Ok(revision.0)
     }
 
@@ -225,9 +247,17 @@ impl ClaimReviewService {
         action: ClaimActionRequestDto,
     ) -> Result<Resolution> {
         let user = |action: UserAction, note: Option<String>, label: Option<LabelSource>| {
+            let trust = match &action {
+                UserAction::Confirm { .. } => Some(TrustVerdict::Confirm),
+                UserAction::Edit { .. } => Some(TrustVerdict::Edit),
+                UserAction::Remove => Some(TrustVerdict::Remove),
+                _ => None,
+            };
             Ok(Resolution {
                 event: ClaimEvent::UserAction { action, note },
                 label,
+                trust,
+                forget: None,
             })
         };
         match action {
@@ -336,21 +366,27 @@ impl ClaimReviewService {
         }
         let forgotten = match &undone.event {
             ClaimEvent::UserAction { action, .. } => match action {
-                UserAction::Confirm { .. } => Some(LabelSource::UserConfirm),
-                UserAction::Edit { .. } => Some(LabelSource::UserEdit),
-                UserAction::Remove => Some(LabelSource::UserRemove),
+                UserAction::Confirm { .. } => {
+                    Some((LabelSource::UserConfirm, TrustVerdict::Confirm))
+                }
+                UserAction::Edit { .. } => Some((LabelSource::UserEdit, TrustVerdict::Edit)),
+                UserAction::Remove => Some((LabelSource::UserRemove, TrustVerdict::Remove)),
                 _ => None,
             },
             _ => None,
         };
-        if let Some(source) = forgotten {
+        if let Some((source, _)) = forgotten {
             self.examples.forget(&entry.claim_id().0, source).await?;
         }
+        // Calibration forgets after the Undo is on the ledger: a bar moving
+        // back re-decides claims, which advances the review's revision.
         Ok(Resolution {
             event: ClaimEvent::Undone {
                 event_ordinal: ordinal,
             },
             label: None,
+            trust: None,
+            forget: forgotten.map(|(_, verdict)| verdict),
         })
     }
 
@@ -400,13 +436,19 @@ fn provenance(review: &LessonReview) -> EventProvenance {
     }
 }
 
-/// Whether the user acted on any claim at or after `at` (§6.2).
+/// Whether the user acted on any claim at or after `at` (§6.2), or a trust
+/// change re-decided one (source provenance §18.7: an override or a moved
+/// bar is the user's doing too).
 pub fn changed_since(ledger: &Ledger, at: i64) -> bool {
     ledger.claims.iter().any(|entry| {
-        entry
-            .events()
-            .iter()
-            .any(|record| record.provenance.actor == Actor::User && record.provenance.at >= at)
+        entry.events().iter().any(|record| {
+            let changed = record.provenance.actor == Actor::User
+                || matches!(
+                    record.event,
+                    ClaimEvent::StandingAssessed { cause: Some(_), .. }
+                );
+            changed && record.provenance.at >= at
+        })
     })
 }
 

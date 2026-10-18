@@ -5,8 +5,12 @@
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
     ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen, HumanBinding, Provenance,
-    RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason, UnitKind, UserAction,
-    VerdictKind,
+    RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason, SupportedBy,
+    TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
+};
+use lattice_core::domain::provenance::{
+    AddedBy, Bar, ClaimKind, ClaimProfile, ClusterId, CountedSupport, Decision, Missing,
+    PassageKind, SourceDates, Support, TemporalScope, TemporalValidity, Trust, TrustLevel,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -118,6 +122,15 @@ fn claim_states_mirror_the_domain() {
             },
             previous: Box::new(confirmed),
         },
+        ClaimState::Reopened {
+            cause: ReopenCause::TrustChanged(TrustCause::Bar {
+                kind: ClaimKind::Specification,
+            }),
+            previous: Box::new(ClaimState::ResolvedByEvidence {
+                source_version_id: "v1".into(),
+                supporting_quote: "boils at 100 °C".into(),
+            }),
+        },
     ];
     let dtos: Vec<ClaimStateDto> = states.iter().map(ClaimStateDto::from).collect();
     assert_mirrors(&dtos, &fixture);
@@ -135,9 +148,74 @@ fn verdict_kinds_mirror_the_domain() {
         VerdictKind::Disputed {
             verifier: Box::new(VerdictKind::Contradicted),
         },
+        VerdictKind::InsufficientStanding {
+            bar: Bar::Primary,
+            have: counted(),
+        },
     ];
     let dtos: Vec<VerdictKindDto> = kinds.iter().map(VerdictKindDto::from).collect();
     assert_mirrors(&dtos, &fixture);
+}
+
+/// An established blog counted, and a distrusted page excluded.
+fn counted() -> Vec<CountedSupport> {
+    vec![
+        CountedSupport {
+            source_version_id: "v1".into(),
+            origin_cluster: ClusterId("v1".into()),
+            counted: Some(TrustLevel::Established),
+        },
+        CountedSupport {
+            source_version_id: "v2".into(),
+            origin_cluster: ClusterId("v2".into()),
+            counted: None,
+        },
+    ]
+}
+
+/// The gate's assessment of a specification claim whose one support, an
+/// established blog, is below the bar.
+fn below_the_bar() -> TrustAssessment {
+    TrustAssessment {
+        profile: ClaimProfile {
+            kind: ClaimKind::Specification,
+            subject: None,
+            temporal: TemporalScope::Current,
+            measurement_origin: None,
+            attributed_to: None,
+            reasons: vec![],
+            policy: "claim-profile-v1".into(),
+            model: "qwen3.5-27b".into(),
+        },
+        supports: vec![Support {
+            source_version_id: "v1".into(),
+            origin_cluster: ClusterId("v1".into()),
+            trust: Trust {
+                level: TrustLevel::Established,
+                reasons: vec![],
+                override_: None,
+            },
+            dates: SourceDates::default(),
+            passage: PassageKind::Direct,
+            temporal: TemporalValidity::Valid,
+            added_by: AddedBy::Research,
+            cited_urls: vec![],
+            owner_hints: vec![],
+        }],
+        contrary: vec![],
+        decision: Decision::Insufficient {
+            bar: Bar::Primary,
+            have: counted(),
+            missing: Missing::NoPrimaryForSubject,
+            next: vec![],
+            reasons: vec![],
+        },
+        supported: SupportedBy {
+            source_version_id: "v1".into(),
+            supporting_quote: "boils at 100 °C".into(),
+        },
+        policy: "source-trust-v1".into(),
+    }
 }
 
 fn provenance(actor: Actor, at: i64) -> EventProvenance {
@@ -263,6 +341,13 @@ fn claim_events_mirror_the_domain() {
                 },
             },
         )),
+        ClaimEvent::StandingAssessed {
+            trust: Box::new(below_the_bar()),
+            reason: "Its support does not come from the subject's owner.".into(),
+            cause: Some(TrustCause::Override {
+                source_version_ids: vec!["v1".into()],
+            }),
+        },
     ];
     let records: Vec<RecordedEvent> = events
         .into_iter()
