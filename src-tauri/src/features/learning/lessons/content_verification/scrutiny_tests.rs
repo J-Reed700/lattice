@@ -67,7 +67,7 @@ fn finding(statement: &str, verdict: ClaimVerdict, trust: Option<FindingTrust>) 
         evidence: Vec::new(),
         supporting_quote: None,
         resolution: None,
-        trust,
+        trust: trust.map(Box::new),
     }
 }
 

@@ -113,7 +113,7 @@ impl LessonVerificationReport {
                             retrieval_kind: passage.retrieval_kind.clone(),
                             trust: finding
                                 .trust
-                                .as_ref()
+                                .as_deref()
                                 .and_then(|trust| passage_trust(trust, &passage.source_id)),
                         })
                     })
@@ -156,7 +156,7 @@ impl LessonVerificationReport {
                     passages,
                     resolution,
                     note,
-                    sufficiency: finding.trust.as_ref().map(sufficiency),
+                    sufficiency: finding.trust.as_deref().map(sufficiency),
                 })
             })
             .collect::<Result<Vec<_>>>()?;

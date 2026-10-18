@@ -119,7 +119,7 @@ fn judge(finding: &Finding) -> Sufficiency {
         source_version_id: &source,
         supporting_quote: &quote,
         passages: &finding.evidence,
-        trust: finding.trust.as_ref(),
+        trust: finding.trust.as_deref(),
     })
 }
 
@@ -143,7 +143,7 @@ fn a_primary_source_meets_a_specification_bar() {
     assert!(!trust.needs_scrutiny());
     assert_eq!(trust.supports.len(), 1);
     assert_eq!(trust.supports[0].passage, PassageKind::Direct);
-    claim.trust = Some(trust);
+    claim.trust = Some(Box::new(trust));
     assert!(matches!(judge(&claim), Sufficiency::Sufficient));
 }
 
@@ -185,7 +185,7 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
         PassageKind::Testimonial { attributed_to, borne_out: None } if attributed_to == "platform.openai.com"
     ));
     assert!(trust.needs_scrutiny());
-    claim.trust = Some(trust);
+    claim.trust = Some(Box::new(trust));
     let Sufficiency::Insufficient { reason, .. } = judge(&claim) else {
         panic!("the ledger records an insufficient support as unsupported");
     };
@@ -355,18 +355,18 @@ fn a_quotation_outside_the_named_passage_is_never_sufficient() {
         "docs".to_owned(),
         facts(level("primary"), "web:openai.com", text, Vec::new()),
     )]);
-    claim.trust = Some(weighed(
+    claim.trust = Some(Box::new(weighed(
         &profile(ClaimKind::Specification, Some("OpenAI API")),
         &claim,
         &facts,
-    ));
+    )));
     let quote = claim.supporting_quote.clone().unwrap();
     let verdict = ProvenanceGate.judge(&Supported {
         claim: &claim.statement,
         source_version_id: "docs",
         supporting_quote: &quote,
         passages: &claim.evidence,
-        trust: claim.trust.as_ref(),
+        trust: claim.trust.as_deref(),
     });
     assert!(matches!(verdict, Sufficiency::Insufficient { .. }));
 }
@@ -415,7 +415,7 @@ fn a_contrary_that_outranks_the_support_contradicts_the_claim() {
         trust.assessment("v1", "").overturn(),
         Overturn::Contradicted { .. }
     ));
-    claim.trust = Some(trust);
+    claim.trust = Some(Box::new(trust));
     assert!(matches!(judge(&claim), Sufficiency::Contradicted { .. }));
 }
 
@@ -572,7 +572,7 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
             &claim,
             &HashMap::from([(id.to_owned(), version)]),
         );
-        claim.trust = Some(trust);
+        claim.trust = Some(Box::new(trust));
         match case["decision"].as_str().unwrap() {
             "sufficient" => assert!(
                 matches!(judge(&claim), Sufficiency::Sufficient),

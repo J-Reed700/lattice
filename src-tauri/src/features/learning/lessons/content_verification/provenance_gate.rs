@@ -428,7 +428,9 @@ pub(super) async fn weigh(
         let Some((_, _, finding, _)) = results.get_mut(index) else {
             continue;
         };
-        finding.trust = Some(weighed(&mut judgements, llm, &profile, finding).await?);
+        finding.trust = Some(Box::new(
+            weighed(&mut judgements, llm, &profile, finding).await?,
+        ));
     }
     Ok(())
 }

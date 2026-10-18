@@ -194,7 +194,7 @@ impl ClaimLedger {
                     source_version_id: &source,
                     supporting_quote: &quote,
                     passages: &finding.evidence,
-                    trust: finding.trust.as_ref(),
+                    trust: finding.trust.as_deref(),
                 };
                 let trust = finding
                     .trust

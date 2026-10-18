@@ -44,7 +44,7 @@ impl Finding {
     /// The gate's account of a supported finding that needs scrutiny.
     fn scrutinised(&self) -> Option<&FindingTrust> {
         self.trust
-            .as_ref()
+            .as_deref()
             .filter(|trust| self.verdict == ClaimVerdict::Supported && trust.needs_scrutiny())
     }
 }

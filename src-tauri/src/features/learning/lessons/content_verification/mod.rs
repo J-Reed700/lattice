@@ -186,9 +186,10 @@ struct Finding {
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution: Option<general_knowledge::Resolution>,
     /// What the provenance gate weighed for a supported finding: the
-    /// supports' levels for the claim's subject and the decision.
+    /// supports' levels for the claim's subject and the decision. Boxed: it
+    /// is most of a finding's size and most findings have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    trust: Option<provenance_gate::FindingTrust>,
+    trust: Option<Box<provenance_gate::FindingTrust>>,
 }
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
