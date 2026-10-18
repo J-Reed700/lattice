@@ -63,6 +63,7 @@ async function installSourceTrust(page: Page) {
         return {
           change: { scope: { scope: 'site' as const, registrableDomain: 'example.org' }, sourceVersionIds: ['source-version-field-notes-1'] },
           impact: { versions: 1, claims: 2, lessons: 1 },
+          redecided: { verified: 2, reopened: 0, stillFailing: 0, notLevelled: 0, lessons: 1 },
         };
       },
       list_source_trust_overrides: () => [{
@@ -113,9 +114,9 @@ test('A source shows its level with the reasons, and a site is trusted as primar
   await section.getByRole('combobox', { name: 'Level' }).selectOption('primary');
   await section.getByRole('textbox', { name: 'Another subject' }).fill('Field methods');
   await expect(section.getByText('Trust example.org as primary for: Field methods')).toBeVisible();
-  await expect(section.getByText('2 claims waiting for review in 1 lesson cite this site; they will be re-decided.')).toBeVisible();
+  await expect(section.getByText('2 checked claims in 1 lesson rest on this site; they will be re-decided.')).toBeVisible();
   await section.getByRole('button', { name: 'Apply and re-decide 2 claims' }).click();
-  await expect(section.getByText(/^Saved\. 2 claims/)).toBeVisible();
+  await expect(section.getByText('Saved. 2 claims verified.')).toBeVisible();
   const calls = await page.evaluate(() => (window as unknown as { __TRUST_CALLS__: unknown[] }).__TRUST_CALLS__);
   expect(calls).toEqual([{
     command: 'set_source_trust_override',
