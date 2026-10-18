@@ -1,4 +1,5 @@
 import { configuredConnections } from './configuredConnections';
+import { cloudVisionDefault } from './visionGeometry';
 
 import type { ChatModelChoice, CloudProvider, ModelRef } from '../lib/bindings';
 import type { LLMSettings } from '../types/api/settings';
@@ -24,6 +25,8 @@ export interface ChatModelOption {
   contextLabel: string | null;
   /** `false` only when the GGUF declares no tool calling; `null` when unknown. */
   supportsTools: boolean | null;
+  /** `true` when the model is declared to see pictures; `null` when unknown. */
+  seesImages: boolean | null;
   /** The chat model set in Settings, which every chat on the default answers with. */
   isDefault: boolean;
 }
@@ -42,13 +45,13 @@ export function isUnavailableChatModel(model: EffectiveChatModel | null): model 
   return model !== null && 'unavailable' in model;
 }
 
-const CLOUD_PROVIDER_NAMES: Record<CloudProvider, string> = {
+export const CLOUD_PROVIDER_NAMES: Record<CloudProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   google: 'Google',
 };
 
-function isCloudProvider(provider: LLMSettings['provider']): provider is CloudProvider {
+export function isCloudProvider(provider: LLMSettings['provider']): provider is CloudProvider {
   return provider === 'openai' || provider === 'anthropic' || provider === 'google';
 }
 
@@ -118,6 +121,19 @@ export function modelRefKey(ref: ModelRef): string {
 export function sameModelRef(a: ModelRef | null | undefined, b: ModelRef | null | undefined): boolean {
   if (!a || !b) return false;
   return modelRefKey(a) === modelRefKey(b);
+}
+
+/**
+ * Whether a remote model is declared to see pictures: its declaration in
+ * Settings, else its cloud provider's published default. Nothing is asked of
+ * a server. `null` before settings load, and for a downloaded model, whose
+ * catalog entry declares it instead.
+ */
+export function remoteSeesImages(ref: ModelRef, settings: LLMSettings | null | undefined): boolean | null {
+  if (!settings || ref.kind === 'local') return null;
+  const declared = settings.visionDeclarations[modelRefKey(ref)] as LLMSettings['visionDeclarations'][string] | undefined;
+  if (declared) return declared.enabled;
+  return ref.kind === 'cloud' && cloudVisionDefault(ref.provider, ref.model) !== null;
 }
 
 /**
@@ -251,6 +267,7 @@ export function buildChatModelOptions(
       backend: 'local',
       contextLabel: formatContextLabel(m),
       supportsTools: m.supports_tool_calling ?? null,
+      seesImages: null,
       isDefault: defaultId === m.model_id,
     });
   }
@@ -258,9 +275,10 @@ export function buildChatModelOptions(
   // 2. llama.cpp connection
   if (connections.llamaCpp && settings) {
     const modelLabel = cleanModelDisplayName(settings.llamaCpp.model);
+    const ref = modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings);
     options.push({
       id: LLAMACPP_SERVER_MODEL_ID,
-      ref: modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings),
+      ref,
       label: modelLabel,
       triggerLabel: `llama.cpp · ${modelLabel}`,
       subtitle: formatServerEndpoint(settings.llamaCpp.url),
@@ -268,6 +286,7 @@ export function buildChatModelOptions(
       backend: 'llamacpp',
       contextLabel: null,
       supportsTools: null,
+      seesImages: remoteSeesImages(ref, settings),
       isDefault: defaultId === LLAMACPP_SERVER_MODEL_ID,
     });
   }
@@ -275,9 +294,10 @@ export function buildChatModelOptions(
   // 3. Ollama connection, then the Ollama tags downloaded as rows of their own
   if (connections.ollama && settings) {
     const modelLabel = cleanModelDisplayName(settings.model);
+    const ref = modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings);
     options.push({
       id: OLLAMA_SERVER_MODEL_ID,
-      ref: modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings),
+      ref,
       label: modelLabel,
       triggerLabel: `Ollama · ${modelLabel}`,
       subtitle: formatServerEndpoint(settings.ollamaUrl),
@@ -285,6 +305,7 @@ export function buildChatModelOptions(
       backend: 'ollama',
       contextLabel: null,
       supportsTools: null,
+      seesImages: remoteSeesImages(ref, settings),
       isDefault: defaultId === OLLAMA_SERVER_MODEL_ID,
     });
   }
@@ -297,9 +318,10 @@ export function buildChatModelOptions(
   );
   for (const m of explicitOllamaModels) {
     const label = m.model_name || m.model_id;
+    const ref: ModelRef = { kind: 'ollama', model: m.model_id };
     options.push({
       id: m.model_id,
-      ref: { kind: 'ollama', model: m.model_id },
+      ref,
       label,
       triggerLabel: `Ollama · ${label}`,
       subtitle: null,
@@ -307,6 +329,7 @@ export function buildChatModelOptions(
       backend: 'ollama',
       contextLabel: null,
       supportsTools: null,
+      seesImages: remoteSeesImages(ref, settings),
       isDefault: defaultId === m.model_id,
     });
   }
@@ -315,9 +338,10 @@ export function buildChatModelOptions(
   if (settings && isCloudProvider(settings.provider) && settings.model.trim()) {
     const providerName = CLOUD_PROVIDER_NAMES[settings.provider];
     const modelLabel = settings.model.trim();
+    const ref = modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, settings);
     options.push({
       id: CLOUD_PROVIDER_MODEL_ID,
-      ref: modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, settings),
+      ref,
       label: modelLabel,
       triggerLabel: `${providerName} · ${modelLabel}`,
       subtitle: providerName,
@@ -325,6 +349,7 @@ export function buildChatModelOptions(
       backend: 'cloud',
       contextLabel: null,
       supportsTools: null,
+      seesImages: remoteSeesImages(ref, settings),
       isDefault: defaultId === CLOUD_PROVIDER_MODEL_ID,
     });
   }
@@ -351,7 +376,10 @@ function unavailable(label: string, reason: string): UnavailableChatModel {
  */
 function remoteOption(ref: Exclude<ModelRef, { kind: 'local' }>, settings: LLMSettings | null | undefined): ChatModelOption {
   const label = cleanModelDisplayName(ref.model) || ref.model;
-  const base = { id: modelRefKey(ref), ref, label, contextLabel: null, supportsTools: null, isDefault: false };
+  const base = {
+    id: modelRefKey(ref), ref, label, contextLabel: null, supportsTools: null,
+    seesImages: remoteSeesImages(ref, settings), isDefault: false,
+  };
   switch (ref.kind) {
     case 'ollama':
       return { ...base, triggerLabel: `Ollama · ${label}`, subtitle: formatServerEndpoint(settings?.ollamaUrl ?? ''), group: 'Ollama', backend: 'ollama' };

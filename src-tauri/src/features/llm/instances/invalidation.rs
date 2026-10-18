@@ -46,6 +46,11 @@ fn client_changed(key: &ModelKey, before: &LLMSettingsDto, after: &LLMSettingsDt
     if key.tuning.generation(before) != key.tuning.generation(after) {
         return true;
     }
+    // A vision declaration is baked into the client that sends pictures or
+    // refuses them.
+    if before.vision_declaration(&key.model) != after.vision_declaration(&key.model) {
+        return true;
+    }
     match &key.model {
         // The model's own saved configuration and Settings' server options
         // make up its server; the key carries the launch it was started with.

@@ -21,6 +21,7 @@ use lattice_core::application::ports::llm_port::{
     tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::Result;
 
 /// A port whose every model call goes through one backend's scheduler.
@@ -62,24 +63,27 @@ impl ScheduledLlm {
     /// prompt; any other answer can shrink to the room left, so only a prompt
     /// that leaves none is refused. The calibrated estimate decides when the
     /// request plainly fits. When it does not, a backend with a tokenizer
-    /// counts the prompt exactly before anything is refused. Opaque provider
-    /// state (signed reasoning, images) is not text and is left out of both
-    /// counts, so it never causes a refusal.
+    /// counts the prompt's text exactly before anything is refused. Opaque
+    /// provider state (signed reasoning) is not text and is left out of both
+    /// counts, so it never causes a refusal. Pictures are charged in both by
+    /// their declared geometry, never as their bytes.
     async fn ensure_fits(&self, request: &CompletionRequest) -> Result<()> {
         let window = self.inner.max_context_tokens();
         let fixed = request.max_output_tokens.filter(|tokens| *tokens > 0);
         let answer = fixed.map_or(1, |tokens| usize::try_from(tokens).unwrap_or(usize::MAX));
+        let image_tokens = request.image_tokens();
         let fits = |prompt: usize| prompt.saturating_add(answer) <= window;
         let estimate = tokens_for_chars(
             prompt_texts(request).map(|text| text.chars().count()).sum(),
             self.estimator.chars_per_token(),
-        );
+        )
+        .saturating_add(image_tokens);
         if fits(estimate) {
             return Ok(());
         }
         let (prompt_tokens, counted_exactly) = match &self.tokenizer {
             Some(_) => match self.count_tokens_exact(&prompt_text(request)).await {
-                Ok(exact) => (exact, true),
+                Ok(exact) => (exact.saturating_add(image_tokens), true),
                 Err(error) => {
                     tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
                     (estimate, false)
@@ -96,6 +100,8 @@ impl ScheduledLlm {
                 prompt_tokens,
                 counted_exactly,
                 output_tokens: fixed.unwrap_or(0),
+                image_tokens,
+                image_count: request.image_count(),
             },
             window,
             fixed.is_some(),
@@ -109,7 +115,8 @@ impl ScheduledLlm {
     ) -> Result<(Permit, Cow<'r, CompletionRequest>)> {
         self.ensure_fits(request).await?;
         let output = request.effective_max_output_tokens(self.output_limit) as usize;
-        let prompt = tokens_for_chars(prompt_chars(request), self.estimator.chars_per_token());
+        let prompt = tokens_for_chars(prompt_chars(request), self.estimator.chars_per_token())
+            .saturating_add(request.image_tokens());
         let permit = self
             .scheduler
             .admit(
@@ -151,10 +158,11 @@ impl ScheduledLlm {
     }
 
     /// Calibrate the estimate from what the backend says it read. Opaque
-    /// provider state (signed reasoning, images) is not text a tokenizer read
-    /// character by character, so a request carrying it teaches nothing.
+    /// provider state (signed reasoning) and pictures are not text a tokenizer
+    /// read character by character, so a request carrying them teaches nothing.
     fn observe(&self, request: &CompletionRequest, response: &CompletionResponse) {
         if response.input_tokens == 0
+            || request.has_images()
             || request
                 .input
                 .iter()
@@ -195,7 +203,8 @@ pub(super) fn prompt_chars(request: &CompletionRequest) -> usize {
 
 /// The text a tokenizer reads in a request: every message with its role,
 /// every call and result, then the tool schemas. Opaque provider state
-/// (signed reasoning, images) is not text and is left out.
+/// (signed reasoning) and pictures' bytes are not text and are left out; a
+/// picture's alt stands in for it.
 fn prompt_texts(request: &CompletionRequest) -> impl Iterator<Item = Cow<'_, str>> {
     let input = request.input.iter().flat_map(|item| match item {
         CompletionInput::Message { role, content } => {
@@ -210,6 +219,7 @@ fn prompt_texts(request: &CompletionRequest) -> impl Iterator<Item = Cow<'_, str
             Cow::Borrowed(name.as_str()),
             Cow::Owned(arguments.to_string()),
         ],
+        CompletionInput::Multimodal { role, .. } => vec![Cow::Borrowed(role.as_str()), item.text()],
         CompletionInput::ToolResult { output, .. } => vec![Cow::Borrowed(output.as_str())],
         CompletionInput::Native { .. } => Vec::new(),
     });
@@ -314,6 +324,10 @@ impl LLMPort for ScheduledLlm {
 
     fn supports_tool_calling(&self) -> bool {
         self.inner.supports_tool_calling()
+    }
+
+    fn vision(&self) -> Option<VisionGeometry> {
+        self.inner.vision()
     }
 
     fn provider_name(&self) -> &str {

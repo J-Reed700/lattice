@@ -36,6 +36,7 @@ fn local_client(
         supports_tools: true,
         model_thinking,
         prefill_guard: true,
+        vision: None,
     };
     LlamaCppLlm::connect("http://localhost:8080", "token", config).unwrap()
 }
@@ -349,6 +350,7 @@ async fn measured(
         supports_tools: false,
         model_thinking: ThinkingPolicy::default(),
         prefill_guard: false,
+        vision: None,
     };
     let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
     let (body, size) = client
@@ -434,6 +436,7 @@ async fn a_prompt_the_estimate_fits_is_not_counted_again() {
         supports_tools: false,
         model_thinking: ThinkingPolicy::default(),
         prefill_guard: false,
+        vision: None,
     };
     let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
     let (body, size) = client
@@ -446,4 +449,126 @@ async fn a_prompt_the_estimate_fits_is_not_counted_again() {
         .unwrap();
     assert_eq!(body["max_tokens"], 2_000);
     assert!(!size.counted_exactly);
+}
+
+/// One 400 KB picture from the user, costing `tokens`, before `text`.
+fn picture_request(role: &str, text: &str, tokens: u32) -> CompletionRequest {
+    use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
+    CompletionRequest {
+        input: vec![CompletionInput::Multimodal {
+            role: role.into(),
+            parts: vec![
+                ContentPart::Image(ImagePart {
+                    mime: "image/jpeg".into(),
+                    data_base64: "A".repeat(400_000),
+                    width: 896,
+                    height: 1120,
+                    tokens,
+                    alt: "photo.jpg".into(),
+                }),
+                ContentPart::Text { text: text.into() },
+            ],
+        }],
+        ..Default::default()
+    }
+}
+
+fn seeing(client: LlamaCppLlm) -> LlamaCppLlm {
+    use lattice_core::domain::models::vision::VisionPreset;
+    client.with_vision(Some(VisionPreset::Qwen25Vl.geometry()))
+}
+
+#[test]
+fn a_picture_is_sent_as_an_image_url_before_the_text() {
+    let body = seeing(client())
+        .body(&picture_request("user", "What is this?", 1_282))
+        .unwrap();
+    let content = &body["messages"][0]["content"];
+    assert_eq!(content[0]["type"], "image_url");
+    let url = content[0]["image_url"]["url"].as_str().unwrap();
+    assert!(url.starts_with("data:image/jpeg;base64,AAAA"), "{url:.40}");
+    assert_eq!(content[1], json!({"type":"text","text":"What is this?"}));
+}
+
+#[test]
+fn a_model_nobody_declared_able_to_see_refuses_pictures() {
+    let refused = client()
+        .body(&picture_request("user", "What is this?", 1_282))
+        .unwrap_err();
+    assert!(matches!(refused, AppError::InvalidConfig(_)), "{refused}");
+    assert!(
+        refused.to_string().contains("is not set up to see images"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn pictures_outside_a_user_message_are_refused() {
+    let refused = seeing(client())
+        .body(&picture_request("assistant", "Here", 1_282))
+        .unwrap_err();
+    assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
+}
+
+#[test]
+fn a_pictures_bytes_never_count_as_prompt_text() {
+    let client = seeing(client());
+    let request = picture_request("user", "What is this?", 1_282);
+    // 400 KB of base64 read as text would be 100,000 tokens and leave nothing.
+    let window = client.config.context_window as u32;
+    let room = client.output_room_for(&request.input, 4_096);
+    assert_eq!(room, 4_096.min(window.saturating_sub(1_300)));
+    // The prefill allowance adds the picture's declared tokens, not its bytes.
+    let allowance = retry::prefill_allowance(&request.input);
+    assert_eq!(
+        allowance,
+        retry::FIRST_FRAME_FLOOR
+            + Duration::from_secs((1_282 / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
+    );
+}
+
+#[tokio::test]
+async fn the_exact_count_adds_the_pictures_and_a_refusal_names_them() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"tokens": vec![1; 1_000]})))
+        .mount(&server)
+        .await;
+    let settings = LLMSettingsDto::default();
+    let config = ServerConfig {
+        model: "qwen-vl".into(),
+        generation: GenerationConfig::from_settings(&settings),
+        context_window: 8192,
+        stall_timeout: Duration::from_secs(30),
+        supports_tools: false,
+        model_thinking: ThinkingPolicy::default(),
+        prefill_guard: false,
+        vision: Some(lattice_core::domain::models::vision::VisionPreset::Qwen25Vl.geometry()),
+    };
+    let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
+    // The estimate's margin puts 6,000 text tokens at 9,000; the server counts
+    // 1,000, plus framing, plus the picture's 5,000.
+    let request = CompletionRequest {
+        max_output_tokens: Some(2_000),
+        ..picture_request("user", &"x".repeat(24_000), 5_000)
+    };
+    let (_, size) = client.measured_body(&request).await.unwrap();
+    assert!(size.counted_exactly);
+    assert_eq!(size.prompt_tokens, 1_000 + 8 + 16 + 5_000);
+    assert_eq!((size.image_tokens, size.image_count), (5_000, 1));
+    let refused = client
+        .measured_body(&CompletionRequest {
+            max_output_tokens: Some(2_000),
+            ..picture_request("user", &"x".repeat(24_000), 6_000)
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("text counted exactly; 6000 tokens for 1 picture"),
+        "{refused}"
+    );
 }

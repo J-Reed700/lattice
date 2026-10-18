@@ -170,6 +170,14 @@ impl ContextAssembler {
                 // gets rejected.
                 self.count(role) + self.count(content) + MESSAGE_FRAMING_TOKENS
             }
+            // Pictures cost what their declared geometry charges, never the
+            // characters of their bytes.
+            CompletionInput::Multimodal { role, .. } => {
+                self.count(role)
+                    + self.count(&input.text())
+                    + input.image_tokens()
+                    + MESSAGE_FRAMING_TOKENS
+            }
             CompletionInput::ToolCall {
                 name, arguments, ..
             } => self.count(name) + self.count(&arguments.to_string()) + MESSAGE_FRAMING_TOKENS,

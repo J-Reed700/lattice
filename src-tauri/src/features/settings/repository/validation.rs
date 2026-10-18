@@ -197,7 +197,8 @@ impl SettingsRepository {
             )
             .into_iter()
             .chain(settings.llm.thinking_sampling.problems("thinking_sampling"))
-            .chain(settings.llm.speculative_decoding.problem());
+            .chain(settings.llm.speculative_decoding.problem())
+            .chain(settings.llm.vision_problems());
         for problem in generation_problems {
             result.add_error("llm", problem);
         }
