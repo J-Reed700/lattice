@@ -11,6 +11,8 @@ const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), resume: vi.fn
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resumeLearningLessonReview: api.resume,
   getLearningLessonAudit: api.audit,
+  // Each card's support block reads its sources' standing; none is judged here.
+  getLearningSourceTrust: async () => ({ ok: true, data: { sources: [], claim: null } }),
 } }));
 
 const ok = <T,>(data: T) => ({ ok: true, data });

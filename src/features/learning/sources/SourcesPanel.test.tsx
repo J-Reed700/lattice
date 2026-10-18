@@ -29,6 +29,8 @@ vi.mock('@/lib/api', () => ({ default: {
   refreshLearningSource: mocks.refresh,
   adoptLearningSourceVersion: mocks.adopt,
   updateLearningSourcePolicy: mocks.policy,
+  // The trust section reads each source's level; none is judged here.
+  getLearningSourceTrust: async () => ({ ok: true, data: { sources: [], claim: null } }),
   getLearningProgram: vi.fn(), listLearningPrograms: vi.fn(),
 } }));
 
