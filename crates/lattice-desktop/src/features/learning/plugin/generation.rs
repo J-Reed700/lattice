@@ -68,6 +68,7 @@ pub(super) fn generation_worker(
     crate::features::learning::generation_jobs::LessonGenerationWorker {
         runtimes,
         research_web: Some(container.web_service()),
+        verifier: Some(super::audit::container_verifier(container)),
         pool: container.db_pool().clone(),
         load_library: std::sync::Arc::new(move || {
             let container = library_container.clone();

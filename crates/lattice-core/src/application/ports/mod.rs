@@ -74,6 +74,7 @@ pub mod backup_port;
 pub mod backup_scheduler_port;
 pub mod chat_images;
 pub mod chunk_repository_port;
+pub mod claim_review;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
 pub mod conversation_context;
@@ -110,6 +111,7 @@ pub mod note_index_sink;
 pub mod ocr_port;
 pub mod query_interpreter;
 pub mod recent_documents_port;
+pub mod reference_snapshots;
 pub mod repository_port;
 pub mod search_engines;
 pub mod settings_port;
@@ -133,6 +135,7 @@ pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
 pub use chat_images::{ChatImagesPort, CopiedMessage, ImageTurnScope};
 pub use chunk_repository_port::ChunkRepositoryPort;
+pub use claim_review::ClaimReviewStore;
 pub use content_addressed_storage_port::{
     is_blob_hash, BlobLease, BlobLeases, BlobReferenceCheck, BlobRemoval,
     ContentAddressedStoragePort, ImportedBlob, RetainReason,
@@ -172,6 +175,7 @@ pub use model_storage::{DownloadedModel, ModelStoragePort};
 pub use note_index_sink::NoteIndexSink;
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
+pub use reference_snapshots::{ReferenceSnapshot, ReferenceSnapshotPort};
 pub use repository_port::{Filter, NoFilter, RepositoryPort};
 pub use search_engines::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 pub use settings_port::merge_json_update;

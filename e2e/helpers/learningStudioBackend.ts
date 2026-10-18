@@ -24,6 +24,9 @@ import type {
   LearningProgramDto,
   LearningPracticalWorkspaceDto,
   LearningTangentDto,
+  ClaimActionRequestDto,
+  ClaimEventPayloadDto,
+  LessonClaimReviewDto,
   StudyCardDto,
   StudyDeckSummaryDto,
   WorkspaceNoteDto,
@@ -78,9 +81,12 @@ type SourceCheck = {
   pendingVersionId: string | null;
   message: string | null;
 };
+/** A lesson's claim review as the claim review spec drives it. */
+type ClaimReviewFixture = LessonClaimReviewDto;
 type SourceLibraryItem = {
   id: string;
   kind: SourceKind;
+  addedBy: "user" | "research" | "outline" | "import" | "verifier";
   origin: string;
   requestedUrl: string | null;
   freshnessPolicy: SourcePolicy;
@@ -369,6 +375,7 @@ export async function installLearningStudioBackend(page: Page) {
         {
           id: "logical-source-field-notes",
           kind: "web",
+          addedBy: "outline",
           origin: source.url ?? "https://example.org/field-notes",
           requestedUrl: source.url,
           freshnessPolicy: "manual",
@@ -436,6 +443,14 @@ export async function installLearningStudioBackend(page: Page) {
     ];
     const state = {
       program,
+      // Lesson claim reviews by lesson id; a lesson without one answers null.
+      claimReviews: {} as Record<string, ClaimReviewFixture>,
+      claimActions: [] as Array<{ claimId: string; action: { action: string } & Record<string, unknown>; at: number }>,
+      verifierAudit: {
+        programId: program.summary.id, on: false, webSearch: false, consentAt: null as number | null, consentProvider: null as string | null,
+        verifier: null, destination: "Anthropic (claude-fixture)" as string | null, consentRequiredFor: "anthropic" as string | null,
+        blocked: null as string | null, usage: { audits: 0, inputTokens: 0, outputTokens: 0 },
+      },
       memory,
       canvasWorkspace,
       calls: ipc.calls,
@@ -1169,15 +1184,96 @@ export async function installLearningStudioBackend(page: Page) {
           ],
         };
       },
+      // The reader asks for a passage's file by its source version id; a
+      // learning source version is not a file, so the read fails as it does
+      // in the app and the reader shows the saved passage instead.
+      read_file_content: (args: MockArgs) => {
+        throw new Error(`File not found: ${String((args as { path?: string }).path)}`);
+      },
+      get_learning_lesson_claim_review: (args: MockArgs) => {
+        const review = state.claimReviews[String((args as { lessonId?: string }).lessonId)];
+        return review ? structuredClone(review) : null;
+      },
+      resolve_learning_claim: (args: MockArgs) => {
+        const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: ClaimActionRequestDto }>(args);
+        const review = state.claimReviews[request.lessonId];
+        if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
+        if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
+        const claim = review.claims.find((item) => item.claimId === request.claimId);
+        if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
+        const now = Date.now();
+        const { action } = request;
+        const record = (event: ClaimEventPayloadDto) => claim.history.push({ ordinal: claim.history.length, actor: "user", at: now, jobId: null, appVersion: "e2e", checkerModel: null, event });
+        let attach: Record<string, unknown> | null = null;
+        if (action.action === "attach_link") {
+          const url = String(action.url);
+          if (url.includes("403")) {
+            const host = new URL(url).host;
+            const failure = { kind: "refused", message: `${host} refused the request (HTTP 403).`, nextSteps: [{ step: "paste_text", origin: url }, { step: "add_file" }] };
+            attach = { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [failure.message] };
+            state.claimActions.push({ claimId: claim.claimId, action, at: now });
+            return { revision: review.revision, attach };
+          }
+        }
+        if (action.action === "attach_text" || action.action === "attach_link") {
+          const title = action.action === "attach_text" ? String(action.title) : String(action.url);
+          claim.state = { state: "resolved_by_evidence" };
+          claim.availableActions = ["attach_evidence"];
+          record({ kind: "evidence_attached", sourceVersionId: "pasted-version", provenance: action.action === "attach_text" ? { input: "pasted_text" } : { input: "link", url: action.url }, result: { outcome: "no_passage" } });
+          attach = { revision: review.revision + 1, source: { sourceId: "pasted-source", sourceVersionId: "pasted-version", title, url: null, addedBy: "user" }, alreadySaved: false, outcome: { outcome: "no_passage" }, failure: null, snapshot: { state: "not_applicable" }, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [`Verified against ${title}.`] };
+        } else if (action.action === "confirm") {
+          claim.state = { state: "confirmed", at: now };
+          claim.human = { at: now, note: (action.note as string | null) ?? null, boundSources: [] };
+          claim.availableActions = ["unconfirm", "undo", "attach_evidence"];
+          record({ kind: "user_action", action: { action: "confirm", boundSourceVersionIds: action.sourceVersionIds ?? [] }, note: action.note ?? null });
+        } else if (action.action === "undo") {
+          claim.state = { state: "queued" };
+          claim.human = null;
+          claim.availableActions = ["confirm", "edit", "remove", "attach_evidence", "research_with_hint"];
+          record({ kind: "undone", eventOrdinal: claim.history.length - 1 });
+        } else if (action.action === "remove") {
+          claim.state = { state: "removed", at: now, by: "user" };
+          claim.availableActions = ["undo"];
+          record({ kind: "user_action", action: { action: "remove" }, note: null });
+        } else throw { code: "INVALID_INPUT", message: `The e2e fixture does not model ${action.action}.` };
+        state.claimActions.push({ claimId: claim.claimId, action, at: now });
+        review.revision += 1;
+        review.changedSinceStop = true;
+        const waiting = review.claims.filter((item) => item.state.state === "queued").length;
+        review.counts = { ...review.counts, queued: waiting, confirmed: review.claims.filter((item) => item.state.state === "confirmed").length };
+        return { revision: review.revision, attach: attach && { ...attach, revision: review.revision } };
+      },
+      resume_learning_lesson_review: (args: MockArgs) => {
+        const request = getRequest<{ programId: string; lessonId: string; expectedRevision: number; operationId: string }>(args);
+        const review = state.claimReviews[request.lessonId];
+        const holding = state.planWorkspace.jobs.find((job) => job.resultId?.includes(request.lessonId));
+        if (!review || !holding) throw { code: "NOT_FOUND", message: "Nothing is waiting for review in this lesson." };
+        if (review.claims.some((item) => item.state.state === "queued") && !review.changedSinceStop)
+          throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a claim or add evidence first." };
+        review.state = "verifying";
+        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
+        state.planWorkspace.jobs.unshift(next);
+        return next;
+      },
+      // The Verifier audit is off unless a spec turns it on; no lesson has an audit.
+      get_learning_program_verifier_audit: () => structuredClone(state.verifierAudit),
+      set_learning_program_verifier_audit: (args: MockArgs) => {
+        const { on, webSearch, consentConfirmed } = args as { on: boolean; webSearch: boolean; consentConfirmed: boolean };
+        if (on && state.verifierAudit.consentRequiredFor && !consentConfirmed)
+          throw { code: "INVALID_INPUT", message: "Confirm what is sent before turning the audit on." };
+        Object.assign(state.verifierAudit, { on, webSearch: on && webSearch, consentAt: on && consentConfirmed ? Date.now() : null, consentProvider: on && consentConfirmed ? state.verifierAudit.consentRequiredFor : null });
+        return structuredClone(state.verifierAudit);
+      },
+      get_learning_lesson_audit: () => null,
       get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
-        claimCount: 14, generalKnowledgeCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+        claimCount: 14, generalKnowledgeCount: 0, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
         teachingClaims: [{ sectionIndex: 0, contentQuote: "A comparison begins by naming the measure and the period under observation.",
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }] }],
+            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null }],
       }),
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {
@@ -1725,6 +1821,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.sourceWorkspace.sources.push({
             id,
             kind: "web",
+            addedBy: "user",
             origin: url,
             requestedUrl: url,
             freshnessPolicy: String(request.freshnessPolicy) as SourcePolicy,
@@ -1769,6 +1866,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.sourceWorkspace.sources.push({
             id,
             kind: "document",
+            addedBy: "user",
             origin: String(request.documentId),
             requestedUrl: null,
             freshnessPolicy: "fixed",
@@ -1812,6 +1910,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.sourceWorkspace.sources.push({
             id,
             kind: "pasted",
+            addedBy: "user",
             origin: "Pasted text",
             requestedUrl: null,
             freshnessPolicy: "fixed",

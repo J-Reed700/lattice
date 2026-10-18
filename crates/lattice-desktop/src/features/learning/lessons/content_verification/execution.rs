@@ -164,6 +164,10 @@ impl Observation {
             && self.result.exit_code == Some(0)
             && !self.result.output_truncated
     }
+    /// The exact code that ran, as the lesson shows it.
+    pub(in crate::features::learning) fn code(&self) -> &str {
+        &self.code
+    }
     pub(in crate::features::learning) fn evidence(&self) -> String {
         format!("Execution on {} for the exact code below:\n{}\nStatus: {:?}; stdout (JSON string preserving whitespace): {}\nstderr: {}", self.runtime, self.code, self.result.status, json!(self.result.stdout), json!(self.result.stderr))
     }

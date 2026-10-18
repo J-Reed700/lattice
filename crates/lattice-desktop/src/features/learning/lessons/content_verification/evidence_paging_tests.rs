@@ -421,7 +421,7 @@ impl LLMPort for BrokenJudge {
 }
 
 #[tokio::test]
-async fn an_unusable_check_fails_the_job_once_and_an_outage_defers_it() -> Result<()> {
+async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_it() -> Result<()> {
     use lattice_core::shared::runtime::jobs::JobFailure;
     let sources: Vec<_> = (0..3).map(related).collect();
     let references = ReferenceCollection::lexical(&sources)?;
@@ -436,19 +436,21 @@ async fn an_unusable_check_fails_the_job_once_and_an_outage_defers_it() -> Resul
         )
         .await
     };
-    // Deterministic: the claim is left unverified with its cause, and the
-    // job's error is not one it defers.
+    // Deterministic: the claim is left unverified with its cause, which the
+    // claim ledger queues for the user as "could not judge" (§4), never a
+    // job failure.
     let results = check(BrokenJudge {
         inner: Model::new(),
         outage: false,
     })
     .await?;
     assert_eq!(results[0].2.verdict, ClaimVerdict::Unverified);
-    let findings: Vec<Finding> = results.into_iter().map(|r| r.2).collect();
-    let error = repair_loop::unchecked_claims(&findings).unwrap();
-    assert!(!JobFailure::is_transient(&error), "{error}");
-    assert!(error.to_string().contains(CLAIM));
-    assert!(error.to_string().contains("unusable"));
+    assert_eq!(results[0].2.statement, CLAIM);
+    assert!(
+        results[0].2.reason.contains("unusable"),
+        "{}",
+        results[0].2.reason
+    );
     // Transient: the outage fails the check and the job defers it.
     let error = check(BrokenJudge {
         inner: Model::new(),

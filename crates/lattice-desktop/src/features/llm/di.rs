@@ -198,6 +198,34 @@ impl Container {
         .await
     }
 
+    /// The Verifier model, pinned for one lesson audit (lesson claim review
+    /// §14). Never another role's model: unset, or a cloud model with no key
+    /// saved, and the audit refuses. Never prewarmed; a cloud Verifier is a
+    /// client, not a sidecar.
+    pub async fn verifier_llm(&self, requirements: ModelRequirements) -> Result<PinnedModel> {
+        self.llm_for(&ModelRequest {
+            role: ModelRole::Verifier,
+            selection: ModelSelection::Verifier,
+            requirements,
+            work: String::new(),
+            conversation_id: None,
+        })
+        .await
+    }
+
+    /// The Verifier model named in Settings, unloaded: what an audit's
+    /// consent is checked against before anything is sent.
+    pub async fn verifier_model(&self) -> Result<Option<ModelRef>> {
+        Ok(self
+            .system
+            .settings_repo()
+            .get_all()
+            .await
+            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {e}")))?
+            .llm
+            .verifier_model)
+    }
+
     /// The Settings default chat model, for work that belongs to no chat.
     pub async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
         Ok(self.pinned_default_chat_llm().await?.llm)

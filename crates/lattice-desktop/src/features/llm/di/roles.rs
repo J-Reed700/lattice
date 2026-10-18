@@ -1,7 +1,8 @@
 //! Which model each role runs on, loaded through the app's instances.
 //!
 //! A chat runs on its request override, else its own choice, else the
-//! Settings default; the Learning role runs on its own model; the router and
+//! Settings default; the Learning and Verifier roles run on their own models
+//! (the Verifier's may be a cloud model, checked for a saved key); the router and
 //! utility roles on theirs. Only the Settings default keeps Auto's load-time
 //! fallback — the active local model, then a llama.cpp server that is up, then
 //! Ollama. A model named outright is used as named or refused, never swapped
@@ -16,7 +17,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::{LLMPort, SettingsRepositoryPort};
 use lattice_core::application::services::chat_model_resolution::{
-    default_chat_model, resolve, resolve_learning,
+    default_chat_model, resolve, resolve_learning, resolve_verifier,
 };
 use lattice_core::application::services::model_selection::select_model;
 use lattice_core::domain::conversation::ChatModelChoice;
@@ -30,7 +31,7 @@ use crate::features::llm::instances::{
     Acquire, Acquired, GpuBudget, Holder, LaunchProfile, LearningShortfall, LlmInstances, ModelKey,
     Tuning,
 };
-use crate::features::llm::loading::{launch_profile_for, LocalModel, ModelLoader};
+use crate::features::llm::loading::{cloud_key_saved, launch_profile_for, LocalModel, ModelLoader};
 
 /// What a turn or job asks a model for.
 pub(crate) struct ModelRequest {
@@ -68,6 +69,9 @@ pub(crate) enum ModelSelection {
     },
     /// The Learning model set in Settings; refused when none is.
     Learning,
+    /// The Verifier model set in Settings; refused when none is, or when it
+    /// names a cloud model with no API key saved.
+    Verifier,
 }
 
 /// One model wanted for one piece of work.
@@ -118,6 +122,12 @@ impl RoleModels {
             ModelSelection::Learning => {
                 let resolved = resolve_learning(&settings).map_err(|error| {
                     refusal::refused(request.role, None, "learning_unset", error)
+                })?;
+                Some(resolved)
+            }
+            ModelSelection::Verifier => {
+                let resolved = resolve_verifier(&settings, cloud_key_saved).map_err(|error| {
+                    refusal::refused(request.role, None, "verifier_unavailable", error)
                 })?;
                 Some(resolved)
             }

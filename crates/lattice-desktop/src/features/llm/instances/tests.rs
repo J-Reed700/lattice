@@ -709,6 +709,29 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
 }
 
 #[test]
+fn verifier_refusals_name_the_verifier_role_and_its_fix() {
+    use refusal::{no_tools, not_downloaded};
+    let message = |error: AppError| match error {
+        AppError::InvalidConfig(message) | AppError::AiModelsNotInstalled(message) => message,
+        other => panic!("unexpected refusal {other:?}"),
+    };
+    assert_eq!(
+        message(not_downloaded(
+            ModelRole::Verifier,
+            ModelOrigin::VerifierRole,
+            "qwen3.5-27b"
+        )),
+        "Your Verifier model, qwen3.5-27b, is not downloaded any more. Choose one in \
+         Settings → Models under Verifier."
+    );
+    assert_eq!(
+        message(no_tools(ModelRole::Verifier, "Qwen3.5-27B")),
+        "Qwen3.5-27B cannot call tools, and the verifier audit needs them. Choose a \
+         tool-capable model as the Verifier model."
+    );
+}
+
+#[test]
 fn a_learning_shortfall_lasts_until_its_model_serves_a_window_that_covers_it() {
     let instances = LlmInstances::new();
     let model = local_key("Ornith-1.5-9B").model;

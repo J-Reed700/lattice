@@ -93,6 +93,64 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningOutlineEvidenceDto | null>> =>
     learningCall('get_learning_outline_evidence', { programId }),
 
+  /** null before the lesson's first verification pass. */
+  getLearningLessonClaimReview: (
+    programId: string,
+    lessonId: string,
+  ): Promise<ApiResult<Wire.LessonClaimReviewDto | null>> =>
+    learningCall('get_learning_lesson_claim_review', { programId, lessonId }),
+
+  resolveLearningClaim: (
+    request: Wire.ResolveLearningClaimRequestDto,
+  ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
+    learningCall('resolve_learning_claim', { request }),
+
+  resumeLearningLessonReview: (
+    request: Wire.ResumeLearningLessonReviewRequestDto,
+  ): Promise<ApiResult<Wire.LearningGenerationJob>> =>
+    learningCall('resume_learning_lesson_review', { request }),
+
+  captureLearningSourceSnapshot: (
+    request: Wire.CaptureLearningSourceSnapshotRequestDto,
+  ): Promise<ApiResult<Wire.SnapshotNoteDto>> =>
+    learningCall('capture_learning_source_snapshot', { request }),
+
+  getLearningCheckerAccuracy: (): Promise<ApiResult<Wire.CheckerAccuracyDto[]>> =>
+    learningCall('get_learning_checker_accuracy'),
+
+  getLearningProgramVerifierAudit: (
+    programId: string,
+  ): Promise<ApiResult<Wire.LearningVerifierAuditDto>> =>
+    learningCall('get_learning_program_verifier_audit', { programId }),
+
+  /** Refused for a cloud Verifier unless `consentConfirmed`; off clears the consent. */
+  setLearningProgramVerifierAudit: (
+    programId: string,
+    on: boolean,
+    webSearch: boolean,
+    consentConfirmed: boolean,
+  ): Promise<ApiResult<Wire.LearningVerifierAuditDto>> =>
+    learningCall('set_learning_program_verifier_audit', { programId, on, webSearch, consentConfirmed }),
+
+  getLearningLessonAudit: (
+    programId: string,
+    lessonId: string,
+  ): Promise<ApiResult<Wire.LearningLessonAuditDto | null>> =>
+    learningCall('get_learning_lesson_audit', { programId, lessonId }),
+
+  auditLearningLessonNow: (
+    programId: string,
+    lessonId: string,
+    operationId: string,
+  ): Promise<ApiResult<Wire.LearningLessonAuditResultDto>> =>
+    learningCall('audit_learning_lesson_now', { programId, lessonId, operationId }),
+
+  /** Null when the user dismissed the save dialog. */
+  exportLearningCheckerExamples: (
+    request: Wire.ExportLearningCheckerExamplesRequestDto,
+  ): Promise<ApiResult<Wire.ExportedLearningCheckerExamplesDto | null>> =>
+    learningCall('export_learning_checker_examples', { request }),
+
   generateLearningProgram: (
     request: Wire.GenerateLearningProgramRequestDto,
     options?: {

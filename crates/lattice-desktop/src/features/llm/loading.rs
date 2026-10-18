@@ -410,6 +410,16 @@ fn llm_provider(provider: CloudProvider) -> LLMProvider {
     }
 }
 
+/// Whether `provider` has an API key, looked up as [`cloud_api_key`] reads
+/// it. The key itself is not returned.
+pub(crate) fn cloud_key_saved(provider: CloudProvider) -> Result<bool> {
+    match cloud_api_key(provider) {
+        Ok(_) => Ok(true),
+        Err(AppError::InvalidConfig(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// The API key for `provider`, read as everywhere else: its environment
 /// variable, else the keyring.
 fn cloud_api_key(provider: CloudProvider) -> Result<String> {

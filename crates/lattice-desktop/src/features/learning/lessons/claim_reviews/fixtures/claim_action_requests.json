@@ -1,0 +1,52 @@
+[
+  {
+    "action": "confirm",
+    "note": "Measured in the lab.",
+    "sourceVersionIds": [
+      "v1"
+    ]
+  },
+  {
+    "action": "unconfirm"
+  },
+  {
+    "action": "edit",
+    "before": "Water boils at 100 °C.",
+    "after": "Water boils at 100 °C at one atmosphere."
+  },
+  {
+    "action": "remove"
+  },
+  {
+    "action": "general_knowledge"
+  },
+  {
+    "action": "accept_all_general_knowledge"
+  },
+  {
+    "action": "research_with_hint",
+    "hint": "NIST steam tables"
+  },
+  {
+    "action": "attach_saved_source",
+    "sourceVersionId": "v1",
+    "startByte": 120,
+    "endByte": 184
+  },
+  {
+    "action": "attach_link",
+    "url": "https://example.org/steam"
+  },
+  {
+    "action": "attach_document",
+    "documentId": "doc-7"
+  },
+  {
+    "action": "attach_text",
+    "title": "Lab notebook, 12 Oct",
+    "text": "Boiled at 100.0 °C, 1013 hPa."
+  },
+  {
+    "action": "undo"
+  }
+]

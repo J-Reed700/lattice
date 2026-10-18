@@ -209,7 +209,25 @@ pub struct LearningGenerationActivity {
     /// Set while claims this pass left unsupported are checked against further
     /// pages of their evidence.
     pub deeper_evidence: Option<LearningDeeperEvidence>,
+    /// Where the lesson's claims stand after the latest pass; none before
+    /// the first pass observed them.
+    pub claims: Option<LearningClaimTally>,
     pub recent_steps: Vec<LearningGenerationStep>,
+}
+
+/// The lesson's claims by who acts next (§6.3): "Pass 3 · 2 claims being
+/// repaired · 5 waiting for you · 108 verified".
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningClaimTally {
+    /// The machine's: being checked, researched or repaired.
+    pub repairing: u32,
+    /// Waiting for the user.
+    pub waiting: u32,
+    /// Verified against a source.
+    pub verified: u32,
+    /// Closed by the user or removed: confirmed, general knowledge, removed.
+    pub resolved_by_you: u32,
 }
 
 /// One round of checking unsupported claims against their next evidence page.

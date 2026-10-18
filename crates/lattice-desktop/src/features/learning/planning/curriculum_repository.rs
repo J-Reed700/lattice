@@ -30,6 +30,8 @@ pub(in crate::features::learning) use generation_recovery::{
 mod diagnostics;
 mod jobs;
 mod preparation;
+mod programs;
+pub(crate) use programs::ProgramVerifierAudit;
 
 use diagnostics::decode_diagnostic_row;
 
@@ -106,6 +108,12 @@ pub struct LearningCurriculumRepository {
 impl LearningCurriculumRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// The database the repository writes, for the lesson's claim ledger,
+    /// which a preparation job writes beside its drafts.
+    pub(in crate::features::learning) fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
     pub(in crate::features::learning) async fn seed_accepted(

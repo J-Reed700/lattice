@@ -368,6 +368,7 @@ pub(super) async fn run_and_confirm(
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
+        verifier: None,
     };
     // Run through the native job runtime: transient network/model failures
     // stay queued, and the runtime redelivers them when their retry is due.

@@ -69,6 +69,24 @@ pub(in crate::features::learning) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
 }
 
+/// The job and lesson a running preparation writes its drafts for, and the
+/// database it writes them to: where the lesson's claim ledger is kept.
+pub(in crate::features::learning) struct DraftScope {
+    pub pool: sqlx::SqlitePool,
+    pub job_id: String,
+    pub lesson_id: String,
+}
+
+pub(in crate::features::learning) fn scope() -> Option<DraftScope> {
+    CURRENT
+        .try_with(|context| DraftScope {
+            pool: context.repo.pool().clone(),
+            job_id: context.job_id.clone(),
+            lesson_id: context.lesson_id.clone(),
+        })
+        .ok()
+}
+
 /// Learner progress can change the program's revision without changing these
 /// authoring inputs. Keep the job's original identity through resume and retry.
 pub(in crate::features::learning) fn authoring_revision(current: i64) -> i64 {

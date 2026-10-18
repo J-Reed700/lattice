@@ -49,6 +49,8 @@ mod canvas;
 pub use canvas::*;
 mod sources;
 pub use sources::*;
+mod claims;
+pub use claims::*;
 mod recall;
 pub use recall::*;
 mod practice;
@@ -69,6 +71,8 @@ mod study;
 pub use study::*;
 mod tangents;
 pub use tangents::*;
+mod audit;
+pub use audit::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -128,6 +132,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             list_learning_programs,
             get_learning_program,
             get_learning_lesson_evidence,
+            get_learning_program_verifier_audit,
+            set_learning_program_verifier_audit,
+            get_learning_lesson_audit,
+            audit_learning_lesson_now,
             get_learning_outline_evidence,
             generate_learning_program,
             cancel_learning_outline,
@@ -163,6 +171,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_learning_source_selector,
             match_learning_source_selector,
             search_learning_sources_semantically,
+            get_learning_lesson_claim_review,
+            resolve_learning_claim,
+            resume_learning_lesson_review,
+            capture_learning_source_snapshot,
+            get_learning_checker_accuracy,
+            export_learning_checker_examples,
             get_learning_recall_workspace,
             save_learning_recall_card,
             decide_learning_recall_duplicate,

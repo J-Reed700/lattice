@@ -1,0 +1,23 @@
+[
+  {
+    "kind": "unsupported"
+  },
+  {
+    "kind": "contradicted"
+  },
+  {
+    "kind": "no_source"
+  },
+  {
+    "kind": "could_not_judge"
+  },
+  {
+    "kind": "general_knowledge_proposed"
+  },
+  {
+    "kind": "disputed",
+    "verifier": {
+      "kind": "contradicted"
+    }
+  }
+]

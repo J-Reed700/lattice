@@ -637,6 +637,9 @@ pub enum ModelRole {
     Router,
     Learning,
     Maintenance,
+    /// The final grounded audit of a lesson's claims before it publishes
+    /// (lesson claim review §14). The one role that may name a cloud model.
+    Verifier,
 }
 
 /// Why a turn or job runs on the model it runs on.
@@ -651,6 +654,8 @@ pub enum ModelOrigin {
     RequestOverride,
     /// The Learning model set in Settings.
     LearningRole,
+    /// The Verifier model set in Settings.
+    VerifierRole,
 }
 
 /// Whether the work needs the model to call tools.

@@ -284,6 +284,7 @@ fn practical_fixture() -> (LearningLessonDto, LearningSourceVersionDto) {
             truncated: false,
             extraction_version: "synthetic_eval_v1".into(),
             acquired_at: 1,
+            snapshot_hash: None,
         },
         full_text: "Quoted delimiters stay inside the current field. Two adjacent quote characters inside a quoted field represent one literal quote."
             .into(),

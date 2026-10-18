@@ -1,4 +1,6 @@
 use super::*;
+use lattice_core::application::ports::ReferenceSnapshot;
+use lattice_core::domain::learning::claim_review::SourceAddedBy;
 
 #[tauri::command]
 #[specta::specta]
@@ -18,10 +20,26 @@ pub async fn get_learning_source_version(
     request: GetLearningSourceVersionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningSourceVersionDto, ApiError> {
-    source_library(&container)
-        .get_version(&request)
-        .await
-        .map_err(ApiError::from)
+    let repo = source_library(&container);
+    let mut version = repo.get_version(&request).await.map_err(ApiError::from)?;
+    // A page's frozen copy finishes after its version is saved; the first
+    // read that finds it ready records it (claim review §5.4).
+    if version.version.snapshot_hash.is_none() {
+        if let Some(url) = version.version.resolved_url.clone() {
+            match container.reference_snapshots().status(&url).await {
+                Ok(Some(ReferenceSnapshot::Ready { sha256 })) => {
+                    repo.link_snapshot(&request.program_id, &request.version_id, &sha256)
+                        .await
+                        .map_err(ApiError::from)?;
+                    version.version.snapshot_hash = Some(sha256);
+                }
+                Ok(_) => {}
+                // The captured text still reads; the frozen copy is optional.
+                Err(error) => tracing::debug!(%error, "Could not look up a source's frozen copy"),
+            }
+        }
+    }
+    Ok(version)
 }
 
 #[tauri::command]
@@ -97,7 +115,7 @@ pub async fn add_learning_document_source(
     )
     .await
     .map_err(ApiError::from)?;
-    repo.add(
+    repo.add_by(
         crate::features::learning::source_library::NewLearningSource {
             operation_id: &request.operation_id,
             source_id: &request.source_id,
@@ -111,6 +129,7 @@ pub async fn add_learning_document_source(
         },
         captured,
         hash,
+        SourceAddedBy::User,
     )
     .await
     .map_err(ApiError::from)?;
@@ -140,10 +159,11 @@ pub async fn add_learning_text_source(
         resolved_url: None,
         text: request.text.clone(),
         truncated: false,
-        extraction_version: "pasted_text_v1".into(),
+        extraction_version: crate::features::learning::source_library::PASTED_TEXT_EXTRACTION
+            .into(),
     };
     source_library(&container)
-        .add(
+        .add_by(
             crate::features::learning::source_library::NewLearningSource {
                 operation_id: &request.operation_id,
                 source_id: &request.source_id,
@@ -157,6 +177,7 @@ pub async fn add_learning_text_source(
             },
             captured,
             hash,
+            SourceAddedBy::User,
         )
         .await
         .map_err(ApiError::from)?;

@@ -456,6 +456,22 @@ impl<'a> ReferenceCollection<'a> {
         }
     }
 
+    /// [`Self::verification_page`] from one source version only: the
+    /// passages of `source_version_id` for `query`, best first, while `fits`
+    /// accepts them. A source the user attaches to a claim is checked this
+    /// way, ranked within the whole collection (claim review §5.4).
+    pub(in crate::features::learning) async fn retrieve_from(
+        &self,
+        source_version_id: &str,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
+        let (page, _) = self
+            .verification_page_within(query, &[], |hit| hit.source_id == source_version_id, fits)
+            .await?;
+        Ok(page)
+    }
+
     /// Whether `text` mentions what `query` is about: one of the query's
     /// distinctive content terms, those no more common across this
     /// collection's passages than the median of the query's own content

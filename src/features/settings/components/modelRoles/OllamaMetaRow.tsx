@@ -56,7 +56,7 @@ export function OllamaMetaRow() {
   const resolvedUtilityTag = utilityTag || chatTag;
 
   // Learning names the chat tag on this connection: `Ollama{tag}` in Settings.
-  const ollamaRoles = ROLES.filter((r) => r.id === 'chat' || r.id === 'utility' || r.id === 'learning');
+  const ollamaRoles = ROLES.filter((r) => r.id === 'chat' || r.id === 'utility' || r.id === 'learning' || r.id === 'verifier');
 
   const goToChatSettings = () => {
     window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));

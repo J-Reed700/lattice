@@ -1,4 +1,4 @@
-import { LEARNING_PROGRAMS_KEY, learningAssessmentWorkspaceKey, learningCanvasKey, learningLessonEvidencePrefix, learningMemoryKey, learningOutlineEvidencePrefix, learningPlanKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningProgramKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+import { LEARNING_PROGRAMS_KEY, learningAssessmentWorkspaceKey, learningCanvasKey, learningClaimReviewPrefix, learningLessonEvidencePrefix, learningMemoryKey, learningOutlineEvidencePrefix, learningPlanKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningProgramKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 
 import type { QueryClient } from '@tanstack/react-query';
 
@@ -11,6 +11,8 @@ export async function invalidateLearningSourceDependents(client: QueryClient, pr
     learningPlanKey(programId),
     learningLessonEvidencePrefix(programId),
     learningOutlineEvidencePrefix(programId),
+    // Deleting a source reopens the claims it resolved (§5.3).
+    learningClaimReviewPrefix(programId),
     ['learning-source-version', programId],
     ['learning-source-search', programId],
     ['learning-semantic-sources', programId],

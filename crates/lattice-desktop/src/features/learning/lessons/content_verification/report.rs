@@ -35,6 +35,13 @@ impl LessonVerificationReport {
         self.content_sha256 = content_hash(lesson)?;
         Ok(self)
     }
+    /// The user confirmed this example although it did not complete (§5.5).
+    pub(super) fn example_confirmed(&self, observation_id: &str) -> bool {
+        self.confirmed_examples
+            .as_ref()
+            .is_some_and(|ids| ids.iter().any(|id| id == observation_id))
+    }
+
     pub(super) fn validate(&self, lesson_id: &str, lesson: &PreparedLearningLesson) -> Result<()> {
         let unit_count = lesson.blocks.len() + lesson.questions.len();
         let coverage_ids = self
@@ -85,16 +92,31 @@ impl LessonVerificationReport {
             || !self.issues.is_empty()
             || self.findings.is_empty()
             || !findings_complete
+            || self.findings.iter().any(|f| !f.publishable())
             || self
-                .findings
+                .executions
                 .iter()
-                .any(|f| f.verdict != ClaimVerdict::Supported && !f.general_knowledge())
-            || self.executions.iter().any(|e| !e.passed())
+                .any(|e| !e.passed() && !self.example_confirmed(&e.id))
         {
             return Err(invalid("A complete verification report for this exact lesson revision is required before publication."));
         }
         Ok(())
     }
+}
+
+/// The publication gate's refusals when the references moved on after the
+/// lesson was verified. The job verifies again instead of failing (§12).
+const SOURCES_CHANGED: &str =
+    "The reference collection changed during verification. Prepare the lesson again.";
+const SOURCE_INACTIVE: &str = "A verified source is no longer active; verify this lesson again.";
+const SOURCE_CONTENT_CHANGED: &str =
+    "Verification source content changed; verify this lesson again.";
+
+/// Whether `error` is the publication gate finding the references changed
+/// since verification.
+pub(in crate::features::learning) fn sources_changed(error: &AppError) -> bool {
+    matches!(error, AppError::InvalidInput(message)
+        if [SOURCES_CHANGED, SOURCE_INACTIVE, SOURCE_CONTENT_CHANGED].contains(&message.as_str()))
 }
 
 /// Called inside both publication transactions, before marking anything ready.
@@ -113,21 +135,20 @@ pub(in crate::features::learning) async fn persist_report(
         let active: Vec<String> = sqlx::query_scalar("SELECT active_version_id FROM learning_source_library WHERE program_id=? AND deleted_at IS NULL AND active_version_id IS NOT NULL").bind(program_id).fetch_all(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?;
         let expected: HashSet<_> = report.sources.iter().map(|s| s.id.as_str()).collect();
         if active.iter().map(String::as_str).collect::<HashSet<_>>() != expected {
-            return Err(invalid(
-                "The reference collection changed during verification. Prepare the lesson again.",
-            ));
+            return Err(invalid(SOURCES_CHANGED));
         }
     }
     for source in &report.sources {
         let row = sqlx::query("SELECT v.full_text FROM learning_source_versions v JOIN learning_source_library s ON s.active_version_id=v.id AND s.program_id=v.program_id WHERE v.id=? AND v.program_id=? AND s.deleted_at IS NULL")
-            .bind(&source.id).bind(program_id).fetch_optional(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?.ok_or_else(|| invalid("A verified source is no longer active; verify this lesson again."))?;
+            .bind(&source.id).bind(program_id).fetch_optional(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?.ok_or_else(|| invalid(SOURCE_INACTIVE))?;
         if digest(&row.get::<String, _>("full_text")) != source.sha256 {
-            return Err(invalid(
-                "Verification source content changed; verify this lesson again.",
-            ));
+            return Err(invalid(SOURCE_CONTENT_CHANGED));
         }
     }
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
         .bind(lesson_id).bind(program_id).bind(&report.policy).bind(&report.content_sha256).bind(serde_json::to_string(report)?).bind(report.checked_at).execute(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?;
+    // The lesson's claim review, when it has one, ends with the publication.
+    sqlx::query("UPDATE learning_lesson_reviews SET state='ready',revision=revision+1,updated_at=? WHERE lesson_id=?")
+        .bind(chrono::Utc::now().timestamp_millis()).bind(lesson_id).execute(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?;
     Ok(())
 }

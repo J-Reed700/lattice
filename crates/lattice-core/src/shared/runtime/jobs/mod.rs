@@ -6,6 +6,7 @@
 //! cancellation always wins over a late worker result. Handlers own their
 //! cancellation points: terminal writes run to completion rather than being
 //! dropped mid-transaction.
+mod attempt;
 mod repository;
 mod runtime;
 
@@ -309,5 +310,7 @@ impl From<&JobRecord> for JobDto {
     }
 }
 
+#[cfg(test)]
+mod continue_tests;
 #[cfg(test)]
 mod tests;

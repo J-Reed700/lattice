@@ -1,0 +1,46 @@
+[
+  {
+    "state": "unchecked"
+  },
+  {
+    "state": "open",
+    "machineAttemptsLeft": 1
+  },
+  {
+    "state": "queued"
+  },
+  {
+    "state": "resolved_by_evidence"
+  },
+  {
+    "state": "confirmed",
+    "at": 1760000300000
+  },
+  {
+    "state": "removed",
+    "at": 1760000400000,
+    "by": "machine"
+  },
+  {
+    "state": "edited",
+    "at": 1760000500000,
+    "successor": "claim-2"
+  },
+  {
+    "state": "general_knowledge",
+    "at": 1760000600000,
+    "by": "user"
+  },
+  {
+    "state": "reopened",
+    "cause": {
+      "cause": "source_replaced",
+      "from": "v1",
+      "to": "v2"
+    },
+    "previous": {
+      "state": "confirmed",
+      "at": 1760000300000
+    }
+  }
+]

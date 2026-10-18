@@ -1,0 +1,267 @@
+[
+  {
+    "ordinal": 0,
+    "actor": "machine",
+    "at": 1760000000000,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "extracted",
+      "field": "explanation",
+      "quote": "boils at 100 °C",
+      "span": [
+        6,
+        22
+      ],
+      "statement": "Water boils at 100 °C at sea level."
+    }
+  },
+  {
+    "ordinal": 1,
+    "actor": "machine",
+    "at": 1760000000001,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "checked",
+      "check": {
+        "checker": {
+          "role": "local",
+          "model": "qwen3.5-27b"
+        },
+        "result": {
+          "verdict": "failed",
+          "kind": {
+            "kind": "contradicted"
+          }
+        },
+        "reason": "The passage gives 99.97 °C at one atmosphere.",
+        "fingerprint": "fp-1",
+        "evidence": [
+          {
+            "sourceVersionId": "v1",
+            "startByte": 120,
+            "endByte": 184,
+            "textSha256": "4f2a"
+          }
+        ],
+        "windowTokens": 32768
+      }
+    }
+  },
+  {
+    "ordinal": 2,
+    "actor": "machine",
+    "at": 1760000000002,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "researched",
+      "queries": [
+        "boiling point of water at sea level"
+      ],
+      "sourcesAdded": [
+        "v2"
+      ],
+      "passagesFound": 2
+    }
+  },
+  {
+    "ordinal": 3,
+    "actor": "machine",
+    "at": 1760000000003,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "repair_attempted",
+      "attempt": 1,
+      "escalated": false,
+      "before": "Water boils at 100 °C.",
+      "after": "Water boils at about 100 °C.",
+      "outcome": {
+        "outcome": "rejected",
+        "reason": "The rewrite dropped its citation."
+      }
+    }
+  },
+  {
+    "ordinal": 4,
+    "actor": "machine",
+    "at": 1760000000004,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "executed",
+      "observationId": "obs-1",
+      "passed": false,
+      "evidence": "Could not run: no python runtime on this machine."
+    }
+  },
+  {
+    "ordinal": 5,
+    "actor": "user",
+    "at": 1760000000005,
+    "jobId": null,
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "user_action",
+      "action": {
+        "action": "confirm",
+        "boundSourceVersionIds": [
+          "v1"
+        ]
+      },
+      "note": "Measured in the lab."
+    }
+  },
+  {
+    "ordinal": 6,
+    "actor": "user",
+    "at": 1760000000006,
+    "jobId": null,
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "evidence_attached",
+      "sourceVersionId": "v3",
+      "provenance": {
+        "input": "link",
+        "url": "https://example.org/steam"
+      },
+      "result": {
+        "outcome": "checked",
+        "check": {
+          "checker": {
+            "role": "local",
+            "model": "qwen3.5-27b"
+          },
+          "result": {
+            "verdict": "supported",
+            "sourceVersionId": "v3",
+            "supportingQuote": "boils at 100 °C"
+          },
+          "reason": "The passage gives 99.97 °C at one atmosphere.",
+          "fingerprint": "fp-1",
+          "evidence": [
+            {
+              "sourceVersionId": "v1",
+              "startByte": 120,
+              "endByte": 184,
+              "textSha256": "4f2a"
+            }
+          ],
+          "windowTokens": 32768
+        }
+      }
+    }
+  },
+  {
+    "ordinal": 7,
+    "actor": "machine",
+    "at": 1760000000007,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "superseded",
+      "successor": "claim-2"
+    }
+  },
+  {
+    "ordinal": 8,
+    "actor": "machine",
+    "at": 1760000000008,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "reopened",
+      "cause": {
+        "cause": "source_deleted",
+        "sourceVersionId": "v3"
+      }
+    }
+  },
+  {
+    "ordinal": 9,
+    "actor": "user",
+    "at": 1760000000009,
+    "jobId": null,
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "undone",
+      "eventOrdinal": 5
+    }
+  },
+  {
+    "ordinal": 10,
+    "actor": "machine",
+    "at": 1760000000010,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "stopped",
+      "reason": {
+        "code": "model_rejected",
+        "message": "llama.cpp rejected this request twice.",
+        "fix": "Lower the context window in Settings to match the server.",
+        "at": 1760000900000,
+        "request": {
+          "promptTokensExact": 118994,
+          "promptTokensEstimated": null,
+          "windowTokens": 131072,
+          "outputReserved": 8192,
+          "serverKind": "llama_cpp",
+          "serverMessageSanitized": "(500 server_error) […]",
+          "attempts": 2,
+          "step": "verify · pass 2"
+        }
+      }
+    }
+  },
+  {
+    "ordinal": 11,
+    "actor": "machine",
+    "at": 1760000000011,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "checked",
+      "check": {
+        "checker": {
+          "role": "verifier",
+          "model": "claude-verifier"
+        },
+        "result": {
+          "verdict": "failed",
+          "kind": {
+            "kind": "disputed",
+            "verifier": {
+              "kind": "unsupported"
+            }
+          }
+        },
+        "reason": "The passage gives 99.97 °C at one atmosphere.",
+        "fingerprint": "fp-1",
+        "evidence": [
+          {
+            "sourceVersionId": "v1",
+            "startByte": 120,
+            "endByte": 184,
+            "textSha256": "4f2a"
+          }
+        ],
+        "windowTokens": 32768
+      }
+    }
+  }
+]

@@ -19,9 +19,13 @@ use std::collections::{HashMap, HashSet};
 
 mod challenge;
 mod citations;
+mod claim_ledger;
 use citations::{
     lesson_sources_first, overlaps, section_citations, source_mentions, take_cited, Citations,
     CITED,
+};
+pub(in crate::features::learning) use claim_ledger::{
+    field_text, held_for_review, held_lessons, review_outcome, unit_texts, HeldForReview,
 };
 mod coverage;
 #[cfg(test)]
@@ -59,26 +63,37 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
     )
     .await
 }
+mod passes;
+use passes::{check_evidence, verify_with_references};
 mod repair;
 mod repair_loop;
+mod repair_work;
 mod report;
 pub(in crate::features::learning) mod research;
+mod review_pass;
 mod section_checkpoints;
+mod support_gate;
 #[cfg(test)]
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
+#[cfg(test)]
+use repair_loop::repair_context;
 #[cfg(test)]
 pub(in crate::features::learning) use repair_loop::verify_and_repair;
 pub(in crate::features::learning) use repair_loop::{
     has_pending_repair, verify_and_repair_with_references,
 };
-#[cfg(test)]
-use repair_loop::{repair_context, repair_issue_fingerprint};
-use repair_loop::{repair_fingerprint, PendingRepair, RepairProgress};
+use repair_loop::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
-pub(in crate::features::learning) use report::persist_report;
+pub(in crate::features::learning) use report::{persist_report, sources_changed};
 const POLICY: &str = "lesson-evidence-v20";
+
+/// The evidence policy checks are judged under: what a labelled checker
+/// example records (§15).
+pub(in crate::features::learning) fn evidence_policy() -> &'static str {
+    POLICY
+}
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
 const INVENTORY_POLICY: &str = "lesson-evidence-v7";
@@ -160,12 +175,18 @@ struct Finding {
     reason: String,
     evidence: Vec<EvidencePassage>,
     supporting_quote: Option<String>,
+    /// The user's resolution, set from the claim ledger at publication.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<general_knowledge::Resolution>,
 }
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
 #[derive(Default)]
 struct ClaimChecks {
     findings: HashMap<String, Finding>,
+    /// Claims the ledger holds as resolved by evidence the user brought, by
+    /// unit and statement: that check is their receipt (`claim_ledger`).
+    settled: HashMap<(usize, String), Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
     prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
@@ -275,6 +296,7 @@ impl ClaimReceipt {
             reason: self.reason,
             evidence: evidence.to_vec(),
             supporting_quote: self.supporting_quote,
+            resolution: None,
         })
     }
 }
@@ -299,6 +321,9 @@ pub struct LessonVerificationReport {
     coverage_audit: Vec<CoverageUnit>,
     findings: Vec<Finding>,
     executions: Vec<execution::Observation>,
+    /// Failed examples the user confirmed, set from the claim ledger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirmed_examples: Option<Vec<String>>,
     issues: Vec<String>,
     retrieval_mode: String,
     embedding_model: Option<String>,
@@ -644,149 +669,4 @@ pub(in crate::features::learning) async fn live_coverage_fixture(
     Ok(serde_json::to_value(
         coverage::audit(llm, &content, &inventory, Some(progress)).await?,
     )?)
-}
-
-async fn verify_with_references(
-    llm: &dyn LLMPort,
-    runtimes: &BuiltinRuntimes,
-    candidate: &Value,
-    references: &ReferenceCollection<'_>,
-    checks: &mut ClaimChecks,
-) -> Result<LessonVerificationReport> {
-    let candidate_text = candidate.to_string();
-    let content = units(candidate)?;
-    let checkpoint = crate::features::learning::lesson_drafts::claim_inventory(&candidate_text)
-        .await?
-        .and_then(|raw| serde_json::from_str::<InventoryCheckpoint>(&raw).ok())
-        .filter(|saved| {
-            saved.policy == INVENTORY_POLICY
-                && saved.model == llm.model_name()
-                && saved.model_context == llm.max_context_tokens()
-                && saved.content_sha256 == digest(&candidate_text)
-                && validate_inventory(&saved.inventory, &content).is_ok()
-        });
-    let (inventory, coverage) = match checkpoint {
-        Some(mut saved) => {
-            if saved.coverage_policy.as_deref() != Some(coverage::POLICY)
-                || !valid_saved_coverage(&saved.coverage, &content)
-            {
-                saved.coverage.units.clear();
-            }
-            crate::features::learning::lesson_progress::phase(
-                crate::features::learning::lesson_progress::Phase::Coverage,
-                "Resuming saved claim coverage with the current policy",
-            );
-            complete_inventory(
-                llm,
-                &content,
-                saved.inventory,
-                &candidate_text,
-                Some(saved.coverage),
-            )
-            .await?
-        }
-        None => extract_audited_inventory(llm, &content, &candidate_text).await?,
-    };
-    let checkpoint = InventoryCheckpoint {
-        policy: INVENTORY_POLICY.into(),
-        model: llm.model_name().into(),
-        model_context: llm.max_context_tokens(),
-        content_sha256: digest(&candidate_text),
-        inventory,
-        coverage,
-        coverage_policy: Some(coverage::POLICY.into()),
-    };
-    crate::features::learning::lesson_drafts::record_claim_inventory(
-        &candidate_text,
-        serde_json::to_string(&checkpoint)?,
-    )
-    .await?;
-    let (inventory, coverage) = (checkpoint.inventory, checkpoint.coverage);
-    crate::features::learning::lesson_progress::phase(
-        crate::features::learning::lesson_progress::Phase::Examples,
-        "Checking executable examples",
-    );
-    let executions = execution::observe(runtimes, candidate).await?;
-    check_evidence(
-        llm, candidate, references, inventory, coverage, executions, checks,
-    )
-    .await
-}
-
-async fn check_evidence(
-    llm: &dyn LLMPort,
-    candidate: &Value,
-    references: &ReferenceCollection<'_>,
-    inventory: Inventory,
-    coverage: Coverage,
-    executions: Vec<execution::Observation>,
-    completed: &mut ClaimChecks,
-) -> Result<LessonVerificationReport> {
-    let mut issues = Vec::new();
-    if executions
-        .iter()
-        .any(|observation| observation.unavailable())
-    {
-        return Err(AppError::ServiceNotAvailable("An example runtime is unavailable or cancelled. No lesson was published; retry when the runtime is available.".into()));
-    }
-    for observation in &executions {
-        if !observation.passed() {
-            issues.push(format!(
-                "Example {} did not complete: {}",
-                observation.id,
-                observation.evidence()
-            ));
-        }
-    }
-    let results = evidence_checks::check_with_citations(
-        llm,
-        references,
-        &inventory,
-        &executions,
-        completed,
-        &section_citations(candidate, references)?,
-    )
-    .await?;
-    let findings: Vec<_> = results
-        .into_iter()
-        .map(|(_, key, finding, _)| {
-            completed.record(key, &finding);
-            finding
-        })
-        .collect();
-    // An unsupported claim without invented specifics is kept as general
-    // knowledge, not checked against a source; it is never an issue.
-    for finding in &findings {
-        if finding.verdict != ClaimVerdict::Supported && !finding.general_knowledge() {
-            issues.push(format!(
-                "Section {}: {} — {}",
-                finding.unit + 1,
-                finding.statement,
-                finding.reason
-            ));
-        }
-    }
-    Ok(LessonVerificationReport {
-        policy: POLICY.into(),
-        lesson_id: String::new(),
-        content_sha256: String::new(),
-        checker_model: llm.model_name().into(),
-        checked_at: chrono::Utc::now().timestamp_millis(),
-        sources: references
-            .sources
-            .iter()
-            .map(|s| SourceBinding {
-                id: s.id.clone(),
-                sha256: digest(&s.excerpt),
-            })
-            .collect(),
-        coverage: inventory.units,
-        coverage_audit: coverage.units,
-        findings,
-        executions,
-        issues,
-        retrieval_mode: references.mode().into(),
-        embedding_model: references.embedding_model(),
-        unexecuted_languages: execution::unexecuted_languages(candidate),
-    })
 }

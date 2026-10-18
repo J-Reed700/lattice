@@ -6,6 +6,9 @@ import { ChevronDown, CirclePause, LoaderCircle, Save } from 'lucide-react';
 import { useCancelLearningGenerationJob, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
 import { PREPARATION_PHASES, preparationDuration } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationCurrentStep } from '@/features/learning/lessons/LessonPreparationCurrentStep';
+import { heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { claimTallyLine, HeldLessonsReview } from '@/features/learning/lessons/review/HeldLessonsReview';
+import { PASS_BOUND } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/workspace/useLearningStudio';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
@@ -38,6 +41,9 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
     void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
     void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
   }, [client, job?.id, job?.status, programId]);
+  const held = heldLessonIds(job);
+  // Lessons held for review are not a failure: the claim lists take over (§6.1).
+  if (job && held.length > 0) return <HeldLessonsReview lessonIds={held} programId={programId} revision={revision} />;
   if (!active && (!job || job.status === 'completed')) return null;
   const elapsed = Math.max(0, (now - (job?.startedAt ?? job?.createdAt ?? now)) / 1000);
   const request = () => ({ operationId: crypto.randomUUID(), programId, jobId: job!.id, expectedRevision: revision });
@@ -105,7 +111,12 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
           {currentChecks && <div><dt className="text-text-muted">{deeper ? `Left on evidence page ${deeper.page}` : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : deeper ? deeper.claims - deeper.checked : remaining}</dd></div>}
           <div><dt className="text-text-muted">Saved checks reused</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksReused}</dd></div>
         </dl>
-        <p className="mt-3 text-xs leading-5 text-text-muted">Checked means reviewed, not necessarily passed. Claims needing attention lead to research or repair. Completed checks keep their saved evidence. New references reopen checks only when new evidence is retrieved for that claim; changed content or sources also need review. Unchanged comparisons are reused. Unsupported claims are checked again against further pages of their evidence, and move to Supported when a later page supports them.</p>
+        <p className="mt-3 text-xs leading-5 text-text-muted">{PASS_BOUND}</p>
+      </div>}
+      {activity?.claims && <div className="rounded-xl border border-border bg-background/70 p-4 text-xs leading-5">
+        <h4 className="font-semibold text-text-primary">Claims</h4>
+        <p className="mt-1 tabular-nums text-text-secondary">{claimTallyLine(activity.verificationPass, activity.claims)}</p>
+        {activity.claims.waiting > 0 && <p className="mt-1 text-text-secondary">Claims waiting for you can be resolved now, while preparation runs: open the lesson below to see each one with what was compared.</p>}
       </div>}
       {!active && !paused && <p role="alert" className="rounded-xl bg-rose-500/10 p-4 text-sm leading-6 text-rose-700">{job?.error || error || 'Preparation stopped. Your draft and completed checkpoints remain saved.'}</p>}
       <div className="rounded-xl border border-accent/20 p-4 text-xs leading-5 text-text-secondary">

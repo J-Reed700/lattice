@@ -12,6 +12,9 @@ fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
 }
 
+/// The conversation frozen copies belong to when no chat cited the page.
+pub const LIBRARY_CONVERSATION: &str = "__library_snapshots__";
+
 const COLUMNS: &str = "id, conversation_id, normalized_url, requested_url, final_url, title, \
     status, method, captured_at, byte_size, sha256, resource_count, missing_resource_count, \
     partial, partial_reasons, error_code, error_message, favicon_data_url, job_id, created_at";
@@ -205,6 +208,12 @@ impl SnapshotRepository {
             return Ok(cid);
         }
 
+        self.library_conversation().await
+    }
+
+    /// The conversation that holds frozen copies no chat cited: pages saved
+    /// from the library or as learning references. Created on first use.
+    pub async fn library_conversation(&self) -> Result<String> {
         let space_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM conversation_spaces WHERE id = 'space_general' UNION ALL SELECT id FROM conversation_spaces LIMIT 1"
         )
@@ -214,8 +223,9 @@ impl SnapshotRepository {
 
         let now = Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT OR IGNORE INTO conversations (id, title, space_id, created_at, updated_at) VALUES ('__library_snapshots__', 'Saved Web Snapshots', ?, ?, ?)"
+            "INSERT OR IGNORE INTO conversations (id, title, space_id, created_at, updated_at) VALUES (?, 'Saved Web Snapshots', ?, ?, ?)"
         )
+        .bind(LIBRARY_CONVERSATION)
         .bind(space_id)
         .bind(&now)
         .bind(&now)
@@ -223,7 +233,7 @@ impl SnapshotRepository {
         .await
         .map_err(db)?;
 
-        Ok("__library_snapshots__".to_string())
+        Ok(LIBRARY_CONVERSATION.to_string())
     }
 
     pub async fn find_reader_text(

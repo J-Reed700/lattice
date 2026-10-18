@@ -230,3 +230,35 @@ fn a_local_models_vision_switch_defaults_to_unset() {
     let config: LocalModelConfigDto = serde_json::from_value(serde_json::json!({})).unwrap();
     assert_eq!(config.vision, None);
 }
+
+/// The Verifier model is unset until the user chooses one, loads unset from
+/// a file written before the field existed, and keeps a cloud model through
+/// the round trip under `llm.verifierModel`.
+#[test]
+fn the_verifier_model_loads_with_or_without_the_field() {
+    use crate::domain::models::model_ref::{CloudProvider, ModelRef};
+
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let llm = value
+        .pointer_mut("/llm")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("llm settings are serialized under llm");
+    assert_eq!(llm.remove("verifierModel"), Some(serde_json::Value::Null));
+    let loaded: SettingsDto = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(loaded.llm.verifier_model, None);
+
+    let chosen = serde_json::json!({"kind": "cloud", "provider": "anthropic", "model": "claude-x"});
+    value["llm"]["verifierModel"] = chosen.clone();
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        loaded.llm.verifier_model,
+        Some(ModelRef::Cloud {
+            provider: CloudProvider::Anthropic,
+            model: "claude-x".into()
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap()["llm"]["verifierModel"],
+        chosen
+    );
+}

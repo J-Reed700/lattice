@@ -39,6 +39,9 @@ pub struct LearningSourceVersionSummaryDto {
     pub truncated: bool,
     pub extraction_version: String,
     pub acquired_at: i64,
+    /// The frozen copy of the page this version was read from, once captured
+    /// (claim review §5.4); the reader opens it by its page URL.
+    pub snapshot_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -57,6 +60,8 @@ pub struct LearningSourceCheckDto {
 pub struct LearningSourceLibraryItemDto {
     pub id: String,
     pub kind: LearningSourceKind,
+    /// Who added the source: the Sources chip (claim review §5.4).
+    pub added_by: crate::features::learning::lessons::claim_reviews::dto::SourceAddedByDto,
     pub origin: String,
     pub requested_url: Option<String>,
     pub freshness_policy: LearningSourcePolicy,

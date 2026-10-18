@@ -2,6 +2,10 @@
 //! evidence collection must not become one enormous, fragile rewrite request,
 //! so a section whose failed claims and evidence do not fit the model is
 //! repaired in several requests, in sequence.
+use super::claim_ledger::ClaimLedger;
+use super::repair_work::{
+    claim_ids, drop_group, escalated, ledger_targets, rejected, section_examples, withdraw_resolved,
+};
 use super::*;
 use crate::features::learning::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
@@ -49,11 +53,18 @@ fn targets(context: &Value) -> Result<BTreeSet<usize>> {
                 .ok_or_else(|| invalid("A repair finding has no section."))? as usize,
         );
     }
-    for observation in observations(context)?.into_iter().filter(|o| !o.passed()) {
+    for example in context
+        .get("exampleClaims")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         targets.insert(
-            observation
-                .unit
-                .ok_or_else(|| invalid("A failed example has no repairable section."))?,
+            example
+                .get("unit")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| invalid("A failed example has no repairable section."))?
+                as usize,
         );
     }
     Ok(targets)
@@ -135,12 +146,12 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
         "failedClaims":failures,"evidence":evidence,
         "executions":observations(context)?.into_iter().filter(|o|o.unit==Some(unit)).collect::<Vec<_>>(),
         "repairHistory":repair_history,
-        "repeatedDefects":context.get("repeatedDefects").and_then(Value::as_bool).unwrap_or(false)
+        "repeatedDefects":escalated(failures) || escalated(&section_examples(context, unit))
     }))
 }
 
 fn repair_system() -> String {
-    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. If repeatedDefects is true, the previous repair left the same defect unresolved: remove the entire disputed factual assertion while preserving the rest of the section. Label Markdown code/output fences. {}", text_edits::INSTRUCTIONS)
+    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. A failed claim with repeatedDefect true was left unresolved by the previous repair on the same evidence: remove that entire factual assertion while preserving the rest of the section; repeatedDefects is true when any listed claim or failed example is such a claim. Label Markdown code/output fences. {}", text_edits::INSTRUCTIONS)
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an
@@ -325,8 +336,7 @@ pub(in crate::features::learning) async fn candidate(
     context: Value,
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
-    defects: usize,
-    progress: &RepairProgress,
+    ledger: &mut ClaimLedger,
 ) -> Result<String> {
     let candidate = repair_sections(
         llm,
@@ -335,8 +345,7 @@ pub(in crate::features::learning) async fn candidate(
         context,
         output_tokens,
         references,
-        defects,
-        progress,
+        ledger,
     )
     .await?;
     crate::features::learning::teaching::review_lesson(
@@ -354,7 +363,10 @@ pub(in crate::features::learning) async fn candidate(
 /// Repair every affected section in turn, each in as many requests as its
 /// failed claims and their evidence need to fit the model, each request on
 /// the section as the previous one left it. Every patch is saved with the
-/// work that remains.
+/// work that remains. Before each request the ledger is read again: a claim
+/// the user resolved meanwhile is not sent and not charged (§9). A request
+/// whose answer cannot be used costs its claims an attempt; the section
+/// stays as it was.
 async fn repair_sections(
     llm: &dyn LLMPort,
     prompt: &str,
@@ -362,8 +374,7 @@ async fn repair_sections(
     mut context: Value,
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
-    defects: usize,
-    progress: &RepairProgress,
+    ledger: &mut ClaimLedger,
 ) -> Result<Value> {
     let pending = targets(&context)?;
     if pending.is_empty() {
@@ -376,8 +387,26 @@ async fn repair_sections(
     let system = repair_system();
     for (position, unit) in pending.iter().copied().enumerate() {
         let (field, _) = location(&candidate, unit)?;
+        ledger.sync().await?;
+        let dropped = withdraw_resolved(&mut context, ledger);
+        if !dropped.is_empty() {
+            ledger.supersede(&dropped).await?;
+        }
+        let examples = claim_ids(&section_examples(&context, unit));
+        if section_failures(&context, unit).is_empty() && examples.is_empty() {
+            continue;
+        }
         let mut groups: VecDeque<Vec<Value>> =
-            claim_groups(llm, &system, &context, unit, output_tokens)?.into();
+            match claim_groups(llm, &system, &context, unit, output_tokens) {
+                Ok(groups) => groups.into(),
+                Err(error) if rejected(&error) => {
+                    let mut claims = claim_ids(&section_failures(&context, unit));
+                    claims.extend(examples);
+                    ledger.reject(&claims, &error.to_string()).await?;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
         let mut part = 0;
         while let Some(mut group) = groups.pop_front() {
             let local = section_context(&context, unit, &group)?;
@@ -398,9 +427,10 @@ async fn repair_sections(
                     (evidence.len() > 1).then(|| evidence.pop())
                 });
                 if trimmed.is_none() {
-                    return Err(invalid(
-                        "A failed claim's evidence passage does not fit in this model's context window.",
-                    ));
+                    let reason = "A failed claim's evidence passage does not fit in this model's context window.";
+                    ledger.reject(&claim_ids(&group), reason).await?;
+                    drop_group(&mut context, unit, group.len(), false);
+                    continue;
                 }
                 tracing::warn!(
                     unit,
@@ -430,50 +460,32 @@ async fn repair_sections(
             let original = local
                 .get("candidate")
                 .ok_or_else(|| invalid("Missing repair candidate."))?;
-            let raw = crate::features::learning::generation::complete_json(
-                llm,
-                &system,
-                local.to_string(),
-                text_edits::schema(original),
-                output_tokens,
-            )
-            .await?;
             let repaired =
-                apply_or_replace_section(llm, &local, original, schema, field, output_tokens, &raw)
-                    .await?;
-            let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
-                .map_err(|error| invalid(format!("Invalid repair schema: {error}")))?;
-            if !validator.is_valid(&repaired) {
-                return Err(invalid(
-                    "The edited section does not match the lesson schema. Its prior draft is saved.",
-                ));
+                match repair_group(llm, &system, &local, original, schema, field, output_tokens)
+                    .await
+                {
+                    Ok(repaired) => merge(&mut candidate, repaired, unit),
+                    Err(error) => Err(error),
+                };
+            if let Err(error) = repaired {
+                if !rejected(&error) {
+                    return Err(error);
+                }
+                let mut claims = claim_ids(&group);
+                if part == 1 {
+                    claims.extend(claim_ids(&section_examples(&context, unit)));
+                }
+                ledger.reject(&claims, &error.to_string()).await?;
             }
-            merge(&mut candidate, repaired, unit)?;
             let saved = candidate.to_string();
-            let object = context
-                .as_object_mut()
-                .ok_or_else(|| invalid("Invalid repair context."))?;
-            object.insert("candidate".into(), candidate.clone());
-            // The group's claims are this section's next ones in recorded
-            // order; its failed examples went with its first request.
-            if let Some(items) = object.get_mut("failedClaims").and_then(Value::as_array_mut) {
-                let mut settled = 0;
-                items.retain(|item| {
-                    let ours = item.get("unit").and_then(Value::as_u64) == Some(unit as u64);
-                    let keep = !ours || settled >= group.len();
-                    settled += usize::from(ours && !keep);
-                    keep
-                });
-            }
-            if let Some(items) = object.get_mut("executions").and_then(Value::as_array_mut) {
-                items.retain(|item| item.get("unit").and_then(Value::as_u64) != Some(unit as u64));
+            drop_group(&mut context, unit, group.len(), part == 1);
+            if let Some(object) = context.as_object_mut() {
+                object.insert("candidate".into(), candidate.clone());
             }
             let checkpoint = PendingRepair {
                 fingerprint: repair_fingerprint(llm, prompt, schema, &candidate, references),
-                defects,
-                issue_fingerprint: None,
+                defects: ledger_targets(&context),
                 context: context.clone(),
-                progress: progress.clone(),
             };
             let remaining = if !groups.is_empty() || position + 1 < pending.len() {
                 Some(serde_json::to_string(&checkpoint)?)
@@ -487,6 +499,36 @@ async fn repair_sections(
     Ok(candidate)
 }
 
+/// One request's edit of one section, validated against the lesson schema.
+async fn repair_group(
+    llm: &dyn LLMPort,
+    system: &str,
+    local: &Value,
+    original: &Value,
+    schema: &Value,
+    field: &str,
+    output_tokens: usize,
+) -> Result<Value> {
+    let raw = crate::features::learning::generation::complete_json(
+        llm,
+        system,
+        local.to_string(),
+        text_edits::schema(original),
+        output_tokens,
+    )
+    .await?;
+    let repaired =
+        apply_or_replace_section(llm, local, original, schema, field, output_tokens, &raw).await?;
+    let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
+        .map_err(|error| invalid(format!("Invalid repair schema: {error}")))?;
+    if !validator.is_valid(&repaired) {
+        return Err(invalid(
+            "The edited section does not match the lesson schema. Its prior draft is saved.",
+        ));
+    }
+    Ok(repaired)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
@@ -496,7 +538,7 @@ mod tests {
     #[test]
     fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Result<()> {
         let original = json!({"blocks":[{"kind":"explanation","title":"First","body":"Keep byte-for-byte"},{"kind":"explanation","title":"Second","body":"Fix this"}],"questions":[{"kind":"quiz","prompt":"Keep this question"}]});
-        let context = json!({"candidate":original,"requirements":{},"failedClaims":[{"unit":1,"evidence":["evidence-1"]},{"unit":2,"evidence":["evidence-2"]}],"evidence":[{"id":"evidence-1","text":"Relevant"},{"id":"evidence-2","text":"Another section"}],"executions":[],"repairHistory":[{"unit":1,"statement":"Rejected here"},{"unit":2,"statement":"Rejected elsewhere"}],"repeatedDefects":true});
+        let context = json!({"candidate":original,"requirements":{},"failedClaims":[{"unit":1,"evidence":["evidence-1"],"repeatedDefect":true},{"unit":2,"evidence":["evidence-2"]}],"evidence":[{"id":"evidence-1","text":"Relevant"},{"id":"evidence-2","text":"Another section"}],"executions":[],"repairHistory":[{"unit":1,"statement":"Rejected here"},{"unit":2,"statement":"Rejected elsewhere"}]});
         let local = section_context(&context, 1, &section_failures(&context, 1))?;
         assert_eq!(local["candidate"]["blocks"].as_array().unwrap().len(), 1);
         assert_eq!(
@@ -508,6 +550,9 @@ mod tests {
             json!([{"unit":1,"statement":"Rejected here"}])
         );
         assert_eq!(local["repeatedDefects"], true);
+        // The other section's claim is on its first attempt.
+        let other = section_context(&context, 2, &section_failures(&context, 2))?;
+        assert_eq!(other["repeatedDefects"], false);
         let patch = json!({"blocks":[{"kind":"explanation","title":"Second","body":"Corrected"}],"questions":[]});
         let mut result = original.clone();
         merge(&mut result, patch, 1)?;
@@ -599,7 +644,7 @@ mod tests {
         let claims: Vec<_> = (0..6)
             .map(|k| json!({"unit":0,"statement":format!("Claim {k}"),"verdict":"unsupported","reason":"Unstated.","evidence":[format!("evidence-{}", 2 * k), format!("evidence-{}", 2 * k + 1)]}))
             .collect();
-        let context = json!({"candidate":{"blocks":[{"kind":"explanation","title":"T","body":"[0] [1] [2] [3] [4] [5]"}],"questions":[]},"requirements":{},"failedClaims":claims,"evidence":passages,"executions":[],"repairHistory":[],"repeatedDefects":false});
+        let context = json!({"candidate":{"blocks":[{"kind":"explanation","title":"T","body":"[0] [1] [2] [3] [4] [5]"}],"questions":[]},"requirements":{},"failedClaims":claims,"evidence":passages,"executions":[],"repairHistory":[]});
         let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
         let output_tokens = 500;
         let llm = SmallWindow {
@@ -607,6 +652,7 @@ mod tests {
             requests: Mutex::new(Vec::new()),
         };
         let references = ReferenceCollection::lexical(&[])?;
+        let mut ledger = ClaimLedger::open(&llm, "{}").await?;
 
         let repaired = repair_sections(
             &llm,
@@ -615,8 +661,7 @@ mod tests {
             context,
             output_tokens,
             &references,
-            6,
-            &RepairProgress::default(),
+            &mut ledger,
         )
         .await?;
 

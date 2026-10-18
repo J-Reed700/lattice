@@ -550,6 +550,7 @@ pub async fn prepare_lesson_with_references<'a>(
         keys,
         verification: None,
     };
+    report.cite_user_evidence(&mut prepared);
     prepared.verification = Some(report.bind(&lesson.id, &prepared)?);
     Ok(prepared)
 }

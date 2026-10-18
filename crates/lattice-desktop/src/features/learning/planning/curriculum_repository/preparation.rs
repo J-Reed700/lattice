@@ -109,7 +109,24 @@ impl LearningCurriculumRepository {
             crate::features::learning::dto::PreparedLearningLesson,
         )],
     ) -> Result<()> {
-        if lessons.is_empty() || lessons.len() > 3 {
+        self.publish_prepared(id, expected_revision, lessons, &[])
+            .await
+    }
+
+    /// Publishes the job's prepared lessons and completes it. The `held`
+    /// lessons wait for the user's review and are not published; with any,
+    /// the job completes as `needs_review:…` (§6.1).
+    pub(in crate::features::learning) async fn publish_prepared(
+        &self,
+        id: &str,
+        expected_revision: i64,
+        lessons: &[(
+            String,
+            crate::features::learning::dto::PreparedLearningLesson,
+        )],
+        held: &[crate::features::learning::content_verification::HeldForReview],
+    ) -> Result<()> {
+        if lessons.is_empty() || lessons.len() + held.len() > 3 {
             return Err(AppError::InvalidInput(
                 "A generation job may publish one to three prepared lessons.".into(),
             ));
@@ -126,7 +143,7 @@ impl LearningCurriculumRepository {
             ));
         }
         let program_id = scope.program_id.clone();
-        if lessons.len() != job.progress_total as usize {
+        if lessons.len() + held.len() != job.progress_total as usize {
             return Err(AppError::InvalidInput(
                 "Prepared lesson count must match the bounded job size.".into(),
             ));
@@ -247,7 +264,21 @@ impl LearningCurriculumRepository {
             .bind(&snapshot.id).bind(&program_id).bind(snapshot.revision_number as i64).bind(&predecessor)
             .bind(&snapshot.reason).bind(snapshot_json).bind(snapshot_hash).bind(required).bind(resume)
             .bind(snapshot.created_at).bind(snapshot.created_at).execute(&mut *tx).await.map_err(db)?;
-        JobStore::complete_in(&mut tx, id, &program_id, "Published prepared lessons").await?;
+        let (result_ref, message) = if held.is_empty() {
+            (program_id.clone(), "Published prepared lessons".to_owned())
+        } else {
+            // Publishing these lessons changed the course's content. The held
+            // lessons continue from this job (§6.2), and its own publication
+            // is no change made under it.
+            sqlx::query("UPDATE learning_jobs SET content_revision=(SELECT content_revision FROM learning_programs WHERE id=?) WHERE job_id=?")
+                .bind(&program_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+            crate::features::learning::content_verification::review_outcome(held)
+        };
+        JobStore::complete_in(&mut tx, id, &result_ref, &message).await?;
         tx.commit().await.map_err(db)
     }
 }
