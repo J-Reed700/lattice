@@ -43,7 +43,7 @@
 //! # }
 //! ```
 
-use crate::features::web::services::stealth;
+use crate::features::web::services::identity;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -54,7 +54,7 @@ use readability_js::Readability;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 // Compile-time regex validation using lazy_regex (eliminates runtime panics)
 // Pre-compile HTML tag stripping regex at module level
@@ -77,9 +77,9 @@ const JAVASCRIPT_HEAVY_SITES: &[&str] = &[
 ///
 /// Extracts clean, readable article content from HTML using
 /// Mozilla's Readability.js algorithm (same as Firefox Reader Mode).
-/// Uses stealth HTTP features (UA rotation, cookies, proxy) to avoid bot detection.
+/// Reads with browser-like headers (see `identity`).
 pub struct ArticleExtractorService {
-    /// HTTP client with cookie jar and optional proxy
+    /// HTTP client without a cookie jar
     client: Client,
 }
 
@@ -279,9 +279,9 @@ impl ArticleExtractorService {
 
     /// Fetch and extract YouTube metadata from URL.
     async fn extract_youtube_article_from_url(&self, fetch_url: &str) -> Result<CleanArticle> {
-        stealth::random_delay(500, 2000).await;
-        let profile = stealth::random_profile();
-        let headers = stealth::browser_headers(profile, None);
+        identity::random_delay(500, 2000).await;
+        let profile = identity::random_profile();
+        let headers = identity::browser_headers(profile, None);
 
         let response = self
             .client
@@ -338,7 +338,7 @@ impl ArticleExtractorService {
     /// When this fails, app initialization will use a disabled fallback service
     /// that returns helpful error messages instead of crashing the app.
     pub fn new() -> Result<Self> {
-        let client = stealth::stealth_client_builder()
+        let client = identity::client_builder()
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| {
@@ -522,7 +522,7 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             return self.extract_youtube_article_from_url(&fetch_url).await;
         }
 
-        // Detect JavaScript-heavy sites — try FlareSolverr if available
+        // JavaScript-heavy sites have no static article to extract.
         if let Ok(parsed_url) = url::Url::parse(&fetch_url) {
             if let Some(domain) = parsed_url.host_str() {
                 let domain_lower = domain.to_ascii_lowercase();
@@ -530,18 +530,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
                     .iter()
                     .any(|site| Self::host_matches_domain(&domain_lower, site))
                 {
-                    if let Some(solver) = stealth::flaresolverr() {
-                        info!(url = %fetch_url, "Using FlareSolverr for JS-heavy site");
-                        match solver.solve(&fetch_url).await {
-                            Ok(html) => {
-                                return self.extract_article(&html, &fetch_url).await;
-                            }
-                            Err(e) => {
-                                warn!("FlareSolverr failed for {}: {}", fetch_url, e);
-                            }
-                        }
-                    }
-
                     warn!(
                         url = fetch_url,
                         domain = domain,
@@ -553,8 +541,7 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
                         reason: format!(
                             "Site '{}' requires JavaScript for content rendering. \
                              Static HTML extraction is not supported for this site. \
-                             Consider using the official API or browser extension instead, \
-                             or configure FlareSolverr via RECALL_FLARESOLVERR_URL.",
+                             Consider using the official API or browser extension instead.",
                             domain
                         ),
                     });
@@ -562,9 +549,9 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             }
         }
 
-        stealth::random_delay(500, 2000).await;
-        let profile = stealth::random_profile();
-        let headers = stealth::browser_headers(profile, None);
+        identity::random_delay(500, 2000).await;
+        let profile = identity::random_profile();
+        let headers = identity::browser_headers(profile, None);
 
         let response = self
             .client

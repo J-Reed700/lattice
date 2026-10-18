@@ -5,7 +5,7 @@ use super::{
     HTML_PARSE_TIMEOUT, MAX_PAGE_BODY_BYTES, RESPONSE_BODY_TIMEOUT, THIN_PAGE_CHARS,
 };
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage};
-use crate::features::web::services::{browser_reader, stealth};
+use crate::features::web::services::{browser_reader, identity};
 use chrono::Utc;
 use encoding_rs::{Encoding, UTF_8};
 use lattice_core::shared::error::{AppError, Result};
@@ -211,8 +211,8 @@ impl WebService {
         let _site_slot = self.pacer.acquire(url).await;
 
         let start = Instant::now();
-        let profile = stealth::random_profile();
-        let headers = stealth::browser_headers(profile, None);
+        let profile = identity::random_profile();
+        let headers = identity::browser_headers(profile, None);
 
         let mut response = self
             .client

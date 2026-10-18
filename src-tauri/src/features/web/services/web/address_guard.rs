@@ -8,7 +8,6 @@
 //! second lookup cannot rebind to a private one.
 use super::parse_fetchable_url;
 use lattice_core::shared::error::{AppError, Result};
-use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use tracing::{debug, warn};
 use url::{Host, Url};
@@ -151,33 +150,18 @@ pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
 /// The web client's DNS resolver: an address in a blocked range fails the
 /// lookup, so neither the first request nor any redirect hop can connect to
 /// one, and the connector uses exactly the addresses checked here.
-pub(crate) struct PublicOnlyResolver {
-    /// Configured proxies, which may legitimately live on this machine.
-    exempt_hosts: HashSet<String>,
-}
-
-impl PublicOnlyResolver {
-    pub(crate) fn new(exempt_hosts: Vec<String>) -> Self {
-        Self {
-            exempt_hosts: exempt_hosts.into_iter().collect(),
-        }
-    }
-}
+pub(crate) struct PublicOnlyResolver;
 
 impl reqwest::dns::Resolve for PublicOnlyResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().trim_end_matches('.').to_ascii_lowercase();
-        let exempt = self.exempt_hosts.contains(&host);
         Box::pin(async move {
+            if host == "localhost" || host.ends_with(".localhost") {
+                return Err(format!("Access to localhost blocked: {host}").into());
+            }
             // The connector sets the port itself; 0 is a placeholder.
-            let addrs: Vec<SocketAddr> = if exempt {
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect()
-            } else {
-                if host == "localhost" || host.ends_with(".localhost") {
-                    return Err(format!("Access to localhost blocked: {host}").into());
-                }
-                resolve_public(&host, 0).await.map_err(|e| e.to_string())?
-            };
+            let addrs: Vec<SocketAddr> =
+                resolve_public(&host, 0).await.map_err(|e| e.to_string())?;
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }

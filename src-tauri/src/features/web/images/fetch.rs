@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 
 use super::{extension_for_mime, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS};
-use crate::features::web::services::stealth;
+use crate::features::web::services::identity;
 use crate::features::web::services::web::{BoundedBody, BoundedFetchError, WebService};
 use crate::features::web::snapshots::store::sha256_hex;
 
@@ -59,7 +59,7 @@ pub fn commons_headers(accept: &'static str) -> HeaderMap {
 /// Headers for any other site: the same browser profile page reads send,
 /// with `referer` when the request is for something a page shows.
 pub fn browser_headers(referer: Option<&str>, accept: Option<&'static str>) -> HeaderMap {
-    let mut headers = stealth::browser_headers(stealth::random_profile(), referer);
+    let mut headers = identity::browser_headers(identity::random_profile(), referer);
     if let Some(accept) = accept {
         headers.insert(ACCEPT, HeaderValue::from_static(accept));
     }
