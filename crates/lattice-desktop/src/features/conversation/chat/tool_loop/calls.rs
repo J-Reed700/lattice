@@ -106,6 +106,10 @@ pub(super) struct CallScope<'a> {
     pub(super) window_chars: usize,
     /// The schemas ride along with every round and take room like any message.
     pub(super) tool_schema_chars: usize,
+    /// The turn's model: `find_image` shows it the candidates when it can see.
+    pub(super) llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
+    /// The reader's question, the context a `find_image` pick is judged in.
+    pub(super) question: &'a str,
 }
 
 /// The turn's tool calls, and what they have learned so far.
