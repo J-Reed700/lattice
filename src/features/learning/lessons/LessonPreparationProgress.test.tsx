@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonPreparationProgress } from '@/features/learning/lessons/LessonPreparationProgress';
+import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 
-const api = vi.hoisted(() => ({ plan: vi.fn(), cancel: vi.fn(), retry: vi.fn() }));
+const api = vi.hoisted(() => ({ plan: vi.fn(), cancel: vi.fn(), retry: vi.fn(), review: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: api.plan, cancelLearningGenerationJob: api.cancel, retryLearningGenerationJob: api.retry,
+  getLearningLessonClaimReview: api.review,
 } }));
 
 const job: LearningGenerationJob = {
@@ -286,6 +288,34 @@ describe('Durable lesson preparation progress', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The database is unavailable.');
     expect(screen.getByRole('status')).toHaveTextContent('Lesson preparation paused');
     expect(screen.getByRole('button', { name: 'Resume lesson preparation' })).toBeEnabled();
+    unmount(); client.clear();
+  });
+
+  it('shows a lesson held for review as waiting for the user, with its claims, never as a failure', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 1 claim', finishedAt: Date.now() - 1_000 }] } });
+    api.review.mockResolvedValue({ ok: true, data: review([claimItem()]) });
+    const { client, unmount } = show();
+    expect(await screen.findByRole('heading', { name: 'Lesson preparation is waiting for you' })).toBeVisible();
+    expect(screen.getByText(/Needs your review: 1 claim\. Every check that could run has run/)).toBeVisible();
+    expect(await screen.findByRole('heading', { name: /Needs your review · 1 claim needs your review/ })).toBeVisible();
+    expect(api.review).toHaveBeenCalledWith('program-1', 'lesson-1');
+    expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+    unmount(); client.clear();
+  });
+
+  it('counts claims per state while preparation runs, with the pass bound', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
+      phase: 'repair', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
+      lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: true,
+      responseCharacters: 0, modelAttempt: 1, verificationPass: 3, checksCompleted: 115,
+      checksTotal: 115, checksReused: 0, checksUnresolved: 7, modelChecksTotal: 115, deeperEvidence: null,
+      claims: { repairing: 2, waiting: 5, verified: 108, resolvedByYou: 0 }, recentSteps: [],
+    } }] } });
+    const { client, unmount } = show();
+    expect(await screen.findByText('Pass 3 · 2 claims being repaired · 5 waiting for you · 108 verified')).toBeVisible();
+    expect(screen.getByText(/Claims waiting for you can be resolved now/)).toBeVisible();
+    expect(screen.getByText(/the machine gives up on a claim after two tries on the same evidence/)).toBeVisible();
     unmount(); client.clear();
   });
 });

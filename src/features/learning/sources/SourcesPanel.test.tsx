@@ -76,6 +76,8 @@ describe('Learning Studio Sources workspace', () => {
     expect(screen.getByText('Observe closely')).toBeVisible();
     expect(screen.getByText(/Version 1 · captured/)).toBeVisible();
     expect(screen.getByText('Update available · saved edition stays active')).toBeVisible();
+    // Who brought the source in, in words, on the list row and the open source.
+    expect(screen.getAllByText('Added by you')).toHaveLength(2);
     await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Source version history' }), 'version-2');
     await waitFor(() => expect(mocks.version).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-2' }));
   });
