@@ -12,16 +12,16 @@ There are three levels:
 
 ## 1. Unit tests
 
-Run from `src-tauri/`:
+Run from `crates/lattice-desktop/`:
 
 ```bash
-cd src-tauri
+cd crates/lattice-desktop
 CARGO_INCREMENTAL=0 cargo test --lib features::learning -j 2
 ```
 
-At `09d5a552` this runs 448 tests, all passing (414 at `62b3151f`). Use a narrower filter while working, for example `outline_linking`, `outline_review`, `outline_repair`, `generation::evidence`, `content_verification::research`, `evidence_paging`, `content_caps`, `patient_model`, `course_generation`. Keep `-j 2` and `CARGO_INCREMENTAL=0`: the build cache has filled the disk before, and many agents may share the machine. A fresh worktree needs `src-tauri/binaries/` (the sidecar stub) and `dist/` copied from another worktree before the lib test binary builds.
+At `09d5a552` this runs 448 tests, all passing (414 at `62b3151f`). Use a narrower filter while working, for example `outline_linking`, `outline_review`, `outline_repair`, `generation::evidence`, `content_verification::research`, `evidence_paging`, `content_caps`, `patient_model`, `course_generation`. Keep `-j 2` and `CARGO_INCREMENTAL=0`: the build cache has filled the disk before, and many agents may share the machine. A fresh worktree needs `crates/lattice-desktop/binaries/` (the sidecar stub) and `dist/` copied from another worktree before the lib test binary builds.
 
-Where the tests live (paths under `src-tauri/src/features/learning/`):
+Where the tests live (paths under `crates/lattice-desktop/src/features/learning/`):
 
 | Area | Tests |
 |---|---|
@@ -53,7 +53,7 @@ python3 -m unittest scripts/test_lesson_claim_pairs.py scripts/test_claim_checke
 From `.github/workflows/ci.yml`. Run them before handing over a change:
 
 ```bash
-cd src-tauri
+cd crates/lattice-desktop
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets
 cd ..
@@ -66,7 +66,7 @@ cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 
 ## 2. Live tests
 
-All live tests are `#[ignore]` lib tests in `src-tauri/src/features/learning/lessons/`, compiled into the lib test binary. They are wired as `generation_jobs::live_lesson_tests` (`live_lesson_tests.rs`) with submodules `course_e2e` (`live_course_e2e.rs`), `small` (`live_small_lesson.rs`) and `claim_pairs` (`live_claim_pairs_eval.rs`).
+All live tests are `#[ignore]` lib tests in `crates/lattice-desktop/src/features/learning/lessons/`, compiled into the lib test binary. They are wired as `generation_jobs::live_lesson_tests` (`live_lesson_tests.rs`) with submodules `course_e2e` (`live_course_e2e.rs`), `small` (`live_small_lesson.rs`) and `claim_pairs` (`live_claim_pairs_eval.rs`).
 
 ### What a live run touches
 
@@ -83,10 +83,10 @@ Run one live course at a time, and only one local llama-server at a time.
 Build once, then copy the binary into the artifacts so the run is pinned to known code and a rebuild cannot replace it mid-run:
 
 ```bash
-cd src-tauri
+cd crates/lattice-desktop
 CARGO_INCREMENTAL=0 cargo test --lib --no-run -j 2 2>&1 | grep 'Executable unittests src/lib.rs'
 #   Executable unittests src/lib.rs (<target-dir>/debug/deps/lattice-<hash>)
-RUN=../artifacts/course-e2e-$(date +%F)
+RUN=../../artifacts/course-e2e-$(date +%F)
 mkdir -p $RUN/bin
 cp <target-dir>/debug/deps/lattice-<hash> $RUN/bin/<label>-$(git rev-parse --short HEAD)
 ```
@@ -182,10 +182,10 @@ The job must be `Pending`, `Running` or `Failed`, and no other job of the progra
 A=artifacts/course-e2e-2026-10-14
 cp -R $A/wp1-1 $A/lesson-fix-1          # keeps job-id.txt and the call files
 mv $A/lesson-fix-1/course.sqlite $A/lesson-fix-1/lesson.sqlite
-cd src-tauri
+cd crates/lattice-desktop
 LATTICE_LLAMACPP_SETTINGS="$HOME/Library/Application Support/tech.lattice.app/settings.json" \
-LATTICE_LESSON_CALLS=$PWD/../$A/lesson-fix-1 \
-  <binary> live_small_lesson_resumes_to_ready --ignored --nocapture > ../$A/lesson-fix-1.log 2>&1
+LATTICE_LESSON_CALLS=$PWD/../../$A/lesson-fix-1 \
+  <binary> live_small_lesson_resumes_to_ready --ignored --nocapture > ../../$A/lesson-fix-1.log 2>&1
 ```
 
 Always work on a copy. The test writes to the database it is given.
@@ -260,10 +260,10 @@ Scores the lesson's strict passage judge (`ClaimChecker`, `CheckPolicy::Strict`)
 | `LATTICE_CLAIM_BATCH` | Claims per batch (default 8, as in the pipeline) |
 
 ```bash
-cd src-tauri
+cd crates/lattice-desktop
 LATTICE_LLAMACPP_SETTINGS="$HOME/Library/Application Support/tech.lattice.app/settings.json" \
-LATTICE_CLAIM_PAIRS=$PWD/../evals/grounding/lesson-claims-w1/gold-w1.jsonl \
-LATTICE_CLAIM_RESULTS=$PWD/../evals/grounding/results/<date>-lesson-w1-<checker>.jsonl \
+LATTICE_CLAIM_PAIRS=$PWD/../../evals/grounding/lesson-claims-w1/gold-w1.jsonl \
+LATTICE_CLAIM_RESULTS=$PWD/../../evals/grounding/results/<date>-lesson-w1-<checker>.jsonl \
 LATTICE_CLAIM_CHECKER=<checker> \
   <binary> live_claim_pairs_eval --ignored --nocapture
 ```
@@ -272,10 +272,10 @@ Rows: `id, checker, label, difficulty, verdict, reason, latency_ms, batch, calls
 
 ### Granite Guardian: `scripts/claim_checker_granite.py`
 
-Granite Guardian 3.3 8B (Q8 GGUF at `~/.cache/lattice-eval-models/granite-guardian-3.3-8b-Q8_0.gguf`) served by the bundled `src-tauri/binaries/llama-server-aarch64-apple-darwin`. A typical start (the exact flags used on 2026-10-14 were not recorded):
+Granite Guardian 3.3 8B (Q8 GGUF at `~/.cache/lattice-eval-models/granite-guardian-3.3-8b-Q8_0.gguf`) served by the bundled `crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin`. A typical start (the exact flags used on 2026-10-14 were not recorded):
 
 ```bash
-src-tauri/binaries/llama-server-aarch64-apple-darwin \
+crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin \
   -m ~/.cache/lattice-eval-models/granite-guardian-3.3-8b-Q8_0.gguf --port 8094 -c 8192
 python3 scripts/claim_checker_granite.py --url http://127.0.0.1:8094 \
   --dataset evals/grounding/lesson-claims-w1/gold-w1.jsonl \

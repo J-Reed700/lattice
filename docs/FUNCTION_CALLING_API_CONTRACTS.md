@@ -6,7 +6,7 @@ have been removed)
 
 This document defines the tools Lattice offers an LLM during a chat turn, and
 the IPC commands that expose the same tools to the frontend. The JSON schemas
-in `src-tauri/src/features/function_calling/registry.rs` are the source of
+in `crates/lattice-desktop/src/features/function_calling/registry.rs` are the source of
 truth; this page summarizes them.
 
 ## Table of Contents
@@ -27,7 +27,7 @@ truth; this page summarizes them.
 
 | Piece | Path |
 |-------|------|
-| Tool schemas, `init_function_registry`, `register_custom_query_tools` | `src-tauri/src/features/function_calling/registry.rs` |
+| Tool schemas, `init_function_registry`, `register_custom_query_tools` | `crates/lattice-desktop/src/features/function_calling/registry.rs` |
 | Wire types (`ToolDefinition`, `FunctionCall`, `FunctionResult`, `RegistryStats`) | `crates/lattice-core/src/application/contracts/tools/calls.rs` |
 | Tool input/output DTOs | `crates/lattice-core/src/application/contracts/tools/dto.rs` |
 | The model-side `ToolDefinition` (`parameters`), its `From` conversion, the OpenAI `tools` shape and the invalid-call marker | `crates/lattice-core/src/application/ports/llm_port{.rs,/tools.rs}` |
@@ -37,7 +37,7 @@ truth; this page summarizes them.
 | Space/focus scoping for library tools | `features/conversation/chat/tool_loop/scoped_document_tools.rs` |
 
 The registry and executor are built once in the DI container
-(`src-tauri/src/interfaces/di/container.rs`).
+(`crates/lattice-desktop/src/interfaces/di/container.rs`).
 
 ### IPC commands (plugin `functions`)
 
@@ -220,7 +220,7 @@ page's lead section. Both call the Wikipedia API.
 ## Custom query tools
 
 Users can define HTTP lookup tools in settings (`llm.customTools`,
-`CustomToolSettingsDto` in `src-tauri/crates/lattice-core/src/application/contracts/settings.rs`):
+`CustomToolSettingsDto` in `crates/lattice-core/src/application/contracts/settings.rs`):
 `enabled`, `name`, `description`, `endpoint`, `query_param`,
 `max_results_param?`, `default_max_results`. Each enabled tool is registered
 with the schema `{ query: string (required), max_results: integer 1-100 }`.

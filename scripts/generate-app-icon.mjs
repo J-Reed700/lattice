@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Generates the Lattice app icon: a 4x4 node lattice whose left column and
 // bottom row are lit, tracing an L. Pure geometry, no raster inputs. Writes
-// src-tauri/icons/icon.svg (bundle source) and public/favicon.svg; see
-// src-tauri/icons/README.md for the rest of the pipeline.
+// crates/lattice-desktop/icons/icon.svg (bundle source) and public/favicon.svg; see
+// crates/lattice-desktop/icons/README.md for the rest of the pipeline.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -58,6 +58,6 @@ const appIcon = svg(litL({ gap: 150, tile: `<rect x="100" y="100" width="824" he
 // Favicon: full-bleed tile, lattice scaled up to stay legible at 16px.
 const favicon = svg(litL({ gap: 250, tile: `<rect width="${S}" height="${S}" rx="200" fill="${INK}"/>` }));
 
-fs.writeFileSync(path.join(ROOT, 'src-tauri/icons/icon.svg'), appIcon);
+fs.writeFileSync(path.join(ROOT, 'crates/lattice-desktop/icons/icon.svg'), appIcon);
 fs.writeFileSync(path.join(ROOT, 'public/favicon.svg'), favicon);
-console.log('wrote src-tauri/icons/icon.svg, public/favicon.svg');
+console.log('wrote crates/lattice-desktop/icons/icon.svg, public/favicon.svg');

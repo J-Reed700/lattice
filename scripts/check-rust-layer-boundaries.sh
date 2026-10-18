@@ -10,7 +10,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status=0
-cargo run --quiet --locked --manifest-path "$ROOT/scripts/rust-architecture-check/Cargo.toml" -- "$ROOT/src-tauri/src" "$ROOT/api-rust/src" --core "$ROOT/src-tauri/crates/lattice-core/src" "$@" || status=$?
+cargo run --quiet --locked --manifest-path "$ROOT/scripts/rust-architecture-check/Cargo.toml" -- "$ROOT/crates/lattice-desktop/src" "$ROOT/crates/lattice-sync/src" --core "$ROOT/crates/lattice-core/src" "$@" || status=$?
 for argument in "$@"; do
   if [[ "$argument" == "--write-baseline" ]]; then
     python3 "$ROOT/scripts/check-tauri-command-inventory.py" --write-baseline || status=$?

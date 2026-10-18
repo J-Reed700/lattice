@@ -2,7 +2,7 @@
 
 Status: implemented (2026-09-16, since merged). See section 7 for where the build
 differs from this brief.
-Branch: `architecture-refactor`. Crate: `src-tauri/`. Frontend untouched.
+Branch: `architecture-refactor`. Crate: `crates/lattice-desktop/`. Frontend untouched.
 
 ## 1. Problem
 
@@ -11,16 +11,16 @@ in `tauri dev`, then aborts with SIGABRT.
 
 Root cause, verified:
 
-- `artifact_identity()` in `src-tauri/src/features/embedding/candle_service.rs`
+- `artifact_identity()` in `crates/lattice-desktop/src/features/embedding/candle_service.rs`
   (line ~1159) streams every model artifact through SHA-256, including the
   1.19 GB `model.safetensors`, to produce the string that names the vector
   space (`sha256:<hex>`). That string decides which `usearch-<id>.usearch`
   file is opened and which rows of `embedding_generation_vectors` are restored.
 - It runs synchronously on the async runtime, **twice per launch**: once in
-  `build_with_compression` (`src-tauri/src/features/search/di.rs` ~line 108)
+  `build_with_compression` (`crates/lattice-desktop/src/features/search/di.rs` ~line 108)
   and again inside `CandleEmbeddingService::new` (candle_service.rs ~line 310)
   when the model is loaded.
-- `initialize_app_async` (`src-tauri/src/infrastructure/setup/app.rs` ~line 197)
+- `initialize_app_async` (`crates/lattice-desktop/src/infrastructure/setup/app.rs` ~line 197)
   wraps container construction in `tokio::time::timeout(30 s)`. A tokio timeout
   cannot preempt blocking code, so it fires only after the hash returns, then
   rejects the already-built container. The `Err` propagates out of Tauri's
@@ -28,7 +28,7 @@ Root cause, verified:
   crash report.
 - Unoptimized `sha2` in the dev profile makes the hash ~20x slower than
   release. `[profile.dev.package.sha2] opt-level = 3` is already in
-  `src-tauri/Cargo.toml` and stays. It is a dev-ergonomics fix, not the fix:
+  `crates/lattice-desktop/Cargo.toml` and stays. It is a dev-ergonomics fix, not the fix:
   release still reads 1.2 GB from disk on every launch.
 
 ## 2. Design
@@ -48,7 +48,7 @@ that owns it. Reads never rehash.**
 - Startup reads the identity from the row. `CandleEmbeddingService` is
   constructed **with** an identity; it no longer computes one.
 - Re-verification of files stays where it already lives: the explicit verify
-  path in `src-tauri/src/features/llm/use_cases/download_model.rs`
+  path in `crates/lattice-desktop/src/features/llm/use_cases/download_model.rs`
   (`verify_model_files`). If a user replaces files by hand they re-activate the
   model. Not a launch concern.
 - The 30 s blanket deadline is deleted. Startup failure shows the dialog and
@@ -66,8 +66,8 @@ source of truth with a stale-cache failure mode).
 
 ### 3.1 Domain value object
 
-New file `src-tauri/src/domain/value_objects/artifact_identity.rs`, exported
-from `src-tauri/src/domain/value_objects/mod.rs` (follow the existing
+New file `crates/lattice-desktop/src/domain/value_objects/artifact_identity.rs`, exported
+from `crates/lattice-desktop/src/domain/value_objects/mod.rs` (follow the existing
 `sparse_embedding` export pattern).
 
 ```rust
@@ -100,8 +100,8 @@ byte-identical to the strings already baked into index filenames.
 
 ### 3.2 Computation and establishment
 
-New file `src-tauri/src/features/embedding/artifact_identity.rs`, declared in
-`src-tauri/src/features/embedding/mod.rs`.
+New file `crates/lattice-desktop/src/features/embedding/artifact_identity.rs`, declared in
+`crates/lattice-desktop/src/features/embedding/mod.rs`.
 
 ```rust
 /// Stream the artifacts under `dir` through SHA-256. Byte-for-byte the same
@@ -128,14 +128,14 @@ with them, renamed to `compute_...`.
 
 ### 3.3 Domain model and repository
 
-`src-tauri/src/domain/models/downloaded.rs`:
+`crates/lattice-desktop/src/domain/models/downloaded.rs`:
 
 - `DownloadedModel` gains `embedding_artifact_identity: Option<ArtifactIdentity>`.
 - `from_db(...)` gains the parameter (last position). `new` / `new_with_catalog`
   start it as `None`.
 - Accessor `pub fn embedding_artifact_identity(&self) -> Option<&ArtifactIdentity>`.
 
-`src-tauri/src/features/download/downloaded_model_repository.rs`:
+`crates/lattice-desktop/src/features/download/downloaded_model_repository.rs`:
 
 - `MODEL_SELECT_BASE` selects `m.embedding_artifact_identity`;
   `DownloadedModelRecord` gains `embedding_artifact_identity: Option<String>`;
@@ -174,12 +174,12 @@ model without identity" (`InvalidState`) with a follow-up existence check.
 the artifact, not to the activation.
 
 If the statement stays a `sqlx::query!` macro, regenerate the offline cache
-with `src-tauri/scripts/update-sqlx-cache.sh`. Using a runtime `sqlx::query`
+with `crates/lattice-desktop/scripts/update-sqlx-cache.sh`. Using a runtime `sqlx::query`
 (as `MODEL_SELECT_BASE` already does) is also acceptable.
 
 ### 3.4 Migration
 
-`src-tauri/migrations/20260916000000_init_schema.sql`, table `models`
+`crates/lattice-desktop/migrations/20260916000000_init_schema.sql`, table `models`
 (line ~613): add
 
 ```sql
@@ -193,7 +193,7 @@ if it enumerates `models` columns (it does not today).
 
 ### 3.5 Candle service
 
-`src-tauri/src/features/embedding/candle_service.rs`:
+`crates/lattice-desktop/src/features/embedding/candle_service.rs`:
 
 ```rust
 impl CandleEmbeddingService {
@@ -221,14 +221,14 @@ A1 is ~40 lines; after it, A, B and C run in parallel.
 
 ### Agent A: identity type, schema, persistence, activation
 
-Owns: `src-tauri/src/domain/value_objects/{mod.rs,artifact_identity.rs}`,
-`src-tauri/src/domain/models/downloaded.rs`,
-`src-tauri/migrations/20260916000000_init_schema.sql`,
-`src-tauri/src/features/download/downloaded_model_repository.rs`,
-`src-tauri/src/features/download/saga.rs`,
-`src-tauri/src/features/model_management/use_cases/set_active_embedding_model.rs`,
-`src-tauri/src/features/embedding/artifact_identity.rs` (new; `mod.rs` line
-added here too), `src-tauri/.sqlx/` if regenerated, plus any test fixtures
+Owns: `crates/lattice-desktop/src/domain/value_objects/{mod.rs,artifact_identity.rs}`,
+`crates/lattice-desktop/src/domain/models/downloaded.rs`,
+`crates/lattice-desktop/migrations/20260916000000_init_schema.sql`,
+`crates/lattice-desktop/src/features/download/downloaded_model_repository.rs`,
+`crates/lattice-desktop/src/features/download/saga.rs`,
+`crates/lattice-desktop/src/features/model_management/use_cases/set_active_embedding_model.rs`,
+`crates/lattice-desktop/src/features/embedding/artifact_identity.rs` (new; `mod.rs` line
+added here too), `crates/lattice-desktop/.sqlx/` if regenerated, plus any test fixtures
 that call `DownloadedModel::from_db` or `set_active_embedding_model`.
 
 - A1. Domain type (3.1), `DownloadedModel` field + accessor + `from_db` arg,
@@ -264,14 +264,14 @@ that call `DownloadedModel::from_db` or `set_active_embedding_model`.
 
 ### Agent B: consumers stop hashing
 
-Owns: `src-tauri/src/features/embedding/candle_service.rs`,
-`src-tauri/src/features/embedding/loading.rs`,
-`src-tauri/src/features/search/di.rs`,
-`src-tauri/src/features/model_management/commands_extra.rs`,
-`src-tauri/src/features/embedding/generator.rs`,
-`src-tauri/src/features/indexing/use_cases/embedding_input.rs`,
-`src-tauri/src/features/conversation/chat/retrieval/corpus_plan/tests.rs`,
-`src-tauri/examples/measure_artifact_identity.rs` (delete; scratch file from
+Owns: `crates/lattice-desktop/src/features/embedding/candle_service.rs`,
+`crates/lattice-desktop/src/features/embedding/loading.rs`,
+`crates/lattice-desktop/src/features/search/di.rs`,
+`crates/lattice-desktop/src/features/model_management/commands_extra.rs`,
+`crates/lattice-desktop/src/features/embedding/generator.rs`,
+`crates/lattice-desktop/src/features/indexing/use_cases/embedding_input.rs`,
+`crates/lattice-desktop/src/features/conversation/chat/retrieval/corpus_plan/tests.rs`,
+`crates/lattice-desktop/examples/measure_artifact_identity.rs` (delete; scratch file from
 an earlier session), `docs/RUST_ARCHITECTURE.md`.
 
 - B1. `CandleEmbeddingService::open` / `open_unregistered` (3.5). Delete
@@ -307,8 +307,8 @@ an earlier session), `docs/RUST_ARCHITECTURE.md`.
 
 ### Agent C: startup path
 
-Owns: `src-tauri/src/infrastructure/setup/app.rs`,
-`src-tauri/src/infrastructure/setup/mod.rs`, `src-tauri/src/main.rs`.
+Owns: `crates/lattice-desktop/src/infrastructure/setup/app.rs`,
+`crates/lattice-desktop/src/infrastructure/setup/mod.rs`, `crates/lattice-desktop/src/main.rs`.
 
 - C1. Delete the `tokio::time::timeout(Duration::from_secs(30), ...)` wrapper
   around container construction in `initialize_app_async`. Keep the inner
@@ -335,7 +335,7 @@ Owns: `src-tauri/src/infrastructure/setup/app.rs`,
 Another session builds concurrently on this machine; use `-j 2` for cargo.
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 cargo fmt --all -- --check
 cargo clippy -j 2 --all-targets -- -D warnings
 cargo test -j 2 --lib
@@ -357,7 +357,7 @@ Manual acceptance, after `rm ~/Library/Application\ Support/tech.lattice.app/lat
 2. Quit and relaunch. Startup log shows no hashing, "USearch vector index
    ready" within a few seconds of "Initializing DI Container", and the index
    file name is `usearch-sha256-<same hex as before>...`.
-3. `grep -rn "artifact_identity(\|compute(" src-tauri/src/infrastructure/setup src-tauri/src/interfaces/di src-tauri/src/features/search/di.rs` returns nothing.
+3. `grep -rn "artifact_identity(\|compute(" crates/lattice-desktop/src/infrastructure/setup crates/lattice-desktop/src/interfaces/di crates/lattice-desktop/src/features/search/di.rs` returns nothing.
 
 ## 6. Out of scope, recorded as known follow-ups
 
@@ -375,7 +375,7 @@ Manual acceptance, after `rm ~/Library/Application\ Support/tech.lattice.app/lat
 Blocking work still on the launch thread (found in C4, not fixed).
 `initialize_app` runs `initialize_app_async` under `block_on` on the main
 thread, so every item below delays the first window. Paths are under
-`src-tauri/src/`.
+`crates/lattice-desktop/src/`.
 
 - `SystemInfoAdapter::new` (`infrastructure/adapters/system_info.rs:56`) calls
   `sysinfo::System::new_all()`, a full scan of processes, disks, networks and
@@ -409,7 +409,7 @@ Found while proving C2 (not fixed):
 
 - `crash::set_crashes_directory` (`infrastructure/crash/mod.rs:79`) has no
   effect. `install_panic_hook` has already filled the same `OnceLock`s with
-  `<cwd>/crashes`, so panic reports go to `src-tauri/crashes` under
+  `<cwd>/crashes`, so panic reports go to `crates/lattice-desktop/crashes` under
   `tauri dev`, not to `<app_data>/crashes`.
 - `init_regular_tracing` (`infrastructure/observability/tracing.rs:155-156`)
   calls `mem::forget` on the non-blocking file writer's `WorkerGuard`, and

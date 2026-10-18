@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import planCases from '../../../src-tauri/crates/lattice-core/src/domain/models/vision/plan_cases.json';
+import planCases from '../../../crates/lattice-core/src/domain/models/vision/plan_cases.json';
 import {
   CONSERVATIVE_DEFAULT,
   VISION_PRESETS,

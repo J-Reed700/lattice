@@ -23,18 +23,19 @@ entry points. Put implementation and operational helpers in their owning folders
 | `src/features/<feature>/` | React feature views, hooks, models, and API clients |
 | `src/shared/` | Shared IPC transport and cross-feature primitives |
 | `src/components/` | Shared UI primitives and the app shell (`Layout`, `RootLayout`) |
-| `src-tauri/src/features/<feature>/` | Desktop capabilities, including their commands, loaders, services, and repositories |
-| `src-tauri/crates/lattice-core/src/application/` | Cross-feature contracts, ports, and orchestration (the `lattice-core` crate) |
-| `src-tauri/crates/lattice-core/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
-| `src-tauri/crates/lattice-core/src/shared/` | Cross-cutting types, errors, IPC, filesystem, HTTP, persistence formatting, runtime, and resilience helpers |
-| `src-tauri/src/infrastructure/` | Shared technical implementations, grouped by responsibility |
-| `src-tauri/src/interfaces/` | Dependency injection and shared IPC adapters |
-| `src-tauri/src/bin/<tool>/` | Developer executables and their private helpers |
-| `src-tauri/src/desktop_e2e/` | Helpers compiled only into the instrumented desktop executable |
-| `api-rust/src/` | Optional sync service, organized into HTTP, sync, and persistence modules |
-| `scripts/build/` | Build entry points and their configuration |
-| `scripts/dev/` | Local development launchers |
-| `src-tauri/scripts/` | Desktop-crate maintenance and verification scripts |
+| `crates/lattice-core/src/application/` | Cross-feature contracts, ports, and orchestration |
+| `crates/lattice-core/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
+| `crates/lattice-core/src/shared/` | Cross-cutting types, errors, IPC, filesystem, HTTP, persistence formatting, runtime, and resilience helpers |
+| `crates/lattice-desktop/src/features/<feature>/` | Desktop capabilities, including their commands, loaders, services, and repositories |
+| `crates/lattice-desktop/src/infrastructure/` | Shared technical implementations, grouped by responsibility |
+| `crates/lattice-desktop/src/interfaces/` | Dependency injection and shared IPC adapters |
+| `crates/lattice-desktop/src/bin/<tool>/` | Developer executables and their private helpers |
+| `crates/lattice-desktop/src/desktop_e2e/` | Helpers compiled only into the instrumented desktop executable |
+| `crates/lattice-desktop/migrations/` | SQLite migrations, one dated file per schema change |
+| `crates/lattice-desktop/scripts/` | Sidecar, migration and SQLx-cache maintenance scripts |
+| `crates/lattice-sync/src/` | Optional sync service, organized into HTTP, sync, and persistence modules |
+| `scripts/` | Repository checks and evaluation runners |
+| `scripts/build/`, `scripts/dev/` | Build entry points and local development launchers |
 
 Keep code with its owner: embedding loading belongs in `features/embedding/`,
 LLM loading in `features/llm/`, messaging in `infrastructure/events/`, and
@@ -55,7 +56,7 @@ Do not recreate a generic `shared/utils/` folder or a second `Result` alias.
 The npm entry points remain the supported shortcuts: `npm run dev`,
 `npm run build`, and `npm run build:node`. For direct invocation, use paths such
 as `bash scripts/dev/dev.sh help` or `bash scripts/build/build.sh --help`.
-Run the base-schema smoke check with `bash src-tauri/scripts/test-migrations.sh`.
+Run the base-schema smoke check with `bash crates/lattice-desktop/scripts/test-migrations.sh`.
 
 ## Architecture conventions
 
@@ -122,9 +123,9 @@ When adding a Tauri command, update all five integration points:
 
 1. The `#[tauri::command]` implementation.
 2. The feature's `tauri::generate_handler!` registration.
-3. The command list in `src-tauri/build.rs`.
-4. The permission entry in `src-tauri/capabilities/main.json`.
-5. The command list in `src-tauri/src/bin/export_bindings/main.rs`, then
+3. The command list in `crates/lattice-desktop/build.rs`.
+4. The permission entry in `crates/lattice-desktop/capabilities/main.json`.
+5. The command list in `crates/lattice-desktop/src/bin/export_bindings/main.rs`, then
    `npm run bindings:generate`, which also regenerates
    `src/shared/ipc/routes.generated.ts`.
 
@@ -134,7 +135,7 @@ Missing step 3 or 4 still compiles and is rejected at runtime;
 (`scripts/tauri-command-orphans.baseline`).
 
 Schema changes go in a new dated migration,
-`src-tauri/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit a migration that
+`crates/lattice-desktop/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit a migration that
 has been applied, including the squashed `20260916000000_init_schema.sql`;
 sqlx checksums applied migrations and startup refuses a changed history.
 Lattice is pre-release, so don't add compatibility code for old local data.
@@ -159,9 +160,9 @@ npm run type-check:e2e
 npm run lint
 npm run contracts:check
 npm run test:unit
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets
-cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib
+(cd crates/lattice-desktop && cargo fmt --all -- --check)
+(cd crates/lattice-desktop && cargo clippy --workspace --all-targets)
+(cd crates/lattice-desktop && cargo test --workspace --lib)
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml

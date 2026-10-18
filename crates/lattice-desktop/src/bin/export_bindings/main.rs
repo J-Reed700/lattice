@@ -1,0 +1,618 @@
+//! TypeScript Bindings Generator
+//!
+//! Standalone binary that generates TypeScript type definitions for registered
+//! Specta-compatible plugin commands.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --features bindings-export --bin export_bindings
+//! cargo run --features bindings-export --bin export_bindings -- --check
+//! ```
+//!
+//! # Output
+//!
+//! Creates `src/lib/bindings.ts` with:
+//! - TypeScript wrappers and DTOs for the registered plugin commands, each
+//!   invoking its plugin route (`plugin:<plugin>|<command>`)
+//! - Auto-exported DTOs from command signatures
+//! - A deterministic generated header
+//!
+//! and `src/shared/ipc/routes.generated.ts`, the plugin that owns each command,
+//! which the renderer's transport invokes through.
+//!
+//! `--check` compares both against the committed files and writes neither.
+
+mod routes;
+mod settings;
+
+use specta_typescript::{BigIntExportBehavior, Typescript};
+use std::path::{Path, PathBuf};
+
+fn normalize_generated_bindings(generated: &str) -> Result<String, String> {
+    let generated =
+        settings::normalize_settings_output(generated).map_err(|error| error.to_string())?;
+    let normalized = generated
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!("{normalized}\n"))
+}
+
+/// Where `generated` and `committed` first differ, as a 1-based line number and
+/// the two lines; `None` when they are the same text.
+///
+/// Compared line by line, so the line-ending convention is not part of the
+/// comparison. It used to be byte for byte, and on Windows git checks the
+/// committed file out with CRLF endings while the generator writes LF — so the
+/// check reported up-to-date bindings as stale there, and only there. A missing
+/// line is reported against an empty one.
+fn first_difference(generated: &str, committed: &str) -> Option<(usize, String, String)> {
+    let mut generated_lines = generated.lines();
+    let mut committed_lines = committed.lines();
+    let mut line_number = 0usize;
+    loop {
+        line_number += 1;
+        match (generated_lines.next(), committed_lines.next()) {
+            (None, None) => return None,
+            (generated, committed) if generated == committed => {}
+            (generated, committed) => {
+                return Some((
+                    line_number,
+                    generated.unwrap_or_default().to_string(),
+                    committed.unwrap_or_default().to_string(),
+                ));
+            }
+        }
+    }
+}
+
+fn main() {
+    let check_only = std::env::args().skip(1).any(|arg| arg == "--check");
+    if let Err(error) = run(check_only) {
+        eprintln!("✗ {error}");
+        std::process::exit(1);
+    }
+}
+
+/// The two generated files and their contents, rendered from the commands.
+fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
+    // Build the tauri_specta builder with all plugin commands.
+    // rustfmt::skip: collect_commands! parses each entry as a `path`, and
+    // rustfmt would split the turbofish on the generic command across lines.
+    #[rustfmt::skip]
+    let builder =
+        tauri_specta::Builder::<tauri::Wry>::new().commands(tauri_specta::collect_commands![
+            lattice::features::explorer::plugin::explorer_resolve_root,
+            lattice::features::explorer::plugin::explorer_list_dir,
+            lattice::features::explorer::plugin::explorer_read_file,
+            lattice::features::explorer::plugin::explorer_locate_file,
+            lattice::features::explorer::plugin::explorer_search,
+            lattice::features::explorer::plugin::set_conversation_explorer_root,
+            lattice::features::explorer::plugin::explorer_index_open,
+            lattice::features::explorer::plugin::explorer_index_close,
+            lattice::features::explorer::plugin::explorer_index_status,
+            lattice::features::explorer::plugin::explorer_index_rebuild,
+            lattice::features::explorer::plugin::explorer_folders_list,
+            lattice::features::explorer::plugin::explorer_folder_rename,
+            lattice::features::explorer::plugin::explorer_folder_set_pinned,
+            lattice::features::explorer::plugin::explorer_folder_set_last_thread,
+            lattice::features::explorer::plugin::explorer_folder_set_settings,
+            lattice::features::explorer::plugin::explorer_folder_delete_index,
+            lattice::features::explorer::plugin::explorer_folder_remove,
+            lattice::features::learning::plugin::get_learning_plan,
+            lattice::features::learning::plugin::get_learning_portability_workspace,
+            lattice::features::learning::plugin::export_learning_pack,
+            lattice::features::learning::plugin::preview_learning_pack_import,
+            lattice::features::learning::plugin::apply_learning_pack_import,
+            lattice::features::learning::plugin::cancel_learning_pack_import_preview,
+            lattice::features::learning::plugin::save_learning_pack_as::<tauri::Wry>,
+            lattice::features::learning::plugin::export_all_learning_packs::<tauri::Wry>,
+            lattice::features::learning::plugin::preview_learning_curriculum_revision,
+            lattice::features::learning::plugin::accept_learning_curriculum_revision,
+            lattice::features::learning::plugin::discard_learning_curriculum_revision,
+            lattice::features::learning::plugin::start_learning_diagnostic,
+            lattice::features::learning::plugin::submit_learning_diagnostic,
+            lattice::features::learning::plugin::skip_learning_diagnostic,
+            lattice::features::learning::plugin::start_learning_generation_job,
+            lattice::features::learning::plugin::cancel_learning_generation_job,
+            lattice::features::learning::plugin::retry_learning_generation_job,
+            lattice::features::learning::plugin::get_learning_generation_job,
+            lattice::features::learning::plugin::list_learning_programs,
+            lattice::features::learning::plugin::get_learning_program,
+            lattice::features::learning::plugin::get_learning_lesson_evidence,
+            lattice::features::learning::plugin::get_learning_outline_evidence,
+            lattice::features::learning::plugin::generate_learning_program,
+            lattice::features::learning::plugin::cancel_learning_outline,
+            lattice::features::learning::plugin::repair_learning_outline,
+            lattice::features::learning::plugin::accept_learning_program,
+            lattice::features::learning::plugin::prepare_learning_lesson,
+            lattice::features::learning::plugin::complete_learning_lesson,
+            lattice::features::learning::plugin::submit_learning_attempt,
+            lattice::features::learning::plugin::delete_learning_program,
+            lattice::features::learning::plugin::get_learning_memory,
+            lattice::features::learning::plugin::ensure_learning_lesson_note,
+            lattice::features::learning::plugin::generate_learning_card_drafts,
+            lattice::features::learning::plugin::save_learning_card_draft,
+            lattice::features::learning::plugin::accept_learning_card_draft,
+            lattice::features::learning::plugin::discard_learning_card_draft,
+            lattice::features::learning::plugin::get_learning_canvas_workspace,
+            lattice::features::learning::plugin::create_learning_canvas,
+            lattice::features::learning::plugin::save_learning_canvas,
+            lattice::features::learning::plugin::create_learning_canvas_snapshot,
+            lattice::features::learning::plugin::restore_learning_canvas_snapshot,
+            lattice::features::learning::plugin::get_learning_source_workspace,
+            lattice::features::learning::plugin::get_learning_source_version,
+            lattice::features::learning::plugin::search_learning_sources,
+            lattice::features::learning::plugin::add_learning_web_source,
+            lattice::features::learning::plugin::add_learning_document_source,
+            lattice::features::learning::plugin::add_learning_text_source,
+            lattice::features::learning::plugin::refresh_learning_source,
+            lattice::features::learning::plugin::adopt_learning_source_version,
+            lattice::features::learning::plugin::update_learning_source_policy,
+            lattice::features::learning::plugin::delete_learning_source,
+            lattice::features::learning::plugin::reimport_learning_source,
+            lattice::features::learning::plugin::create_learning_source_selector,
+            lattice::features::learning::plugin::get_learning_source_selector,
+            lattice::features::learning::plugin::match_learning_source_selector,
+            lattice::features::learning::plugin::search_learning_sources_semantically,
+            lattice::features::learning::plugin::get_learning_recall_workspace,
+            lattice::features::learning::plugin::save_learning_recall_card,
+            lattice::features::learning::plugin::decide_learning_recall_duplicate,
+            lattice::features::learning::plugin::review_learning_recall_card,
+            lattice::features::learning::plugin::get_learning_practice_workspace,
+            lattice::features::learning::plugin::get_learning_practice_session,
+            lattice::features::learning::plugin::start_learning_practice_session,
+            lattice::features::learning::plugin::save_learning_practice_artifact,
+            lattice::features::learning::plugin::change_learning_practice_mode,
+            lattice::features::learning::plugin::open_learning_practice_source,
+            lattice::features::learning::plugin::request_learning_tutor_response,
+            lattice::features::learning::plugin::reveal_learning_practice_solution,
+            lattice::features::learning::plugin::submit_learning_practice_attempt,
+            lattice::features::learning::plugin::accept_learning_practice_proposal,
+            lattice::features::learning::plugin::reject_learning_practice_proposal,
+            lattice::features::learning::plugin::get_learning_assessment_workspace,
+            lattice::features::learning::plugin::create_learning_assessment_blueprint,
+            lattice::features::learning::plugin::start_learning_assessment_form,
+            lattice::features::learning::plugin::get_learning_assessment_form,
+            lattice::features::learning::plugin::save_learning_assessment_response,
+            lattice::features::learning::plugin::interrupt_learning_assessment_form,
+            lattice::features::learning::plugin::submit_learning_assessment_form,
+            lattice::features::learning::plugin::accept_learning_follow_up,
+            lattice::features::learning::plugin::dismiss_learning_follow_up,
+            lattice::features::learning::plugin::get_learning_practical_workspace,
+            lattice::features::learning::plugin::get_learning_practical_draft,
+            lattice::features::learning::plugin::save_learning_practical_draft,
+            lattice::features::learning::plugin::get_learning_runtime_catalog,
+            lattice::features::learning::plugin::prepare_learning_runtime_preset,
+            lattice::features::learning::plugin::save_learning_runtime_profile,
+            lattice::features::learning::plugin::generate_learning_practical_activity,
+            lattice::features::learning::plugin::start_learning_practical_run,
+            lattice::features::learning::plugin::cancel_learning_practical_run,
+            lattice::features::learning::plugin::start_learning_simulation,
+            lattice::features::learning::plugin::send_learning_simulation_turn,
+            lattice::features::learning::plugin::finish_learning_simulation,
+            lattice::features::learning::plugin::list_study_decks,
+            lattice::features::learning::plugin::get_study_deck,
+            lattice::features::learning::plugin::generate_study_deck,
+            lattice::features::learning::plugin::generate_conversation_study_deck,
+            lattice::features::learning::plugin::review_study_card,
+            lattice::features::learning::plugin::update_study_card,
+            lattice::features::learning::plugin::delete_study_deck,
+            lattice::features::learning::plugin::create_learning_tangent,
+            lattice::features::learning::plugin::list_learning_tangents,
+            // Model management plugin
+            lattice::features::model_management::plugin::commands::download_model,
+            lattice::features::model_management::plugin::commands::check_first_run_status,
+            lattice::features::model_management::plugin::commands::download_default_embedding_model,
+            lattice::features::model_management::plugin::commands::delete_model,
+            lattice::features::model_management::plugin::commands::get_model_download_path::<tauri::Wry>,
+            lattice::features::model_management::plugin::commands::list_downloaded_models,
+            lattice::features::model_management::plugin::commands::is_model_already_downloaded,
+            lattice::features::model_management::plugin::commands::set_active_embedding_model,
+            lattice::features::model_management::plugin::commands::set_active_chat_model,
+            lattice::features::model_management::plugin::commands::get_active_chat_model,
+            lattice::features::model_management::plugin::commands::get_active_embedding_model,
+            lattice::features::model_management::plugin::commands::get_active_models,
+            lattice::features::model_management::plugin::commands::clear_active_chat_model,
+            lattice::features::model_management::plugin::commands::clear_active_embedding_model,
+            lattice::features::model_management::plugin::commands::set_active_utility_model,
+            lattice::features::model_management::plugin::commands::clear_active_utility_model,
+            lattice::features::model_management::plugin::commands::warm_up_active_chat_model,
+            lattice::features::model_management::plugin::commands::warm_up_active_utility_model,
+            lattice::features::model_management::plugin::commands::warm_up_learning_model,
+            lattice::features::model_management::plugin::commands::list_loaded_models,
+            lattice::features::model_management::plugin::commands::last_learning_window_shortfall,
+            // Catalog/discovery commands
+            lattice::features::model_management::commands::detect_system_capabilities,
+            lattice::features::model_management::commands::get_compatible_models,
+            lattice::features::model_management::commands::get_all_recommended_models,
+            lattice::features::model_management::commands::search_model_catalog,
+            lattice::features::model_management::commands::get_model_variants,
+            lattice::features::model_management::commands::refresh_model_catalog,
+            lattice::features::model_management::commands::clear_model_catalog_cache,
+            lattice::features::model_management::commands::get_model_catalog_stats,
+            // Search plugin
+            lattice::features::search::commands::search_documents,
+            lattice::features::search::commands::search_fast,
+            lattice::features::search::commands::semantic_search,
+            lattice::features::search::commands::hybrid_search,
+            lattice::features::search::commands::find_similar,
+            lattice::features::search::commands::find_similar_documents,
+            lattice::features::search::commands::search_with_recency,
+            lattice::features::search::commands::batch_search,
+            lattice::features::search::plugin::reranker_status,
+            lattice::features::search::plugin::download_reranker,
+            lattice::features::function_calling::plugin::list_available_functions,
+            lattice::features::function_calling::plugin::execute_function,
+            lattice::features::function_calling::plugin::get_function_stats,
+            lattice::features::qa::plugin::check_llm_health,
+            lattice::features::conversation::plugin::chat_with_conversation,
+            lattice::features::conversation::commands::images::attach_message_images,
+            lattice::features::conversation::commands::images::release_message_images,
+            lattice::features::conversation::commands::images::restage_message_image,
+            lattice::features::conversation::plugin::generate_chat_starters,
+            lattice::features::conversation::plugin::regenerate_response,
+            lattice::features::conversation::plugin::truncate_conversation_after,
+            lattice::features::conversation::plugin::fork_conversation,
+            lattice::features::conversation::plugin::create_conversation_tangent,
+            lattice::features::conversation::plugin::list_conversation_tangents,
+            lattice::features::conversation::plugin::promote_conversation_tangent,
+            lattice::features::conversation::plugin::continue_in_new_conversation,
+            lattice::features::conversation::plugin::compact_conversation,
+            lattice::features::conversation::plugin::get_conversation_memory,
+            lattice::features::conversation::plugin::manage_knowledge,
+            lattice::features::settings::plugin::get_system_theme::<tauri::Wry>,
+            lattice::features::settings::plugin::set_cloud_api_key,
+            // Additional public IPC contracts (use the same signatures as runtime).
+            lattice::features::file::commands::open_file,
+            lattice::features::file::commands::open_file_by_id,
+            lattice::features::file::commands::read_file_content,
+            lattice::features::file::commands::read_file_bytes,
+            lattice::features::file::commands::show_in_folder,
+            lattice::interfaces::commands::document_list::get_document,
+            lattice::features::compare::plugin::compare_documents,
+            lattice::features::references::plugin::create_passage_reference,
+            lattice::features::references::plugin::list_passage_references,
+            lattice::features::references::plugin::update_passage_reference,
+            lattice::features::references::plugin::delete_passage_reference,
+            // File plugin
+            lattice::interfaces::commands::indexing::index_file,
+            lattice::interfaces::commands::indexing::index_directory,
+            lattice::features::file::commands::get_file_metadata,
+            lattice::interfaces::commands::indexing::remove_indexed_file,
+            lattice::features::file::plugin::commands::list_indexed_files,
+            lattice::features::file::plugin::commands::list_all_documents,
+            lattice::interfaces::commands::indexing::get_indexing_status,
+            lattice::interfaces::commands::indexing::get_indexing_stats,
+            lattice::interfaces::commands::indexing::get_index_progress,
+            lattice::interfaces::commands::indexing::cancel_indexing,
+            lattice::interfaces::commands::indexing::pause_indexing,
+            lattice::interfaces::commands::indexing::resume_indexing,
+            lattice::interfaces::commands::indexing::clear_indexing_failure,
+            lattice::interfaces::commands::indexing::reindex_file,
+            lattice::interfaces::commands::indexing::delete_document,
+            lattice::interfaces::commands::indexing::rename_document,
+            lattice::features::file::plugin::commands::get_file_path_by_id,
+            lattice::features::file::plugin::commands::get_indexed_folders,
+            lattice::features::file::plugin::commands::get_indexing_activities,
+            lattice::features::file::plugin::commands::get_recent_documents,
+            // Credentials Plugin (7 commands)
+            // Health Plugin (5 commands)
+            lattice::features::health::plugin::commands::health_check,
+            lattice::features::health::plugin::commands::get_system_stats,
+            lattice::features::health::plugin::commands::get_version,
+            lattice::features::health::plugin::commands::initialize_database,
+            lattice::features::health::plugin::commands::get_backend_logs,
+            // Tags Plugin (5 commands)
+            lattice::features::tags::plugin::get_all_tags_with_counts,
+            lattice::features::tags::plugin::get_document_tags,
+            lattice::features::tags::plugin::apply_tags,
+            lattice::features::tags::plugin::remove_tag_from_document,
+            lattice::features::tags::plugin::generate_tags_for_document,
+            // Favorites Plugin (4 commands)
+            lattice::features::favorites::plugin::add_favorite,
+            lattice::features::favorites::plugin::remove_favorite,
+            lattice::features::favorites::plugin::get_favorites,
+            lattice::features::favorites::plugin::is_favorite,
+            // Cache Plugin (5 commands)
+            lattice::features::cache::commands::clear_cache,
+            lattice::features::cache::commands::get_cache_stats,
+            lattice::features::cache::commands::get_cache_metrics,
+            lattice::features::cache::commands::clear_search_cache,
+            // Embeddings Plugin (4 commands)
+            lattice::features::embedding::plugin::generate_embedding,
+            lattice::features::embedding::plugin::generate_embeddings_batch,
+            lattice::features::embedding::plugin::get_embedding_model_info,
+            // HuggingFace Plugin (4 commands)
+            lattice::features::huggingface::plugin::set_huggingface_token,
+            lattice::features::huggingface::plugin::get_huggingface_token_status,
+            lattice::features::huggingface::plugin::get_huggingface_token,
+            lattice::features::huggingface::plugin::delete_huggingface_token,
+            // Extraction Plugin (4 commands)
+            lattice::features::extraction::plugin::parse_wikilinks,
+            lattice::features::extraction::plugin::extract_document_title,
+            lattice::features::extraction::plugin::resolve_wikilink,
+            lattice::features::extraction::plugin::extract_and_resolve_links,
+            // Conversation plugin
+            lattice::features::conversation::plugin::create_conversation,
+            lattice::features::conversation::plugin::set_conversation_model_choice,
+            lattice::features::conversation::plugin::get_conversation,
+            lattice::features::conversation::plugin::list_conversations,
+            lattice::features::conversation::plugin::delete_conversation,
+            lattice::features::conversation::plugin::get_conversation_messages,
+            lattice::features::conversation::plugin::rename_conversation,
+            // Chat commands accept a Tauri Window for streaming and are not
+            // representable by tauri-specta's standalone collector.
+            lattice::features::conversation::plugin::create_conversation_space,
+            lattice::features::conversation::plugin::list_conversation_spaces,
+            lattice::features::conversation::plugin::create_journal,
+            lattice::features::conversation::plugin::list_journals,
+            lattice::features::conversation::plugin::update_journal,
+            lattice::features::conversation::plugin::archive_journal,
+            lattice::features::conversation::plugin::delete_journal,
+            lattice::features::conversation::plugin::list_conversation_space_members,
+            lattice::features::conversation::plugin::upsert_conversation_space_member,
+            lattice::features::conversation::plugin::remove_conversation_space_member,
+            lattice::features::conversation::plugin::update_conversation_space,
+            lattice::features::conversation::plugin::archive_conversation_space,
+            lattice::features::conversation::plugin::move_conversation_to_space,
+            lattice::features::conversation::plugin::add_conversation_to_journal,
+            lattice::features::conversation::plugin::remove_conversation_from_journal,
+            lattice::features::conversation::plugin::list_space_documents,
+            lattice::features::conversation::plugin::list_conversation_linked_documents,
+            lattice::features::conversation::plugin::remove_conversation_linked_document,
+            lattice::features::conversation::plugin::add_conversation_web_source,
+            lattice::features::conversation::plugin::list_conversation_web_sources,
+            lattice::features::conversation::plugin::remove_conversation_web_source,
+            lattice::features::conversation::plugin::list_document_space_memberships,
+            lattice::features::conversation::plugin::add_documents_to_library,
+            lattice::features::conversation::plugin::set_document_space_membership,
+            lattice::features::conversation::plugin::set_documents_space_membership,
+            lattice::features::conversation::plugin::set_conversation_saved,
+            lattice::features::conversation::plugin::set_conversation_bookmarked,
+            lattice::features::conversation::plugin::set_conversation_pinned,
+            lattice::features::conversation::plugin::set_conversation_archived,
+            lattice::features::conversation::plugin::bookmark_conversation_message,
+            lattice::features::conversation::plugin::unbookmark_conversation_message,
+            lattice::features::conversation::plugin::delete_conversation_message,
+            lattice::features::conversation::plugin::list_message_bookmarks,
+            lattice::features::conversation::plugin::list_conversations_explorer,
+            lattice::features::conversation::plugin::list_journal_conversations,
+            lattice::features::conversation::plugin::set_journal_entry_pinned,
+            lattice::features::conversation::plugin::list_journal_entry_pins,
+            lattice::features::conversation::plugin::synthesize_journal_entries,
+            lattice::features::conversation::plugin::list_journal_syntheses,
+            lattice::features::conversation::plugin::get_journal_synthesis_result,
+            lattice::features::conversation::plugin::mark_journal_synthesis_applied,
+            lattice::features::conversation::plugin::dismiss_journal_synthesis,
+            lattice::features::conversation::plugin::retry_journal_synthesis,
+            // Batch plugin
+            lattice::features::batch::plugin::batch_import_files,
+            lattice::features::batch::plugin::batch_import_urls,
+            lattice::features::batch::plugin::get_batch_status,
+            lattice::features::batch::plugin::cancel_batch,
+            lattice::features::batch::plugin::get_batch_history,
+            lattice::features::batch::plugin::delete_batch_job,
+            lattice::features::batch::plugin::retry_failed_items,
+            lattice::features::jobs::plugin::list_jobs,
+            // Backup Plugin (7 commands)
+            lattice::features::backup::plugin::plugin_create_backup,
+            lattice::features::backup::plugin::plugin_restore_backup,
+            lattice::features::backup::plugin::plugin_list_backups,
+            lattice::features::backup::plugin::plugin_export_markdown,
+            lattice::features::backup::plugin::plugin_export_json,
+            lattice::features::backup::plugin::plugin_get_archive_status,
+            lattice::features::backup::plugin::plugin_begin_archive_setup,
+            lattice::features::backup::plugin::plugin_confirm_archive_setup,
+            lattice::features::backup::plugin::plugin_choose_archive_destination::<tauri::Wry>,
+            lattice::features::backup::plugin::plugin_set_archive_keep_count,
+            lattice::features::backup::plugin::plugin_set_archive_passphrase,
+            lattice::features::backup::plugin::plugin_rotate_recovery_code,
+            lattice::features::backup::plugin::plugin_disable_archive,
+            lattice::features::backup::plugin::plugin_create_archive_now,
+            lattice::features::backup::plugin::plugin_restore_archive::<tauri::Wry>,
+            // Daily notes plugin
+            lattice::features::daily_notes::plugin::list_workspace_notes,
+            lattice::features::daily_notes::plugin::create_workspace_note,
+            lattice::features::daily_notes::plugin::update_workspace_note,
+            lattice::features::daily_notes::plugin::capture_reference,
+            lattice::features::daily_notes::plugin::delete_workspace_note,
+            lattice::features::daily_notes::plugin::get_today_note,
+            lattice::features::daily_notes::plugin::quick_capture,
+            lattice::features::daily_notes::plugin::get_daily_notes_range,
+            lattice::features::daily_notes::plugin::get_previous_daily_note,
+            lattice::features::daily_notes::plugin::get_next_daily_note,
+            lattice::features::daily_notes::plugin::update_daily_note_content,
+            // Download lifecycle plugin
+            lattice::features::download::plugin::start_model_download,
+            lattice::features::download::plugin::pause_download,
+            lattice::features::download::plugin::resume_download,
+            lattice::features::download::plugin::cancel_download,
+            lattice::features::download::plugin::retry_download,
+            lattice::features::download::plugin::remove_download,
+            lattice::features::download::plugin::clear_completed_downloads,
+            lattice::features::download::plugin::get_download_status,
+            lattice::features::download::plugin::list_downloads,
+            lattice::features::download::plugin::start_vision_projector_download,
+            // Mentions plugin
+            lattice::features::mentions::plugin::extract_mentions,
+            lattice::features::mentions::plugin::search_mentions,
+            lattice::features::mentions::plugin::get_mentions_for_document,
+            lattice::features::mentions::plugin::get_backlinks_for_mention,
+            lattice::features::mentions::plugin::get_mentions_by_type,
+            lattice::features::mentions::plugin::create_mention,
+            lattice::features::mentions::plugin::delete_mention,
+            // Settings plugin
+            lattice::features::settings::plugin::test_ollama_connection,
+            lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
+            lattice::features::settings::plugin::test_custom_tool,
+            lattice::features::settings::plugin::get_settings,
+            lattice::features::settings::plugin::get_settings_category,
+            lattice::features::settings::plugin::update_settings,
+            lattice::features::settings::plugin::reset_settings,
+            lattice::features::settings::plugin::export_settings,
+            lattice::features::settings::plugin::import_settings,
+            lattice::features::settings::plugin::validate_folder_path,
+            lattice::features::settings::plugin::add_watch_folder,
+            lattice::features::settings::plugin::remove_watch_folder,
+            // Web and vault plugins
+            lattice::features::web::plugin::ingest_web_url,
+            lattice::features::web::plugin::fetch_url_preview,
+            lattice::features::web::plugin::extract_article,
+            lattice::features::web::plugin::read_web_page,
+            lattice::features::web::plugin::get_web_page_snapshot,
+            lattice::features::web::plugin::capture_web_page_snapshot,
+            lattice::features::web::plugin::list_web_page_snapshots,
+            lattice::features::vault::plugin::rescan_vault,
+            // Updates Plugin (2 commands)
+            lattice::features::updates::plugin::check_for_updates,
+            lattice::features::updates::plugin::get_version_info,
+            // Corpus-shape plugin
+            lattice::features::file::plugin::commands::get_corpus_shape,
+            lattice::features::file::plugin::commands::list_conversations_citing_document,
+            lattice::features::file::custom_collections::commands::list_custom_collections,
+            lattice::features::file::custom_collections::commands::create_custom_collection,
+            lattice::features::file::custom_collections::commands::rename_custom_collection,
+            lattice::features::file::custom_collections::commands::move_custom_collection,
+            lattice::features::file::custom_collections::commands::delete_custom_collection,
+            lattice::features::file::custom_collections::commands::add_documents_to_custom_collection,
+            lattice::features::file::custom_collections::commands::remove_documents_from_custom_collection,
+            lattice::features::corpus_shape::commands::cluster_vault_run::<tauri::Wry>,
+            lattice::features::corpus_shape::commands::list_clusters,
+            // Transcription plugin (2 commands)
+            lattice::features::transcription::plugin::transcribe_file,
+            lattice::features::transcription::plugin::get_transcription_status,
+        ])
+        .typ::<lattice::features::conversation::chat::ChatResponse>()
+        .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
+        .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
+        // Event payloads of the frozen web snapshot feature.
+        .typ::<lattice::features::web::snapshots::WebPageSnapshotChangedEvent>()
+        .typ::<lattice::features::web::snapshots::WebPageSnapshotLinkEvent>()
+        // Persisted in `metadata.turn` rather than returned by a command, so it
+        // reaches no signature on its own and has to be named here.
+        .typ::<lattice::features::conversation::chat::TurnRecordDto>()
+        .typ::<lattice::features::conversation::chat::ToolPreferences>();
+
+    let bindings = builder
+        .export_str(
+            Typescript::default()
+                .header(
+                    "// Auto-generated TypeScript bindings for Lattice plugins\n\
+                     // DO NOT EDIT - generated by crates/lattice-desktop/src/bin/export_bindings/main.rs\n\
+                     // To regenerate: cargo run --features bindings-export --bin export_bindings\n\
+                     // @ts-nocheck\n\
+                     // tauri-specta currently emits runtime helpers unused by this app; declarations\n\
+                     // exported from this file remain type-checked at their use sites.",
+                )
+                .bigint(BigIntExportBehavior::Number),
+        )
+        .map_err(|error| format!("Error generating bindings: {error}"))?;
+    let bindings = normalize_generated_bindings(&bindings)?;
+
+    let capabilities_path = workspace_root
+        .join("crates")
+        .join("lattice-desktop")
+        .join("capabilities")
+        .join("main.json");
+    let capabilities = std::fs::read_to_string(&capabilities_path)
+        .map_err(|error| format!("cannot read {}: {error}", capabilities_path.display()))?;
+    let owners = routes::command_owners(&capabilities)?;
+    let (bindings, command_routes) = routes::qualify_commands(&bindings, &owners)?;
+
+    Ok(vec![
+        (
+            workspace_root.join("src").join("lib").join("bindings.ts"),
+            bindings,
+        ),
+        (
+            workspace_root
+                .join("src")
+                .join("shared")
+                .join("ipc")
+                .join("routes.generated.ts"),
+            routes::render_routes(&command_routes),
+        ),
+    ])
+}
+
+fn run(check_only: bool) -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.ancestors().nth(2).ok_or_else(|| {
+        format!(
+            "unable to determine workspace root from {}",
+            manifest_dir.display()
+        )
+    })?;
+    let outputs = render(workspace_root)?;
+
+    if !check_only {
+        for (path, contents) in &outputs {
+            std::fs::write(path, contents)
+                .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            println!("Generated {}", path.display());
+        }
+        return Ok(());
+    }
+
+    let mut stale = false;
+    for (path, generated) in &outputs {
+        let committed = std::fs::read_to_string(path)
+            .map_err(|error| format!("cannot read committed {}: {error}", path.display()))?;
+        if let Some((line, generated, committed)) = first_difference(generated, &committed) {
+            stale = true;
+            eprintln!(
+                "{} is stale. First difference at line {line}:\n  generated: {generated}\n  committed: {committed}",
+                path.display()
+            );
+        }
+    }
+    if stale {
+        return Err(
+            "TypeScript bindings are stale. Run `cargo run --features bindings-export --bin export_bindings`."
+                .to_string(),
+        );
+    }
+    println!("TypeScript bindings are up to date.");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_difference;
+
+    /// The Windows CI failure: same bindings, checked out with CRLF endings.
+    #[test]
+    fn a_crlf_checkout_of_the_same_bindings_is_not_stale() {
+        let generated = "export type A = string\nexport type B = number\n";
+        let committed = "export type A = string\r\nexport type B = number\r\n";
+        assert_eq!(first_difference(generated, committed), None);
+    }
+
+    #[test]
+    fn a_real_difference_is_reported_with_its_line() {
+        let generated = "export type A = string\nexport type B = number\n";
+        let committed = "export type A = string\nexport type B = boolean\n";
+        assert_eq!(
+            first_difference(generated, committed),
+            Some((
+                2,
+                "export type B = number".to_string(),
+                "export type B = boolean".to_string()
+            ))
+        );
+    }
+
+    /// A command added in Rust but not yet regenerated shows up as extra lines.
+    #[test]
+    fn bindings_that_only_differ_in_length_are_stale() {
+        let generated = "export type A = string\nexport type B = number\n";
+        let committed = "export type A = string\n";
+        assert_eq!(
+            first_difference(generated, committed),
+            Some((2, "export type B = number".to_string(), String::new()))
+        );
+    }
+}

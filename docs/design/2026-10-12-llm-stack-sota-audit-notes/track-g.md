@@ -4,7 +4,7 @@ MTP drafting works on Josh's M3 Max (36 GB, Metal) with the bundled v0.6.0 `llam
 
 ## Setup
 
-- **Binary:** `src-tauri/binaries/llama-server-aarch64-apple-darwin`, `version: 0.6.0-dev (build 11429, commit d81235049)`. MTP-related `--help` text, verbatim:
+- **Binary:** `crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin`, `version: 0.6.0-dev (build 11429, commit d81235049)`. MTP-related `--help` text, verbatim:
   - `--spec-type none,draft-simple,draft-eagle3,draft-mtp,draft-dflash,draft-dspark,ngram-simple,ngram-map-k,ngram-map-k4v,ngram-mod,ngram-cache` "comma-separated list of types of speculative decoding to use (default: none)"
   - `--spec-draft-n-max N` "number of tokens to draft for speculative decoding (default: 3)"
   - `--spec-draft-n-min N` "minimum number of draft tokens to use for speculative decoding (default: 0)"

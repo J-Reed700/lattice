@@ -129,7 +129,7 @@ Feature edges 147 → 93 (−54, as estimated). Feature re-exports 17 → 15. `i
 
 ## PR 4b as built
 
-The USearch adapter now lives in `src-tauri/src/infrastructure/vector_index/`: `usearch_index{.rs,/*}` (with the `SearchServiceTrait` and `VectorSearchPort` impls in `usearch_index/ports.rs`), `compression.rs`, `rescore_store.rs`, `dimension_metadata.rs`, `vector_ops.rs` and `vector_ops_test.rs`, all moved with `git mv`. `features/search/engine/vector_search/` keeps `manifest`, `persistence` and `runtime_index`, and no longer re-exports any adapter type; every caller imports from `crate::infrastructure::vector_index` (the retrieval eval from `lattice::infrastructure::vector_index`).
+The USearch adapter now lives in `crates/lattice-desktop/src/infrastructure/vector_index/`: `usearch_index{.rs,/*}` (with the `SearchServiceTrait` and `VectorSearchPort` impls in `usearch_index/ports.rs`), `compression.rs`, `rescore_store.rs`, `dimension_metadata.rs`, `vector_ops.rs` and `vector_ops_test.rs`, all moved with `git mv`. `features/search/engine/vector_search/` keeps `manifest`, `persistence` and `runtime_index`, and no longer re-exports any adapter type; every caller imports from `crate::infrastructure::vector_index` (the retrieval eval from `lattice::infrastructure::vector_index`).
 
 Feature edges 93 → 89 (explorer→search −3, summaries→search −1). Feature re-exports stay 15. `infrastructure-imports-feature` stays 0. Deviations:
 

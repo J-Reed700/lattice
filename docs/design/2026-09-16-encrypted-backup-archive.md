@@ -33,7 +33,7 @@ otherwise kept. Downloaded models are never included.
 
 ## File format
 
-Authoritative: `src-tauri/src/features/backup/archive/format.rs`.
+Authoritative: `crates/lattice-desktop/src/features/backup/archive/format.rs`.
 
 ```
 MAGIC "LATTBKP\x01" | header_len u32 LE | header JSON | STREAM chunks...
@@ -166,8 +166,8 @@ plugin_restore_archive(request: RestoreArchiveRequestDto) -> RestoreArchiveResul
 ```
 
 Capabilities: add `backup:allow-plugin-<name>` for each in
-`src-tauri/capabilities/main.json`. Register each in
-`src-tauri/src/bin/export_bindings/main.rs` and `features/backup/plugin.rs`.
+`crates/lattice-desktop/capabilities/main.json`. Register each in
+`crates/lattice-desktop/src/bin/export_bindings/main.rs` and `features/backup/plugin.rs`.
 Regenerate `src/lib/bindings.ts` with `npm run bindings:generate`.
 
 ## Frontend
@@ -196,7 +196,7 @@ Tests follow `BackupSection.test.tsx` (vitest + testing-library, `vi.mock('@/lib
 
 ## As built
 
-Code lives in `src-tauri/src/features/backup/` (the repo was flattened from
+Code lives in `crates/lattice-desktop/src/features/backup/` (the repo was flattened from
 `src/app/` during implementation).
 
 | File | Role |

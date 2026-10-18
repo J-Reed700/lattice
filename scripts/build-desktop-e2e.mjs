@@ -10,7 +10,7 @@ const release = process.argv.includes('--release');
 const platform = process.platform;
 if (!['darwin', 'linux', 'win32'].includes(platform)) throw new Error('Unsupported desktop platform');
 await mkdir(output, { recursive: true });
-const config = JSON.parse(await readFile(path.join(root, 'src-tauri/tauri.e2e.conf.json'), 'utf8'));
+const config = JSON.parse(await readFile(path.join(root, 'crates/lattice-desktop/tauri.e2e.conf.json'), 'utf8'));
 const candidateToken = `t${randomUUID().replaceAll('-', '')}`;
 config.identifier = `tech.lattice.compatibility.${candidateToken}`;
 // Tauri's NSIS bundle chooses its own current-user install location. Give the
@@ -22,7 +22,7 @@ await writeFile(configPath, JSON.stringify(config, null, 2));
 const env = { ...process.env };
 // Never replace the ordinary development executable with a test-identity
 // binary. A caller may explicitly select a dedicated target directory.
-env.CARGO_TARGET_DIR = path.resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target/desktop-e2e');
+env.CARGO_TARGET_DIR = path.resolve(root, process.env.CARGO_TARGET_DIR || 'target/desktop-e2e');
 const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') || 'PATH';
 env[pathKey] = `${path.join(root, 'node_modules', '.bin')}${path.delimiter}${env[pathKey] || ''}`;
 // Limit local debug build disk use; CI can select the normal release profile.
@@ -58,7 +58,7 @@ async function assertMissing(file) {
 // be copied into a production or compatibility bundle.
 const cargoMetadata = JSON.parse(capture('cargo', [
   'metadata', '--no-deps', '--format-version', '1', '--manifest-path',
-  path.join(root, 'src-tauri', 'Cargo.toml'),
+  path.join(root, 'crates/lattice-desktop', 'Cargo.toml'),
 ]));
 const desktopPackage = cargoMetadata.packages.find(pkg => pkg.name === 'lattice-desktop');
 const bindingsTarget = desktopPackage?.targets.find(target => target.name === 'export_bindings');

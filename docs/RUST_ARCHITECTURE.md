@@ -3,17 +3,19 @@
 ## Dependency direction
 
 The core layers (`domain`, `application` and `shared`) are their own crate,
-`lattice-core` (lib `lattice_core`) at `src-tauri/crates/lattice-core`. It
+`lattice-core` (lib `lattice_core`) at `crates/lattice-core`. It
 does not depend on Tauri or on the desktop crate, so the compiler rejects any
 core import of features, infrastructure or interfaces. The desktop crate
 (`lattice-desktop`, lib `lattice`) names core items as `lattice_core::…`.
 Test doubles that the desktop crate's tests use sit behind core's
 `test-support` feature, which only the desktop crate's dev-dependency enables.
-Shared dependency pins and lints live in the workspace manifest,
-`src-tauri/Cargo.toml`.
+Shared dependency pins, lints and build profiles live in the workspace
+manifest, the root `Cargo.toml`. Run cargo from `crates/lattice-desktop`:
+its `.cargo/config.toml` sets offline SQLx and the larger thread stack the
+tests need.
 
 The desktop application owns persistence and runtime ports under
-`src-tauri/crates/lattice-core/src/application/ports`. Domain values do not
+`crates/lattice-core/src/application/ports`. Domain values do not
 own SQL drivers, transport adapters, or application orchestration. Composition
 remains in the DI modules; adapters implement ports in infrastructure or
 existing feature repository modules.
@@ -24,7 +26,7 @@ belong to their respective adapters, not the sync contracts.
 
 ## Module layout
 
-- Each vertical feature under `src-tauri/src/features/<name>/` owns its
+- Each vertical feature under `crates/lattice-desktop/src/features/<name>/` owns its
   engine, repositories, services, commands and plugin. Two production
   modules still load through `#[path]`:
   `learning/planning/curriculum_repository.rs` (`generation_recovery.rs`) and
@@ -191,7 +193,7 @@ Driver and LLM conversions live in their respective outer modules, preserving
 IPC shapes without making the shared error contract import those layers.
 
 Empty placeholder suites and orphaned test scaffolding have been removed.
-The active test inventory is in `src-tauri/tests/README.md`. CI explicitly executes
+The active test inventory is in `crates/lattice-desktop/tests/README.md`. CI explicitly executes
 lifecycle, tag repository, and plugin integration tests; the syntax-aware checker
 (`scripts/rust-architecture-check`) rejects empty integration test bodies and Rust
 test files outside the Cargo module graph, and checks the shared error contract
@@ -477,7 +479,7 @@ Rust compiler, so they are the parts that bite a newcomer.
 - Registering a Tauri command takes five separate edits: the
   `#[tauri::command]` function (conversation keeps the bodies as `_impl`
   functions in `plugin_impl.rs`), its `generate_handler!` entry in the
-  feature's `plugin.rs`, the command name in `src-tauri/build.rs` under
+  feature's `plugin.rs`, the command name in `crates/lattice-desktop/build.rs` under
   `InlinedPlugin::commands`, the matching `<feature>:allow-<command>` permission
   in `capabilities/main.json`, and its entry in `export_bindings`'s
   `collect_commands!` list. Missing any one of the five is not a compile
@@ -513,7 +515,7 @@ Rust compiler, so they are the parts that bite a newcomer.
   from a fresh snapshot instead of overwriting a newer ledger. Re-running the
   same operation id does not apply a second time.
 - Add each schema change as a new dated migration,
-  `src-tauri/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit one that has been
+  `crates/lattice-desktop/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit one that has been
   applied, the squashed init file included: sqlx stores a checksum of every
   applied migration and startup refuses a database whose history changed. A
   column added by `ALTER TABLE` goes only in the new file, never also in the
@@ -535,13 +537,15 @@ python3 scripts/check-tauri-command-inventory.py
 python3 scripts/check-sql-contracts.py
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml -p lattice-core
-cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib
-cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets
-cargo run --manifest-path src-tauri/Cargo.toml --features bindings-export --bin export_bindings -- --check
-cargo test --manifest-path api-rust/Cargo.toml --lib
-cargo test --manifest-path api-rust/Cargo.toml --test sync_persistence -- --ignored
-cargo test --manifest-path src-tauri/Cargo.toml --test conversation_memory_evals -- --list
+cargo test --manifest-path crates/lattice-sync/Cargo.toml --lib
+cargo test --manifest-path crates/lattice-sync/Cargo.toml --test sync_persistence -- --ignored
+
+cd crates/lattice-desktop
+cargo test -p lattice-core
+cargo test --workspace --lib
+cargo check --workspace --all-targets
+cargo run --features bindings-export --bin export_bindings -- --check
+cargo test --test conversation_memory_evals -- --list
 ```
 
 After removing ratcheted violations, run
@@ -550,7 +554,7 @@ smaller baselines.
 
 The conversation-memory evaluation suite is opt-in and needs a configured model
 plus the environment documented at the top of
-`src-tauri/tests/conversation_memory_evals.rs`. Authenticated Qwen calibrations
+`crates/lattice-desktop/tests/conversation_memory_evals.rs`. Authenticated Qwen calibrations
 have exercised correction and conflict cases. The corrected-value and
 unresolved-conflict cases pass after repairs to same-batch transitions, repair
 context, and ambiguous-transition review. A subsequent release run found and

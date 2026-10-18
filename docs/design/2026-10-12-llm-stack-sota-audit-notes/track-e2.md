@@ -6,7 +6,7 @@ The judge is the strong part; the lexical gate in front of it is the weak part. 
 
 - **New files:**
   - `evals/grounding/`: 101 labelled pairs, README, report, results, scores.
-  - `src-tauri/examples/claim_checker_eval.rs`: runs the shipped verifier.
+  - `crates/lattice-desktop/examples/claim_checker_eval.rs`: runs the shipped verifier.
   - `scripts/claim_checker_bakeoff.py`: runs one external checker per process.
   - `scripts/claim_checker_bakeoff_score.py`: the scorer.
   - `scripts/test_claim_checker_bakeoff.py`: tests for the scorer.

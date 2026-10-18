@@ -54,8 +54,8 @@ embedding model (Qwen3-Embedding where there is a GPU backend, MiniLM
 otherwise) and a local chat model. Downloads continue in the background, the
 full catalog stays in Settings, and after that it works fully offline.
 Optional chat providers (Ollama, a remote llama.cpp server, OpenAI,
-Anthropic) are available if you want them; `api-rust/` holds an experimental
-sync service the app does not use yet.
+Anthropic) are available if you want them; `crates/lattice-sync/` holds an
+experimental sync service the app does not use yet.
 
 ## Getting started
 
@@ -71,7 +71,8 @@ Native compatibility tests build and exercise isolated app packages on macOS
 You'll need Node.js 20.19+ or 22.12+ (CI uses 24), a current Rust toolchain,
 and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for
 your platform. Local generation uses a bundled `llama-server` sidecar; see
-[src-tauri/binaries](src-tauri/binaries/README.md) for how it is fetched.
+[crates/lattice-desktop/binaries](crates/lattice-desktop/binaries/README.md)
+for how it is fetched.
 
 ```bash
 npm ci
@@ -85,14 +86,21 @@ talks to the Rust backend needs the Tauri dev process.
 
 ```text
 .
-├── src/           # React and TypeScript frontend
-├── src-tauri/     # Rust backend and Tauri configuration
-├── api-rust/      # Experimental Rust sync service
-├── e2e/           # Playwright renderer journeys and native desktop tests
-├── evals/         # Retrieval and conversation-memory evaluation sets and results
-├── docs/          # Architecture notes, design docs, and user docs
-└── scripts/       # Repository checks and developer utilities
+├── crates/
+│   ├── lattice-core/      # Domain, application ports and contracts; no Tauri
+│   ├── lattice-desktop/   # The Tauri app: features, infrastructure, commands,
+│   │                      # migrations, sidecar binaries and app configuration
+│   └── lattice-sync/      # Experimental sync service (its own workspace)
+├── src/                   # React and TypeScript frontend
+├── e2e/                   # Playwright renderer journeys and native desktop tests
+├── evals/                 # Retrieval, grounding and memory eval sets and results
+├── docs/                  # Architecture, ADRs, design docs and user docs
+├── scripts/               # Repository checks and developer utilities
+└── Cargo.toml             # Rust workspace: lattice-core and lattice-desktop
 ```
+
+`lattice-desktop` depends on `lattice-core`, never the other way round; see
+[Rust architecture](docs/RUST_ARCHITECTURE.md) for the layer rules.
 
 ## Development checks
 
@@ -115,12 +123,14 @@ npm run test:e2e
 The suite builds its own renderer in `e2e-results/renderer` and serves it on port
 4173. Keep that port free; the tests do not reuse a running development server.
 
-Desktop backend:
+Desktop backend (run cargo from the app crate, whose `.cargo/config.toml`
+sets offline SQLx and the test thread stack):
 
 ```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets
-cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib
+cd crates/lattice-desktop
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets
+cargo test --workspace --lib
 ```
 
 Architecture and contract checks:
