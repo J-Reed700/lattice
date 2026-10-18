@@ -277,6 +277,7 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
         async {
             let expanded = expand(&llm, &references, &[gap()], &ClaimChecks::default())
                 .await?
+                .saved()
                 .expect("relevant capture");
             assert_eq!(expanded.sources.len(), sources.len() + 1);
             let saved = repo.verification_sources(&program.summary.id).await?;
@@ -327,6 +328,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         async {
             let expanded = expand(&llm, &references, &[gap()], &ClaimChecks::default())
                 .await?
+                .saved()
                 .expect("new evidence saved");
             assert_eq!(expanded.sources.len(), 101);
             let saved = repo.verification_sources(&program.summary.id).await?;
@@ -362,6 +364,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
         async {
             let expanded = expand(&llm, &original, &findings, &ClaimChecks::default())
                 .await?
+                .saved()
                 .expect("full capture added");
             assert_eq!(expanded.sources.len(), sources.len() + 1);
             let added = expanded
@@ -380,6 +383,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
             assert!(
                 expand(&model(), &expanded, &findings, &ClaimChecks::default())
                     .await?
+                    .saved()
                     .is_none()
             );
             Ok(())
@@ -409,12 +413,59 @@ async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures
             assert!(
                 expand(&llm, &references, &[failed], &ClaimChecks::default())
                     .await?
+                    .saved()
                     .is_none()
             );
             assert!(llm.prompts.lock().unwrap().is_empty());
             assert!(expand(&llm, &references, &[gap()], &ClaimChecks::default())
                 .await?
+                .saved()
                 .is_none());
+            assert_eq!(
+                repo.verification_sources(&program.summary.id).await?.len(),
+                sources.len()
+            );
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        async {
+            let llm = ScriptedModel {
+                outputs: Mutex::new([json!({"queries":[]}).to_string()].into()),
+                prompts: Mutex::new(vec![]),
+            };
+            let outcome = expand(&llm, &references, &[gap()], &ClaimChecks::default()).await?;
+            let Expansion::Exhausted(exhausted) = outcome else {
+                panic!("an empty plan means public search cannot help, not a failure");
+            };
+            assert_eq!(
+                exhausted,
+                Exhausted {
+                    claims: 1,
+                    searched: 0
+                }
+            );
+            assert_eq!(
+                exhausted.to_string(),
+                "No further public search can help 1 unresolved claim (0 searches already tried)"
+            );
+            assert_eq!(llm.prompts.lock().unwrap().len(), 1, "only the planner ran");
             assert_eq!(
                 repo.verification_sources(&program.summary.id).await?.len(),
                 sources.len()

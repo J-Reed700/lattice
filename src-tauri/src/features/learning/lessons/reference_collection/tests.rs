@@ -414,3 +414,38 @@ fn deeper_evidence_must_mention_what_the_claim_is_about() -> Result<()> {
     assert!(!collection.mentions_subject_of("ASP.NET Core", "Vacuum reclaims storage."));
     Ok(())
 }
+
+#[tokio::test]
+async fn keyword_ranking_is_the_same_on_every_build_and_call() -> Result<()> {
+    // Near-tied passages: the same terms, in different amounts.
+    let words = ["schema", "tool", "enum", "value", "model", "call", "field"];
+    let sources: Vec<_> = (0..24)
+        .map(|index| LearningSourceDto {
+            id: format!("source-{index}"),
+            title: format!("Source {index}"),
+            url: None,
+            excerpt: words
+                .iter()
+                .enumerate()
+                .map(|(at, word)| format!("{word} ").repeat(1 + (index + at) % 4))
+                .collect(),
+            acquired_at: 1,
+        })
+        .collect();
+    let query = words.join(" ");
+    let order = |hits: Vec<ReferencePassage>| {
+        hits.into_iter()
+            .map(|hit| (hit.source_id, hit.start_byte))
+            .collect::<Vec<_>>()
+    };
+    let first = order(
+        ReferenceCollection::lexical(&sources)?
+            .retrieve(&query, 24)
+            .await?,
+    );
+    for _ in 0..16 {
+        let rebuilt = ReferenceCollection::lexical(&sources)?;
+        assert_eq!(order(rebuilt.retrieve(&query, 24).await?), first);
+    }
+    Ok(())
+}

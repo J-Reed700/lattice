@@ -89,7 +89,9 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         }
         let mut report =
             verify_with_references(llm, runtimes, &candidate, active, &mut checks).await?;
-        loop {
+        // The last research round's finding that public search cannot help,
+        // so a stop names the true reason the claims stayed unresolved.
+        let research_exhausted = loop {
             let gaps = report
                 .findings
                 .iter()
@@ -101,11 +103,13 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 })
                 .count();
             let active = expanded.as_ref().unwrap_or(references);
-            let Some(additional) = research::expand(llm, active, &report.findings, &checks)
+            let additional = match research::expand(llm, active, &report.findings, &checks)
                 .boxed()
                 .await?
-            else {
-                break;
+            {
+                research::Expansion::Saved(additional) => *additional,
+                research::Expansion::Exhausted(exhausted) => break Some(exhausted),
+                research::Expansion::Unchanged => break None,
             };
             expanded = Some(additional);
             let active = expanded
@@ -144,16 +148,18 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     .iter()
                     .any(|finding| finding.verdict == ClaimVerdict::Contradicted)
             {
-                break;
+                break None;
             }
-        }
+        };
         if report.issues.is_empty() {
             return Ok((raw, report));
         }
         if let Some(error) = unchecked_claims(&report.findings) {
             return Err(error);
         }
-        progress.record(&raw, &report.issues).await?;
+        progress
+            .record(&raw, &report.issues, research_exhausted)
+            .await?;
         let issue_fingerprint = repair_issue_fingerprint(&report.issues);
         let repeated_defects =
             progress.escalated || previous_issue_fingerprint.as_ref() == Some(&issue_fingerprint);
@@ -173,6 +179,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             &report,
             &repair_history,
             repeated_defects,
+            expanded.as_ref().unwrap_or(references),
         )?;
         let pending = PendingRepair {
             fingerprint: repair_fingerprint(
@@ -227,20 +234,30 @@ impl RepairProgress {
     /// beats the best becomes it and clears the escalation; one that does not
     /// escalates the next repair, and after an escalated round it stops: the
     /// best candidate is saved as the lesson draft and an error explains why.
-    pub(super) async fn record(&mut self, raw: &str, issues: &[String]) -> Result<()> {
+    /// `exhausted` is research's finding that no public search can help the
+    /// remaining claims; a stop states it as the reason they remain.
+    pub(super) async fn record(
+        &mut self,
+        raw: &str,
+        issues: &[String],
+        exhausted: Option<research::Exhausted>,
+    ) -> Result<()> {
         match &self.best {
             Some(best) if issues.len() >= best.issues.len() => {
                 if self.escalated {
                     crate::features::learning::lesson_drafts::save(&best.candidate).await?;
                     return Err(AppError::InvalidInput(format!(
-                        "Repairs stopped reducing the lesson's problems: {} remain ({}). The best draft is saved; retry to continue.",
+                        "Repairs stopped reducing the lesson's problems: {} remain ({}).{} The best draft is saved; retry to continue.",
                         best.issues.len(),
                         best.issues
                             .iter()
                             .take(3)
                             .map(String::as_str)
                             .collect::<Vec<_>>()
-                            .join("; ")
+                            .join("; "),
+                        exhausted
+                            .map(|exhausted| format!(" {exhausted}."))
+                            .unwrap_or_default()
                     )));
                 }
                 self.escalated = true;
@@ -371,13 +388,24 @@ impl PendingRepair {
 /// once instead of multiplying an entire retrieval result by every finding.
 /// This changes representation only: no conflicting or unsupported evidence is
 /// discarded, and the full candidate still undergoes independent verification.
+/// Each passage carries its source's title, and a failed claim names a
+/// "Source N" by title too, so a source index is not read as evidence N.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
     report: &LessonVerificationReport,
     repair_history: &[Value],
     repeated_defects: bool,
+    references: &ReferenceCollection<'_>,
 ) -> Result<Value> {
+    let citations = section_citations(candidate, references)?;
+    let title = |id: &str| {
+        references
+            .sources
+            .iter()
+            .find(|source| source.id == id)
+            .map(|source| source.title.clone())
+    };
     let mut locations = HashMap::new();
     let mut passages = Vec::new();
     let failed: Vec<_> = report.findings.iter()
@@ -387,12 +415,12 @@ pub(super) fn repair_context(
                 let key = (&passage.source_id, passage.start_byte, passage.end_byte, &passage.text);
                 let index = *locations.entry(key).or_insert_with(|| {
                     let index = passages.len();
-                    passages.push(json!({"id":format!("evidence-{index}"),"sourceId":passage.source_id,"startByte":passage.start_byte,"endByte":passage.end_byte,"text":passage.text}));
+                    passages.push(json!({"id":format!("evidence-{index}"),"sourceId":passage.source_id,"sourceTitle":title(&passage.source_id),"startByte":passage.start_byte,"endByte":passage.end_byte,"text":passage.text}));
                     index
                 });
                 format!("evidence-{index}")
             }).collect();
-            json!({"unit":finding.unit,"statement":finding.statement,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence})
+            json!({"unit":finding.unit,"statement":citations.label(&finding.statement, references),"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence})
         }).collect();
     Ok(json!({
         "requirements":crate::features::learning::generation::parse_json::<Value>(prompt)?,

@@ -54,7 +54,7 @@ impl LLMPort for BatchModel {
                 _ => None,
             })
             .unwrap();
-        let challenge = system.starts_with("Plan independent evidence searches");
+        let challenge = system.starts_with("Review a provisional lesson claim approval");
         let batch = serde_json::from_str::<Value>(user)
             .ok()
             .filter(|input| input["claims"].is_array());
@@ -89,12 +89,12 @@ impl LLMPort for BatchModel {
             // All ten fixture assertions use the same source: it is sent once.
             assert_eq!(batch["sourcePassages"].as_array().unwrap().len(), 1);
             let checks:Vec<_>=batch["claims"].as_array().unwrap().iter().map(|claim| {
-                if challenge {json!({"id":claim["id"],"queries":[]})}
+                if challenge {json!({"id":claim["id"],"objections":[]})}
                 else {json!({"id":claim["id"],"response":if self.malformed_first&&claim["id"]=="claim-0" {"incomplete response".into()}else{format!("Reason: The fixture passage states the claim.\nSource passage: {}\nVerdict: supported",claim["evidenceIds"][0].as_str().unwrap())}})}
             }).collect();
             json!({"checks":checks}).to_string()
         } else if challenge {
-            json!({"queries":[]}).to_string()
+            json!({"objections":[]}).to_string()
         } else {
             if self.block_individual {
                 std::future::pending::<()>().await;

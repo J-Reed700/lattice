@@ -117,14 +117,55 @@ pub(in crate::features::learning) async fn run<T>(
     }
 }
 
+/// Gaps the research planner judged no public search can help: `claims`
+/// unresolved claims after `searched` searches already tried.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Exhausted {
+    pub(super) claims: usize,
+    pub(super) searched: usize,
+}
+
+impl std::fmt::Display for Exhausted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "No further public search can help {} unresolved claim{} ({} search{} already tried)",
+            self.claims,
+            if self.claims == 1 { "" } else { "s" },
+            self.searched,
+            if self.searched == 1 { "" } else { "es" },
+        )
+    }
+}
+
+/// What a research round did for the lesson's gaps.
+pub(super) enum Expansion<'a> {
+    /// New references were saved; the gaps are checked again against them.
+    Saved(Box<ReferenceCollection<'a>>),
+    /// The planner found nothing public left to search for these gaps.
+    Exhausted(Exhausted),
+    /// No research ran, or its searches saved nothing new.
+    Unchanged,
+}
+
+impl<'a> Expansion<'a> {
+    /// The expanded references, when this round saved any.
+    pub(super) fn saved(self) -> Option<ReferenceCollection<'a>> {
+        match self {
+            Self::Saved(references) => Some(*references),
+            Self::Exhausted(_) | Self::Unchanged => None,
+        }
+    }
+}
+
 pub(super) async fn expand<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
     findings: &[Finding],
     checks: &ClaimChecks,
-) -> Result<Option<ReferenceCollection<'a>>> {
+) -> Result<Expansion<'a>> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
-        return Ok(None);
+        return Ok(Expansion::Unchanged);
     };
     let gaps: Vec<_> = findings
         .iter()
@@ -137,16 +178,17 @@ pub(super) async fn expand<'a>(
         .map(|f| json!({"claim":f.statement,"missingEvidence":f.reason}))
         .collect();
     if gaps.is_empty() {
-        return Ok(None);
+        return Ok(Expansion::Unchanged);
     }
-    let Some(expanded) = research(llm, references, &context, &gaps, Gaps::Claims).await? else {
-        return Ok(None);
+    let expanded = match research(llm, references, &context, &gaps, Gaps::Claims).await? {
+        Expansion::Saved(expanded) => *expanded,
+        unresearched => return Ok(unresearched),
     };
     // Persist the claim-to-source scope before returning. If the app exits
     // between research and rechecking, recovery still reopens only the failed
     // comparisons that requested these automatically captured references.
     evidence_selection::record_research_scope(&expanded, findings, checks).await?;
-    Ok(Some(expanded))
+    Ok(Expansion::Saved(Box::new(expanded)))
 }
 
 /// Before a lesson is written, search for references on its topics that no
@@ -173,7 +215,7 @@ pub(in crate::features::learning) async fn research_topics<'a>(
             tracing::warn!(%error, topics = gaps.len(), "Lesson topic research gave no usable answer; the topics stay uncovered");
             Ok(None)
         }
-        result => result,
+        result => result.map(Expansion::saved),
     }
 }
 
@@ -187,14 +229,14 @@ enum Gaps {
 }
 
 /// Plan searches for `gaps`, choose and capture credible results, save them
-/// to the program, and reload the collection. None when nothing was saved.
+/// to the program, and reload the collection.
 async fn research<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
     context: &Context,
     gaps: &[Value],
     kind: Gaps,
-) -> Result<Option<ReferenceCollection<'a>>> {
+) -> Result<Expansion<'a>> {
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Research,
         match kind {
@@ -235,14 +277,25 @@ async fn research<'a>(
         &already_searched,
     )
     .await?;
-    // Topics nobody can find searches for stay uncovered and say so.
-    if queries.is_empty() && kind == Gaps::Topics {
-        return Ok(None);
-    }
+    // An empty plan is the planner's answer that public search cannot help
+    // these gaps, not a failure: topics stay uncovered, and claims go on to
+    // the repair, labelling or best-draft stop that follows research.
     if queries.is_empty() {
-        return Err(AppError::Other(
-            "The reference search plan was malformed. The lesson remains unpublished.".into(),
-        ));
+        let exhausted = Exhausted {
+            claims: gaps.len(),
+            searched: already_searched.len(),
+        };
+        if kind == Gaps::Claims {
+            tracing::info!(
+                claims = exhausted.claims,
+                already_searched = exhausted.searched,
+                "Reference research planner found nothing new to search; continuing with saved references"
+            );
+            crate::features::learning::lesson_progress::stage(format!(
+                "{exhausted}; continuing with the saved references"
+            ));
+        }
+        return Ok(Expansion::Exhausted(exhausted));
     }
     let program_repo =
         crate::features::learning::repository::LearningRepository::new(context.pool.clone());
@@ -342,7 +395,7 @@ async fn research<'a>(
         }
     }
     if added == 0 && sources.len() == references.sources.len() {
-        return Ok(None);
+        return Ok(Expansion::Unchanged);
     }
     crate::features::learning::lesson_progress::stage(format!(
         "Indexing {added} additional references; checking which saved comparisons can be reused"
@@ -350,5 +403,5 @@ async fn research<'a>(
     references
         .reload(&context.pool, &context.program_id, &sources)
         .await
-        .map(Some)
+        .map(|references| Expansion::Saved(Box::new(references)))
 }
