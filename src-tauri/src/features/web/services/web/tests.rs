@@ -1,6 +1,7 @@
 //! Tests for page reading, search-result parsing and the private-address guard.
 use super::page::{decode_response_text, read_bounded_body};
 use super::*;
+use std::time::Instant;
 use url::Url;
 
 #[test]
@@ -363,7 +364,7 @@ async fn reference_capture_retains_large_page_tail_without_using_chat_cache() {
             url,
             super::page::PageText {
                 final_url: url.into(),
-                title: title,
+                title,
                 content: extracted,
                 content_type: Some("text/html".into()),
                 via: Default::default(),

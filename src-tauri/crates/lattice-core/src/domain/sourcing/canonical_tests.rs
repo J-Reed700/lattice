@@ -135,9 +135,12 @@ fn wayback_urls_key_as_the_page_they_archive() {
     }
 }
 
+/// A capture time as (year, month, day, hour, minute, second).
+type Ymdhms = (i32, u32, u32, u32, u32, u32);
+
 #[test]
 fn unwrap_archive_reads_the_capture_time() {
-    let cases: &[(&str, Option<(i32, u32, u32, u32, u32, u32)>)] = &[
+    let cases: &[(&str, Option<Ymdhms>)] = &[
         (
             "https://web.archive.org/web/20240115093007id_/https://example.com/",
             Some((2024, 1, 15, 9, 30, 7)),

@@ -297,8 +297,18 @@ fn the_keyless_registry_holds_the_three_providers_with_honest_identities() {
         .collect();
     assert_eq!(ids, ["duckduckgo", "bing_html", "wikipedia"]);
     use lattice_core::domain::sourcing::Identity;
-    assert_eq!(wikipedia::DESCRIPTOR.identity, Identity::DeclaredClient);
-    assert_eq!(duckduckgo::DESCRIPTOR.identity, Identity::BrowserLike);
-    assert!(duckduckgo::DESCRIPTOR.rate.trip_on_first_refusal);
-    assert!(!wikipedia::DESCRIPTOR.rate.trip_on_first_refusal);
+    // Read from the registered entries, not the descriptor constants, so the
+    // check covers what the registry actually serves.
+    let registered = |id: &str| {
+        registry
+            .iter()
+            .map(|entry| entry.descriptor())
+            .find(|descriptor| descriptor.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} is registered"))
+    };
+    let (wikipedia, duckduckgo) = (registered("wikipedia"), registered("duckduckgo"));
+    assert_eq!(wikipedia.identity, Identity::DeclaredClient);
+    assert_eq!(duckduckgo.identity, Identity::BrowserLike);
+    assert!(duckduckgo.rate.trip_on_first_refusal);
+    assert!(!wikipedia.rate.trip_on_first_refusal);
 }

@@ -187,7 +187,10 @@ fn search_output(
         .len();
     let start = offset.min(total);
     let end = start.saturating_add(max_results).min(total);
-    let results: Vec<WebSearchResult> = findings.leads[start..end]
+    let results: Vec<WebSearchResult> = findings
+        .leads
+        .get(start..end)
+        .unwrap_or_default()
         .iter()
         .map(|lead| WebSearchResult {
             title: lead.title.clone().unwrap_or_else(|| lead.url.to_string()),

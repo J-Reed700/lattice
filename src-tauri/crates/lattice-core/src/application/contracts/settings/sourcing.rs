@@ -81,7 +81,7 @@ impl SourcingSettingsDto {
     pub fn finder_enabled(&self, id: &FinderId) -> bool {
         self.finders
             .get(id.as_str())
-            .map_or(true, |setting| setting.enabled)
+            .is_none_or(|setting| setting.enabled)
     }
 
     /// The SearXNG instance, when set to an http(s) URL.

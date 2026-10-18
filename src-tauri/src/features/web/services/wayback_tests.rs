@@ -289,11 +289,10 @@ async fn a_replay_reads_the_raw_capture() {
             r"^/web/20150102000131id_/https:/+example\.com/$",
         ))
         .and(header_regex("user-agent", r"^Lattice/"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "text/html; charset=utf-8")
-                .set_body_string("<html><body><p>Archived words.</p></body></html>"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>Archived words.</p></body></html>",
+            "text/html; charset=utf-8",
+        ))
         .expect(1)
         .mount(&server)
         .await;

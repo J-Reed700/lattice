@@ -146,8 +146,10 @@ impl<'a> Runner<'a> {
         let mut last_wave_new = 0;
         let mut ran_every_wave = true;
         for (index, wave) in plan.waves.iter().enumerate() {
-            let later_steps = plan.waves[index..]
+            let later_steps = plan
+                .waves
                 .iter()
+                .skip(index)
                 .any(|wave| !wave.steps.is_empty());
             if index > 0 && !self.policy.wants_another_wave(fused, last_wave_new, want) {
                 ran_every_wave = !later_steps;
@@ -242,7 +244,8 @@ impl<'a> Runner<'a> {
         want: usize,
         fused: &mut usize,
     ) {
-        let destinations = report.steps[range.clone()]
+        let steps = report.steps.get(range.clone()).unwrap_or_default();
+        let destinations = steps
             .iter()
             .map(|step| step.entry.descriptor().sends_to)
             .collect::<HashSet<_>>()
@@ -252,7 +255,7 @@ impl<'a> Runner<'a> {
         // the borrowed steps makes the future's `Send` depend on a
         // higher-ranked lifetime the compiler cannot prove.
         let mut pending: Vec<BoxFuture<'_, PageRun>> = Vec::with_capacity(range.len());
-        for step in &report.steps[range.clone()] {
+        for step in steps {
             pending.push(Box::pin(self.run_page(&step.entry, &step.need, 1)));
         }
         let runs: Vec<PageRun> = futures::stream::iter(pending)
@@ -270,11 +273,11 @@ impl<'a> Runner<'a> {
         }
         *fused = self.fused_len(&report.steps);
         for (index, outcome) in held {
-            let outcome = if *fused < want {
-                let step = &report.steps[index];
-                self.after_wait(&step.entry, &step.need, 1, outcome).await
-            } else {
-                outcome
+            let outcome = match report.steps.get(index) {
+                Some(step) if *fused < want => {
+                    self.after_wait(&step.entry, &step.need, 1, outcome).await
+                }
+                _ => outcome,
             };
             self.settle(report, Some(index), outcome);
             *fused = self.fused_len(&report.steps);
@@ -291,17 +294,19 @@ impl<'a> Runner<'a> {
         fused: &mut usize,
     ) {
         while *fused < want && !self.budget.is_spent() {
-            let next = range
-                .clone()
-                .filter(|&index| {
-                    let step = &report.steps[index];
+            let next = report
+                .steps
+                .iter()
+                .enumerate()
+                .take(range.end)
+                .skip(range.start)
+                .filter(|(_, step)| {
                     step.more && step.pages < pages_to_fill(want, step.entry.page_size)
                 })
-                .min_by_key(|&index| (report.steps[index].pages, index));
-            let Some(index) = next else {
+                .min_by_key(|&(index, step)| (step.pages, index));
+            let Some((index, step)) = next else {
                 break;
             };
-            let step = &report.steps[index];
             let page = step.pages + 1;
             let run = self.run_page(&step.entry, &step.need, page).await;
             let outcome = if run.held {
@@ -314,7 +319,9 @@ impl<'a> Runner<'a> {
             self.settle(report, Some(index), outcome);
             *fused = self.fused_len(&report.steps);
             if *fused == before {
-                report.steps[index].more = false;
+                if let Some(step) = report.steps.get_mut(index) {
+                    step.more = false;
+                }
             }
         }
     }
@@ -502,7 +509,7 @@ impl<'a> Runner<'a> {
                 self.need
                     .scope
                     .as_ref()
-                    .map_or(true, |scope| scope.covers(&lead.url))
+                    .is_none_or(|scope| scope.covers(&lead.url))
             })
             .map(canonical::lead_key)
             .collect::<HashSet<_>>()

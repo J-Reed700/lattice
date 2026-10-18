@@ -109,6 +109,7 @@ pub struct WebService {
 /// A page read for display, which is a fetch plus the one thing the tool
 /// output has no room for: when the text was actually read. A cache hit is
 /// served instantly and could otherwise only claim to have been read "now".
+#[derive(Debug)]
 pub struct ReadPage {
     pub output: FetchUrlContentOutput,
     pub fetched_at: DateTime<Utc>,

@@ -83,7 +83,7 @@ impl SourcingService {
         let entries: Vec<FinderEntry> = self
             .registry
             .iter()
-            .filter(|entry| only.map_or(true, |ids| ids.contains(&entry.descriptor().id)))
+            .filter(|entry| only.is_none_or(|ids| ids.contains(&entry.descriptor().id)))
             .cloned()
             .collect();
         let descriptors: Vec<FinderDescriptor> = entries

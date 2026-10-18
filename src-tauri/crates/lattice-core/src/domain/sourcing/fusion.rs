@@ -61,11 +61,7 @@ pub fn rrf_scored(lists: &[RankedList<'_>], k: u32, owner: Option<&Origin>) -> V
                 wave: list.wave,
                 list_index,
             };
-            fused
-                .entry(key)
-                .or_insert_with(Candidate::default)
-                .occurrences
-                .push(occurrence);
+            fused.entry(key).or_default().occurrences.push(occurrence);
         }
     }
 

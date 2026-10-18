@@ -89,15 +89,21 @@ async fn web_search_returns_every_finders_outcome() {
         .search_web(&input("rust async", 5, 1))
         .await
         .unwrap();
+    // DuckDuckGo's window fits the search's budget, so it is held behind
+    // Bing and settles after it: find its outcome by name, not position.
     assert_eq!(ddg.calls().len(), 1);
-    assert_eq!(again.outcomes[0].result, "skipped");
+    let skipped = again
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.finder == "duckduckgo")
+        .expect("DuckDuckGo's outcome is reported");
+    assert_eq!(skipped.result, "skipped");
     assert!(
-        again.outcomes[0]
+        skipped
             .cause
             .as_deref()
             .is_some_and(|cause| cause.contains("bot challenge")),
-        "{:?}",
-        again.outcomes[0]
+        "{skipped:?}"
     );
 }
 
