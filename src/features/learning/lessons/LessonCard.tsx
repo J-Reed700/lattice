@@ -55,7 +55,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   useEffect(() => { if (selected) setExpanded(true); }, [selected, lesson.preparation]);
   // A lesson held for review is named by its job's result; its claims come
   // from the review. While a job runs, an opened lesson lists claims live.
-  const jobs = useLearningPlan(program.summary.id).data?.jobs ?? [];
+  // A draft course has no plan and no jobs, so it asks for none.
+  const jobs = useLearningPlan(program.summary.status === 'active' ? program.summary.id : '').data?.jobs ?? [];
   const holdingJob = lesson.preparation === 'outline' ? jobHoldingLesson(jobs, lesson.id) : null;
   const activeJob = currentPreparationJobs(jobs).find((job) => job.status === 'pending' || job.status === 'running') ?? null;
   const review = useLessonClaimReview(
