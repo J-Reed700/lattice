@@ -1,5 +1,5 @@
-use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
+use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
 use lattice_core::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::confinement::confine_to_root;

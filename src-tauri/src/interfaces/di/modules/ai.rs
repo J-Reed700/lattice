@@ -189,7 +189,7 @@ impl AIModule {
 
     pub fn download_manager(
         &self,
-    ) -> &Arc<dyn crate::features::download::manager::DownloadManager> {
+    ) -> &Arc<dyn lattice_core::application::ports::download_manager::DownloadManager> {
         &self.llm.download_manager
     }
 

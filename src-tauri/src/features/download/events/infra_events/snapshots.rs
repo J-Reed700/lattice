@@ -163,9 +163,9 @@ impl DownloadEventBridge {
 
     pub(super) async fn convert_event(
         &self,
-        event: crate::features::download::manager::DownloadEvent,
+        event: lattice_core::application::ports::download_manager::DownloadEvent,
     ) -> Result<DownloadEvent> {
-        use crate::features::download::manager::DownloadEvent as ME;
+        use lattice_core::application::ports::download_manager::DownloadEvent as ME;
         use lattice_core::domain::download::snapshot::{DownloadStatus, SingleFileSnapshot};
 
         match event {

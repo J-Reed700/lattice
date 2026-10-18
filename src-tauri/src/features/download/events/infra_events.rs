@@ -1,3 +1,4 @@
+use lattice_core::application::ports::download_manager as manager_port;
 use lattice_core::domain::download::snapshot::{
     BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot,
 };
@@ -82,10 +83,10 @@ impl DownloadEventEmitter {
 
 pub struct DownloadEventBridge {
     emitter: Arc<DownloadEventEmitter>,
-    download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
+    download_manager: Arc<dyn manager_port::DownloadManager>,
     repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
     event_rx_arc:
-        Arc<RwLock<Option<mpsc::Receiver<crate::features::download::manager::DownloadEvent>>>>,
+        Arc<RwLock<Option<mpsc::Receiver<manager_port::DownloadEvent>>>>,
     // reason: holds the repository handle supplied by DI wiring in
     // bootstrap/app.rs; dropping it would change the public `new` signature.
     #[allow(dead_code)]
@@ -104,11 +105,9 @@ pub struct DownloadEventBridge {
 impl DownloadEventBridge {
     pub fn new(
         app_handle: AppHandle,
-        download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
+        download_manager: Arc<dyn manager_port::DownloadManager>,
         repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
-        event_rx_arc: Arc<
-            RwLock<Option<mpsc::Receiver<crate::features::download::manager::DownloadEvent>>>,
-        >,
+        event_rx_arc: Arc<RwLock<Option<mpsc::Receiver<manager_port::DownloadEvent>>>>,
         downloaded_model_repository: Option<
             Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>,
         >,
@@ -205,7 +204,7 @@ impl DownloadEventBridge {
                             let delay = reconciliation_poll_delay(sessions.len(), false);
                             for session in sessions {
                                 use lattice_core::domain::download::DownloadState;
-                                use crate::features::download::manager::DownloadEvent as ManagerEvent;
+                                use manager_port::DownloadEvent as ManagerEvent;
 
                                 let event = match session.state() {
                                     DownloadState::Completed => Some(ManagerEvent::Completed {
@@ -316,10 +315,7 @@ impl DownloadEventBridge {
 
     /// Handle infrastructure events from DownloadManager (file-level events)
     /// Converts to snapshot and emits
-    async fn handle_infrastructure_event(
-        &self,
-        manager_event: crate::features::download::manager::DownloadEvent,
-    ) {
+    async fn handle_infrastructure_event(&self, manager_event: manager_port::DownloadEvent) {
         let terminal_event = is_terminal_manager_event(&manager_event);
         // Bridge manager events into domain download events so DownloadSaga can
         // update model_files/model status atomically.
@@ -327,9 +323,7 @@ impl DownloadEventBridge {
             tracing::warn!("Failed to publish domain download event: {}", e);
         }
 
-        if let crate::features::download::manager::DownloadEvent::Failed { id, error } =
-            &manager_event
-        {
+        if let manager_port::DownloadEvent::Failed { id, error } = &manager_event {
             if let Err(e) = self
                 .emitter
                 .emit_failed(DownloadFailedEvent {
@@ -365,13 +359,13 @@ impl DownloadEventBridge {
 
     async fn publish_domain_event(
         &self,
-        manager_event: &crate::features::download::manager::DownloadEvent,
+        manager_event: &manager_port::DownloadEvent,
     ) -> Result<()> {
         use crate::features::download::events::model_download_events::{
             FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadStartedEvent,
             ModelDownloadEvent,
         };
-        use crate::features::download::manager::DownloadEvent as ME;
+        use manager_port::DownloadEvent as ME;
 
         let Some(event_bus) = &self.event_bus else {
             return Ok(());
@@ -504,7 +498,7 @@ impl DownloadEventBridge {
 }
 
 async fn process_queue_after_terminal(
-    manager: &dyn crate::features::download::manager::DownloadManager,
+    manager: &dyn manager_port::DownloadManager,
     terminal_event: bool,
 ) -> Result<(), lattice_core::domain::download::DownloadError> {
     if terminal_event {
@@ -513,12 +507,12 @@ async fn process_queue_after_terminal(
     Ok(())
 }
 
-fn is_terminal_manager_event(event: &crate::features::download::manager::DownloadEvent) -> bool {
+fn is_terminal_manager_event(event: &manager_port::DownloadEvent) -> bool {
     matches!(
         event,
-        crate::features::download::manager::DownloadEvent::Completed { .. }
-            | crate::features::download::manager::DownloadEvent::Failed { .. }
-            | crate::features::download::manager::DownloadEvent::Cancelled { .. }
+        manager_port::DownloadEvent::Completed { .. }
+            | manager_port::DownloadEvent::Failed { .. }
+            | manager_port::DownloadEvent::Cancelled { .. }
     )
 }
 

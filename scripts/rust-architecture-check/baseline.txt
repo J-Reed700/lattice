@@ -44,9 +44,8 @@
 #   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
 
-feature-edge features::llm features::download 7
+feature-edge features::llm features::download 3
 feature-edge features::llm features::model_management 2
-feature-edge features::model_management features::download 6
 
 feature-reexport features/conversation/chat/ports.rs lattice_core 2
 feature-reexport features/favorites/dto.rs lattice_core 1

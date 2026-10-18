@@ -85,6 +85,7 @@ pub mod credentials_port;
 pub mod database_stats_port;
 pub mod document_repository_port;
 pub mod document_scope;
+pub mod download_manager;
 pub mod embedding_index_binding;
 pub mod embedding_port;
 pub mod embedding_repository_port;

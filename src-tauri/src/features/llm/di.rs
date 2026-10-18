@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 
 use crate::features::download::download_repository::SqliteDownloadRepository;
 use crate::features::download::engine::HttpDownloadEngine;
-use crate::features::download::manager::{DownloadManager, DownloadManagerService};
+use crate::features::download::manager::DownloadManagerService;
 use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
@@ -26,6 +26,7 @@ use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::download_manager::DownloadManager;
 use lattice_core::application::ports::llm_port::{
     InvalidationCause, ModelRequirements, ModelRole, OptionalLlmLoader, PinnedModel,
 };

@@ -9,7 +9,8 @@
 //!
 //! - `crate::features::download::download_repository` — download state repo
 //! - `crate::features::download::engine` — DownloadEngine
-//! - `crate::features::download::manager` — DownloadManager, DownloadEvent
+//! - `crate::features::download::manager` — DownloadManagerService, which
+//!   implements core's `DownloadManager` port
 //! - `crate::features::download::saga` — DownloadSaga
 //! - `crate::features::download::commands` — Tauri command handlers
 //! - `crate::features::download::plugin::init()` — Tauri plugin

@@ -27,7 +27,7 @@
 //! println!("Downloaded: {} ({} bytes)", response.model_name, response.file_size_bytes);
 //! ```
 
-use crate::features::download::manager::{DownloadManager, DownloadRequest};
+use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
 use lattice_core::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
@@ -200,9 +200,9 @@ impl DownloadDefaultModelUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::download::manager::DownloadEvent;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use async_trait::async_trait;
+    use lattice_core::application::ports::download_manager::DownloadEvent;
     use lattice_core::domain::download::{DownloadError, DownloadSession};
     use lattice_core::domain::models::embedding_defaults::{
         DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
@@ -232,7 +232,7 @@ mod tests {
 
         async fn start_download_batch(
             &self,
-            items: Vec<crate::features::download::manager::DownloadBatchItem>,
+            items: Vec<lattice_core::application::ports::download_manager::DownloadBatchItem>,
         ) -> Result<Vec<String>, DownloadError> {
             let mut ids = Vec::with_capacity(items.len());
             for item in items {

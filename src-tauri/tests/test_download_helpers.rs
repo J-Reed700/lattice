@@ -10,7 +10,7 @@
 mod common;
 
 use common::download_helpers::*;
-use lattice::features::download::manager::DownloadEvent;
+use lattice_core::application::ports::download_manager::DownloadEvent;
 use std::time::Duration;
 use tokio::sync::mpsc;
 

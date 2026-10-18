@@ -24,10 +24,12 @@
 //! println!("Downloaded to: {}", response.path);
 //! ```
 
-use crate::features::download::manager::{DownloadBatchItem, DownloadManager, DownloadRequest};
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::ports::download_manager::{
+    DownloadBatchItem, DownloadManager, DownloadRequest,
+};
 use lattice_core::application::ports::file_system_port::FileSystemPort;
 use lattice_core::application::ports::model_catalog::ModelCatalogPort;
 use lattice_core::application::ports::model_storage::ModelStoragePort;
