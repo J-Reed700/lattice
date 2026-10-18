@@ -139,6 +139,18 @@ pub enum ClaimEvent {   // append-only audit, one row each
 
 Port `crates/lattice-core/src/application/ports/claim_review.rs`: `ClaimReviewStore { load(lesson_id) -> Ledger; append(lesson_id, claim_id, event, expected_revision) -> Result<Revision>; set_lesson_review(lesson_id, LessonReviewState) }`. Implemented in the learning feature (§7).
 
+*As built (track L0):* `domain/learning/claim_review.rs` (types) with `claim_review/{ledger.rs, replay.rs, rules.rs}`. Where the sketch above could not hold, the code differs:
+- `ClaimState::Unchecked` (extracted, not yet checked; the machine's) gives every claim a state from its first event.
+- `VerdictKind::Disputed { verifier }` has no `local`: `VerdictKind` cannot spell "supported", and the local side of a dispute is always "verified by the local checker", because a human verdict the Verifier disputes (a confirmation, or accepted general knowledge) is reopened as `Reopened { VerifierDispute }` instead (§14.5).
+- `Checked(Check)` carries `result: CheckResult { Supported { source_version_id, supporting_quote } | Failed { kind } }` in place of a flat kind and optional quote, plus `window_tokens` (a different window is new information). `Extracted` also carries the `statement`. `EvidenceAttached.result` is `AttachOutcome { Checked(Check) | NoPassage }`. `Executed` is a record only: code claims are judged by the `Checked` event over their execution passages, as today.
+- New event `Superseded { successor }`: re-extraction's successor, or `None` for a claim whose sentence went with an edit (the "become `Edited { successor: None }`" above needed an event). A user edit is `UserAction::Edit` (→ `Edited { successor: None }`), then `Superseded` once re-extraction names the successor.
+- `RepairOutcome` is `Rewritten | Removed | Rejected { reason } | SupersededByUser`. `after_machine_failure` is the ledger's replay, not a public function: a rejected repair uses an attempt at once, a rewrite uses one at the check that follows, and a user-superseded repair is not charged (§9); `RepairAttempted` is refused unless `may_repair` holds and `attempt`/`escalated` match the attempts left.
+- Every event is validated against the state it lands on (actor per kind, §5.1 preconditions, note on a contradiction, undo target), so a log that loads is a log the rules allowed. Undo returns to the state before the undone event; undoing an `Undone` redoes it; undoing the machine's removal of a sentence queues the claim (§4).
+- A claim waiting for the user stays the user's: a recheck on new information may verify it or update its reason, never return it to automatic repair (§5.1's "no automatic repair" after user research or evidence, applied to every queued claim).
+- `relitigate(bound, change) -> Option<ReopenCause>` returns the cause to record; `reopen_cause(state, change)` adds §5.3's reopen of a machine verification whose source was deleted or replaced. `identity` is `identities(prior, extracted, field_text)` over a whole re-extraction, so no prior id is given twice (`claim_id` is a primary key); a new claim gets `None` and `ClaimId::generate()`.
+- Also in the domain: `available_actions`/`allows` (§5.1's preconditions), `may_research`, `next_repair_escalates`, `confirm_requires_note`, `end_state` (BLOCKED, §6.1) and `ClaimCounts`.
+- Port: `append(lesson_id, claim_id, provenance, event, expected_revision)`; `set_lesson_review(lesson_id, LessonReview { program_id, job_id, state, draft_sha256, checker_model, stop_reason }) -> Revision`, since the row needs more than its state; `load` returns `Ledger { review, revision, claims }`.
+
 ## 4. Convergence: the rewritten loop
 
 `verify_and_repair_with_references` (`repair_loop.rs:36-199`) keeps its shape; the lesson-wide issue count and `RepairProgress` (`repair_loop.rs:202-241`) are replaced by the per-claim ledger.
@@ -339,6 +351,8 @@ The `learning_programs` ALTERs are plain column adds; the triggers on that table
 
 No table rebuild; `preparation` and the job status CHECKs are untouched. Pre-release: existing rows get `added_by='research'`, which is wrong for sources the user added before this change; acceptable under "data deletable", and the Sources panel can show "added before provenance was recorded" for rows older than the migration if Josh wants (one line, LATER).
 
+*As built (track L0):* the file is `migrations/20261017150000_lesson_claim_reviews.sql`, after `20261017120000_chat_images.sql`. `learning_lesson_reviews.job_id` references `jobs(id)`: `learning_generation_jobs` was dropped by `20261009140000_jobs.sql`. Everything else is as above, §14's opt-in and consent columns and §15's `learning_checker_examples` included, so no later track needs a migration of its own. Test: `learning/lessons/claim_reviews/migration_tests.rs` (fresh database; populated database before and after, rows kept, defaults, checks, cascades, and the opt-in leaving `content_revision` alone).
+
 ### 7.2 Repository and service (feature layer)
 
 `src-tauri/src/features/learning/lessons/claim_reviews/` (new): `repository.rs` (implements `ClaimReviewStore` over sqlx), `service.rs` (actions → events, `expected_revision` check, draft edits via `text_edits`), `dto.rs`, `attach.rs` (the §5.4 pipeline, composing the sources repository, `ReferenceCollection::reload`, `retrieve_from`, `judge_for_publication`), `mod.rs`. DI through the container/bootstrap (#71's composition root), no global state. Each file ≤ 800 lines.
@@ -361,6 +375,8 @@ pub enum ClaimActionRequestDto { Confirm{note, source_version_ids}, Unconfirm, E
   AttachLink{url}, AttachDocument{document_id}, AttachText{title, text}, Undo }
 pub struct StopReasonDto { code, message, fix, at, request: Option<RequestFactsDto { prompt_tokens_exact, prompt_tokens_estimated, window_tokens, output_reserved, server_kind, server_message_sanitized, attempts, step }> }
 ```
+
+*As built (track L0):* `learning/lessons/claim_reviews/dto.rs` and `dto/history.rs`; JSON fixtures in `claim_reviews/fixtures/`, pinned by `dto_tests.rs` (each fixture round-trips, and the domain mirrors produce it). `evidence` is `ClaimEvidencePassageDto { passage: LearningEvidencePassageDto, addedBy }` (the reused DTO is nested, not extended). `ClaimStateDto` carries the status only; verdict, reason, supporting quote and the user's note are the item's own fields. `history` is `ClaimEventDto { ordinal, actor, at, jobId, appVersion, checkerModel, event }` with one payload per event kind. Unions are internally tagged (`state`, `kind`, `cause`, `action`, `outcome`, `verdict`, `input`). No command is registered and the bindings are unchanged.
 
 ### 7.4 Commands (`learning/plugin/claims.rs`, new; registered in `learning/plugin.rs` and `src/bin/export_bindings/main.rs`)
 
