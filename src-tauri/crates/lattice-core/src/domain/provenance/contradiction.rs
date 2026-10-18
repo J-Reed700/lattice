@@ -15,7 +15,7 @@ use super::temporal::{day, TemporalValidity};
 
 /// A passage the checker found contradicting the claim, levelled the same
 /// way as a support.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contrary {
     pub source_version_id: String,
     pub origin_cluster: ClusterId,

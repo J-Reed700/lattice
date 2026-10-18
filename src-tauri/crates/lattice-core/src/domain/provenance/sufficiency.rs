@@ -35,7 +35,7 @@ pub enum PassageKind {
 
 /// One passage the checker used as support, levelled for the claim's
 /// subject.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Support {
     pub source_version_id: String,
     pub origin_cluster: ClusterId,

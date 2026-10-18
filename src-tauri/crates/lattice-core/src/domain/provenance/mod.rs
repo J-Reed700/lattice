@@ -66,8 +66,8 @@ mod temporal;
 
 pub use authority::{AuthorityAssessment, InheritedTrust, SubjectRelation, Trust, TrustLevel};
 pub use calibration::{
-    effective_bars, BarBasis, Calibration, CalibrationCell, EffectiveBar, EffectiveBars,
-    LabelSource, LevelBar, Outcome, OutcomeRecord, Posterior, Prior,
+    bar_changes, effective_bars, BarBasis, BarChange, Calibration, CalibrationCell, EffectiveBar,
+    EffectiveBars, LabelSource, LevelBar, Outcome, OutcomeRecord, Posterior, Prior,
 };
 pub use chain::{citation_candidates, follow_further, CitationCandidate, LinkStanding};
 pub use claim_profile::{

@@ -23,6 +23,9 @@ pub enum LabelSource {
     VerifierAgree,
     VerifierDisagree,
     ContraryEvidence,
+    /// The user attached evidence and the check against it verified the
+    /// claim: the claim held.
+    EvidenceAdded,
 }
 
 wire_names!(LabelSource {
@@ -33,6 +36,7 @@ wire_names!(LabelSource {
     VerifierAgree => "verifier_agree",
     VerifierDisagree => "verifier_disagree",
     ContraryEvidence => "contrary_evidence",
+    EvidenceAdded => "evidence_added",
 });
 
 /// One supporting cluster of one closed claim: what the gate decided and
@@ -545,6 +549,10 @@ fn ln_gamma(x: f64) -> f64 {
     let t = x + G + 0.5;
     0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + sum.ln()
 }
+
+#[path = "bar_changes.rs"]
+mod bar_changes;
+pub use bar_changes::{bar_changes, BarChange};
 
 #[cfg(test)]
 #[path = "calibration_tests.rs"]
