@@ -702,3 +702,29 @@ Fix PR (`lattice-evidence`, uncommitted): `content_verification/research.rs` (`E
 Claim-review design: CR §0, §2.1-2.3, §3, §4, §5.1, §5.3, §5.4, §6.1, §7.1, §8.2, §14, §15, §16 (tracks R, L0, L1, S, F, V, I and the per-chat-model collision table).
 
 Scratchpad evidence: `/private/tmp/claude-501/-Users-josh-Code-lattice-temp/9f78b884-57bd-495c-8a76-b7447ad904e3/scratchpad/lesson-failure-function-calling.md` §1, §3 (causes 2-5, 7), §4 (fix 7: the policy decision).
+
+## As-built notes: P2 web (2026-10-17)
+
+Branch `feat/provenance-web`, from P1's contracts commit `40f2be17`, fast-forwarded to P1's rules commit `ccedb536` so the page origin uses core's rules instead of a second copy.
+
+**Where it is.** `features/web/services/provenance/{mod, metadata, json_ld, dates, links}.rs` with `tests.rs` (fixture pages) and `parts_tests.rs` (link scanner, dates); fixtures in `provenance/fixtures/` (documentation page, blog post, news article, Wayback capture, a page falsely claiming to be official, malformed markup). `WebServiceTrait::fetch_reference_page` has its default in `lattice-core/src/application/ports/web_service.rs` (the trait moved there in phase 2 round C; §17/§22 still say `web/traits/web.rs`), returning `NotExtracted { reason: NO_PROVENANCE_READER }`; `WebService` overrides it and `fetch_reference_content` now delegates to it. `ReadPage.signals` carries the signals for every read; `MockWebService::set_page_signals` configures them per URL. `conversation/chat/test_runtime.rs` and the learning fakes are unchanged.
+
+**What each read records.**
+
+| Read | Signals |
+|---|---|
+| HTTP, reference | markup metadata + `links` from the reference markdown |
+| HTTP, chat | markup metadata; `links` empty (chat text is paragraph text, whose brackets are the page's prose) |
+| Browser, reference | new `BrowserReader::read_document` (the rendered DOM without the snapshot fix-ups); the same markdown extraction and metadata reader run on it; `via_browser_reader = true`, `status` = what the HTTP client was answered, `last_modified = None` |
+| Browser, chat; page-cache hit | `NotExtracted` with the reason (the text report and the cache carry no markup) |
+
+The browser fallback for reference reads used to return flat paragraph text stamped as `web_reference_markdown_v2`; it now returns that markdown. `PageRead::Reference`'s doc said "no browser fallback"; the code always had one, and the doc now says what it does.
+
+**Deviations from §4/§17.**
+
+- **Links are a scanner, not a regex.** `provenance/links.rs` reads the reference reader's own grammar: backslash escapes, code spans and fenced blocks are honoured, brackets are matched, only absolute http(s) destinations count, images are skipped, and the anchor is the plain text (escapes and the reader's `&amp;`/`&lt;`/`&gt;` decoded, emphasis markers dropped). Core's `signals::markdown_links` (P1, a regex) matches `\[click here\](https://…)`, which is how the reader writes a link-shaped string from the page's *prose*, and links inside code. **Open for P1/P7:** keep one; the scanner is pure (`url` only) and can move into core verbatim, replacing the regex.
+- **Cross-origin canonicals are not carried.** `Origin::apply_canonical` keeps a same-origin canonical and returns `CrossOrigin { url }` otherwise; `PageSignals` has no field for it, and P2 may not edit domain types, so it is logged at debug and dropped. **Open for P1:** a `PageSignals.canonical_of: Option<String>` (or similar) so P3 can write `CanonicalOf`. An archived page's canonical is unwrapped to the original before it is applied (Wayback rewrites it into its own address space).
+- **`self_description` is filled at extraction** with core's `signals::self_description` over title, site name and description, rather than left to the judgement path.
+- **Archive unwrapping is core's** (`Origin::of_url`); web has no archive module. `dates.archived_at` comes from `origin.archived`.
+
+**Precedence (first that parses wins; each present-but-unparsable field is a `DateBasis::Malformed { field }`).** Published: JSON-LD `datePublished` → `article:published_time` → meta (`datePublished` itemprop, `date`, `dc.date`, `dc.date.issued`, `dcterms.date|issued|created`, `citation_publication_date`, `citation_date`, `pubdate`, `publishdate`) → `time[itemprop~=datePublished]`, `time[pubdate]`, `article time[datetime]`. Modified: JSON-LD `dateModified` → `article:modified_time`, `og:updated_time` → meta (`dateModified`, `dc.date.modified`, `dcterms.modified`, `http-equiv=last-modified`) → `time[itemprop~=dateModified]`. Publisher: JSON-LD `publisher` (content nodes first, untyped `@id` references resolved to the typed node on the page) → `dc.publisher`/`dcterms.publisher`/`citation_publisher` → microdata `itemprop=publisher` → the first JSON-LD organisation node. Author: JSON-LD `author`/`creator` → `author`/`dc.creator`/`dcterms.creator`/`citation_author` → `article:author` → microdata → `rel=author`. Values are cleaned (control characters removed, whitespace collapsed) and otherwise kept as declared: no caps, since oversized metadata is core's `OversizedMetadata` flag.
