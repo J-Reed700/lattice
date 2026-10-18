@@ -29,7 +29,7 @@
 //! # }
 //! ```
 
-use crate::features::web::services::stealth;
+use crate::features::web::services::identity;
 use crate::features::web::WebCaptureServiceTrait;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -52,9 +52,9 @@ pub struct WebCaptureService {
 }
 
 impl WebCaptureService {
-    /// Create a new web capture service with stealth features.
+    /// Create a new web capture service with browser-like headers.
     pub fn new() -> Result<Self> {
-        let client = stealth::stealth_client_builder()
+        let client = identity::client_builder()
             .timeout(WEB_REQUEST_TIMEOUT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
@@ -64,7 +64,7 @@ impl WebCaptureService {
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration) -> Result<Self> {
-        let client = stealth::stealth_client_builder()
+        let client = identity::client_builder()
             .timeout(timeout)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
@@ -412,9 +412,9 @@ impl WebCaptureServiceTrait for WebCaptureService {
         // Validate URL for security
         self.validate_url(url)?;
 
-        stealth::random_delay(500, 2000).await;
-        let profile = stealth::random_profile();
-        let headers = stealth::browser_headers(profile, None);
+        identity::random_delay(500, 2000).await;
+        let profile = identity::random_profile();
+        let headers = identity::browser_headers(profile, None);
 
         let response = self
             .client

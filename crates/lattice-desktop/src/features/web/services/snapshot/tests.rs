@@ -18,7 +18,7 @@ use super::resources::{
 use super::sanitize::{
     choose_srcset, collect, noscript_images, sanitize_with_resources, synthesize_archival_html,
 };
-use crate::features::web::services::stealth;
+use crate::features::web::services::identity;
 use crate::features::web::services::web::public_web_client;
 use crate::features::web::traits::page_snapshot::{
     CaptureError, CaptureProgress, CaptureRequest, DataUri, ProgressSink,
@@ -536,7 +536,7 @@ async fn a_private_address_is_refused_without_a_request() {
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
     let client = public_web_client().unwrap();
-    let profile = stealth::random_profile();
+    let profile = identity::random_profile();
     for url in [
         format!("http://127.0.0.1:{port}/x.png"),
         "http://10.0.0.1/x.png".to_string(),
@@ -630,7 +630,7 @@ async fn the_resource_budget_sets_partial() {
     let progress: ProgressSink = Arc::new(|_: CaptureProgress| {});
     let fetcher = Fetcher::new(
         &client,
-        stealth::random_profile(),
+        identity::random_profile(),
         PAGE.to_string(),
         progress,
     );

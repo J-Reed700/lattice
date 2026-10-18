@@ -115,6 +115,8 @@ pub mod search_engines;
 pub mod settings_port;
 pub mod settings_reader;
 pub mod settings_side_effects_port;
+pub mod source_finder;
+pub mod source_finding;
 pub mod sparse_term_store_port;
 pub mod summary_search;
 pub mod system_info;
@@ -176,6 +178,8 @@ pub use settings_port::merge_json_update;
 pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
 pub use settings_reader::SettingsReaderPort;
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
+pub use source_finder::{Budget, SourceFinder};
+pub use source_finding::SourceFinding;
 pub use sparse_term_store_port::{ChunkSparseTerms, SparseTermStorePort};
 pub use system_info::{
     AcceleratorProbe, ComputeType, GpuInfo, NoAcceleratorProbe, SystemInfo, SystemInfoPort,

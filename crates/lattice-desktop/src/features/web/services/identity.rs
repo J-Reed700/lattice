@@ -1,26 +1,26 @@
-//! Stealth HTTP utilities for anti-bot evasion.
+//! The two HTTP identities Lattice presents (design §3.9).
 //!
-//! Provides browser-like request profiles, user-agent rotation, proxy support,
-//! random delays, and FlareSolverr integration to avoid detection.
+//! - **Browser-like** for HTML search engines and ordinary pages, where a
+//!   browser is what the site expects of a user's reading client: consistent
+//!   browser profiles (User-Agent with matching client hints) and navigation
+//!   headers.
+//! - **Declared client** for every API: `Lattice/<version> (+<project URL>)`,
+//!   plus the user's contact when they set one for polite pools. Wikimedia,
+//!   crates.io, Crossref, SEC and arXiv require an honest agent from bots, and
+//!   a browser disguise on an API is what gets a client blocked.
 //!
-//! # Configuration (Environment Variables)
-//!
-//! - `RECALL_PROXY_URL`: Single residential proxy URL (e.g., `http://user:pass@proxy:8080`)
-//! - `RECALL_PROXY_URLS`: Comma-separated proxy URLs for rotation
-//! - `RECALL_FLARESOLVERR_URL`: FlareSolverr endpoint (e.g., `http://localhost:8191`)
-//! - `RECALL_STEALTH_MIN_DELAY_MS`: Minimum inter-request delay (default: 500)
-//! - `RECALL_STEALTH_MAX_DELAY_MS`: Maximum inter-request delay (default: 2000)
+//! There is no proxy pool and no challenge solver: anonymity comes from
+//! sending only the query, never from routing through someone else's
+//! machine (decided 2026-09-23).
 
-use once_cell::sync::Lazy;
 use rand::Rng;
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, CONNECTION,
     REFERER, USER_AGENT,
 };
-use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 /// Consistent browser profile pairing User-Agent with matching Sec-CH-UA headers.
 /// Anti-bot systems flag mismatched UA/client-hint combinations.
@@ -122,12 +122,6 @@ const BROWSER_PROFILES: &[BrowserProfile] = &[
 ];
 
 // ─── Profile Selection ──────────────────────────────────────────────────────
-
-// global-state: parsed once from the process environment, which no caller
-// can change, and never written again.
-static PROXY_POOL: Lazy<Option<Vec<String>>> = Lazy::new(load_proxy_pool);
-// global-state: configured once from the process environment, like the pool.
-static FLARESOLVERR: Lazy<Option<FlareSolverrClient>> = Lazy::new(FlareSolverrClient::from_env);
 
 #[allow(clippy::indexing_slicing)] // gen_range stays below BROWSER_PROFILES.len()
 pub fn random_profile() -> &'static BrowserProfile {
@@ -255,225 +249,52 @@ pub async fn random_delay(default_min_ms: u64, default_max_ms: u64) {
     sleep(Duration::from_millis(delay_ms)).await;
 }
 
-// ─── Proxy Pool ─────────────────────────────────────────────────────────────
+// ─── Declared Client ────────────────────────────────────────────────────────
 
-fn load_proxy_pool() -> Option<Vec<String>> {
-    if let Ok(url) = std::env::var("RECALL_PROXY_URL") {
-        let url = url.trim().to_string();
-        if !url.is_empty() {
-            info!("Stealth: loaded single proxy from RECALL_PROXY_URL");
-            return Some(vec![url]);
-        }
-    }
-    if let Ok(urls) = std::env::var("RECALL_PROXY_URLS") {
-        let proxies: Vec<String> = urls
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !proxies.is_empty() {
-            info!(
-                count = proxies.len(),
-                "Stealth: loaded proxy pool from RECALL_PROXY_URLS"
-            );
-            return Some(proxies);
-        }
-    }
-    debug!("Stealth: no proxy configured");
-    None
-}
+/// Where the project lives: the contact half of the declared agent, which
+/// Wikimedia's User-Agent policy asks every bot to carry. A project page,
+/// never an email: one shared address would make every user look like one
+/// client to the services that pool by contact.
+pub const PROJECT_URL: &str = "https://github.com/J-Reed700/lattice";
 
-/// Pick a random proxy URL from the configured pool (if any).
-#[allow(clippy::indexing_slicing)]
-pub fn random_proxy_url() -> Option<&'static str> {
-    PROXY_POOL.as_ref().map(|proxies| {
-        let mut rng = rand::thread_rng();
-        let idx = rng.gen_range(0..proxies.len());
-        proxies[idx].as_str()
-    })
-}
-
-/// Host names of the configured proxies. The web client's resolver refuses
-/// private addresses, and a proxy the user runs on this machine or the LAN is
-/// exactly such an address; its name is the one thing exempt.
-pub fn proxy_hosts() -> Vec<String> {
-    PROXY_POOL
-        .as_ref()
-        .map(|proxies| {
-            proxies
-                .iter()
-                .filter_map(|proxy| reqwest::Url::parse(proxy).ok())
-                .filter_map(|url| url.host_str().map(str::to_ascii_lowercase))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Get the FlareSolverr client (if `RECALL_FLARESOLVERR_URL` is set).
-pub fn flaresolverr() -> Option<&'static FlareSolverrClient> {
-    FLARESOLVERR.as_ref()
-}
-
-// ─── FlareSolverr Client ────────────────────────────────────────────────────
-
-/// Proxy server that solves Cloudflare / JS anti-bot challenges using a real
-/// headless browser. See <https://github.com/FlareSolverr/FlareSolverr>.
-pub struct FlareSolverrClient {
-    endpoint: String,
-    client: reqwest::Client,
-    timeout_ms: u64,
-}
-
-#[derive(Deserialize)]
-struct FlareSolverrResponse {
-    status: String,
-    solution: Option<FlareSolverrSolution>,
-}
-
-#[derive(Deserialize)]
-struct FlareSolverrSolution {
-    response: String,
-    #[allow(dead_code)]
-    status: u16,
-    #[allow(dead_code)]
-    url: String,
-}
-
-impl FlareSolverrClient {
-    fn from_env() -> Option<Self> {
-        let endpoint = std::env::var("RECALL_FLARESOLVERR_URL").ok()?;
-        let endpoint = endpoint.trim().to_string();
-        if endpoint.is_empty() {
-            return None;
-        }
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .ok()?;
-
-        info!(endpoint = %endpoint, "Stealth: FlareSolverr client initialized");
-        Some(Self {
-            endpoint,
-            client,
-            timeout_ms: 60000,
-        })
-    }
-
-    /// Solve a JS challenge by delegating to FlareSolverr. Returns rendered HTML.
-    pub async fn solve(&self, url: &str) -> std::result::Result<String, String> {
-        debug!(url, "FlareSolverr: solving challenge");
-
-        let body = serde_json::json!({
-            "cmd": "request.get",
-            "url": url,
-            "maxTimeout": self.timeout_ms
-        });
-
-        let response = self
-            .client
-            .post(format!("{}/v1", self.endpoint.trim_end_matches('/')))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("FlareSolverr request failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("FlareSolverr HTTP {}", response.status()));
-        }
-
-        let result: FlareSolverrResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("FlareSolverr parse failed: {}", e))?;
-
-        if result.status != "ok" {
-            return Err(format!("FlareSolverr status: {}", result.status));
-        }
-
-        result
-            .solution
-            .map(|s| s.response)
-            .ok_or_else(|| "FlareSolverr returned no solution".to_string())
+/// The declared agent: `Lattice/<version> (+<project URL>)`, with the user's
+/// own contact appended when they set one for polite pools.
+pub fn declared_user_agent(contact: Option<&str>) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    match contact.map(str::trim).filter(|contact| !contact.is_empty()) {
+        Some(contact) => format!("Lattice/{version} (+{PROJECT_URL}; {contact})"),
+        None => format!("Lattice/{version} (+{PROJECT_URL})"),
     }
 }
 
-// ─── Stealth Client Builder ─────────────────────────────────────────────────
+/// Headers for an API call: the declared agent and what the caller accepts.
+/// No browser profile, no client hints, no `Sec-Fetch-*`.
+pub fn declared_client_headers(contact: Option<&str>, accept: &'static str) -> HeaderMap {
+    let mut headers = HeaderMap::with_capacity(2);
+    if let Ok(agent) = HeaderValue::from_str(&declared_user_agent(contact)) {
+        headers.insert(USER_AGENT, agent);
+    }
+    headers.insert(ACCEPT, HeaderValue::from_static(accept));
+    headers
+}
 
-/// Reqwest `ClientBuilder` with stealth features:
-/// - Proxy rotation (when configured)
-/// - No cookie jar: one client serves every turn and conversation, so a jar
-///   would replay a search engine's cookies on every later query and let it
-///   link searches from unrelated conversations. The hidden browser reader is
-///   incognito for the same reason.
+// ─── Client Builder ─────────────────────────────────────────────────────────
+
+/// The base `ClientBuilder` for reading the public web. No cookie jar: one
+/// client serves every turn and conversation, so a jar would replay a search
+/// engine's cookies on every later query and let it link searches from
+/// unrelated conversations. The hidden browser reader is incognito for the
+/// same reason.
 ///
-/// Does **not** set `User-Agent` — use [`browser_headers`] per-request for rotation.
-pub fn stealth_client_builder() -> reqwest::ClientBuilder {
-    let mut builder = lattice_core::shared::http::reqwest_client_builder().cookie_store(false);
-
-    if let Some(proxy_url) = random_proxy_url() {
-        let shown = redact_url_credentials(proxy_url);
-        match reqwest::Proxy::all(proxy_url) {
-            Ok(proxy) => {
-                debug!(proxy = %shown, "Stealth: using proxy");
-                builder = builder.proxy(proxy);
-            }
-            Err(e) => {
-                warn!(proxy = %shown, error = %e, "Stealth: invalid proxy URL, skipping");
-            }
-        }
-    }
-
-    builder
-}
-
-/// `url` with any `user:password@` replaced, for logging. A proxy URL carries
-/// its credentials inline, and the log files outlive the session. A string
-/// that does not parse is hidden whole, since where its secret sits is unknown.
-pub fn redact_url_credentials(url: &str) -> String {
-    match reqwest::Url::parse(url) {
-        Ok(mut parsed) => {
-            if !parsed.username().is_empty() || parsed.password().is_some() {
-                // Both setters only fail on URLs that cannot carry credentials,
-                // and such a URL has none to hide.
-                let _ = parsed.set_username("redacted");
-                let _ = parsed.set_password(None);
-            }
-            parsed.to_string()
-        }
-        Err(_) => "<unparseable proxy URL>".to_string(),
-    }
-}
-
-/// Infer the search-engine origin from a request URL for the Referer header.
-pub fn search_referer_for_url(url: &str) -> Option<&'static str> {
-    if url.contains("duckduckgo.com") {
-        Some("https://duckduckgo.com/")
-    } else if url.contains("bing.com") {
-        Some("https://www.bing.com/")
-    } else if url.contains("wikipedia.org") {
-        Some("https://en.wikipedia.org/")
-    } else {
-        None
-    }
+/// Does **not** set `User-Agent`: each request carries its identity's headers
+/// ([`browser_headers`], [`search_headers`] or [`declared_client_headers`]).
+pub fn client_builder() -> reqwest::ClientBuilder {
+    lattice_core::shared::http::reqwest_client_builder().cookie_store(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn proxy_credentials_are_redacted_for_logs() {
-        let shown = redact_url_credentials("http://alice:s3cret@proxy.example:8080");
-        assert!(!shown.contains("s3cret"), "{shown}");
-        assert!(!shown.contains("alice"), "{shown}");
-        assert!(shown.contains("proxy.example:8080"), "{shown}");
-
-        assert_eq!(
-            redact_url_credentials("socks5://proxy.example:1080"),
-            "socks5://proxy.example:1080"
-        );
-        assert!(!redact_url_credentials("not a url with secret").contains("secret"));
-    }
 
     #[test]
     fn test_browser_headers_no_referer() {
@@ -519,16 +340,23 @@ mod tests {
     }
 
     #[test]
-    fn test_search_referer_detection() {
-        assert_eq!(
-            search_referer_for_url("https://html.duckduckgo.com/html/?q=test"),
-            Some("https://duckduckgo.com/")
+    fn an_api_call_declares_lattice_and_never_a_browser() {
+        let headers = declared_client_headers(None, "application/json");
+        let agent = headers
+            .get(USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert!(agent.starts_with("Lattice/"), "{agent}");
+        assert!(agent.contains(PROJECT_URL), "{agent}");
+        assert!(!agent.contains("Mozilla"), "{agent}");
+        assert!(headers.get(HeaderName::from_static("sec-ch-ua")).is_none());
+
+        let with_contact = declared_user_agent(Some(" me@example.org "));
+        assert!(
+            with_contact.ends_with("; me@example.org)"),
+            "{with_contact}"
         );
-        assert_eq!(
-            search_referer_for_url("https://www.bing.com/search?q=test"),
-            Some("https://www.bing.com/")
-        );
-        assert_eq!(search_referer_for_url("https://example.com"), None);
+        assert_eq!(declared_user_agent(Some("  ")), declared_user_agent(None));
     }
 
     #[test]
