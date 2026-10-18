@@ -446,3 +446,55 @@ async fn an_unusable_check_fails_the_job_once_and_an_outage_defers_it() -> Resul
     assert!(JobFailure::is_transient(&error), "{error}");
     Ok(())
 }
+
+#[tokio::test]
+async fn research_found_for_a_claim_leads_its_full_first_page_and_is_rechecked() -> Result<()> {
+    let sources: Vec<_> = (0..12).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let claims = inventory(&[CLAIM.into()]);
+    let mut retained = ClaimChecks::default();
+    let first = evidence_checks::check(&model, &references, &claims, &[], &retained).await?;
+    assert_eq!(first[0].2.verdict, ClaimVerdict::Unsupported);
+    let share = claim_share(&model, CLAIM, 1);
+    let first_page = first[0].2.evidence.clone();
+    let findings: Vec<_> = first.iter().map(|result| result.2.clone()).collect();
+    for (_, key, finding, _) in first {
+        retained.record(key, &finding);
+    }
+    let checks_before = model.checks.lock().unwrap().len();
+
+    // Research saves a source that states the claim, in a passage longer
+    // than any room the first page leaves.
+    let mut expanded_sources = sources.clone();
+    let archive = "Archive index entry. ".repeat(80);
+    expanded_sources.push(reference(
+        "marker".into(),
+        format!("{archive} {MARKER} {archive}"),
+    ));
+    let expanded = ReferenceCollection::lexical(&expanded_sources)?;
+    assert!(
+        !within_share(
+            &model,
+            share,
+            first_page
+                .iter()
+                .chain(&expanded.cited_passages(&[MARKER])?)
+        ),
+        "the fixture's first page has no room left for the new passage"
+    );
+    evidence_selection::record_research_scope(&expanded, &findings, &retained).await?;
+    let second = evidence_checks::check(&model, &expanded, &claims, &[], &retained).await?;
+
+    assert_eq!(second[0].2.verdict, ClaimVerdict::Supported);
+    let checks = model.checks.lock().unwrap();
+    let recheck = checks
+        .get(checks_before)
+        .expect("new evidence is checked again, not reused");
+    assert!(
+        recheck[0].contains(MARKER),
+        "what research found comes first"
+    );
+    assert!(within_share(&model, share, second[0].2.evidence.iter()));
+    Ok(())
+}

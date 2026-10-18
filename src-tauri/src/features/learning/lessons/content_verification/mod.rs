@@ -467,22 +467,21 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
     // Retrieval still chooses the current evidence, including conflicts. Once
     // selected, use a stable order for BOTH the actual judge input and its key.
     // Corpus-dependent ranking changes must not repeat an identical comparison.
-    // The section's own cited passages come first.
+    // What research found for the claim comes first, then the section's own
+    // cited passages.
+    let lead = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
+        evidence_selection::RESEARCHED => 0,
+        CITED => 1,
+        _ => 2,
+    };
     evidence.sort_by(|a, b| {
-        (
-            a.retrieval_kind != CITED,
-            &a.source_id,
-            a.start_byte,
-            a.end_byte,
-            &a.text,
-        )
-            .cmp(&(
-                b.retrieval_kind != CITED,
-                &b.source_id,
-                b.start_byte,
-                b.end_byte,
-                &b.text,
-            ))
+        (lead(a), &a.source_id, a.start_byte, a.end_byte, &a.text).cmp(&(
+            lead(b),
+            &b.source_id,
+            b.start_byte,
+            b.end_byte,
+            &b.text,
+        ))
     });
 }
 
