@@ -309,7 +309,7 @@ describe('Learning Studio program workflow', () => {
     const successful = structuredClone(active);
     successful.attempts = [{
       id: 'saved-attempt', moduleId: 'module-1', lessonId: 'lesson-1', kind: 'quiz', correct: 1, total: 1,
-      submittedAt: 1_790_000_000_000,
+      submittedAt: 1_790_000_000_000, coverage: null,
       results: [{ questionId: 'quiz-1', prompt: quizQuestion.prompt, options: quizQuestion.options, selectedIndex: 0, correctIndex: 0, explanation: 'The source explains this principle.', sourceIds: ['source-1'] }],
     }];
     mocks.list.mockResolvedValue(ok([summary(active)]));
@@ -334,6 +334,46 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('button', { name: 'History (1)' }));
     expect(await screen.findByText('Model-authored answer key')).toBeVisible();
     expect(screen.getByText('The source explains this principle.')).toBeVisible();
+  });
+
+  it('starts a module test once one lesson is prepared and says how much of the module it covers', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    const submitted = structuredClone(active);
+    submitted.attempts = [{
+      id: 'test-attempt', moduleId: 'module-1', lessonId: null, kind: 'test', correct: 1, total: 1,
+      submittedAt: 1_790_000_000_000, coverage: { coveredLessons: 1, moduleLessons: 2 },
+      results: [{ questionId: 'test-1', prompt: testQuestion.prompt, options: testQuestion.options, selectedIndex: 0, correctIndex: 0, explanation: 'The model points to A.', sourceIds: ['source-1'] }],
+    }];
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.submit.mockResolvedValue(ok(submitted));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(screen.getByRole('tab', { name: 'Practice' }));
+    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
+    await user.click(screen.getByRole('button', { name: 'Module test' }));
+    expect(screen.getByText('Covers 1 of 2 lessons in this module.')).toBeVisible();
+    expect(screen.queryByText(/Prepare at least one lesson/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'A' }));
+    await user.click(screen.getByRole('button', { name: 'Submit answers' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'test', moduleId: 'module-1', lessonId: null, answers: [{ questionId: 'test-1', selectedIndex: 0 }] })));
+    await user.click(screen.getByRole('button', { name: 'History (1)' }));
+    expect(await screen.findByText('Covers 1 of 2 lessons in this module · partial test')).toBeVisible();
+  });
+
+  it('asks for one prepared lesson before a module test can start', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(screen.getByRole('tab', { name: 'Practice' }));
+    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
+    await user.click(screen.getByRole('button', { name: 'Module test' }));
+    expect(screen.getByText(/Prepare at least one lesson in this module to take its test/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Submit answers' })).not.toBeInTheDocument();
   });
 
   it('keeps a practical session mounted when switching workspace groups and exposes More as a keyboard menu', async () => {
