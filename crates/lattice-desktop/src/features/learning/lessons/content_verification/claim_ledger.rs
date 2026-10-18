@@ -18,7 +18,8 @@ mod receipts;
 pub(super) use audit::Audited;
 
 use super::general_knowledge::Resolution;
-use super::support_gate::{CheckerVerdict, SupportGate};
+use super::provenance_gate::ProvenanceGate;
+use super::support_gate::SupportGate;
 use super::*;
 use crate::features::learning::curriculum::LearningClaimTally;
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
@@ -130,7 +131,7 @@ impl ClaimLedger {
             findings: Vec::new(),
             examples: HashMap::new(),
             edited_now: HashSet::new(),
-            gate: Box::new(CheckerVerdict),
+            gate: Box::new(ProvenanceGate),
         };
         let Some(scope) = crate::features::learning::lesson_drafts::scope() else {
             return Ok(ledger);

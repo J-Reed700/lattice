@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why we moved our queue to Postgres &#8211; Field Notes</title>
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<link rel="canonical" href="https://fieldnotes.example.net/2026/02/queue-on-postgres/" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Why we moved our queue to Postgres" />
+<meta property="og:description" content="Two years of running a job queue on SKIP LOCKED: what broke and what did not." />
+<meta property="og:url" content="https://fieldnotes.example.net/2026/02/queue-on-postgres/" />
+<meta property="og:site_name" content="Field Notes" />
+<meta property="article:published_time" content="2026-02-11T08:15:00+00:00" />
+<meta property="article:modified_time" content="2026-02-12T10:00:00+00:00" />
+<meta name="author" content="Dana Whitfield" />
+<meta name="description" content="Two years of running a job queue on SKIP LOCKED: what broke and what did not." />
+<script type="application/ld+json" class="yoast-schema-graph">{"@context":"https://schema.org","@graph":[{"@type":"Article","@id":"https://fieldnotes.example.net/2026/02/queue-on-postgres/#article","isPartOf":{"@id":"https://fieldnotes.example.net/2026/02/queue-on-postgres/"},"author":{"name":"Dana Whitfield","@id":"https://fieldnotes.example.net/#/schema/person/d4n4"},"headline":"Why we moved our queue to Postgres","datePublished":"2026-02-11T08:15:00+00:00","dateModified":"2026-02-12T10:00:00+00:00","publisher":{"@id":"https://fieldnotes.example.net/#organization"},"inLanguage":"en-US","license":"https://creativecommons.org/licenses/by/4.0/"},{"@type":"WebPage","@id":"https://fieldnotes.example.net/2026/02/queue-on-postgres/","url":"https://fieldnotes.example.net/2026/02/queue-on-postgres/","name":"Why we moved our queue to Postgres - Field Notes"},{"@type":"WebSite","@id":"https://fieldnotes.example.net/#website","url":"https://fieldnotes.example.net/","name":"Field Notes","publisher":{"@id":"https://fieldnotes.example.net/#organization"}},{"@type":"Organization","@id":"https://fieldnotes.example.net/#organization","name":"Field Notes Engineering","url":"https://fieldnotes.example.net/"},{"@type":"Person","@id":"https://fieldnotes.example.net/#/schema/person/d4n4","name":"Dana Whitfield","url":"https://fieldnotes.example.net/author/dana/"}]}</script>
+<meta name="generator" content="WordPress 6.7.1" />
+</head>
+<body class="post-template-default single single-post">
+<header class="site-header"><a href="/" rel="home">Field Notes</a></header>
+<main id="main" class="site-main">
+<article id="post-812" class="post-812 post type-post status-publish">
+  <header class="entry-header">
+    <h1 class="entry-title">Why we moved our queue to Postgres</h1>
+    <div class="entry-meta">Posted on <time class="entry-date published" datetime="2026-02-11T08:15:00+00:00">February 11, 2026</time> by <a class="url fn n" href="https://fieldnotes.example.net/author/dana/" rel="author">Dana Whitfield</a></div>
+  </header>
+  <div class="entry-content">
+    <p>We followed the <a href="https://www.example-db.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE">locking clause documentation</a> closely.</p>
+    <p>Benchmarks are in <a href="/2025/11/queue-benchmarks/">our earlier post</a>, and the <em>vendor's own</em> <a href="https://vendor.example.com/blog/skip-locked"><strong>write-up</strong></a> agrees.</p>
+  </div>
+  <footer class="entry-footer">This work is licensed under <a rel="license" href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</footer>
+</article>
+</main>
+</body>
+</html>

@@ -341,6 +341,7 @@ describe('sourceAdapter canonical mappings', () => {
         endByte: 165,
         url: 'https://learn.example.com/backprop',
         retrievalKind: 'lexical',
+        trust: null,
       };
 
       const target = fromLearningEvidencePassage(passage, 0, 'Full backpropagation textbook text');

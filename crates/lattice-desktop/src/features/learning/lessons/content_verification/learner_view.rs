@@ -1,16 +1,33 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
 use super::general_knowledge::Resolution;
+use super::provenance_gate::FindingTrust;
 use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
-    dto::LearningLessonDto,
+    dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
     lesson_evidence::{
         LearningClaimEvidenceDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
         LearningLessonEvidenceDto, SavedEvidenceVersion,
     },
+    references::trust::dto_map,
 };
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
+
+/// The level of `source_version_id` for the claim's subject, when it
+/// supports the claim.
+fn passage_trust(trust: &FindingTrust, source_version_id: &str) -> Option<LearningSourceTrustDto> {
+    trust
+        .supports
+        .iter()
+        .find(|support| support.source_version_id == source_version_id)
+        .map(|support| dto_map::support_trust(&trust.profile, support))
+}
+
+/// Whether the claim's support met the bar for its kind (§18.9).
+fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
+    dto_map::sufficiency(&trust.profile, &trust.decision)
+}
 
 fn unavailable() -> AppError {
     AppError::InvalidState("Saved lesson evidence is unavailable: its report or source bindings do not match this lesson.".into())
@@ -94,6 +111,10 @@ impl LessonVerificationReport {
                             start_byte: passage.start_byte,
                             end_byte: passage.end_byte,
                             retrieval_kind: passage.retrieval_kind.clone(),
+                            trust: finding
+                                .trust
+                                .as_deref()
+                                .and_then(|trust| passage_trust(trust, &passage.source_id)),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -135,6 +156,7 @@ impl LessonVerificationReport {
                     passages,
                     resolution,
                     note,
+                    sufficiency: finding.trust.as_deref().map(sufficiency),
                 })
             })
             .collect::<Result<Vec<_>>>()?;

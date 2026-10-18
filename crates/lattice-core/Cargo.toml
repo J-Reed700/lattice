@@ -26,6 +26,7 @@ hex = { workspace = true }
 mockall = { workspace = true, optional = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+psl = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
@@ -39,6 +40,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+unicode-normalization = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
 uuid = { workspace = true }

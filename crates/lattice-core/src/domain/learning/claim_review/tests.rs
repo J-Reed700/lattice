@@ -2,6 +2,7 @@
 
 mod ledger_tests;
 mod rules_tests;
+mod trust_tests;
 
 use super::*;
 

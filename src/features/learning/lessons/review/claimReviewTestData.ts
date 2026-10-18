@@ -5,7 +5,7 @@ export const STOPPED_AT = 1_760_000_010_000;
 
 const passage = {
   sourceVersionId: 'v1', title: 'Thermodynamics, ch. 4', url: null,
-  text: 'At one atmosphere, pure water boils at 99.97 °C.', startByte: 120, endByte: 184, retrievalKind: 'hybrid',
+  text: 'At one atmosphere, pure water boils at 99.97 °C.', startByte: 120, endByte: 184, retrievalKind: 'hybrid', trust: null,
 };
 
 export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimReviewItemDto {
@@ -26,6 +26,7 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
     history: [],
     localCheck: null,
     verifierCheck: null,
+    sufficiency: null,
     ...overrides,
   };
 }

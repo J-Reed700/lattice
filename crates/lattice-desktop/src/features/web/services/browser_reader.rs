@@ -88,6 +88,18 @@ pub struct BrowserPage {
     pub text: String,
 }
 
+/// What a browser read reports back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadMode {
+    /// Paragraph and heading text.
+    Text,
+    /// The rendered document's HTML, untouched.
+    Document,
+    /// The rendered document's HTML with its stylesheets and lazy images
+    /// written in, so a frozen copy renders without the network.
+    Snapshot,
+}
+
 /// A rendered DOM page with its complete HTML document.
 #[derive(Debug, Clone)]
 pub struct BrowserDomPage {
@@ -232,12 +244,30 @@ impl BrowserReader {
     /// its check within `timeout`, or the window cannot be created. The caller
     /// decides what a failure means; nothing is cached here.
     pub async fn read(&self, url: &str, timeout: Duration) -> Result<BrowserPage> {
-        self.read_with_mode(url, timeout, false).await
+        self.read_with_mode(url, timeout, ReadMode::Text).await
     }
 
-    /// Load `url` in a hidden browser window and return its rendered DOM HTML.
+    /// Load `url` in a hidden browser window and return its rendered DOM
+    /// HTML, prepared for a frozen snapshot (stylesheets and lazy images
+    /// written into the document).
     pub async fn read_dom(&self, url: &str, timeout: Duration) -> Result<BrowserDomPage> {
-        let page = self.read_with_mode(url, timeout, true).await?;
+        self.read_html(url, timeout, ReadMode::Snapshot).await
+    }
+
+    /// Load `url` in a hidden browser window and return its rendered DOM HTML
+    /// as the page left it, for the reference reader: its text, links and
+    /// provenance metadata are then read from it as from an HTTP response.
+    pub async fn read_document(&self, url: &str, timeout: Duration) -> Result<BrowserDomPage> {
+        self.read_html(url, timeout, ReadMode::Document).await
+    }
+
+    async fn read_html(
+        &self,
+        url: &str,
+        timeout: Duration,
+        mode: ReadMode,
+    ) -> Result<BrowserDomPage> {
+        let page = self.read_with_mode(url, timeout, mode).await?;
         Ok(BrowserDomPage {
             final_url: page.final_url,
             title: page.title,
@@ -249,7 +279,7 @@ impl BrowserReader {
         &self,
         url: &str,
         timeout: Duration,
-        dom_mode: bool,
+        mode: ReadMode,
     ) -> Result<BrowserPage> {
         let app = &self.app;
         let target =
@@ -328,10 +358,11 @@ impl BrowserReader {
                     () = part_arrived.notified() => {}
                 }
                 let elapsed = started.elapsed();
-                let script = if dom_mode {
-                    dom_check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT)
-                } else {
-                    check_script(elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT)
+                let (give_up, settle_now) = (elapsed >= GIVE_UP_ON_CHECK, elapsed >= SETTLE_LIMIT);
+                let script = match mode {
+                    ReadMode::Text => check_script(give_up, settle_now),
+                    ReadMode::Document => dom_check_script(give_up, settle_now, false),
+                    ReadMode::Snapshot => dom_check_script(give_up, settle_now, true),
                 };
                 if let Err(error) = window.eval(script) {
                     debug!(%error, "Page reader could not run its check");
@@ -383,7 +414,7 @@ impl BrowserReader {
             url,
             final_url = page.final_url.as_str(),
             chars = page.text.len(),
-            dom_mode,
+            ?mode,
             "Page read through the browser"
         );
         Ok(page)
@@ -538,8 +569,12 @@ const CHECK_SCRIPT: &str = r#"
 })();
 "#;
 
-fn dom_check_script(give_up_on_check: bool, settle_now: bool) -> String {
+fn dom_check_script(give_up_on_check: bool, settle_now: bool, snapshot_fixups: bool) -> String {
     DOM_CHECK_SCRIPT
+        .replace(
+            "__SNAPSHOT_FIXUPS__",
+            if snapshot_fixups { "true" } else { "false" },
+        )
         .replace(
             "__GIVE_UP__",
             if give_up_on_check { "true" } else { "false" },
@@ -595,6 +630,7 @@ const DOM_CHECK_SCRIPT: &str = r#"
   state.last = length;
   if (state.steady < 2 && !__SETTLE_NOW__) return;
 
+  if (__SNAPSHOT_FIXUPS__) {
   try {
     for (const sheet of Array.from(document.styleSheets || [])) {
       try {
@@ -647,6 +683,7 @@ const DOM_CHECK_SCRIPT: &str = r#"
       }
     }
   } catch (e) {}
+  }
 
   report(false, '<!doctype html>\n' + (document.documentElement ? document.documentElement.outerHTML : ''));
 })();

@@ -17,6 +17,9 @@ pub const PRACTICAL_ENTRY: &str = "practical/artifacts.json";
 pub const SOURCE_LIBRARY_ENTRY: &str = "sources/library.json";
 pub const SOURCE_SELECTORS_ENTRY: &str = "sources/selectors.json";
 pub const SOURCE_HISTORY_ENTRY: &str = "sources/history.json";
+/// Each version's provenance, the relations between versions and the
+/// course's source trust overrides.
+pub const SOURCE_TRUST_ENTRY: &str = "sources/trust.json";
 /// One `<table>.json` entry per program-scoped evidence table.
 pub const EVIDENCE_TABLE_PREFIX: &str = "evidence/tables/";
 /// One `<canvas-id>.json` entry per canvas, with its snapshots.
@@ -39,6 +42,7 @@ pub enum PackSection {
     SourceLibrary,
     SourceSelectors,
     SourceHistory,
+    SourceTrust,
     EvidenceTables,
     Canvases,
     SourceBodies,
@@ -109,6 +113,7 @@ pub const SECTIONS: &[SectionDescriptor] = &[
         Kind::SourceMetadata,
     ),
     entry(S::SourceHistory, SOURCE_HISTORY_ENTRY, Kind::SourceMetadata),
+    entry(S::SourceTrust, SOURCE_TRUST_ENTRY, Kind::SourceMetadata),
     folder(
         S::EvidenceTables,
         EVIDENCE_TABLE_PREFIX,

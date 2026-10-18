@@ -1,0 +1,62 @@
+{
+  "lesson": "Function Calling & Tool Schemas",
+  "provenance": "Claims and passages from the 2026-10-17 run of this lesson that the evidence challenge overturned or never supported (lesson-failure-function-calling §2: 0.1, 0.13, 10.0, 10.1), plus the Structured Outputs claim research fetched OpenAI's guide for. Source 0 is the LLM Stack Book page (an identified author, independent of the vendors: established); the OpenAI guide is the owner's documentation of its API (primary).",
+  "sources": {
+    "stack-book": {
+      "origin": "web:prakashkagitha.github.io",
+      "level": "established"
+    },
+    "openai-guide": {
+      "origin": "web:openai.com",
+      "level": "primary"
+    }
+  },
+  "claims": [
+    {
+      "id": "0.13",
+      "claim": "Listing all valid enum values prevents the model from inventing invalid inputs.",
+      "kind": "practice",
+      "source": "stack-book",
+      "passage": "| List all enum values explicitly | Prevents the model from inventing invalid values |",
+      "decision": "sufficient"
+    },
+    {
+      "id": "10.0",
+      "claim": "Setting additionalProperties to false prevents hallucinated extra fields.",
+      "kind": "practice",
+      "source": "stack-book",
+      "passage": "| Use `additionalProperties: false` for nested objects | Prevents hallucinated extra fields |",
+      "decision": "sufficient"
+    },
+    {
+      "id": "10.1",
+      "claim": "An empty description removes the semantic anchor the model uses to decide whether to call a tool.",
+      "kind": "general",
+      "source": "stack-book",
+      "passage": "The description is the semantic anchor for the call-or-not decision. With an empty `description`, that semantic anchor is gone.",
+      "decision": "sufficient"
+    },
+    {
+      "id": "structured-outputs",
+      "claim": "Structured Outputs ensures the model always generates responses that adhere to the supplied JSON Schema.",
+      "kind": "specification",
+      "subject": "OpenAI API",
+      "source": "openai-guide",
+      "passage": "Structured Outputs is a feature that ensures the model will always generate responses that adhere to your supplied JSON Schema, so you don't need to worry about the model omitting a required key, or hallucinating an invalid enum value.",
+      "decision": "sufficient"
+    },
+    {
+      "id": "0.1",
+      "claim": "A tool schema tells the model what the tool does, what arguments it accepts, and what it returns.",
+      "kind": "specification",
+      "subject": "OpenAI API",
+      "source": "stack-book",
+      "passage": "A tool schema is a structured description of what the tool does, what arguments it accepts, and what it returns.",
+      "owner_hints": [
+        "platform.openai.com"
+      ],
+      "decision": "insufficient",
+      "bar": "primary"
+    }
+  ]
+}

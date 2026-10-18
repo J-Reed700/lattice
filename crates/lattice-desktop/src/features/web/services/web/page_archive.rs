@@ -5,7 +5,7 @@
 use std::time::Instant;
 
 use chrono::NaiveDate;
-use lattice_core::application::contracts::web::ReadVia;
+use lattice_core::application::contracts::web::{HttpFacts, ReadVia};
 use lattice_core::domain::sourcing::unwrap_archive;
 use lattice_core::shared::error::{AppError, Result};
 use tracing::info;
@@ -15,6 +15,7 @@ use super::super::address_guard::check_url_host;
 use super::super::{PageRead, ReadPage, WebService};
 use super::{cached_page, served_from_cache, text_len, LiveFailure, PageText};
 use crate::features::web::services::page_cache::{ArchiveAnswer, CachedLookup};
+use crate::features::web::services::provenance::{PageProvenance, PageReading};
 use crate::features::web::services::wayback::{Lookup, ReplayMiss};
 
 /// The archive gave no copy: its answer, for the refusal rule, and a note
@@ -213,8 +214,11 @@ impl WebService {
             }
             Err(ReplayMiss::Unanswered(note)) => return Err(ArchiveMiss::unanswered(note)),
         };
-        let (title, content) = self
-            .extract(replayed.html, replayed.snapshot_url.clone(), read)
+        let snapshot_url = Url::parse(&replayed.snapshot_url).map_err(|error| {
+            ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
+        })?;
+        let (title, content, metadata, text_form) = self
+            .extract(replayed.html, snapshot_url, read)
             .await
             .map_err(|error| {
                 ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
@@ -230,6 +234,19 @@ impl WebService {
             captured_at = %replayed.captured_at,
             "Page read from the Internet Archive"
         );
+        // The capture replays the page's own markup, so its metadata is read
+        // like a live page's; the snapshot address says it is archived.
+        let provenance = PageProvenance::Read(Box::new(PageReading {
+            metadata,
+            http: HttpFacts {
+                // A replay only returns a page the archive answered OK.
+                status: reqwest::StatusCode::OK.as_u16(),
+                content_type: replayed.content_type.clone(),
+                last_modified: None,
+                via_browser_reader: false,
+            },
+            text: text_form,
+        }));
         let text = PageText {
             final_url: replayed.snapshot_url.clone(),
             title,
@@ -241,7 +258,7 @@ impl WebService {
             },
         };
         let page = self
-            .keep_page(&replayed.snapshot_url, text, (start, read))
+            .keep_page(&replayed.snapshot_url, text, (start, read), provenance)
             .await;
         if read == PageRead::Chat {
             self.page_cache

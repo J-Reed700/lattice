@@ -17,7 +17,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
-mod challenge;
 mod citations;
 mod claim_ledger;
 use citations::{
@@ -65,12 +64,17 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
 }
 mod passes;
 use passes::{check_evidence, verify_with_references};
+mod provenance_gate;
+pub(in crate::features::learning) use provenance_gate::{
+    gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
+};
 mod repair;
 mod repair_loop;
 mod repair_work;
 mod report;
 pub(in crate::features::learning) mod research;
 mod review_pass;
+mod scrutiny;
 mod section_checkpoints;
 mod support_gate;
 #[cfg(test)]
@@ -87,7 +91,10 @@ use repair_loop::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
 pub(in crate::features::learning) use report::{persist_report, sources_changed};
-const POLICY: &str = "lesson-evidence-v20";
+/// v21: the evidence challenge is gone; a supported verdict is weighed by
+/// the provenance gate (source provenance §11) and passages carry their
+/// source's title, domain and date.
+const POLICY: &str = "lesson-evidence-v21";
 
 /// The evidence policy checks are judged under: what a labelled checker
 /// example records (§15).
@@ -178,6 +185,11 @@ struct Finding {
     /// The user's resolution, set from the claim ledger at publication.
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution: Option<general_knowledge::Resolution>,
+    /// What the provenance gate weighed for a supported finding: the
+    /// supports' levels for the claim's subject and the decision. Boxed: it
+    /// is most of a finding's size and most findings have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trust: Option<Box<provenance_gate::FindingTrust>>,
 }
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
@@ -248,8 +260,8 @@ impl ClaimChecks {
     }
 }
 
-/// A complete strict judgment plus its independent challenge, saved only after
-/// parsing and checking source quotes. Evidence is retrieved anew on resume,
+/// A complete strict judgment, saved only after parsing and checking source
+/// quotes. Evidence is retrieved anew on resume,
 /// rather than duplicating full reference bodies in every checkpoint.
 #[derive(Serialize, Deserialize)]
 struct ClaimReceipt {
@@ -267,7 +279,7 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
             &json!({
                 "policy": POLICY, "model": llm.model_name(),
                 "context": llm.max_context_tokens(), "comparison": comparison,
-                "challenge": challenge::POLICY,
+                "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION,
             })
             .to_string()
         )
@@ -297,6 +309,7 @@ impl ClaimReceipt {
             evidence: evidence.to_vec(),
             supporting_quote: self.supporting_quote,
             resolution: None,
+            trust: None,
         })
     }
 }
@@ -551,8 +564,9 @@ async fn verify(
     .await
 }
 
-/// The publication path requires both source entailment and an independent
-/// search for unresolved evidence concerns. Neither can bypass the other.
+/// The strict judgment of one claim against its passages. Whether a
+/// supported verdict's support is enough is the provenance gate's decision,
+/// never a second model call (source provenance §11).
 pub(in crate::features::learning) async fn judge_for_publication(
     llm: &dyn LLMPort,
     claim: &str,
@@ -582,13 +596,12 @@ pub(in crate::features::learning) async fn judge_for_publication(
     }
     let passages = passages.get(..fitted).unwrap_or_default();
     let _model_call = crate::features::learning::lesson_progress::model_call();
-    let provisional = checker
+    checker
         .check_passages_without_deadline(claim, passages)
-        .await;
-    challenge::guard(llm, claim, passages, provisional).await
+        .await
 }
 
-pub(in crate::features::learning) async fn judge_batch_provisionally(
+pub(in crate::features::learning) async fn judge_batch_for_publication(
     llm: &dyn LLMPort,
     claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<Vec<ClaimJudgment>> {
@@ -611,23 +624,6 @@ pub(in crate::features::learning) async fn judge_batch_provisionally(
             },
         )
         .await
-}
-
-pub(in crate::features::learning) async fn challenge_batch_for_publication(
-    llm: &dyn LLMPort,
-    claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
-    provisional: Vec<ClaimJudgment>,
-) -> Result<Vec<ClaimJudgment>> {
-    challenge::guard_batch(llm, claims, provisional).await
-}
-
-#[cfg(test)]
-pub(in crate::features::learning) async fn judge_batch_for_publication(
-    llm: &dyn LLMPort,
-    claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
-) -> Result<Vec<ClaimJudgment>> {
-    let provisional = judge_batch_provisionally(llm, claims).await?;
-    challenge_batch_for_publication(llm, claims, provisional).await
 }
 
 #[cfg(test)]

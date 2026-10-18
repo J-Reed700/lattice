@@ -5,11 +5,11 @@ import type { LearningClaimEvidenceDto, LearningEvidencePassageDto } from '@/lib
 
 const passage = (version: string, startByte = 0): LearningEvidencePassageDto => ({
   sourceVersionId: version, startByte, endByte: startByte + 5,
-  title: 'Source', text: 'Quote', url: null, retrievalKind: 'lexical',
+  title: 'Source', text: 'Quote', url: null, retrievalKind: 'lexical', trust: null,
 });
 const claim = (sectionIndex: number, passages: LearningEvidencePassageDto[]): LearningClaimEvidenceDto => ({
   sectionIndex, passages, claim: 'Claim', contentQuote: 'Lesson text', verdict: 'supported', reason: 'Reason', supportingQuote: null,
-  resolution: 'verified', note: null,
+  resolution: 'verified', note: null, sufficiency: null,
 });
 
 describe('lesson passage numbering', () => {

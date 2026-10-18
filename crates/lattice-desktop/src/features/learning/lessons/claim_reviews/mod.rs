@@ -14,4 +14,6 @@ mod dto_tests;
 mod migration_tests;
 pub mod repository;
 pub mod service;
+pub mod trust_changed;
+pub mod trust_overrides;
 mod view;

@@ -7,10 +7,13 @@ use super::{
 };
 use crate::features::web::services::finders::retry_after;
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage};
-use crate::features::web::services::{browser_reader, identity};
+use crate::features::web::services::provenance::{
+    self, PageMetadata, PageProvenance, PageReading, TextForm,
+};
+use crate::features::web::services::{browser_reader, identity, reference_text};
 use chrono::{NaiveDate, Utc};
 use encoding_rs::{Encoding, UTF_8};
-use lattice_core::application::contracts::web::ReadVia;
+use lattice_core::application::contracts::web::{HttpFacts, ProvenanceSignals, ReadVia};
 use lattice_core::domain::sourcing::unwrap_archive;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::StatusCode;
@@ -21,10 +24,29 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 use url::Url;
 
-/// Parse one bounded HTML document and derive both the title and readable
-/// body from the same tree.
-fn extract_page_parts(html: &str) -> (Option<String>, String) {
+/// The content type a browser read is recorded with: the browser rendered
+/// an HTML document and does not expose the response's own header.
+const BROWSER_CONTENT_TYPE: &str = "text/html";
+
+/// A page's title, readable body and metadata, from one parse of its HTML.
+fn read_chat_html(html: &str, page_url: &Url) -> (Option<String>, String, PageMetadata) {
     let document = Html::parse_document(html);
+    let (title, body) = page_parts(&document);
+    (title, body, provenance::read_metadata(&document, page_url))
+}
+
+/// A page's reference markdown and metadata.
+fn read_reference_html(
+    html: &str,
+    page_url: &Url,
+) -> Result<(Option<String>, String, PageMetadata)> {
+    let (title, content) = reference_text::extract_with_url(html, Some(page_url.as_str()))?;
+    let metadata = provenance::read_metadata(&Html::parse_document(html), page_url);
+    Ok((title, content, metadata))
+}
+
+/// Derive both the title and readable body from one parsed document.
+fn page_parts(document: &Html) -> (Option<String>, String) {
     let title = Selector::parse("title")
         .ok()
         .and_then(|selector| document.select(&selector).next())
@@ -225,6 +247,9 @@ fn served_from_cache(page: CachedPage, lookup_start: Instant) -> ReadPage {
             read_via: page.read_via,
         },
         fetched_at: page.fetched_at,
+        signals: ProvenanceSignals::NotExtracted {
+            reason: provenance::FROM_PAGE_CACHE.to_string(),
+        },
     }
 }
 
@@ -367,7 +392,10 @@ impl WebService {
                     | StatusCode::SERVICE_UNAVAILABLE
                     | StatusCode::TOO_MANY_REQUESTS
             ) {
-                if let Some(page) = self.read_through_browser(url, start, read).await {
+                if let Some(page) = self
+                    .read_through_browser(url, start, read, status.as_u16())
+                    .await
+                {
                     return Ok(Live::Read(page));
                 }
             }
@@ -376,7 +404,8 @@ impl WebService {
 
         // Every hop to here was cleared by the redirect policy and the
         // resolver before it was requested.
-        let final_url = response.url().to_string();
+        let page_url = response.url().clone();
+        let final_url = page_url.to_string();
         if final_url != url {
             debug!("URL redirected to: {}", final_url);
         }
@@ -386,19 +415,32 @@ impl WebService {
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+        let http = HttpFacts {
+            status: response.status().as_u16(),
+            content_type: content_type.clone(),
+            last_modified: response
+                .headers()
+                .get(reqwest::header::LAST_MODIFIED)
+                .and_then(|value| value.to_str().ok())
+                .and_then(provenance::parse_http_date),
+            via_browser_reader: false,
+        };
 
         let html = read_bounded_body(response, MAX_PAGE_BODY_BYTES)
             .await
             .map_err(|e| AppError::Network(format!("Failed to read response body: {e}")))?;
         let html = decode_response_text(html, content_type.as_deref());
-        let (title, content) = self.extract(html, final_url.clone(), read).await?;
+        let (title, content, metadata, text_form) = self.extract(html, page_url, read).await?;
         let thin = content.trim().len() < THIN_PAGE_CHARS;
 
         // A page whose text is written by its scripts arrives as a shell: a
         // title and a menu. The browser runs the scripts; its text is kept
         // only when it is actually more.
         if thin {
-            if let Some(page) = self.read_through_browser(url, start, read).await {
+            if let Some(page) = self
+                .read_through_browser(url, start, read, http.status)
+                .await
+            {
                 if page.output.content.trim().len() > content.trim().len() {
                     return Ok(if text_len(&page) < THIN_PAGE_CHARS {
                         Live::Thin(page)
@@ -417,7 +459,12 @@ impl WebService {
             content_type,
             via,
         };
-        let page = self.keep_page(url, text, (start, read)).await;
+        let provenance = PageProvenance::Read(Box::new(PageReading {
+            metadata,
+            http,
+            text: text_form,
+        }));
+        let page = self.keep_page(url, text, (start, read), provenance).await;
         Ok(if thin {
             Live::Thin(page)
         } else {
@@ -426,23 +473,17 @@ impl WebService {
     }
 
     /// Read `url` in a hidden browser window, and cache and return it if that
-    /// produced text. `None` leaves the HTTP result standing.
+    /// produced text. `None` leaves the HTTP result standing. `http_status` is
+    /// what the HTTP client was answered, recorded with the page's signals.
     async fn read_through_browser(
         &self,
         url: &str,
         start: Instant,
         page_read: PageRead,
+        http_status: u16,
     ) -> Option<ReadPage> {
-        let read_result = match self.browser.get() {
-            Some(browser) => {
-                browser
-                    .read(url, browser_reader::DEFAULT_READ_TIMEOUT)
-                    .await
-            }
-            None => Err(browser_reader::unavailable()),
-        };
-        match read_result {
-            Ok(page) if !page.text.trim().is_empty() => {
+        match self.browser_read(url, page_read, http_status).await {
+            Ok(page) if !page.content.trim().is_empty() => {
                 // The browser follows redirects the HTTP client never saw.
                 if page.final_url != url && validate_url_resolved(&page.final_url).await.is_err() {
                     warn!(
@@ -455,11 +496,14 @@ impl WebService {
                 let text = PageText {
                     final_url: page.final_url,
                     title: page.title,
-                    content: page.text,
-                    content_type: Some("text/html".to_string()),
+                    content: page.content,
+                    content_type: Some(BROWSER_CONTENT_TYPE.to_string()),
                     via: ReadVia::Browser,
                 };
-                Some(self.keep_page(url, text, (start, page_read)).await)
+                Some(
+                    self.keep_page(url, text, (start, page_read), page.provenance)
+                        .await,
+                )
             }
             Ok(_) => {
                 info!(url, "Browser read found no text either");
@@ -472,29 +516,86 @@ impl WebService {
         }
     }
 
-    /// Title and text, by what the page is read for: article extraction for
-    /// a conversation, the whole document for a reference.
+    /// A conversation's browser read takes the browser's paragraph text; a
+    /// reference read takes the rendered document and runs the same
+    /// extraction and metadata reader as an HTTP read on it.
+    async fn browser_read(
+        &self,
+        url: &str,
+        page_read: PageRead,
+        http_status: u16,
+    ) -> Result<BrowserRead> {
+        let browser = self.browser.get().ok_or_else(browser_reader::unavailable)?;
+        if page_read == PageRead::Chat {
+            let page = browser
+                .read(url, browser_reader::DEFAULT_READ_TIMEOUT)
+                .await?;
+            return Ok(BrowserRead {
+                final_url: page.final_url,
+                title: page.title,
+                content: page.text,
+                provenance: PageProvenance::NotRead(provenance::BROWSER_TEXT_ONLY),
+            });
+        }
+        let page = browser
+            .read_document(url, browser_reader::DEFAULT_READ_TIMEOUT)
+            .await?;
+        let page_url = Url::parse(&page.final_url)
+            .map_err(|e| AppError::InvalidUrl(format!("browser page address: {e}")))?;
+        let html = page.html;
+        let (title, content, metadata) = run_html_parser(self.html_parsers.clone(), move || {
+            read_reference_html(&html, &page_url)
+        })
+        .await??;
+        let http = HttpFacts {
+            status: http_status,
+            content_type: Some(BROWSER_CONTENT_TYPE.to_string()),
+            last_modified: None,
+            via_browser_reader: true,
+        };
+        Ok(BrowserRead {
+            final_url: page.final_url,
+            title: page.title.or(title),
+            content,
+            provenance: PageProvenance::Read(Box::new(PageReading {
+                metadata,
+                http,
+                text: TextForm::Markdown,
+            })),
+        })
+    }
+
+    /// Title, text and metadata, by what the page is read for: article
+    /// extraction for a conversation, the whole document for a reference.
     async fn extract(
         &self,
         html: String,
-        final_url: String,
+        page_url: Url,
         read: PageRead,
-    ) -> Result<(Option<String>, String)> {
+    ) -> Result<(Option<String>, String, PageMetadata, TextForm)> {
         if read == PageRead::Chat {
-            return self.parse_page(html).await;
+            let (title, content, metadata) =
+                run_html_parser(self.html_parsers.clone(), move || {
+                    read_chat_html(&html, &page_url)
+                })
+                .await?;
+            return Ok((title, content, metadata, TextForm::Plain));
         }
-        run_html_parser(self.html_parsers.clone(), move || {
-            super::super::reference_text::extract_with_url(&html, Some(&final_url))
+        let (title, content, metadata) = run_html_parser(self.html_parsers.clone(), move || {
+            read_reference_html(&html, &page_url)
         })
-        .await?
+        .await??;
+        Ok((title, content, metadata, TextForm::Markdown))
     }
 
-    /// Count, cache and wrap a page's extracted text, all of it.
+    /// Count, cache and wrap a page's extracted text, all of it, with the
+    /// signals `provenance` yields for it.
     pub(super) async fn keep_page(
         &self,
         url: &str,
         text: PageText,
         budget: (Instant, PageRead),
+        provenance: PageProvenance,
     ) -> ReadPage {
         let (start, read) = budget;
         let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -514,6 +615,7 @@ impl WebService {
         );
 
         let fetched_at = Utc::now();
+        let signals = provenance.into_signals(&final_url, &content, fetched_at.timestamp());
         let page = ReadPage {
             output: FetchUrlContentOutput {
                 url: final_url,
@@ -527,6 +629,7 @@ impl WebService {
                 read_via: via,
             },
             fetched_at,
+            signals,
         };
         if read == PageRead::Chat {
             self.page_cache
@@ -544,18 +647,22 @@ impl WebService {
     /// 3. Cleaning whitespace
     #[cfg(test)]
     pub(super) fn extract_article_text(&self, html: &str) -> String {
-        extract_page_parts(html).1
-    }
-
-    async fn parse_page(&self, html: String) -> Result<(Option<String>, String)> {
-        run_html_parser(self.html_parsers.clone(), move || extract_page_parts(&html)).await
+        page_parts(&Html::parse_document(html)).1
     }
 
     /// Extract title from HTML. Kept for the focused parser tests.
     #[cfg(test)]
     pub(super) fn extract_title(&self, html: &str) -> Option<String> {
-        extract_page_parts(html).0
+        page_parts(&Html::parse_document(html)).0
     }
+}
+
+/// What a browser read produced, before it is kept.
+struct BrowserRead {
+    final_url: String,
+    title: Option<String>,
+    content: String,
+    provenance: PageProvenance,
 }
 
 #[path = "page_archive.rs"]

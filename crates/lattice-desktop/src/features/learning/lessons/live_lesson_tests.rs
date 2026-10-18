@@ -49,8 +49,10 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
     let mut cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "content_verification/claim_prerequisite_cases.json"
     ))?;
+    // The checker supports what a passage states; whether that support is
+    // enough is the provenance gate's (`provenance_gate_tests`).
     cases.extend(serde_json::from_str::<Vec<serde_json::Value>>(
-        include_str!("content_verification/evidence_challenge_cases.json"),
+        include_str!("content_verification/sufficiency_cases.json"),
     )?);
     // Evidence present for a different claim must not fill this claim's gap.
     cases.insert(0,serde_json::json!({"claim":"The measured value of sample A is 12.","passages":["Sample A was measured."],"expected":"unsupported"}));

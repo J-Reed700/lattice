@@ -19,6 +19,7 @@ mod replay;
 mod rules;
 #[cfg(test)]
 mod tests;
+mod trust;
 
 pub use ledger::{
     CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, RecordedEvent,
@@ -27,9 +28,15 @@ pub use rules::{
     end_state, identities, new_information, relitigate, reopen_cause, ClaimCounts, ExtractedClaim,
     Identities, NewInformation, Observation, SourceChange,
 };
+pub use trust::{
+    trust_outcomes, CalibrationOutcome, GateVerdict, SupportedBy, TrustAssessment, TrustCause,
+    TrustVerdict,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::domain::provenance::{Bar, CountedSupport};
 
 /// Machine repairs a claim gets per piece of evidence: one correction, then
 /// one escalated rewrite that may remove the sentence (§3).
@@ -146,6 +153,10 @@ pub enum VerdictKind {
     /// (§14.5). The local side is always "verified": a human verdict the
     /// Verifier disputes is reopened instead ([`ReopenCause::VerifierDispute`]).
     Disputed { verifier: Box<VerdictKind> },
+    /// The checker found support, but the supports fail the bar for the
+    /// claim's kind (source provenance §6, decision 1): `bar` is the rule,
+    /// `have` each support as the gate counted it.
+    InsufficientStanding { bar: Bar, have: Vec<CountedSupport> },
 }
 
 impl VerdictKind {
@@ -158,7 +169,17 @@ impl VerdictKind {
             Self::CouldNotJudge => "could_not_judge",
             Self::GeneralKnowledgeProposed => "general_knowledge_proposed",
             Self::Disputed { .. } => "disputed",
+            Self::InsufficientStanding { .. } => "insufficient_standing",
         }
+    }
+
+    /// A failure the machine may research and rewrite: no passage supports
+    /// the claim, one contradicts it, or its support is below the bar.
+    pub fn is_repairable(&self) -> bool {
+        matches!(
+            self,
+            Self::Unsupported | Self::Contradicted | Self::InsufficientStanding { .. }
+        )
     }
 
     /// A passage, the local checker's or the Verifier's, says otherwise.
@@ -342,6 +363,9 @@ pub enum ReopenCause {
     },
     Unconfirmed,
     VerifierDispute,
+    /// An override or a calibrated bar changed, and the gate's re-decision
+    /// no longer verifies the claim (source provenance §18.7).
+    TrustChanged(TrustCause),
 }
 
 /// Which checker judged: the Learning model, or the Verifier audit (§14).
@@ -535,6 +559,15 @@ pub enum ClaimEvent {
     Stopped {
         reason: StopReason,
     },
+    /// What the provenance gate weighed for the claim. With no `cause` it
+    /// follows the local check the gate decided; with one it is the gate's
+    /// re-decision after a trust change, made without a model call.
+    /// `reason` is the gate's explanation, the claim's reason when it fails.
+    StandingAssessed {
+        trust: Box<TrustAssessment>,
+        reason: String,
+        cause: Option<TrustCause>,
+    },
 }
 
 impl ClaimEvent {
@@ -552,6 +585,7 @@ impl ClaimEvent {
             Self::Reopened { .. } => "reopened",
             Self::Undone { .. } => "undone",
             Self::Stopped { .. } => "stopped",
+            Self::StandingAssessed { .. } => "standing_assessed",
         }
     }
 }

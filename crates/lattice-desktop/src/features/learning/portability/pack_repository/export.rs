@@ -7,12 +7,13 @@ use super::{
     guards, invalid, json, now,
     source_entries::SourceHistorySnapshot,
 };
+use crate::features::learning::references::trust::pack::SourceTrustPackEntry;
 use crate::features::learning::{
     pack::{
         sections::{
             source_body_path, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY, LESSON_STATE_ENTRY,
             OUTCOMES_ENTRY, PRACTICAL_ENTRY, SOURCE_HISTORY_ENTRY, SOURCE_LIBRARY_ENTRY,
-            SOURCE_SELECTORS_ENTRY,
+            SOURCE_SELECTORS_ENTRY, SOURCE_TRUST_ENTRY,
         },
         LearningPackEntry, LearningPackEntryKind, LearningPackInput, LearningPackPrivacyManifest,
     },
@@ -279,6 +280,20 @@ pub(super) async fn source_history(
         SOURCE_HISTORY_ENTRY,
         LearningPackEntryKind::SourceMetadata,
         &SourceHistorySnapshot { checks },
+    )?])
+}
+
+/// Each version's provenance, the relations between versions and the
+/// course's source overrides (§16 of the provenance design).
+pub(super) async fn source_trust(
+    tx: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<Vec<LearningPackEntry>> {
+    let rows = SourceTrustPackEntry::read(tx, program_id).await?;
+    Ok(vec![entry(
+        SOURCE_TRUST_ENTRY,
+        LearningPackEntryKind::SourceMetadata,
+        &rows,
     )?])
 }
 

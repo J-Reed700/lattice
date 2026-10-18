@@ -592,6 +592,9 @@ fn source_capture(title: &str, text: &str) -> super::source_library::CapturedLea
         text: text.into(),
         truncated: false,
         extraction_version: "test_capture_v1".into(),
+        signals: crate::features::learning::references::trust::capture::not_extracted(
+            "test fixture",
+        ),
     }
 }
 

@@ -13,6 +13,7 @@ pub mod error;
 pub mod learning;
 pub mod models;
 pub mod ports;
+pub mod provenance;
 pub mod qa;
 pub mod repositories;
 pub mod services;

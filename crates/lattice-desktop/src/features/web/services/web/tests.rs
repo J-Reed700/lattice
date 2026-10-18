@@ -1,6 +1,7 @@
 //! Tests for page reading, search-result parsing and the private-address guard.
 use super::page::{decode_response_text, read_bounded_body};
 use super::*;
+use crate::features::web::services::provenance::PageProvenance;
 use std::time::Instant;
 use url::Url;
 
@@ -334,6 +335,7 @@ async fn a_chat_read_keeps_a_long_page_whole_and_caches_all_of_it() {
                 via: Default::default(),
             },
             (Instant::now(), PageRead::Chat),
+            PageProvenance::NotRead("kept directly by the test"),
         )
         .await;
     assert!(!page.output.content_truncated);
@@ -370,6 +372,7 @@ async fn reference_capture_retains_large_page_tail_without_using_chat_cache() {
                 via: Default::default(),
             },
             (Instant::now(), PageRead::Reference),
+            PageProvenance::NotRead("kept directly by the test"),
         )
         .await;
     assert!(!page.output.content_truncated);

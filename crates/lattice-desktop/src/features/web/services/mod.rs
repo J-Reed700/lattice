@@ -6,6 +6,7 @@ pub(crate) mod finders;
 pub(crate) mod identity;
 pub mod ingestion;
 pub(crate) mod page_cache;
+pub(crate) mod provenance;
 mod reference_text;
 pub mod snapshot;
 pub(crate) mod sourcing;

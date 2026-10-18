@@ -94,47 +94,6 @@ fn claim_key(model: &str, claim: &str, passages: &[ReferencePassage]) -> String 
     )
 }
 
-/// A span of the located passage short enough to cite: the passage itself
-/// when it fits, else the retrieved chunk the verification window was built
-/// around. The source's own text is the match target, as in evidence linking.
-fn citable_span(
-    passage: &ReferencePassage,
-    base: &[ReferencePassage],
-    sources: &[LearningSourceDto],
-) -> Option<String> {
-    let source = sources.iter().find(|s| s.id == passage.source_id)?;
-    let fits = |text: &str| generation::validate_excerpt_quote(text, &source.excerpt).is_ok();
-    if fits(&passage.text) {
-        return Some(passage.text.trim().to_owned());
-    }
-    base.iter()
-        .find(|chunk| {
-            chunk.source_id == passage.source_id
-                && chunk.start_byte >= passage.start_byte
-                && chunk.end_byte <= passage.end_byte
-                && fits(&chunk.text)
-        })
-        .map(|chunk| chunk.text.trim().to_owned())
-}
-
-/// The evidence a verdict rests on: the source of the passage the judge named
-/// and the text to keep. A supported claim needs a citable span; a
-/// contradiction shows the whole located passage to the user.
-fn locate(
-    located: &str,
-    verdict: ClaimVerdict,
-    passages: &[ReferencePassage],
-    base: &[ReferencePassage],
-    sources: &[LearningSourceDto],
-) -> Option<(String, String)> {
-    let passage = passages.iter().find(|p| p.text == located)?;
-    let quote = match verdict {
-        ClaimVerdict::Supported => citable_span(passage, base, sources)?,
-        _ => passage.text.trim().to_owned(),
-    };
-    Some((passage.source_id.clone(), quote))
-}
-
 async fn judge(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Result<JudgeOutcome> {
     match judge_for_publication(llm, claim, passages).await {
         ClaimJudgment::Judged(outcome) => Ok(outcome),
@@ -394,16 +353,28 @@ async fn resolve_factual(
         let unsupported = judged.0 == ClaimVerdict::Unsupported;
         // An unsupported verdict on a deeper page does not replace the first.
         if decision.is_none() || !unsupported {
-            decision = Some(judged);
+            decision = Some((judged, passages.clone()));
         }
         if !unsupported {
             break;
         }
         shown.extend(passages);
     }
-    let Some((verdict, reason, evidence)) = decision else {
+    let Some(((verdict, reason, evidence), page)) = decision else {
         issue_mut(draft, id)?.message = "No saved reference addresses this claim.".into();
         return Ok(Resolution::Rewrite(NARROW));
+    };
+    // A supported assertion stands only when its support meets the bar for
+    // its kind, as a lesson's claim does (source provenance §6.2).
+    let (verdict, reason) = match (&verdict, &evidence) {
+        (ClaimVerdict::Supported, Some((source_id, quote))) => {
+            let unit = module_index(&issue.path).unwrap_or_default();
+            match insufficient(llm, unit, &claim, &page, source_id, quote).await? {
+                Some(lacks) => (ClaimVerdict::Unsupported, lacks),
+                None => (verdict, reason),
+            }
+        }
+        _ => (verdict, reason),
     };
     tracing::info!(finding = %id, path = %issue.path, ?verdict, "Judged an outline assertion against the saved references");
     match verdict {
@@ -792,6 +763,9 @@ pub(in crate::features::learning) async fn repair(
     }
     Ok(outcome)
 }
+
+mod evidence;
+use evidence::{insufficient, locate};
 
 #[cfg(test)]
 mod tests;

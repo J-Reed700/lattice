@@ -554,7 +554,11 @@ pub(in crate::features::learning) async fn finish(
 ) -> Result<LearningProgramDto> {
     use crate::features::learning::outline_progress::OutlineStage;
     use crate::features::learning::outline_review_scope::{ReviewReceipt, ReviewScope};
-    let work: Result<()> = async {
+    // Source provenance and trust weigh every assertion repair finds
+    // supported, as in a lesson (§6.2; P7's decision for outlines), when the
+    // outline command turned the gate on.
+    let (program_id, topic) = (program.summary.id.clone(), program.summary.goal.clone());
+    let work: Result<()> = crate::features::learning::content_verification::outline_trust(program_id, topic, async {
         // The course-wide References finding is re-derived each pass from the
         // actual source count, never carried over.
         draft.review.issues.retain(|issue| issue.kind != LearningOutlineIssueKind::References);
@@ -632,7 +636,7 @@ pub(in crate::features::learning) async fn finish(
             }
         }
         Ok(())
-    }.await;
+    }).await;
     if let Err(error) = work {
         tracing::warn!(program_id = %program.summary.id, %error, "Outline retained for repair");
         // Only decorate the committed state; a failed transaction may have

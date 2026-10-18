@@ -1,5 +1,8 @@
 //! Capturing new sources and refreshing them into new immutable versions.
+//! Every version is saved with its provenance (the trust capture hook) in
+//! the same transaction.
 use super::*;
+use crate::features::learning::references::trust;
 
 impl LearningSourceLibraryRepository {
     /// Captures a new source and its first version, recording who added it
@@ -123,6 +126,17 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
+        let captured_version = trust::capture::CapturedVersion {
+            program_id,
+            source_id,
+            version_id,
+            kind: &kind,
+            title,
+            resolved_url: captured.resolved_url.as_deref().or(requested_url),
+            text: &text,
+            acquired_at_ms: acquired,
+        };
+        trust::capture::record(&mut tx, &captured_version, &captured.signals).await?;
         mirror_legacy(
             &mut tx,
             program_id,
@@ -304,6 +318,18 @@ impl LearningSourceLibraryRepository {
                             },
                         )
                         .await?;
+                        let captured_version = trust::capture::CapturedVersion {
+                            program_id: &req.program_id,
+                            source_id: &req.source_id,
+                            version_id: &version_id,
+                            kind: &LearningSourceKind::Web,
+                            title: captured.title.trim(),
+                            resolved_url: captured.resolved_url.as_deref(),
+                            text: &text,
+                            acquired_at_ms: checked,
+                        };
+                        trust::capture::record(&mut tx, &captured_version, &captured.signals)
+                            .await?;
                         mirror_legacy(
                             &mut tx,
                             &req.program_id,

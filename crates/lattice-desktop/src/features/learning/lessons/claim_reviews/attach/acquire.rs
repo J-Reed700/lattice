@@ -157,7 +157,7 @@ async fn link(
     let mut source = match repo.saved_web_source(program_id, &url).await? {
         Some(saved) => acquired(saved, provenance, true),
         None => {
-            let page = match capture.web.fetch_reference_content(&url).await {
+            let page = match capture.web.fetch_reference_page(&url).await {
                 Ok(page) => page,
                 Err(error) => {
                     return Ok(Acquired::NotSaved(AttachFailureDto::from_fetch_error(
@@ -165,7 +165,7 @@ async fn link(
                     )))
                 }
             };
-            if let Some(wall) = AttachFailureDto::from_wall(&url, &page) {
+            if let Some(wall) = AttachFailureDto::from_wall(&url, &page.output) {
                 return Ok(Acquired::NotSaved(wall));
             }
             let captured = match captured_page(&url, page) {
@@ -330,6 +330,7 @@ async fn text_source(
         text: text.into(),
         truncated: false,
         extraction_version: PASTED_TEXT_EXTRACTION.into(),
+        signals: crate::features::learning::references::trust::capture::pasted_signals(None, text),
     };
     let saved = save(
         repo,

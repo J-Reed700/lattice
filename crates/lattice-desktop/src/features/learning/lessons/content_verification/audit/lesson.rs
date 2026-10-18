@@ -23,7 +23,10 @@ use super::tools::VerifierWeb;
 use super::{AuditDeps, AuditOutcome, AuditProgress, AuditRequest, AuditStop};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
+use crate::features::learning::lessons::claim_reviews::trust_changed;
 use crate::features::learning::persistence::now;
+use crate::features::learning::references::trust::outcomes::VerdictScope;
+use lattice_core::application::ports::claim_review::ClaimReviewStore;
 
 /// The Verifier as the app configures it.
 #[async_trait]
@@ -148,6 +151,21 @@ pub(crate) async fn audit_lesson(
         progress: request.progress,
         clock: &now,
     };
-    let outcome = super::run(pinned.llm.as_ref(), &audit, &deps).await?;
-    Ok(LessonAudit::Ran { outcome, web_note })
+    let before = store.load(request.lesson_id).await?;
+    let outcome = super::run(pinned.llm.as_ref(), &audit, &deps).await;
+    // The checks the audit appended stay on the ledger even when it stops
+    // with an error, so their agreements are calibrated either way (§13).
+    trust_changed::record_verifier_agreements(
+        pool,
+        VerdictScope {
+            program_id: request.program_id,
+            lesson_id: request.lesson_id,
+        },
+        &before,
+    )
+    .await?;
+    Ok(LessonAudit::Ran {
+        outcome: outcome?,
+        web_note,
+    })
 }

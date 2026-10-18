@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-18",
+  "run": "offline",
+  "policy": "source-trust-v1",
+  "evidence_policy": "lesson-evidence-v21",
+  "commit": "6c326e4e",
+  "branch": "feat/provenance-verify (P1-P7 integrated, feat/claim-review merged)",
+  "model": null,
+  "commands": [
+    "cargo test -p lattice-core --lib provenance",
+    "cargo test -p lattice-core --lib provenance::fixture_tests::record_independence_thresholds -- --ignored",
+    "cargo test -p lattice-desktop --lib provenance_gate_tests"
+  ],
+  "scoring": "Each fixture test checks every labelled item and fails listing any mismatch, so a passing test is every item as labelled.",
+  "sets": {
+    "sources-v1": {
+      "items": 120,
+      "languages": 8,
+      "levels_as_labelled": 120,
+      "web_origins": 115,
+      "web_origins_as_compiled_suffix_list": 115
+    },
+    "independence-pairs-v1": {
+      "items": 219,
+      "resemblance_copy": { "threshold": 0.64, "f1": 1.0, "optimal_from": 0.6, "optimal_to": 0.69 },
+      "containment_copy": { "threshold": 0.6, "f1": 1.0, "optimal_from": 0.4, "optimal_to": 0.81 },
+      "policy_matches_sweep": true
+    },
+    "sufficiency-cases-v1": { "items": 50, "decided_as_labelled": 50 },
+    "chain-cases-v1": { "items": 12, "ranked_as_labelled": 12 },
+    "injection-cases-v1": { "items": 30, "detected_as_labelled": 30 },
+    "gate_sufficiency_fixture": {
+      "file": "src-tauri/src/features/learning/lessons/content_verification/sufficiency_cases.json",
+      "items": 8,
+      "decided_as_labelled": 8
+    },
+    "function_calling_lesson_fixture": {
+      "file": "src-tauri/src/features/learning/lessons/live_fixtures/function_calling_claims.json",
+      "claims": 5,
+      "primary_backed_passed_with_one_check_and_no_challenge": 5
+    }
+  },
+  "lattice_core_provenance_tests": { "passed": 91, "failed": 0, "ignored": 1 },
+  "not_run": {
+    "live_provenance_eval": "Not built (§21, P7): scoring the standing, ownership and claim-profile judgements needs a running llama-server (local 9B sidecar or remote 27B); skipped in this offline run.",
+    "end_to_end_function_calling_lesson": "§21's manual script prepares the lesson with a live model; skipped in this offline run."
+  },
+  "labelling": "All items labelled by one author and awaiting review (README)."
+}

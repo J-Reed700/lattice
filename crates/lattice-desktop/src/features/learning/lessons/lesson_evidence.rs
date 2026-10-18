@@ -17,6 +17,9 @@ pub struct LearningEvidencePassageDto {
     pub start_byte: usize,
     pub end_byte: usize,
     pub retrieval_kind: String,
+    /// The level of this passage's source for the claim's subject, when the
+    /// passage supports the claim and its support was weighed.
+    pub trust: Option<crate::features::learning::dto::LearningSourceTrustDto>,
 }
 /// How a published claim stands (§5.6): verified against a source, confirmed
 /// by the user, accepted as general knowledge, or verified against a source
@@ -46,6 +49,9 @@ pub struct LearningClaimEvidenceDto {
     pub resolution: LearningClaimResolutionDto,
     /// The user's note on a claim confirmed by them.
     pub note: Option<String>,
+    /// Whether the claim's support met the bar for its kind; `None` when it
+    /// was not weighed.
+    pub sufficiency: Option<crate::features::learning::dto::LearningSufficiencyDto>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

@@ -5,6 +5,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::provenance::{
+    ArchivedFrom, CanonicalElsewhere, DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts,
+    NamedEntity, Origin, OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals,
+    RegistryKind, SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
+};
 use crate::domain::sourcing::FinderOutcome;
 
 /// The version stamped on every reference text the web reader extracts for a
@@ -178,6 +183,17 @@ impl From<&FinderOutcome> for FinderOutcomeDto {
             cause: outcome.result.detail(),
         }
     }
+}
+
+/// A page read for a learning reference, with what capture recorded about
+/// who publishes it (source provenance §4, §17). A fetcher that cannot
+/// extract provenance says so with `ProvenanceSignals::NotExtracted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferencePage {
+    pub output: FetchUrlContentOutput,
+    pub signals: ProvenanceSignals,
+    /// Unix seconds.
+    pub fetched_at: i64,
 }
 
 /// Output from fetch_url_content function.

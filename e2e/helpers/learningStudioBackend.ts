@@ -1721,6 +1721,13 @@ export async function installLearningStudioBackend(page: Page) {
         }
         return copyCanvasWorkspace();
       },
+      // Source trust (provenance §19): no judgements made yet, so no levels;
+      // specs that exercise trust install their own handlers over these.
+      get_learning_source_trust: (args) => {
+        const request = getRequest<{ claim: unknown | null }>(args);
+        return { sources: [], claim: request.claim ? { profile: null, supports: [], bar: null } : null };
+      },
+      list_source_trust_overrides: () => [],
       get_learning_source_workspace: (args) => {
         const programId = getArg<string>(args, "id");
         return programId === sourceWorkspace.programId

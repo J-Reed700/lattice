@@ -9,6 +9,7 @@ mod practice;
 mod programs;
 mod sources;
 mod tangents;
+mod trust;
 
 pub use super::assessment_engine::{
     LearningAssessmentPurpose, LearningFeedbackTiming, LearningItemFormat, LearningRubricCriterion,
@@ -20,6 +21,7 @@ pub use practice::*;
 pub use programs::*;
 pub use sources::*;
 pub use tangents::*;
+pub use trust::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

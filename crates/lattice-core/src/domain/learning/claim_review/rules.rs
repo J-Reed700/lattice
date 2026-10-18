@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use super::{
     span_of, text_sha256, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState,
-    EvidenceFingerprint, HumanBinding, LessonReviewState, ReopenCause,
+    EvidenceFingerprint, GateVerdict, HumanBinding, LessonReviewState, ReopenCause,
 };
 
 /// A change to a source version a claim relied on.
@@ -40,6 +40,9 @@ pub struct Observation {
     pub hint: Option<String>,
     /// A source version the user attached to this claim.
     pub attached_source_version_id: Option<String>,
+    /// What the provenance gate made of this pass's supported verdict;
+    /// `None` when the gate did not weigh it.
+    pub gate: Option<GateVerdict>,
 }
 
 /// Why the machine may look at a claim again.
@@ -54,6 +57,10 @@ pub enum NewInformation {
     CheckerChanged,
     /// Different passages (or none were compared before).
     EvidenceChanged,
+    /// The same evidence, but the provenance gate decides it differently:
+    /// an override, a relation or a calibrated bar changed (source
+    /// provenance §18.7).
+    DecisionChanged,
     UserSource(String),
     UserHint(String),
 }
@@ -84,6 +91,11 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
         }
         Some(basis) if basis.fingerprint == now.fingerprint => {}
         _ => return Some(NewInformation::EvidenceChanged),
+    }
+    if let (Some(now), Some(before)) = (&now.gate, prev.trust()) {
+        if *now != before.verdict() {
+            return Some(NewInformation::DecisionChanged);
+        }
     }
     now.attached_source_version_id
         .clone()
@@ -124,8 +136,10 @@ fn cited_sources(entry: &ClaimLedgerEntry) -> BTreeSet<&str> {
 
 /// §3 `relitigate`: whether a change reopens the user's confirmation, and
 /// why. Only a changed sentence or a change to a source the user bound the
-/// confirmation to does; a new checker, new research or new sources never
-/// do. (Unconfirm is the user's own action, [`super::UserAction::Unconfirm`].)
+/// confirmation to does; a new checker, new research, new sources or a
+/// change of trust (an override, a calibrated bar: source provenance §13)
+/// never do. (Unconfirm is the user's own action,
+/// [`super::UserAction::Unconfirm`].)
 pub fn relitigate(bound: &HumanBinding, change: &NewInformation) -> Option<ReopenCause> {
     match change {
         NewInformation::SentenceChanged { quote_sha256 } => {
@@ -136,6 +150,7 @@ pub fn relitigate(bound: &HumanBinding, change: &NewInformation) -> Option<Reope
             .iter()
             .any(|id| id == source.version())
             .then(|| source_cause(source)),
+        NewInformation::DecisionChanged => None,
         _ => None,
     }
 }

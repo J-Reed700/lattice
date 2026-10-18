@@ -14,6 +14,7 @@ fn observation(entry: &ClaimLedgerEntry) -> Observation {
         source_changes: Vec::new(),
         hint: None,
         attached_source_version_id: None,
+        gate: None,
     }
 }
 
@@ -203,6 +204,7 @@ fn only_the_sentence_or_a_bound_source_reopens_a_confirmation() {
         (NewInformation::EvidenceChanged, None),
         (NewInformation::UserSource("v9".into()), None),
         (NewInformation::UserHint("hint".into()), None),
+        (NewInformation::DecisionChanged, None),
     ];
     for (change, expected) in cases {
         assert_eq!(relitigate(&bound, &change), expected, "{change:?}");

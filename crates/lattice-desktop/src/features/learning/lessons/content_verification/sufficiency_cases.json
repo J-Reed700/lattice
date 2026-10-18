@@ -1,0 +1,89 @@
+[
+  {
+    "domain": "biology",
+    "claim": "All mammals give birth to live young.",
+    "passages": ["All mammals give birth to live young."],
+    "expected": "supported",
+    "kind": "general",
+    "quote": "All mammals give birth to live young.",
+    "supports": [{"level": "community", "origin": "web:forum.example"}],
+    "decision": "insufficient",
+    "bar": "any",
+    "note": "Repetition supports a claim only when its source meets the bar: an anonymous forum post does not."
+  },
+  {
+    "domain": "biology",
+    "claim": "Monotremes, including platypuses and echidnas, lay eggs.",
+    "passages": ["Most mammals give birth to live young. Monotremes, including platypuses and echidnas, lay eggs."],
+    "expected": "supported",
+    "kind": "general",
+    "quote": "Monotremes, including platypuses and echidnas, lay eggs.",
+    "supports": [{"level": "authoritative", "origin": "web:encyclopedia.example"}],
+    "decision": "sufficient"
+  },
+  {
+    "domain": "baking",
+    "claim": "Baking an apple pie for 60 minutes at 180 degrees Celsius guarantees that every pie is fully cooked, regardless of recipe, pan, or oven.",
+    "passages": ["Baking an apple pie for 60 minutes at 180 degrees Celsius guarantees that every pie is fully cooked, regardless of recipe, pan, or oven."],
+    "expected": "supported",
+    "kind": "practice",
+    "quote": "Baking an apple pie for 60 minutes at 180 degrees Celsius guarantees that every pie is fully cooked",
+    "supports": [{"level": "community", "origin": "web:recipes-forum.example"}],
+    "decision": "insufficient",
+    "bar": "established"
+  },
+  {
+    "domain": "baking",
+    "claim": "The example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling.",
+    "passages": ["This example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling. Those instructions apply to this recipe; other recipes may specify different temperatures and durations."],
+    "expected": "supported",
+    "kind": "specification",
+    "quote": "specifies 60 minutes at 180 degrees Celsius using its specified pan and filling",
+    "supports": [{"level": "primary", "origin": "web:recipe-author.example"}],
+    "decision": "sufficient"
+  },
+  {
+    "domain": "programming",
+    "claim": "Pinning a specific compiler version in rust-toolchain.toml guarantees reproducible builds.",
+    "passages": ["Pinning a specific compiler version in rust-toolchain.toml guarantees reproducible builds."],
+    "expected": "supported",
+    "kind": "specification",
+    "quote": "Pinning a specific compiler version in rust-toolchain.toml guarantees reproducible builds.",
+    "supports": [{"level": "established", "origin": "web:dev-blog.example"}],
+    "decision": "insufficient",
+    "bar": "primary"
+  },
+  {
+    "domain": "programming",
+    "claim": "A rust-toolchain.toml file can specify a toolchain by a particular version number, such as 1.75.0.",
+    "passages": ["In rust-toolchain.toml, the toolchain channel may be a specific version number, for example 1.75.0."],
+    "expected": "supported",
+    "kind": "specification",
+    "quote": "the toolchain channel may be a specific version number, for example 1.75.0.",
+    "supports": [{"level": "primary", "origin": "web:rust-lang.example"}],
+    "decision": "sufficient"
+  },
+  {
+    "domain": "history",
+    "claim": "The Peace of Westphalia was signed in 1648.",
+    "passages": ["The Peace of Westphalia was signed in 1648.", "In 1648 the Peace of Westphalia was signed, ending the Thirty Years' War."],
+    "expected": "supported",
+    "kind": "historical",
+    "quote": "Peace of Westphalia was signed",
+    "supports": [{"level": "established", "origin": "web:history-blog.example"}, {"level": "established", "origin": "web:another-history-blog.example"}],
+    "decision": "sufficient",
+    "note": "Two independent established origins corroborate a historical claim (§6.1)."
+  },
+  {
+    "domain": "history",
+    "claim": "The Peace of Westphalia was signed in 1648.",
+    "passages": ["The Peace of Westphalia was signed in 1648.", "The Peace of Westphalia was signed in 1648."],
+    "expected": "supported",
+    "kind": "historical",
+    "quote": "The Peace of Westphalia was signed in 1648.",
+    "supports": [{"level": "established", "origin": "web:history-blog.example"}, {"level": "established", "origin": "web:history-blog.example"}],
+    "decision": "insufficient",
+    "bar": "authoritative",
+    "note": "Two pages of one origin are one origin: no corroboration (§7)."
+  }
+]

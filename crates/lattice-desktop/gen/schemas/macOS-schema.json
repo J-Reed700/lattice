@@ -4869,6 +4869,12 @@
           "markdownDescription": "Enables the change_learning_practice_mode command without any pre-configured scope."
         },
         {
+          "description": "Enables the clear_source_trust_override command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-clear-source-trust-override",
+          "markdownDescription": "Enables the clear_source_trust_override command without any pre-configured scope."
+        },
+        {
           "description": "Enables the complete_learning_lesson command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-complete-learning-lesson",
@@ -4969,6 +4975,12 @@
           "type": "string",
           "const": "learning:allow-export-learning-pack",
           "markdownDescription": "Enables the export_learning_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_provenance_eval_examples command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-export-provenance-eval-examples",
+          "markdownDescription": "Enables the export_provenance_eval_examples command without any pre-configured scope."
         },
         {
           "description": "Enables the finish_learning_simulation command without any pre-configured scope.",
@@ -5133,6 +5145,12 @@
           "markdownDescription": "Enables the get_learning_source_selector command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_learning_source_trust command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-source-trust",
+          "markdownDescription": "Enables the get_learning_source_trust command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_learning_source_version command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-get-learning-source-version",
@@ -5143,6 +5161,12 @@
           "type": "string",
           "const": "learning:allow-get-learning-source-workspace",
           "markdownDescription": "Enables the get_learning_source_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_source_trust_calibration command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-source-trust-calibration",
+          "markdownDescription": "Enables the get_source_trust_calibration command without any pre-configured scope."
         },
         {
           "description": "Enables the get_study_deck command without any pre-configured scope.",
@@ -5167,6 +5191,12 @@
           "type": "string",
           "const": "learning:allow-list-learning-tangents",
           "markdownDescription": "Enables the list_learning_tangents command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_source_trust_overrides command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-list-source-trust-overrides",
+          "markdownDescription": "Enables the list_source_trust_overrides command without any pre-configured scope."
         },
         {
           "description": "Enables the list_study_decks command without any pre-configured scope.",
@@ -5211,6 +5241,12 @@
           "markdownDescription": "Enables the preview_learning_pack_import command without any pre-configured scope."
         },
         {
+          "description": "Enables the reassess_learning_source_trust command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-reassess-learning-source-trust",
+          "markdownDescription": "Enables the reassess_learning_source_trust command without any pre-configured scope."
+        },
+        {
           "description": "Enables the refresh_learning_source command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-refresh-learning-source",
@@ -5233,6 +5269,12 @@
           "type": "string",
           "const": "learning:allow-repair-learning-outline",
           "markdownDescription": "Enables the repair_learning_outline command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reprofile_learning_claim command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-reprofile-learning-claim",
+          "markdownDescription": "Enables the reprofile_learning_claim command without any pre-configured scope."
         },
         {
           "description": "Enables the request_learning_tutor_response command without any pre-configured scope.",
@@ -5353,6 +5395,12 @@
           "type": "string",
           "const": "learning:allow-set-learning-program-verifier-audit",
           "markdownDescription": "Enables the set_learning_program_verifier_audit command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_source_trust_override command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-set-source-trust-override",
+          "markdownDescription": "Enables the set_source_trust_override command without any pre-configured scope."
         },
         {
           "description": "Enables the skip_learning_diagnostic command without any pre-configured scope.",
@@ -5535,6 +5583,12 @@
           "markdownDescription": "Denies the change_learning_practice_mode command without any pre-configured scope."
         },
         {
+          "description": "Denies the clear_source_trust_override command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-clear-source-trust-override",
+          "markdownDescription": "Denies the clear_source_trust_override command without any pre-configured scope."
+        },
+        {
           "description": "Denies the complete_learning_lesson command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-complete-learning-lesson",
@@ -5635,6 +5689,12 @@
           "type": "string",
           "const": "learning:deny-export-learning-pack",
           "markdownDescription": "Denies the export_learning_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_provenance_eval_examples command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-export-provenance-eval-examples",
+          "markdownDescription": "Denies the export_provenance_eval_examples command without any pre-configured scope."
         },
         {
           "description": "Denies the finish_learning_simulation command without any pre-configured scope.",
@@ -5799,6 +5859,12 @@
           "markdownDescription": "Denies the get_learning_source_selector command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_learning_source_trust command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-source-trust",
+          "markdownDescription": "Denies the get_learning_source_trust command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_learning_source_version command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-get-learning-source-version",
@@ -5809,6 +5875,12 @@
           "type": "string",
           "const": "learning:deny-get-learning-source-workspace",
           "markdownDescription": "Denies the get_learning_source_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_source_trust_calibration command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-source-trust-calibration",
+          "markdownDescription": "Denies the get_source_trust_calibration command without any pre-configured scope."
         },
         {
           "description": "Denies the get_study_deck command without any pre-configured scope.",
@@ -5833,6 +5905,12 @@
           "type": "string",
           "const": "learning:deny-list-learning-tangents",
           "markdownDescription": "Denies the list_learning_tangents command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_source_trust_overrides command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-list-source-trust-overrides",
+          "markdownDescription": "Denies the list_source_trust_overrides command without any pre-configured scope."
         },
         {
           "description": "Denies the list_study_decks command without any pre-configured scope.",
@@ -5877,6 +5955,12 @@
           "markdownDescription": "Denies the preview_learning_pack_import command without any pre-configured scope."
         },
         {
+          "description": "Denies the reassess_learning_source_trust command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-reassess-learning-source-trust",
+          "markdownDescription": "Denies the reassess_learning_source_trust command without any pre-configured scope."
+        },
+        {
           "description": "Denies the refresh_learning_source command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-refresh-learning-source",
@@ -5899,6 +5983,12 @@
           "type": "string",
           "const": "learning:deny-repair-learning-outline",
           "markdownDescription": "Denies the repair_learning_outline command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reprofile_learning_claim command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-reprofile-learning-claim",
+          "markdownDescription": "Denies the reprofile_learning_claim command without any pre-configured scope."
         },
         {
           "description": "Denies the request_learning_tutor_response command without any pre-configured scope.",
@@ -6019,6 +6109,12 @@
           "type": "string",
           "const": "learning:deny-set-learning-program-verifier-audit",
           "markdownDescription": "Denies the set_learning_program_verifier_audit command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_source_trust_override command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-set-source-trust-override",
+          "markdownDescription": "Denies the set_source_trust_override command without any pre-configured scope."
         },
         {
           "description": "Denies the skip_learning_diagnostic command without any pre-configured scope.",

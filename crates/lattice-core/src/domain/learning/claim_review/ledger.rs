@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::replay::{apply_check, charge, hand_to_user, queued, reopened, Cursor};
+use super::replay::{apply_check, charge, hand_to_user, queued, redecided, reopened, Cursor};
 use super::{
     Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, EvidenceFingerprint,
-    ReopenCause, RepairOutcome, UserAction, VerdictKind, MACHINE_ATTEMPTS,
+    ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind, MACHINE_ATTEMPTS,
 };
 use crate::shared::error::AppError;
 
@@ -159,6 +159,7 @@ impl ClaimLedgerEntry {
             repair_pending: false,
             researched: false,
             latest_failure: None,
+            trust: None,
         };
         let mut entry = Self {
             claim_id,
@@ -222,6 +223,32 @@ impl ClaimLedgerEntry {
         self.cursor().latest_failure.as_ref()
     }
 
+    /// What the provenance gate weighed for the claim's latest local check,
+    /// when the gate decided it: the claim's state is then the gate's.
+    pub fn trust(&self) -> Option<&TrustAssessment> {
+        self.cursor().trust.as_ref()
+    }
+
+    /// Whether a trust change may re-decide the claim (source provenance
+    /// §18.7): its state is the gate's (a failure the gate's assessment
+    /// gave, a verification it allowed, or a reopen an earlier trust change
+    /// made) and no rewrite awaits its check. A human verdict never is.
+    pub fn redecidable(&self) -> bool {
+        let cursor = self.cursor();
+        cursor.trust.is_some()
+            && !cursor.repair_pending
+            && matches!(
+                &cursor.state,
+                ClaimState::Open { .. }
+                    | ClaimState::Queued { .. }
+                    | ClaimState::ResolvedByEvidence { .. }
+                    | ClaimState::Reopened {
+                        cause: ReopenCause::TrustChanged(_),
+                        ..
+                    }
+            )
+    }
+
     /// §3 `may_repair`: Open, attempts left, a kind a rewrite can address,
     /// and no rewrite already waiting for its check.
     pub fn may_repair(&self) -> bool {
@@ -229,10 +256,10 @@ impl ClaimLedgerEntry {
         matches!(
             &cursor.state,
             ClaimState::Open {
-                kind: VerdictKind::Unsupported | VerdictKind::Contradicted,
+                kind,
                 machine_attempts_left,
                 ..
-            } if *machine_attempts_left > 0
+            } if kind.is_repairable() && *machine_attempts_left > 0
         ) && !cursor.repair_pending
     }
 
@@ -254,10 +281,8 @@ impl ClaimLedgerEntry {
         let cursor = self.cursor();
         matches!(
             &cursor.state,
-            ClaimState::Open {
-                kind: VerdictKind::Unsupported | VerdictKind::Contradicted | VerdictKind::NoSource,
-                ..
-            }
+            ClaimState::Open { kind, .. }
+                if kind.is_repairable() || *kind == VerdictKind::NoSource
         ) && !cursor.researched
             && !cursor.repair_pending
     }
@@ -422,6 +447,16 @@ impl ClaimLedgerEntry {
                 ..
             } => self.apply_repair(&mut next, *attempt, *escalated, outcome, at, &record.event)?,
             ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::StandingAssessed {
+                trust,
+                reason,
+                cause,
+            } => match cause {
+                _ if is_gone(&next.state) => return Err(self.refuse(&record.event)),
+                None => next.trust = Some(trust.as_ref().clone()),
+                Some(_) if !self.redecidable() => return Err(self.refuse(&record.event)),
+                Some(cause) => redecided(&mut next, trust, reason, cause),
+            },
             ClaimEvent::UserAction { action, note } => {
                 self.apply_user_action(&mut next, action, note, at, &record.event)?
             }

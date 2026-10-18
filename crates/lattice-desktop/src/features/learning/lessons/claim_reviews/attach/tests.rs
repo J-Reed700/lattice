@@ -321,16 +321,12 @@ impl LLMPort for Judge {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let replies = fixture_prompts(request)
             .into_iter()
-            .map(|prompt| {
-                if prompt.starts_with("Review a provisional lesson claim approval") {
-                    json!({"objections": []}).to_string()
-                } else {
-                    *self.checks.lock().unwrap() += 1;
-                    format!(
-                        "{}\nReason: The fixture compared the passage.\nSource passage: passage-0",
-                        self.verdict
-                    )
-                }
+            .map(|_| {
+                *self.checks.lock().unwrap() += 1;
+                format!(
+                    "{}\nReason: The fixture compared the passage.\nSource passage: passage-0",
+                    self.verdict
+                )
             })
             .collect();
         Ok(fixture_completion(request, replies))

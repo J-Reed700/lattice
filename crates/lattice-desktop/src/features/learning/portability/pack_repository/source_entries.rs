@@ -8,11 +8,13 @@ use super::{
     },
     export, importers, value_str,
 };
+use crate::features::learning::references::trust::pack::SourceTrustPackEntry;
 use crate::features::learning::{
     dto::{LearningProgramDto, LearningSourceWorkspaceDto},
     pack::{
         sections::{
             PackSection, SOURCE_HISTORY_ENTRY, SOURCE_LIBRARY_ENTRY, SOURCE_SELECTORS_ENTRY,
+            SOURCE_TRUST_ENTRY,
         },
         DecodedLearningPack, LearningPackEntry,
     },
@@ -110,6 +112,44 @@ impl SectionRows for SourceLibrary {
             scope.ids,
         )
         .await
+    }
+}
+
+/// Provenance rows, relations and source overrides. Their keys are the
+/// source and version ids the library section claims and maps, so this
+/// section claims none of its own.
+pub(super) struct SourceTrust;
+#[async_trait]
+impl SectionRows for SourceTrust {
+    fn section(&self) -> PackSection {
+        PackSection::SourceTrust
+    }
+    async fn encode(
+        &self,
+        connection: &mut SqliteConnection,
+        scope: &ExportScope<'_>,
+    ) -> Result<Vec<LearningPackEntry>> {
+        export::source_trust(connection, &scope.program.summary.id).await
+    }
+    fn check(
+        &self,
+        pack: &DecodedLearningPack,
+        _program: &LearningProgramDto,
+    ) -> Result<Vec<String>> {
+        if let Some(rows) = decode::<SourceTrustPackEntry>(pack, SOURCE_TRUST_ENTRY)? {
+            rows.check()?;
+        }
+        Ok(Vec::new())
+    }
+    async fn insert(
+        &self,
+        connection: &mut SqliteConnection,
+        scope: &ImportScope<'_>,
+    ) -> Result<()> {
+        let Some(rows) = decode::<SourceTrustPackEntry>(scope.pack, SOURCE_TRUST_ENTRY)? else {
+            return Ok(());
+        };
+        importers::insert_source_trust(connection, &scope.program.summary.id, rows, scope.ids).await
     }
 }
 

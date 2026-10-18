@@ -4,11 +4,13 @@
 //! knows unit titles and source titles.
 
 mod history;
+mod trust;
 
 pub use history::{
     AttachOutcomeDto, CheckDto, CheckResultDto, CheckerDto, CheckerRoleDto, ClaimEventDto,
     ClaimEventPayloadDto, EvidenceSeenDto, ProvenanceDto, UserActionDto,
 };
+pub use trust::{CountedSupportDto, StandingAssessedDto, TrustCauseDto};
 
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimActionKind, ClaimCounts, ClaimState, LessonReviewState, ReopenCause, RepairOutcome,
@@ -16,6 +18,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::features::learning::dto::LearningSufficiencyDto;
 use crate::features::learning::lesson_evidence::LearningEvidencePassageDto;
 use crate::features::learning::runtime::lab_runtime::LearningLabExecutionResult;
 
@@ -108,6 +111,10 @@ pub struct ClaimReviewItemDto {
     /// The Verifier audit's latest verdict: the "Verifier said" column. Null
     /// until the audit has checked the claim.
     pub verifier_check: Option<CheckerVerdictDto>,
+    /// The provenance gate's decision while the claim's state is the gate's
+    /// (`StandingAssessed`): whether its support met the bar for its kind,
+    /// and why. Null when the gate did not decide the claim's state.
+    pub sufficiency: Option<LearningSufficiencyDto>,
 }
 
 /// One checker's latest verdict on a claim.
@@ -235,6 +242,12 @@ pub enum VerdictKindDto {
     Disputed {
         verifier: Box<VerdictKindDto>,
     },
+    /// The checker found support, but it is below the bar for the claim's
+    /// kind (`bar`), counted as `have` (source provenance §6).
+    InsufficientStanding {
+        bar: String,
+        have: Vec<CountedSupportDto>,
+    },
 }
 
 impl From<&VerdictKind> for VerdictKindDto {
@@ -247,6 +260,10 @@ impl From<&VerdictKind> for VerdictKindDto {
             VerdictKind::GeneralKnowledgeProposed => Self::GeneralKnowledgeProposed,
             VerdictKind::Disputed { verifier } => Self::Disputed {
                 verifier: Box::new(verifier.as_ref().into()),
+            },
+            VerdictKind::InsufficientStanding { bar, have } => Self::InsufficientStanding {
+                bar: trust::bar_name(*bar),
+                have: have.iter().map(Into::into).collect(),
             },
         }
     }
@@ -282,6 +299,11 @@ pub enum ReopenCauseDto {
     },
     Unconfirmed,
     VerifierDispute,
+    /// An override or a calibrated bar changed and the gate's re-decision
+    /// no longer verifies the claim.
+    TrustChanged {
+        trust: TrustCauseDto,
+    },
 }
 
 impl From<&ReopenCause> for ReopenCauseDto {
@@ -297,6 +319,9 @@ impl From<&ReopenCause> for ReopenCauseDto {
             },
             ReopenCause::Unconfirmed => Self::Unconfirmed,
             ReopenCause::VerifierDispute => Self::VerifierDispute,
+            ReopenCause::TrustChanged(cause) => Self::TrustChanged {
+                trust: cause.into(),
+            },
         }
     }
 }

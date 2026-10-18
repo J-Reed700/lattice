@@ -3,8 +3,13 @@
 
 use async_trait::async_trait;
 
-use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchInput, WebSearchOutput};
+use crate::application::contracts::web::{
+    FetchUrlContentOutput, ProvenanceSignals, ReferencePage, WebSearchInput, WebSearchOutput,
+};
 use crate::shared::error::Result;
+
+/// Why a fetcher without a metadata reader returns no provenance signals.
+pub const NO_PROVENANCE_READER: &str = "this fetcher does not extract provenance";
 
 /// Searches the web and reads pages behind the SSRF checks.
 ///
@@ -44,6 +49,20 @@ pub trait WebServiceTrait: Send + Sync {
     /// retain URL/DNS/redirect checks and must report any text truncation.
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
         self.fetch_url_content(url).await
+    }
+
+    /// Read a page for a reference collection together with its provenance
+    /// signals (source provenance §4). A fetcher that reads no markup, such
+    /// as a test fake, says so in the signals rather than inventing any.
+    async fn fetch_reference_page(&self, url: &str) -> Result<ReferencePage> {
+        let output = self.fetch_reference_content(url).await?;
+        Ok(ReferencePage {
+            output,
+            signals: ProvenanceSignals::NotExtracted {
+                reason: NO_PROVENANCE_READER.to_string(),
+            },
+            fetched_at: chrono::Utc::now().timestamp(),
+        })
     }
 
     /// Validate URL for security (SSRF prevention)

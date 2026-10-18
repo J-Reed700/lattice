@@ -73,7 +73,6 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
             "This assertion needs evidence from the saved references.",
         )]),
         judged("supported", Some(0)),
-        no_objections(),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -88,10 +87,10 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
     assert!(review.issues.is_empty());
     assert!(review.note.contains("1 of 24 outline items linked"));
     let prompts = calls(&llm);
-    assert_eq!(prompts.len(), 4);
+    // The strict judgment is the only check: no challenge call follows it.
+    assert_eq!(prompts.len(), 3);
     assert!(prompts[2].starts_with("Source passages:"));
     assert!(prompts[2].contains(&format!("Claim: {ADDITIONAL}")));
-    assert!(prompts[3].starts_with("Review a provisional lesson claim approval"));
     assert!(!prompts
         .iter()
         .any(|p| p.starts_with("Repair a saved curriculum module")));
@@ -499,7 +498,6 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         json!({"queries":["random assignment confounding textbook"]}),
         select_all(1),
         judged("supported", Some(0)),
-        no_objections(),
     ]);
     let repaired = repair_saved(
         &repo,
@@ -523,7 +521,8 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     assert!(review.issues.is_empty());
     assert_eq!(repaired.sources.len(), 3);
     let prompts = calls(&llm);
-    assert_eq!(prompts.len(), 5);
+    // The strict judgment is the only check: no challenge call follows it.
+    assert_eq!(prompts.len(), 4);
     assert_eq!(payload(&prompts[0])["openFindings"][0]["attempts"], 0);
     assert_eq!(
         payload(&prompts[0])["reviewScope"]["mode"],

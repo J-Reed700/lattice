@@ -7,7 +7,9 @@ use lattice_core::domain::learning::claim_review::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{ActorDto, ReopenCauseDto, RepairOutcomeDto, StopReasonDto, VerdictKindDto};
+use super::{
+    ActorDto, ReopenCauseDto, RepairOutcomeDto, StandingAssessedDto, StopReasonDto, VerdictKindDto,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +92,10 @@ pub enum ClaimEventPayloadDto {
     Stopped {
         reason: StopReasonDto,
     },
+    /// What the provenance gate weighed (source provenance §18.7).
+    StandingAssessed {
+        assessment: StandingAssessedDto,
+    },
 }
 
 impl From<&ClaimEvent> for ClaimEventPayloadDto {
@@ -162,6 +168,13 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
             },
             ClaimEvent::Stopped { reason } => Self::Stopped {
                 reason: reason.into(),
+            },
+            ClaimEvent::StandingAssessed {
+                trust,
+                reason,
+                cause,
+            } => Self::StandingAssessed {
+                assessment: StandingAssessedDto::of(trust, reason, cause.as_ref()),
             },
         }
     }
