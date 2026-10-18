@@ -78,6 +78,15 @@ type SourceCheck = {
   pendingVersionId: string | null;
   message: string | null;
 };
+/** The parts of `LessonClaimReviewDto` the claim review spec drives. */
+type ClaimReviewFixture = {
+  lessonId: string; programId: string; state: string; revision: number; pass: number; stopReason: null;
+  counts: { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number };
+  claims: Array<{
+    claimId: string; state: { state: string } & Record<string, unknown>; human: Record<string, unknown> | null;
+    availableActions: string[]; history: Array<Record<string, unknown>>;
+  } & Record<string, unknown>>;
+};
 type SourceLibraryItem = {
   id: string;
   kind: SourceKind;
@@ -438,6 +447,9 @@ export async function installLearningStudioBackend(page: Page) {
     ];
     const state = {
       program,
+      // Lesson claim reviews by lesson id; a lesson without one answers NOT_FOUND.
+      claimReviews: {} as Record<string, ClaimReviewFixture>,
+      claimActions: [] as Array<{ claimId: string; action: { action: string } & Record<string, unknown>; at: number }>,
       memory,
       canvasWorkspace,
       calls: ipc.calls,
@@ -1170,6 +1182,71 @@ export async function installLearningStudioBackend(page: Page) {
             },
           ],
         };
+      },
+      get_learning_lesson_claim_review: (args: MockArgs) => {
+        const review = state.claimReviews[String((args as { lessonId?: string }).lessonId)];
+        if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
+        return structuredClone(review);
+      },
+      resolve_learning_claim: (args: MockArgs) => {
+        const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: { action: string } & Record<string, unknown> }>(args);
+        const review = state.claimReviews[request.lessonId];
+        if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
+        if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
+        const claim = review.claims.find((item) => item.claimId === request.claimId);
+        if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
+        const now = Date.now();
+        const { action } = request;
+        const record = (event: Record<string, unknown>) => claim.history.push({ ordinal: claim.history.length, actor: "user", at: now, jobId: null, appVersion: "e2e", checkerModel: null, event });
+        let attach: Record<string, unknown> | null = null;
+        if (action.action === "attach_link") {
+          const url = String(action.url);
+          if (url.includes("403")) {
+            const host = new URL(url).host;
+            const failure = { kind: "refused", message: `${host} refused the request (HTTP 403).`, nextSteps: [{ step: "paste_text", origin: url }, { step: "add_file" }] };
+            attach = { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [failure.message] };
+            state.claimActions.push({ claimId: claim.claimId, action, at: now });
+            return { revision: review.revision, attach };
+          }
+        }
+        if (action.action === "attach_text" || action.action === "attach_link") {
+          const title = action.action === "attach_text" ? String(action.title) : String(action.url);
+          claim.state = { state: "resolved_by_evidence" };
+          claim.availableActions = ["attach_evidence"];
+          record({ kind: "evidence_attached", sourceVersionId: "pasted-version", provenance: action.action === "attach_text" ? { input: "pasted_text" } : { input: "link", url: action.url }, result: { outcome: "no_passage" } });
+          attach = { revision: review.revision + 1, source: { sourceVersionId: "pasted-version", title, url: null, addedBy: "user" }, alreadySaved: false, outcome: { outcome: "no_passage" }, failure: null, snapshot: { state: "not_applicable" }, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [`Verified against ${title}.`] };
+        } else if (action.action === "confirm") {
+          claim.state = { state: "confirmed", at: now };
+          claim.human = { at: now, note: (action.note as string | null) ?? null, boundSources: [] };
+          claim.availableActions = ["unconfirm", "undo", "attach_evidence"];
+          record({ kind: "user_action", action: { action: "confirm", boundSourceVersionIds: action.sourceVersionIds ?? [] }, note: action.note ?? null });
+        } else if (action.action === "undo") {
+          claim.state = { state: "queued" };
+          claim.human = null;
+          claim.availableActions = ["confirm", "edit", "remove", "attach_evidence", "research_with_hint"];
+          record({ kind: "undone", eventOrdinal: claim.history.length - 1 });
+        } else if (action.action === "remove") {
+          claim.state = { state: "removed", at: now, by: "user" };
+          claim.availableActions = ["undo"];
+          record({ kind: "user_action", action: { action: "remove" }, note: null });
+        } else throw { code: "INVALID_INPUT", message: `The e2e fixture does not model ${action.action}.` };
+        state.claimActions.push({ claimId: claim.claimId, action, at: now });
+        review.revision += 1;
+        const waiting = review.claims.filter((item) => item.state.state === "queued").length;
+        review.counts = { ...review.counts, queued: waiting, confirmed: review.claims.filter((item) => item.state.state === "confirmed").length };
+        return { revision: review.revision, attach: attach && { ...attach, revision: review.revision } };
+      },
+      resume_learning_lesson_review: (args: MockArgs) => {
+        const request = getRequest<{ programId: string; lessonId: string; expectedRevision: number; operationId: string }>(args);
+        const review = state.claimReviews[request.lessonId];
+        const holding = state.planWorkspace.jobs.find((job) => job.resultId?.includes(request.lessonId));
+        if (!review || !holding) throw { code: "NOT_FOUND", message: "Nothing is waiting for review in this lesson." };
+        if (!state.claimActions.some((entry) => entry.at >= (holding.finishedAt ?? 0)))
+          throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a claim or add evidence first." };
+        review.state = "verifying";
+        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
+        state.planWorkspace.jobs.unshift(next);
+        return next;
       },
       get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",

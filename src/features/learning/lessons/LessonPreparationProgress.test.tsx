@@ -135,7 +135,7 @@ describe('Durable lesson preparation progress', () => {
     expect(await screen.findByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
     expect(screen.getByText('170 / 170 checked')).toBeVisible();
     expect(screen.getByText(/Checking finished; 1 claim needed attention in the last pass/)).toBeVisible();
-    expect(screen.getByText(/Checked means reviewed, not necessarily passed/)).toBeVisible();
+    expect(screen.getByText(/Each pass fixes or hands over at least one claim/)).toBeVisible();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(screen.queryByText('Still to check')).not.toBeInTheDocument();
     view.unmount(); view.client.clear();

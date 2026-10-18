@@ -36,6 +36,7 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningProgram: mocks.get,
   getLearningOutlineEvidence: mocks.outlineEvidence,
   getLearningLessonEvidence: async () => ({ ok: true, data: null }),
+  getLearningLessonClaimReview: async () => ({ ok: false, error: 'No review.', details: { code: 'NOT_FOUND', message: 'No review.' } }),
   generateLearningProgram: mocks.generate,
   repairLearningOutline: mocks.repair,
   cancelLearningOutline: mocks.cancel,
