@@ -3,7 +3,7 @@
 > This is the design record; most of it has since been built. Current behaviour, and every place the code differs from this record, is in [docs/development/course-generation-pipeline.md](../development/course-generation-pipeline.md).
 
 Date: 2026-10-14. Branch `learning/outline-evidence` (from `d9c1c68c`). Design only; nothing here has been built.
-All paths are under `src-tauri/src/features/learning/` unless they start with `src/` (frontend), `docs/` or `migrations/`.
+All paths are under `crates/lattice-desktop/src/features/learning/` unless they start with `src/` (frontend), `docs/` or `migrations/`.
 
 ## 1. What went wrong, in the code
 

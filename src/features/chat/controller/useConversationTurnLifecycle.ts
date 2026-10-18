@@ -12,7 +12,7 @@ import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversation
 import type { ApiResult } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
-  Conversation, ConversationMessage, OptimisticMessage, SourceWithMetadata, ToolPreferences,
+  ChatImage, Conversation, ConversationMessage, OptimisticMessage, SourceWithMetadata, ToolPreferences,
 } from '@/types/conversation';
 import { RetrievalTraceSchema, TurnModelSchema, TurnStepSchema } from '@/types/conversation';
 import { ChatStreamStatus } from '@/types/events';
@@ -120,6 +120,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       status: 'pending',
       createdAt: now,
       ...(retryContext ? { retryContext } : {}),
+      // The bubble shows its pictures before the saved message arrives.
+      ...(retryContext?.attachmentImages ? { images: retryContext.attachmentImages } : {}),
     };
     const assistantMessage: OptimisticMessage = {
       tempId: assistantTempId,
@@ -490,7 +492,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     conversationId?: string | null,
     toolPreferences?: ToolPreferences,
     attachmentNames?: string[],
-    attachmentDocumentIds?: string[]
+    attachmentDocumentIds?: string[],
+    attachmentImages?: ChatImage[]
   ) => {
     const state = conversationUiStore.getState();
     // The fallback is a Chat conversation: an Explorer thread is never
@@ -518,12 +521,14 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         toolPreferences,
         requestId,
         attachmentNames,
-        attachmentDocumentIds
+        attachmentDocumentIds,
+        attachmentImages?.map(image => image.id)
       ),
       retryContext: {
         ...(toolPreferences ? { toolPreferences } : {}),
         ...(attachmentNames ? { attachmentNames } : {}),
         ...(attachmentDocumentIds ? { attachmentDocumentIds } : {}),
+        ...(attachmentImages ? { attachmentImages } : {}),
       },
     });
   }, [conversations, queryClient, runGeneration]);
@@ -543,7 +548,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         failed.retryContext?.toolPreferences,
         requestId,
         failed.retryContext?.attachmentNames,
-        failed.retryContext?.attachmentDocumentIds
+        failed.retryContext?.attachmentDocumentIds,
+        failed.retryContext?.attachmentImages?.map(image => image.id)
       ),
     });
   }, [runGeneration]);

@@ -6,7 +6,7 @@ Defect: track D, "Risks". `gguf_metadata::kv_cache_bytes_per_token` charged ever
 
 ## What changed
 
-### `src-tauri/src/features/llm/engine/gguf_metadata.rs`
+### `crates/lattice-desktop/src/features/llm/engine/gguf_metadata.rs`
 
 - `:42` new `PerLayer { Uniform(u32), Layers(Vec<u32>) }`. A head count is one number or one per layer, as llama.cpp's `get_key_or_arr` allows.
 - `:65` `GgufModelInfo`: `head_count` and `head_count_kv` are now `Option<PerLayer>`. New fields: `key_length_swa`, `value_length_swa`, `sliding_window`, `sliding_window_pattern` (per-layer flags), `full_attention_interval`, `nextn_predict_layers`, `shared_kv_layers`.
@@ -17,7 +17,7 @@ Defect: track D, "Risks". `gguf_metadata::kv_cache_bytes_per_token` charged ever
 - `:292` keys are matched as `{prefix}.{name}` with an exact name. A nested key such as `gemma4.vision.block_count` is not the language model's.
 - `:474` `read_integer` replaces `read_scalar_as_u32` and tells "unreadable header" apart from "value out of range". `:515` `skip_elements` is split out of `skip_value` so a list can be skipped after its type and count are read.
 
-### `src-tauri/src/features/llm/engine/sidecar_manager/config.rs`
+### `crates/lattice-desktop/src/features/llm/engine/sidecar_manager/config.rs`
 
 - `:141` `resident_bytes_of` charges `kv_cache_bytes(context_size)`.
 - `:164` `context_size_for` declines up front when the header cannot be sized, as before.
@@ -62,7 +62,7 @@ Headers were streamed by HTTP range request from `https://huggingface.co/<repo>/
 
 Gemma 4's pattern is five sliding layers, then one global (`layer % 6 == 5` is global). No header carries `attention.recurrent_layers` or a scalar `sliding_window_pattern`.
 
-The allocation rules were read from llama.cpp at the pinned tag `v0.6.0` (`src-tauri/scripts/llama-server.lock`), raw from GitHub:
+The allocation rules were read from llama.cpp at the pinned tag `v0.6.0` (`crates/lattice-desktop/scripts/llama-server.lock`), raw from GitHub:
 
 - `src/models/qwen35.cpp` and `qwen35moe.cpp`: `is_recr = (i < n_layer()) && ((i + 1) % full_attn_interval != 0)`, default interval 4. `attention.recurrent_layers` takes priority when present. So layers 3, 7, 11, ... (0-based) are full attention.
 - `src/llama-hparams.cpp`: `n_layer() = n_layer_all - n_layer_nextn`. `has_kv(il)` is false from `n_layer_kv_from_start` on.
@@ -103,7 +103,7 @@ Two entries disagree by more than 0.3 GB. Track D charged sliding layers `window
 
 ## Verified
 
-All cargo commands ran from `src-tauri` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`.
+All cargo commands ran from `crates/lattice-desktop` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`.
 
 - `cargo check --lib`: `Finished`, exit 0, no warnings.
 - `cargo test --lib -- gguf_metadata sidecar_manager`: `test result: ok. 88 passed; 0 failed; 1 ignored` (the ignored one needs `LATTICE_GGUF_MODEL`).
@@ -114,7 +114,7 @@ All cargo commands ran from `src-tauri` with `CARGO_TARGET_DIR=/Users/josh/Code/
 
 ## Not verified
 
-- `cargo clippy --lib` did not run. After the passing test run, the shared target's `lattice-desktop` build script began failing with "failed to run tauri-build: failed to read plugin permissions". The cause is in the shared target, not this change: `debug/build/tauri-0c4148f3981e549e/out/tauri-core-permission-files` lists `/Users/josh/Code/lattice-temp/src-tauri/target/.../out/permissions/default.toml`. That target was copied from `lattice-temp`, whose own `target` has since been deleted. The same `default.toml` exists under `lattice-imm-target2`. Rewriting that one list to the `lattice-imm-target2` path, or forcing tauri's build script to rerun, should clear it for every agent. I did not touch it because it is outside this worktree.
+- `cargo clippy --lib` did not run. After the passing test run, the shared target's `lattice-desktop` build script began failing with "failed to run tauri-build: failed to read plugin permissions". The cause is in the shared target, not this change: `debug/build/tauri-0c4148f3981e549e/out/tauri-core-permission-files` lists `/Users/josh/Code/lattice-temp/target/.../out/permissions/default.toml`. That target was copied from `lattice-temp`, whose own `target` has since been deleted. The same `default.toml` exists under `lattice-imm-target2`. Rewriting that one list to the `lattice-imm-target2` path, or forcing tauri's build script to rerun, should clear it for every agent. I did not touch it because it is outside this worktree.
 - The ignored `a_real_gguf_on_this_machine_parses` against the local Qwen 3.8 27B file did not run, for the same reason.
 - No llama-server ran, so the formula was not compared with llama-server's own "KV self size" log lines.
 - The CPU and Vulkan builds were not checked for flash attention at head size 512. Without flash attention V is cached at the widest layer (see Risks).

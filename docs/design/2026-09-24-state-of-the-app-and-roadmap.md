@@ -27,11 +27,11 @@ The architecture is current. The retrieval core, the evidence-first chat surface
 | Grounding check | Lexical overlap + utility-LLM judge; verdicts stored per sentence with evidence quote and method; sampling now pinned to temperature 0. Still one window per source, unjudged claims flipped to unsupported, no `unverified` state, no eval set | **Rudimentary, proposal written** | `docs/design/2026-09-24-grounding-verifier-modernization.md` |
 | Chat surface | Claim marks, evidence margin, docked reader, turn record with steps and timing, composer `/` and `@`, export. Ahead of most products | **Current** | `docs/design/2026-09-19-chat-research-workbench.md` |
 | Web evidence | Pages archived at citation time, page cache, article extraction, hidden-webview fallback, text-fragment open links | **Current** | `docs/design/2026-09-22-citable-web-evidence.md` |
-| Evaluation | Retrieval evals v1–v3 with a CI integrity check. **No end-to-end answer eval**, no grounding-verdict eval set, memory evals all `#[ignore]` and never run with weights | **Retrieval only** | `evals/retrieval/`, `src-tauri/tests/conversation_memory_evals.rs` |
+| Evaluation | Retrieval evals v1–v3 with a CI integrity check. **No end-to-end answer eval**, no grounding-verdict eval set, memory evals all `#[ignore]` and never run with weights | **Retrieval only** | `evals/retrieval/`, `crates/lattice-desktop/tests/conversation_memory_evals.rs` |
 | Ingestion | Text, DOCX/ODT/XLSX/PPTX, PDF text layer, HTML, transcription. OCR is a no-op port; no layout or table extraction | **2022** | `application/ports/ocr_port.rs` |
 | Local inference | llama-server sidecar pipeline with pinned, verified binaries; auto `n_parallel`; `--ctx-size 32768`; no `--jinja`, no flash-attention flag, no draft model | **Solid, conservative** | `sidecar_manager.rs` |
 | Robustness | Lints deny panics; two panics and the >32k-document failure fixed; ~20 spawned loops still die silently; unbounded RAM on index rebuild; no single-instance guard | **Good core, known list** | `rust-robustness-audit-2026-09-19` |
-| Release | CI runs check/test/clippy/fmt/bindings but never `tauri build`; ad-hoc signing (`signingIdentity: "-"`); no updater plugin; no Intel-mac sidecar; candle CPU-only off macOS | **Not releasable** | `.github/workflows/ci.yml`, `src-tauri/tauri.conf.json` |
+| Release | CI runs check/test/clippy/fmt/bindings but never `tauri build`; ad-hoc signing (`signingIdentity: "-"`); no updater plugin; no Intel-mac sidecar; candle CPU-only off macOS | **Not releasable** | `.github/workflows/ci.yml`, `crates/lattice-desktop/tauri.conf.json` |
 
 ## 3. Game plan
 

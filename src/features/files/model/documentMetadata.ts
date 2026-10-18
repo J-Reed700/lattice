@@ -17,7 +17,7 @@ export const isWebDocument = (doc: DocumentMetadata): boolean => {
 
 /**
  * The closed set of type labels the app uses for a document. Keep in sync with
- * `src-tauri/src/features/stats/type_label.rs::type_label` — same words, same order.
+ * `crates/lattice-desktop/src/features/stats/type_label.rs::type_label` — same words, same order.
  */
 export const TYPE_BUCKETS = [
   'PDF',

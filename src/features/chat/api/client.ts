@@ -170,6 +170,7 @@ export const chatApi = {
    * @param message - User's message text
    * @param attachmentNames - File names to stamp on the message, for the chips in history
    * @param attachmentDocumentIds - Documents this message brought in; the turn reads them whole
+   * @param attachmentImageIds - Pictures attached to the draft (`attachMessageImages`); the message claims them
    * @returns Response containing conversation ID, all messages, and context usage
    */
   chatWithConversation: async (
@@ -179,6 +180,7 @@ export const chatApi = {
     requestId?: string,
     attachmentNames?: string[],
     attachmentDocumentIds?: string[],
+    attachmentImageIds?: string[],
   ): Promise<ApiResult<Wire.ChatResponse>> =>
     apiCall<Wire.ChatResponse>('chat_with_conversation', {
       conversationId,
@@ -187,7 +189,23 @@ export const chatApi = {
       toolPreferences,
       attachmentNames,
       attachmentDocumentIds,
+      attachmentImageIds,
     }),
+
+  /**
+   * Stores pictures the reader attached to a draft. They belong to the
+   * conversation but to no message until a send names their ids.
+   */
+  attachMessageImages: (conversationId: string, paths: string[]): Promise<ApiResult<Wire.ChatImageDto[]>> =>
+    apiCall<Wire.ChatImageDto[]>('attach_message_images', { conversationId, paths }),
+
+  /** Lets go of draft pictures that were removed or discarded before a send. */
+  releaseMessageImages: (conversationId: string, imageIds: string[]): Promise<ApiResult<null>> =>
+    apiCall<null>('release_message_images', { conversationId, imageIds }),
+
+  /** A copy of a sent picture, staged on the draft so the next turn shows it again. */
+  restageMessageImage: (conversationId: string, imageId: string): Promise<ApiResult<Wire.ChatImageDto>> =>
+    apiCall<Wire.ChatImageDto>('restage_message_image', { conversationId, imageId }),
 
   /**
    * Cancels active model generation for a conversation if one is currently in-flight.
