@@ -657,14 +657,6 @@ fn chars_in_flight(input: &[lattice_core::application::ports::llm_port::Completi
                 name, arguments, ..
             } => name.len() + arguments.to_string().len(),
             CompletionInput::Native { value } => value.to_string().len(),
-            // A picture costs its declared tokens, never its base64.
-            CompletionInput::Multimodal { .. } => {
-                item.text().chars().count()
-                    + lattice_core::application::ports::llm_port::chars_within_tokens(
-                        item.image_tokens(),
-                        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
-                    )
-            }
         })
         .sum()
 }
