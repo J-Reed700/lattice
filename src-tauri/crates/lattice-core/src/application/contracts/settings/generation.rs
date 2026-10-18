@@ -127,4 +127,9 @@ pub struct LocalModelConfigDto {
     /// memory usage and allow a larger context window to fit in memory.
     #[serde(default)]
     pub kv_cache_quantization: bool,
+    /// Whether the model is started with its vision projector. `None` means on
+    /// once the catalog's projector is downloaded; `Some(false)` keeps a model
+    /// with a projector text-only.
+    #[serde(default)]
+    pub vision: Option<bool>,
 }

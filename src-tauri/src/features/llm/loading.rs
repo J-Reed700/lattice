@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
+use crate::features::llm::engine::vision::declared_vision;
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::instances::LaunchProfile;
 use crate::features::llm::scheduler::SchedulerRegistry;
@@ -228,22 +229,27 @@ impl ModelLoader {
                 .load_ollama(settings, model, generation)
                 .await
                 .map(remote),
-            ModelRef::LlamaCpp { model } => {
+            ModelRef::LlamaCpp { model: name } => {
                 let mut connection = with_generation(settings, &generation);
-                connection.llama_cpp.model = model.clone();
+                connection.llama_cpp.model = name.clone();
                 Ok(remote(
                     crate::features::llm::llama_cpp::LlamaCppLlm::new(&connection)?
+                        .with_vision(declared_vision(settings, model))
                         .schedule(&self.runtime.schedulers)
                         .await,
                 ))
             }
-            ModelRef::Cloud { provider, model } => {
+            ModelRef::Cloud {
+                provider,
+                model: name,
+            } => {
                 let key = cloud_api_key(*provider)?;
                 let mut connection = with_generation(settings, &generation);
                 connection.provider = llm_provider(*provider);
-                connection.model = model.clone();
+                connection.model = name.clone();
                 Ok(remote(
                     crate::features::llm::cloud::CloudLlm::new(&connection, key)?
+                        .with_vision(declared_vision(settings, model))
                         .schedule(&self.runtime.schedulers),
                 ))
             }
@@ -353,11 +359,18 @@ impl ModelLoader {
             .then(|| (auth_header_name.to_string(), auth_header_value.to_string()));
 
         tracing::info!(endpoint, model, "Connecting to Ollama");
+        let vision = declared_vision(
+            settings,
+            &ModelRef::Ollama {
+                model: model.to_owned(),
+            },
+        );
         create_ollama_llm(
             endpoint,
             model,
             auth_header,
             generation_config,
+            vision,
             &self.runtime.schedulers,
         )
         .await

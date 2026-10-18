@@ -1,5 +1,7 @@
 //! Assemble role-bearing conversation context once for provider adapters.
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, InferencePriority};
+use crate::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, ContentPart, ImagePart, InferencePriority,
+};
 use crate::application::ports::LLMPort;
 use crate::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
@@ -96,12 +98,57 @@ pub fn from_context(
     messages
 }
 
+/// Give the newest user message `images`: `Message` → `Multimodal` with the
+/// images first and the text last (how the vision model families are
+/// prompted). Returns `false` when the input has no user message (nothing
+/// attached). Empty `images` change nothing.
+pub fn attach_images_to_last_user(input: &mut [CompletionInput], images: Vec<ImagePart>) -> bool {
+    let Some(item) = input.iter_mut().rev().find(|item| item.is_user()) else {
+        return false;
+    };
+    if images.is_empty() {
+        return true;
+    }
+    let (role, parts) = match item {
+        CompletionInput::Message { role, content } => {
+            let text = std::mem::take(content);
+            let parts = (!text.is_empty())
+                .then_some(ContentPart::Text { text })
+                .into_iter()
+                .collect();
+            (std::mem::take(role), parts)
+        }
+        CompletionInput::Multimodal { role, parts } => {
+            (std::mem::take(role), std::mem::take(parts))
+        }
+        _ => return false,
+    };
+    let (mut ordered, text): (Vec<_>, Vec<_>) = parts
+        .into_iter()
+        .partition(|part| matches!(part, ContentPart::Image(_)));
+    ordered.extend(images.into_iter().map(ContentPart::Image));
+    ordered.extend(text);
+    *item = CompletionInput::Multimodal {
+        role,
+        parts: ordered,
+    };
+    true
+}
+
+/// Every item through `without_images`, for anything persisted or replayed.
+pub fn strip_images(input: &[CompletionInput]) -> Vec<CompletionInput> {
+    input.iter().map(CompletionInput::without_images).collect()
+}
+
 fn add_instruction(instructions: &mut Vec<String>, content: &str) {
     let content = content.trim();
     if !content.is_empty() && !instructions.iter().any(|existing| existing == content) {
         instructions.push(content.to_owned());
     }
 }
+
+#[cfg(test)]
+mod image_tests;
 
 #[cfg(test)]
 mod tests {

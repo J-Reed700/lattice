@@ -12,3 +12,4 @@ pub mod metadata;
 pub mod model_ref;
 pub mod selection;
 pub mod validation;
+pub mod vision;

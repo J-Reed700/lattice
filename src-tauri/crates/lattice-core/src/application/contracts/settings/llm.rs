@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::models::model_ref::ModelRef;
+use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::{AppError, Result};
 
 use super::generation::{
@@ -96,6 +97,12 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub local_model_configs: BTreeMap<String, LocalModelConfigDto>,
 
+    /// What remote llama.cpp, Ollama and cloud models see pictures with, keyed
+    /// by `ModelRef::to_string()`. A cloud model with no entry falls back to its
+    /// provider's documented default; any other model without one cannot see.
+    #[serde(default)]
+    pub vision_declarations: BTreeMap<String, VisionDeclarationDto>,
+
     /// Speculative decoding for the bundled local server. Experimental, and
     /// applied only to a model that carries a multi-token-prediction head;
     /// every other model starts as it always has.
@@ -174,6 +181,34 @@ pub struct LLMSettingsDto {
     /// evaluated separately from deterministic provenance and budget guarantees.
     #[serde(default = "default_bounded_memory")]
     pub bounded_conversation_memory: bool,
+}
+
+/// A user's statement that a model takes pictures, and how its encoder
+/// resizes and charges for them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VisionDeclarationDto {
+    pub enabled: bool,
+    pub geometry: VisionGeometry,
+}
+
+impl LLMSettingsDto {
+    /// The vision declaration saved for `model`, if any.
+    pub fn vision_declaration(&self, model: &ModelRef) -> Option<&VisionDeclarationDto> {
+        self.vision_declarations.get(&model.to_string())
+    }
+
+    /// Problems with the saved vision declarations, each a sentence for the
+    /// settings check.
+    pub fn vision_problems(&self) -> Vec<String> {
+        self.vision_declarations
+            .iter()
+            .filter_map(|(model, declaration)| {
+                let problem = declaration.geometry.problem()?;
+                Some(format!("vision declaration for {model}: {problem}"))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -485,6 +520,7 @@ impl Default for LLMSettingsDto {
             context_window: 131072,
             local_context_window: None,
             local_model_configs: BTreeMap::new(),
+            vision_declarations: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,

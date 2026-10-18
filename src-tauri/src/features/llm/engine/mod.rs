@@ -17,6 +17,7 @@ pub mod sidecar_manager;
 pub mod sidecar_pool;
 pub mod thinking_policy;
 pub mod types;
+pub(crate) mod vision;
 
 // Directory-backed sub-modules.
 pub mod system;

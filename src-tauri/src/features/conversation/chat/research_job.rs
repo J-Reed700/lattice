@@ -17,6 +17,7 @@ use super::{
     ChatResponse,
 };
 use async_trait::async_trait;
+use lattice_core::application::services::completion_input::strip_images;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
     JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, JobStore, NewJob, RecoveryPolicy,
@@ -344,8 +345,14 @@ impl JobJournal<'_> {
 
 #[async_trait]
 impl ResearchJournal for JobJournal<'_> {
+    /// Pictures are never saved: a resumed turn replays their captions, as a
+    /// later turn would, and their bytes stay out of the job store.
     async fn assembled(&self, turn: &AssembledTurn) -> Result<()> {
-        self.save(ASSEMBLED, &encode(turn)?).await?;
+        let turn = AssembledTurn {
+            input: strip_images(&turn.input),
+            ..turn.clone()
+        };
+        self.save(ASSEMBLED, &encode(&turn)?).await?;
         self.report(
             0,
             "Researching",
@@ -356,7 +363,11 @@ impl ResearchJournal for JobJournal<'_> {
     }
 
     async fn round(&self, round: &ResearchRound) -> Result<()> {
-        self.save(ROUND, &encode(round)?).await?;
+        let round = ResearchRound {
+            transcript: strip_images(&round.transcript),
+            ..round.clone()
+        };
+        self.save(ROUND, &encode(&round)?).await?;
         self.report(
             round.completed,
             &format!("Finished research round {}", round.completed),

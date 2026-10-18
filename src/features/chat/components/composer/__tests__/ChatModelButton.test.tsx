@@ -12,7 +12,7 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery:
 
 const option = (label: string, overrides: Partial<ChatModelOption> = {}): ChatModelOption => ({
   id: label, ref: { kind: 'local', model_id: label }, label, triggerLabel: label, subtitle: null,
-  group: 'Local', backend: 'local', contextLabel: null, supportsTools: null, isDefault: false, ...overrides,
+  group: 'Local', backend: 'local', contextLabel: null, supportsTools: null, seesImages: null, isDefault: false, ...overrides,
 });
 
 const draw = (props: Partial<ChatModelButtonProps>) =>

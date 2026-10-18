@@ -148,5 +148,5 @@ impl ContextAssembler {
 
 /// Whether a rendered recent message is one of the user's own turns.
 fn is_user_turn(message: &CompletionInput) -> bool {
-    matches!(message, CompletionInput::Message { role, .. } if role == "user")
+    message.is_user()
 }

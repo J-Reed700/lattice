@@ -10,7 +10,8 @@
  *
  * Model tags (chat / utility) live in LLM settings, not on the row — many
  * hosted Ollama deployments block `/api/tags` enumeration, so users type the
- * tags manually on the Chat settings page. This row shows them read-only.
+ * tags manually on the Chat settings page. This row shows them read-only,
+ * with a vision declaration for each tag that can answer a chat.
  */
 
 import { Network } from 'lucide-react';
@@ -21,6 +22,7 @@ import { LearningWindowNotice } from './LearningWindowNotice';
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
 import { isLearningModel, ROLES } from './roleConfig';
+import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 
 const OLLAMA_SERVER_MODEL_ID = '__ollama_server__';
 
@@ -60,74 +62,93 @@ export function OllamaMetaRow() {
     window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));
   };
 
+  // Each Ollama model that can answer a chat carries its own vision
+  // declaration: the chat tag, then any tag downloaded as a row of its own.
+  const visionTags = Array.from(new Set([
+    chatTag,
+    ...models
+      .filter((m) => m.backend === 'ollama' && m.model_id !== OLLAMA_SERVER_MODEL_ID
+        && (m.model_type === 'language_model' || m.model_type === 'chat'))
+      .map((m) => m.model_id),
+  ].filter(Boolean)));
+
   const meta = [
     chatTag ? `Chat · ${chatTag}` : 'Chat tag not set',
     resolvedUtilityTag ? `Utility · ${resolvedUtilityTag}` : 'Utility tag not set',
   ].join(' · ');
 
   return (
-    <div className="connected-model-row group flex items-center gap-3 border-b border-border-subtle py-4">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-accent"><Network className="h-4 w-4" aria-hidden="true" /></span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-text-primary">Ollama connection</div>
-        {ollamaUrl ? (
-          <div className="truncate font-mono text-xs text-text-muted">{ollamaUrl}</div>
-        ) : (
+    <div className="border-b border-border-subtle py-4">
+      <div className="connected-model-row group flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-accent"><Network className="h-4 w-4" aria-hidden="true" /></span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-text-primary">Ollama connection</div>
+          {ollamaUrl ? (
+            <div className="truncate font-mono text-xs text-text-muted">{ollamaUrl}</div>
+          ) : (
+            <button
+              type="button"
+              onClick={goToChatSettings}
+              className="text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary"
+            >
+              Set a server URL
+            </button>
+          )}
+          <p className="mt-1 wrap-break-word text-xs text-text-muted">{meta}</p>
+          {providerOverride && (
+            <div role="status" className="mt-2 max-w-xl text-xs text-text-secondary">
+              {provider === 'auto'
+                ? 'Chat provider is Auto: for both chat and utility, local models and llama.cpp take priority over this Ollama assignment.'
+                : `Chat provider is ${provider === 'llamacpp' ? 'llama.cpp' : provider}: chat and utility use that provider, not this Ollama assignment.`}{' '}
+              <button type="button" onClick={goToChatSettings} className="text-accent underline underline-offset-2">
+                Change chat provider
+              </button>
+            </div>
+          )}
+          {isLearningModel(ollamaRow, settings?.llm) ? (
+            <LearningWindowNotice model={settings?.llm.learningModel ?? null} savedWindow={null} />
+          ) : null}
+        </div>
+
+        {/* Outside the lg-only meta line: on a narrow window the missing-tag
+            state would otherwise be both invisible and unfixable. */}
+        {!chatTag || !resolvedUtilityTag ? (
           <button
             type="button"
             onClick={goToChatSettings}
-            className="text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary"
+            className="shrink-0 text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary"
           >
-            Set a server URL
+            Set tags
           </button>
-        )}
-        <p className="mt-1 wrap-break-word text-xs text-text-muted">{meta}</p>
-        {providerOverride && (
-          <div role="status" className="mt-2 max-w-xl text-xs text-text-secondary">
-            {provider === 'auto'
-              ? 'Chat provider is Auto: for both chat and utility, local models and llama.cpp take priority over this Ollama assignment.'
-              : `Chat provider is ${provider === 'llamacpp' ? 'llama.cpp' : provider}: chat and utility use that provider, not this Ollama assignment.`}{' '}
-            <button type="button" onClick={goToChatSettings} className="text-accent underline underline-offset-2">
-              Change chat provider
-            </button>
-          </div>
-        )}
-        {isLearningModel(ollamaRow, settings?.llm) ? (
-          <LearningWindowNotice model={settings?.llm.learningModel ?? null} savedWindow={null} />
         ) : null}
-      </div>
 
-      {/* Outside the lg-only meta line: on a narrow window the missing-tag
-          state would otherwise be both invisible and unfixable. */}
-      {!chatTag || !resolvedUtilityTag ? (
-        <button
-          type="button"
-          onClick={goToChatSettings}
-          className="shrink-0 text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary"
-        >
-          Set tags
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {ollamaRoles.map((role) => {
+            const tagForRole = role.id === 'utility' ? resolvedUtilityTag : chatTag;
+            if (!tagForRole) {
+              return (
+                <button
+                  key={role.id}
+                  type="button"
+                  disabled
+                  className="h-7 cursor-not-allowed rounded-sm px-2 text-xs text-text-disabled"
+                  title={`Set the ${role.id === 'utility' ? 'utility' : 'chat'} tag in Chat settings first`}
+                >
+                  {role.label}
+                </button>
+              );
+            }
+            return <RoleButton key={role.id} model={ollamaRow} role={role} />;
+          })}
+        </div>
+      </div>
+      {visionTags.length > 0 ? (
+        <div className="mt-3 space-y-3 pl-12">
+          {visionTags.map((tag) => (
+            <ModelVisionDeclaration key={tag} modelRef={{ kind: 'ollama', model: tag }} modelName={tag} />
+          ))}
+        </div>
       ) : null}
-
-      <div className="flex shrink-0 items-center gap-0.5">
-        {ollamaRoles.map((role) => {
-          const tagForRole = role.id === 'utility' ? resolvedUtilityTag : chatTag;
-          if (!tagForRole) {
-            return (
-              <button
-                key={role.id}
-                type="button"
-                disabled
-                className="h-7 cursor-not-allowed rounded-sm px-2 text-xs text-text-disabled"
-                title={`Set the ${role.id === 'utility' ? 'utility' : 'chat'} tag in Chat settings first`}
-              >
-                {role.label}
-              </button>
-            );
-          }
-          return <RoleButton key={role.id} model={ollamaRow} role={role} />;
-        })}
-      </div>
     </div>
   );
 }

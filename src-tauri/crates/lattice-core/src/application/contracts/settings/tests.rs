@@ -186,3 +186,47 @@ fn the_learning_model_loads_with_or_without_the_field() {
         chosen
     );
 }
+
+#[test]
+fn vision_declarations_default_empty_and_name_a_degenerate_geometry() {
+    use crate::domain::models::model_ref::ModelRef;
+    use crate::domain::models::vision::{VisionGeometry, VisionPreset};
+    let mut saved = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+    saved.as_object_mut().unwrap().remove("visionDeclarations");
+    let mut llm: LLMSettingsDto = serde_json::from_value(saved).unwrap();
+    assert!(llm.vision_declarations.is_empty());
+    let model = ModelRef::LlamaCpp {
+        model: "qwen-vl".into(),
+    };
+    llm.vision_declarations.insert(
+        model.to_string(),
+        VisionDeclarationDto {
+            enabled: true,
+            geometry: VisionPreset::Qwen3Vl.geometry(),
+        },
+    );
+    assert!(llm.vision_problems().is_empty());
+    assert_eq!(
+        llm.vision_declaration(&model).map(|d| d.geometry),
+        Some(VisionPreset::Qwen3Vl.geometry())
+    );
+    let json = serde_json::to_value(&llm.vision_declarations).unwrap();
+    assert_eq!(json["llamacpp:qwen-vl"]["geometry"]["kind"], "grid");
+    llm.vision_declarations.insert(
+        "ollama:llava".into(),
+        VisionDeclarationDto {
+            enabled: true,
+            geometry: VisionGeometry::Fixed { side: 0, tokens: 1 },
+        },
+    );
+    assert_eq!(
+        llm.vision_problems(),
+        ["vision declaration for ollama:llava: a fixed geometry needs a side above 0"]
+    );
+}
+
+#[test]
+fn a_local_models_vision_switch_defaults_to_unset() {
+    let config: LocalModelConfigDto = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert_eq!(config.vision, None);
+}
