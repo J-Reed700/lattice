@@ -219,8 +219,10 @@ async fn an_outage_defers_and_the_next_audit_resumes_with_the_unaudited_claims()
     let run = harness.runs.only();
     assert_eq!(run.state, RunState::Stopped);
     assert_eq!(run.last_failure(), Some("NETWORK_ERROR"));
+    // Claims are packed in lesson order, and "Water is everywhere." (c)
+    // opens the unit.
     assert_eq!(
-        harness.store.verifier_checks("a").len(),
+        harness.store.verifier_checks("c").len(),
         1,
         "batch 1 is kept"
     );
@@ -233,7 +235,7 @@ async fn an_outage_defers_and_the_next_audit_resumes_with_the_unaudited_claims()
     assert_eq!(texts.len(), 2, "only the two claims still unaudited");
     assert!(texts
         .iter()
-        .all(|text| sent_claims(text) != ["Water boils at 100 °C at sea level."]));
+        .all(|text| sent_claims(text) != ["Water is everywhere."]));
     assert_eq!(harness.runs.only().state, RunState::Completed);
 }
 
@@ -326,7 +328,9 @@ async fn turning_the_audit_off_mid_run_stops_at_the_next_batch_and_keeps_its_ver
         "Audit stopped: Verifier turned off after batch 1 of 3"
     );
     assert!(outcome.publishable(), "opt-in off is no audit gate");
-    assert_eq!(harness.store.verifier_checks("a").len(), 1);
+    // Batch 1 is the lesson's first claim, "Water is everywhere." (c).
+    assert_eq!(harness.store.verifier_checks("c").len(), 1);
+    assert!(harness.store.verifier_checks("a").is_empty());
     assert!(harness.store.verifier_checks("b").is_empty());
     assert_eq!(harness.runs.only().state, RunState::Stopped);
 }
