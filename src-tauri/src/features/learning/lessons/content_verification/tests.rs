@@ -453,8 +453,8 @@ mod coverage_resume_tests;
 #[path = "coverage_adoption_tests.rs"]
 mod coverage_adoption_tests;
 
-#[path = "repair_progress_tests.rs"]
-mod repair_progress_tests;
+#[path = "claim_ledger_tests.rs"]
+mod claim_ledger_tests;
 
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
@@ -674,9 +674,7 @@ fn pending_repairs_require_identical_content_sources_and_instructions() -> Resul
     let pending = PendingRepair {
         fingerprint: repair_fingerprint(&model, "instructions", &schema, &original, &references),
         defects: 1,
-        issue_fingerprint: Some(repair_issue_fingerprint(&[BAD.into()])),
         context: json!({"candidate":original,"failedClaims":[{"statement":BAD}]}),
-        progress: Default::default(),
     };
     let restored: PendingRepair = serde_json::from_str(&serde_json::to_string(&pending)?)?;
     assert!(restored.matches(&model, "instructions", &schema, &original, &references));
@@ -723,25 +721,6 @@ fn pending_repairs_require_identical_content_sources_and_instructions() -> Resul
     approved.defects = 0;
     assert!(!approved.matches(&model, "instructions", &schema, &original, &references));
     Ok(())
-}
-
-#[test]
-fn repair_progress_tracks_defect_identity_instead_of_only_the_count() {
-    let first = repair_issue_fingerprint(&[
-        "Section 1: unsupported toolchain claim".into(),
-        "Section 2: contradicted profile claim".into(),
-    ]);
-    let reordered = repair_issue_fingerprint(&[
-        " Section 2: contradicted   profile claim ".into(),
-        "Section 1: unsupported toolchain claim".into(),
-    ]);
-    let changed = repair_issue_fingerprint(&[
-        "Section 1: unsupported toolchain claim".into(),
-        "Section 3: a different unsupported claim".into(),
-    ]);
-
-    assert_eq!(first, reordered);
-    assert_ne!(first, changed);
 }
 
 #[tokio::test]
@@ -908,7 +887,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
 }
 
 #[tokio::test]
-async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> Result<()> {
+async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -> Result<()> {
     const SECOND: &str = "DictReader removes all whitespace from CSV values by default.";
     struct GradualRepair {
         inner: Model,
@@ -969,7 +948,10 @@ async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> 
                 let repair = self
                     .repairs
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                assert!(repair < 3, "The repeated defect should converge on removal");
+                assert!(
+                    repair < 2,
+                    "A claim gets two attempts per piece of evidence"
+                );
                 let mut body = candidate(if repair == 0 || (self.repeats_once && repair == 1) {
                     SECOND
                 } else {
@@ -996,6 +978,8 @@ async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> 
         }
     }
 
+    // The first repair corrects both claims; SECOND survives it on the same
+    // evidence, so the second repair is its last: escalated (remove it whole).
     for repeats_once in [false, true] {
         let model = GradualRepair {
             inner: Model::new(),
@@ -1003,7 +987,7 @@ async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> 
             repeats_once,
             repeated_escalations: Default::default(),
         };
-        let (_, report) = verify_and_repair(
+        let verified = verify_and_repair(
             &model,
             "{}",
             &json!({}),
@@ -1011,22 +995,27 @@ async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> 
             &[source()],
             3000,
         )
-        .await?;
-        assert_eq!(
-            model.repairs.load(std::sync::atomic::Ordering::Relaxed),
-            if repeats_once { 3 } else { 2 }
-        );
+        .await;
+        assert_eq!(model.repairs.load(std::sync::atomic::Ordering::Relaxed), 2);
         assert_eq!(
             model
                 .repeated_escalations
                 .load(std::sync::atomic::Ordering::Relaxed),
-            usize::from(repeats_once)
+            1
         );
-        assert!(report.issues.is_empty());
-        assert!(report
-            .findings
-            .iter()
-            .all(|finding| finding.verdict == ClaimVerdict::Supported));
+        if repeats_once {
+            // Two attempts on the same evidence: the claim is the user's, and
+            // the lesson waits for review instead of a third rewrite.
+            let error = verified.err().unwrap().to_string();
+            assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
+        } else {
+            let (_, report) = verified?;
+            assert!(report.issues.is_empty());
+            assert!(report
+                .findings
+                .iter()
+                .all(|finding| finding.verdict == ClaimVerdict::Supported));
+        }
     }
     Ok(())
 }
@@ -1077,7 +1066,18 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
         })
         .collect();
     let references = ReferenceCollection::lexical(std::slice::from_ref(&reference))?;
-    let payload = repair_context("{}", &candidate, &report, &[], false, &references)?;
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    ledger.observe(&candidate, &report).await?;
+    let targets = ledger.finding_claims().to_vec();
+    let payload = repair_context(
+        "{}",
+        &candidate,
+        &report,
+        &[],
+        &ledger,
+        &targets,
+        &references,
+    )?;
     assert_eq!(payload["failedClaims"].as_array().unwrap().len(), 107);
     assert_eq!(payload["evidence"].as_array().unwrap().len(), 2);
     assert_eq!(payload["evidence"][0]["text"], original.text);
@@ -1120,10 +1120,11 @@ async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result
 }
 
 #[tokio::test]
-async fn the_gate_passes_a_lesson_whose_only_unsupported_claims_are_general_knowledge() -> Result<()>
-{
+async fn general_knowledge_is_proposed_to_the_user_never_repaired_or_published_unaccepted(
+) -> Result<()> {
     let model = Model::new();
-    let (raw, report) = verify_and_repair(
+    // The machine proposes the label; only the user accepts it (D1).
+    let error = verify_and_repair(
         &model,
         "{}",
         &json!({"type":"object"}),
@@ -1131,17 +1132,20 @@ async fn the_gate_passes_a_lesson_whose_only_unsupported_claims_are_general_know
         &[],
         3000,
     )
-    .await?;
-    assert!(report.issues.is_empty());
-    assert!(report
-        .findings
-        .iter()
-        .all(|f| f.verdict == ClaimVerdict::Unsupported && f.general_knowledge()));
+    .await
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.starts_with("Needs your review:"), "{error}");
     assert!(
         !*model.repaired.lock().unwrap(),
         "general knowledge is never repaired"
     );
-    assert_eq!(raw, candidate("A short factual definition.").to_string());
+    let proposed = verify(&model, &candidate("A short factual definition."), &[]).await?;
+    assert!(proposed
+        .findings
+        .iter()
+        .all(|f| f.verdict == ClaimVerdict::Unsupported && f.proposes_general_knowledge()));
     // An absolute in the same unsupported claim is still an issue.
     let absolute = verify(&model, &candidate("A definition always applies."), &[]).await?;
     assert!(!absolute.issues.is_empty());
@@ -1212,7 +1216,7 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();
     // Without evidence a claim stating a figure stays an issue; a plain one
-    // is kept as general knowledge (see the gate test below).
+    // is proposed as general knowledge, for the user (see the test above).
     let no_evidence = verify(&model, &candidate("A short definition from 2019."), &[]).await?;
     assert_eq!(no_evidence.findings[0].verdict, ClaimVerdict::Unsupported);
     assert!(!no_evidence.issues.is_empty());
@@ -1222,16 +1226,22 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     };
     let report = verify(&offline, &candidate(GOOD), &[source()]).await?;
     assert_eq!(report.findings[0].verdict, ClaimVerdict::Unverified);
-    assert!(verify_and_repair(
+    // A claim the checker could not judge waits for the user (§4).
+    let error = verify_and_repair(
         &offline,
         "{}",
         &json!({}),
         candidate(GOOD).to_string(),
         &[source()],
-        3000
+        3000,
     )
     .await
-    .is_err());
+    .err()
+    .unwrap();
+    assert!(
+        error.to_string().starts_with("Needs your review:"),
+        "{error}"
+    );
     assert!(!*offline.repaired.lock().unwrap());
     let incomplete = Model {
         incomplete_coverage: true,
@@ -1311,6 +1321,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 reason: "Persistence fixture".into(),
                 evidence: vec![],
                 supporting_quote: None,
+                resolution: None,
             })
         })
         .collect();
@@ -1332,6 +1343,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
             .collect(),
         findings,
         executions: vec![],
+        confirmed_examples: None,
         issues: vec![],
         retrieval_mode: "lexical_fallback".into(),
         embedding_model: None,

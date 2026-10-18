@@ -69,6 +69,7 @@ fn gap() -> Finding {
         reason: "The saved introduction does not discuss random assignment.".into(),
         evidence: vec![],
         supporting_quote: None,
+        resolution: None,
     }
 }
 fn model() -> ScriptedModel {
@@ -273,7 +274,7 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
         program.summary.goal.clone(),
         Some(web),
         async {
-            let expanded = expand(&llm, &references, &[gap()], &ClaimChecks::default())
+            let expanded = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default())
                 .await?
                 .saved()
                 .expect("relevant capture");
@@ -324,7 +325,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         program.summary.goal.clone(),
         Some(web(false)),
         async {
-            let expanded = expand(&llm, &references, &[gap()], &ClaimChecks::default())
+            let expanded = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default())
                 .await?
                 .saved()
                 .expect("new evidence saved");
@@ -360,7 +361,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
         program.summary.goal.clone(),
         Some(web(false)),
         async {
-            let expanded = expand(&llm, &original, &findings, &ClaimChecks::default())
+            let expanded = expand(&llm, &original, &findings, &[], &ClaimChecks::default())
                 .await?
                 .saved()
                 .expect("full capture added");
@@ -379,7 +380,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
                 .all(|s| !s.excerpt.contains("SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE")));
             assert_eq!(findings[0].verdict, ClaimVerdict::Unsupported);
             assert!(
-                expand(&model(), &expanded, &findings, &ClaimChecks::default())
+                expand(&model(), &expanded, &findings, &[], &ClaimChecks::default())
                     .await?
                     .saved()
                     .is_none()
@@ -409,16 +410,18 @@ async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures
             let mut failed = gap();
             failed.verdict = ClaimVerdict::Unverified;
             assert!(
-                expand(&llm, &references, &[failed], &ClaimChecks::default())
+                expand(&llm, &references, &[failed], &[], &ClaimChecks::default())
                     .await?
                     .saved()
                     .is_none()
             );
             assert!(llm.prompts.lock().unwrap().is_empty());
-            assert!(expand(&llm, &references, &[gap()], &ClaimChecks::default())
-                .await?
-                .saved()
-                .is_none());
+            assert!(
+                expand(&llm, &references, &[gap()], &[], &ClaimChecks::default())
+                    .await?
+                    .saved()
+                    .is_none()
+            );
             assert_eq!(
                 repo.verification_sources(&program.summary.id).await?.len(),
                 sources.len()
@@ -448,7 +451,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
                 outputs: Mutex::new([json!({"queries":[]}).to_string()].into()),
                 prompts: Mutex::new(vec![]),
             };
-            let outcome = expand(&llm, &references, &[gap()], &ClaimChecks::default()).await?;
+            let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
             let Expansion::Exhausted(exhausted) = outcome else {
                 panic!("an empty plan means public search cannot help, not a failure");
             };
