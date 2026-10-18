@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 
 #[test]
 fn generation_settings_are_preserved() {
@@ -51,11 +52,11 @@ async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoa
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let models = DownloadedModelRepository::new(pool);
+    let models = Arc::new(DownloadedModelRepository::new(pool));
     for row in rows {
         models.save(row).await.unwrap();
     }
-    ModelLoader::new(Arc::new(models), None, LlmRuntime::default())
+    ModelLoader::new(models.clone(), models, None, LlmRuntime::default())
 }
 
 /// A loader whose database must never be asked anything.
@@ -63,11 +64,8 @@ fn loader_without_database() -> ModelLoader {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_lazy("sqlite::memory:")
         .unwrap();
-    ModelLoader::new(
-        Arc::new(DownloadedModelRepository::new(pool)),
-        None,
-        LlmRuntime::default(),
-    )
+    let models = Arc::new(DownloadedModelRepository::new(pool));
+    ModelLoader::new(models.clone(), models, None, LlmRuntime::default())
 }
 
 fn downloaded(model_id: &str, path: std::path::PathBuf) -> lattice_core::domain::DownloadedModel {

@@ -2,8 +2,8 @@
 
 use super::config::{read_pooling_strategy, resolve_prefixes};
 use super::*;
-use crate::features::download::artifact_identity;
 use crate::features::embedding::late_chunking::vector_identity;
+use crate::infrastructure::ml::artifact_identity;
 use candle_core::DType;
 use candle_core::Tensor;
 use lattice_core::application::ports::EmbeddingPort;

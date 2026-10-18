@@ -8,8 +8,8 @@
 # The reason is required. References along an allowed edge are left out of
 # the feature-edge ratchet but still count toward feature-cycle, and the
 # allowed edges must not form a cycle themselves. An allowed edge with no
-# references left fails as STALE: delete its line. Every other edge is
-# ratcheted in baseline.txt and is meant to reach zero; adding a line here is
+# references left fails as STALE: delete its line. Every other edge fails:
+# feature-edge is held at zero and cannot be baselined. Adding a line here is
 # a design decision for review, not a way to get a change through.
 
 allow features::batch features::indexing  # batch import drives indexing's IndexFileUseCase once per queued file

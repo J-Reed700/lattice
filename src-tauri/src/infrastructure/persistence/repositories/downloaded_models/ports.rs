@@ -1,13 +1,15 @@
-//! The domain repository trait and `ModelStoragePort` over the SQLite repository.
+//! The domain repository trait, `ActiveModels` and `ModelStoragePort` over the SQLite repository.
 
 use async_trait::async_trait;
 use tracing::{debug, error};
 
+use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::model_storage::{
     DownloadedModel as DownloadedModelDto, ModelStoragePort,
 };
 use lattice_core::domain::models::downloaded::DownloadedModel;
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryTrait;
+use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::DownloadedModelRepository;
@@ -86,6 +88,71 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
         })?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn find_by_id(&self, id: &str) -> Result<Option<DownloadedModel>> {
+        self.find_by_id(id).await
+    }
+
+    async fn save(&self, model: &DownloadedModel) -> Result<()> {
+        self.save(model).await
+    }
+
+    async fn is_downloaded(&self, model_id: &str) -> Result<bool> {
+        self.is_downloaded(model_id).await
+    }
+
+    async fn has_any_embedding_model(&self) -> Result<bool> {
+        self.has_any_embedding_model().await
+    }
+
+    async fn delete_if_not_active(&self, id: &str) -> Result<Option<DownloadedModel>> {
+        self.delete_if_not_active(id).await
+    }
+}
+
+// The active flags, delegating to the SQL in `activation.rs`.
+
+#[async_trait]
+impl ActiveModels for DownloadedModelRepository {
+    async fn get_active_chat_model(&self) -> Result<Option<DownloadedModel>> {
+        self.get_active_chat_model().await
+    }
+
+    async fn get_active_embedding_model(&self) -> Result<Option<DownloadedModel>> {
+        self.get_active_embedding_model().await
+    }
+
+    async fn get_active_utility_model(&self) -> Result<Option<DownloadedModel>> {
+        self.get_active_utility_model().await
+    }
+
+    async fn set_active_chat_model(&self, model_id: &str) -> Result<()> {
+        self.set_active_chat_model(model_id).await
+    }
+
+    async fn set_active_embedding_model(
+        &self,
+        model_id: &str,
+        identity: Option<&ArtifactIdentity>,
+    ) -> Result<()> {
+        self.set_active_embedding_model(model_id, identity).await
+    }
+
+    async fn set_active_utility_model(&self, model_id: &str) -> Result<()> {
+        self.set_active_utility_model(model_id).await
+    }
+
+    async fn clear_active_chat_model(&self) -> Result<()> {
+        self.clear_active_chat_model().await
+    }
+
+    async fn clear_active_embedding_model(&self) -> Result<()> {
+        self.clear_active_embedding_model().await
+    }
+
+    async fn clear_active_utility_model(&self) -> Result<()> {
+        self.clear_active_utility_model().await
     }
 }
 

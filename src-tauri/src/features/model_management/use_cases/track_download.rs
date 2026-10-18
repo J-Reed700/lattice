@@ -2,20 +2,21 @@
 //!
 //! Records a model download completion in the models table.
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::info;
 
 /// Use case for tracking completed model downloads
 pub struct TrackDownloadUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
 }
 
 impl TrackDownloadUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
+    pub fn new(repository: Arc<dyn DownloadedModelRepository>) -> Self {
         Self { repository }
     }
 

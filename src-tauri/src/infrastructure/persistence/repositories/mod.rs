@@ -12,6 +12,7 @@ pub mod workspace_notes;
 // Transaction-aware repository implementations (Tx modules)
 pub mod chunk;
 pub mod document;
+pub mod downloaded_models;
 pub mod embedding;
 pub mod model;
 pub mod model_file;

@@ -36,14 +36,19 @@ pub(in crate::features::learning) async fn plan_queries(
     struct Plan {
         queries: Vec<String>,
     }
-    let plan: Plan = crate::features::learning::generation::parse_json(&raw)?;
+    let plan: Plan = crate::features::learning::generation::parse_json(&raw).map_err(|_| {
+        AppError::InvalidInput(
+            "The reference search planner's answer could not be read as a list of searches.".into(),
+        )
+    })?;
     if plan
         .queries
         .iter()
         .any(|q| !(3..=240).contains(&q.trim().chars().count()))
     {
         return Err(AppError::Other(
-            "The reference search plan was malformed.".into(),
+            "The reference search planner proposed a search outside the 3 to 240 characters a search allows."
+                .into(),
         ));
     }
     Ok(plan
