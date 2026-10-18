@@ -122,8 +122,8 @@ fn the_schema_names_the_labels_and_bounds_every_string() {
     )];
     let rendered = render(&claims, &units(), &[item(0, vec![0], Context::Unit)]);
 
-    let schema = schema(&rendered, false);
-    let verdict = &schema["properties"]["verdicts"]["items"]["properties"];
+    let without_web = schema(&rendered, false);
+    let verdict = &without_web["properties"]["verdicts"]["items"]["properties"];
     assert_eq!(verdict["claim"]["enum"], json!(["C1"]));
     assert_eq!(
         verdict["passagesUsed"]["items"]["properties"]["passage"]["enum"],

@@ -484,7 +484,10 @@ async fn pasted_text_that_supports_the_claim_verifies_it_and_checks_the_others()
         .unwrap();
 
     assert_eq!(report.lines[0], format!("Verified against {NOTES}."));
-    assert!(matches!(report.outcome, Some(AttachOutcomeDto::Checked(_))));
+    assert!(matches!(
+        report.outcome,
+        Some(AttachOutcomeDto::Checked { .. })
+    ));
     let source = report.source.clone().unwrap();
     assert!(matches!(source.added_by, SourceAddedByDto::User));
     assert!(!report.already_saved);
