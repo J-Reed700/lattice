@@ -36,7 +36,23 @@ impl FunctionExecutor {
 
             let output = self.web_service.search_web(&input).await?;
 
-            info!("Web search completed: {} results", output.result_count);
+            // Every provider's outcome rides in the result (`outcomes`), so
+            // the model reads which provider failed or was skipped and why,
+            // instead of a list that is silently shorter.
+            let not_answered: Vec<String> = output
+                .outcomes
+                .iter()
+                .filter(|outcome| outcome.result != "answered")
+                .map(|outcome| match &outcome.cause {
+                    Some(cause) => format!("{} {} ({cause})", outcome.finder, outcome.result),
+                    None => format!("{} {}", outcome.finder, outcome.result),
+                })
+                .collect();
+            info!(
+                results = output.result_count,
+                not_answered = ?not_answered,
+                "Web search completed"
+            );
 
             Ok(FunctionResult::success(serde_json::to_value(output)?))
         }) // Box::pin handle_web_search
