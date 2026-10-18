@@ -96,7 +96,12 @@ impl SystemModule {
             updates: crate::features::updates::di::build(),
             metrics: crate::features::metrics::di::build(),
             health: crate::features::health::di::build(db_pool.clone()),
-            stats: crate::features::stats::di::build(db_pool),
+            stats: crate::features::stats::di::build(
+                db_pool.clone(),
+                Arc::new(crate::features::tags::repository::TagRepository::new(
+                    db_pool,
+                )),
+            ),
             initialization,
             model_manager,
             system_info: Arc::new(SystemInfoAdapter::new(backend_devices))

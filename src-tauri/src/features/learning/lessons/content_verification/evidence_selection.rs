@@ -1,9 +1,17 @@
 //! Keep the evidence already compared with a claim stable as research grows.
 //! New sources still participate in retrieval. Ranking changes among unchanged
 //! sources do not replace the passages we have already selected and checked.
+//! A claim research was asked for is the exception: what research found leads
+//! its evidence, so the claim is checked again against it.
 use super::*;
 
+/// The retrieval kind of a passage research found for the claim it serves.
+pub(super) const RESEARCHED: &str = "researched";
+
 const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
+/// How a claim's first page is ranked: the lesson's own sources first. A
+/// selection saved under another ranking is retrieved anew.
+const RANKING: &str = "lesson-sources-first";
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page
@@ -201,11 +209,12 @@ pub(super) async fn select(
     executions: &[execution::Observation],
     retained: &ClaimChecks,
     sharing: usize,
-    cited: &[EvidencePassage],
+    citations: &Citations,
 ) -> Result<Vec<EvidencePassage>> {
     let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
         "unit":unit, "statement":claim.statement, "retrieval":references.mode(), "embedding":references.embedding_model(),
+        "ranking":RANKING,
     }).to_string()));
     let memory = retained
         .selections
@@ -298,28 +307,39 @@ pub(super) async fn select(
                 .as_ref()
                 .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
             if !added.is_empty() && claim_is_research_target {
-                // Use normal hybrid retrieval over the current collection to locate
-                // relevant new sources. Keep the old comparison inputs verbatim and
-                // add new passages while the claim's share of a batch call holds them.
+                // Research was asked for because this evidence left the claim
+                // unresolved. Normal retrieval over the current collection
+                // locates the new sources' best passages; they lead the
+                // claim's share of a batch call, and the earlier passages,
+                // in their order, fill the room they leave.
                 let share = claim_share(llm, &claim.statement, sharing);
+                let is_new = |passage: &EvidencePassage| added.contains(passage.source_id.as_str());
                 let (found, _) = references
                     .verification_page(&claim.statement, &[], |passages| {
-                        within_share(
-                            llm,
-                            share,
-                            evidence.iter().chain(
-                                passages
-                                    .iter()
-                                    .filter(|p| added.contains(p.source_id.as_str())),
-                            ),
-                        )
+                        within_share(llm, share, passages.iter().filter(|p| is_new(p)))
                     })
                     .await?;
-                evidence.extend(
-                    found
-                        .into_iter()
-                        .filter(|passage| added.contains(passage.source_id.as_str())),
-                );
+                let mut researched: Vec<_> = found
+                    .into_iter()
+                    .filter(|passage| is_new(passage))
+                    .map(|passage| EvidencePassage {
+                        retrieval_kind: RESEARCHED.into(),
+                        ..passage
+                    })
+                    .collect();
+                if !researched.is_empty() {
+                    canonicalize_evidence(&mut evidence);
+                    for passage in evidence {
+                        if within_share(
+                            llm,
+                            share,
+                            researched.iter().chain(std::iter::once(&passage)),
+                        ) {
+                            researched.push(passage);
+                        }
+                    }
+                    evidence = researched;
+                }
             }
             (evidence, saved.sources != current)
         } else {
@@ -331,7 +351,7 @@ pub(super) async fn select(
                 references,
                 executions,
                 sharing,
-                cited,
+                citations,
             )
             .await?
             .into_iter()
@@ -358,7 +378,9 @@ pub(super) async fn select(
                     start: p.start_byte,
                     end: p.end_byte,
                     sha256: digest(&p.text),
-                    kind: (p.retrieval_kind == CITED).then(|| CITED.to_owned()),
+                    kind: [CITED, RESEARCHED]
+                        .contains(&p.retrieval_kind.as_str())
+                        .then(|| p.retrieval_kind.clone()),
                 })
                 .collect(),
         };

@@ -8,11 +8,13 @@ use super::dto::FolderIndexState;
 use super::manager::group_digits;
 use super::search::{FolderHit, FolderSearch};
 use crate::features::explorer::tools::{number_line, number_width};
+use lattice_core::application::contracts::tools::explorer::{
+    index_arg_str as arg_str, TOOL_SEARCH_FOLDER,
+};
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::{AppError, Result};
 use serde_json::Value;
 
-pub const TOOL_SEARCH_FOLDER: &str = "search_folder";
 /// How many passages a search reads for `room_chars` of result: enough to
 /// fill it at half the chunker's largest passage. What does not fit is
 /// counted in the result, never dropped without a word.
@@ -49,23 +51,6 @@ pub fn definition() -> ToolDefinition {
             "required": ["query"],
             "additionalProperties": false
         }),
-    }
-}
-
-fn arg_str<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && !matches!(*value, "/" | "." | "./"))
-}
-
-/// The step label: `Searched the folder for "…"`.
-pub fn activity_label(arguments: &Value) -> String {
-    let query = arg_str(arguments, "query").unwrap_or_default();
-    match arg_str(arguments, "path") {
-        Some(path) => format!("Searched the folder for \"{query}\" in {path}"),
-        None => format!("Searched the folder for \"{query}\""),
     }
 }
 

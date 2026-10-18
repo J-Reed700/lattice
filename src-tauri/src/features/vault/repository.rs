@@ -1,7 +1,16 @@
 //! Durable, coalesced vault write intentions. Bodies remain in the notes table.
-use crate::features::daily_notes::repository::NoteTimestampRecord;
+use crate::infrastructure::persistence::repositories::workspace_notes::{
+    timestamp_from_row, DailyNotesRepository,
+};
+use lattice_core::application::contracts::notes::NoteTimestampRecord;
+use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
+
+/// The notes table the vault mirrors, seen only through its port.
+pub(super) fn workspace_notes(pool: &SqlitePool) -> impl WorkspaceNotesPort {
+    DailyNotesRepository::new(pool.clone())
+}
 
 #[derive(sqlx::FromRow)]
 pub(super) struct PendingWrite {
@@ -86,13 +95,14 @@ pub(super) async fn rescan_note_page(
     after_id: Option<&str>,
     limit: i64,
 ) -> Result<Vec<NoteTimestampRecord>> {
-    Ok(sqlx::query_as(
+    Ok(sqlx::query(
         "SELECT n.id, n.updated_at, n.created_at FROM daily_notes_workspace n WHERE (? IS NULL OR n.id > ?) AND NOT EXISTS (SELECT 1 FROM vault_rescan_seen s WHERE s.run_id = ? AND s.note_id = n.id) ORDER BY n.id LIMIT ?",
     )
     .bind(after_id)
     .bind(after_id)
     .bind(run_id)
     .bind(limit)
+    .try_map(timestamp_from_row)
     .fetch_all(pool)
     .await?)
 }

@@ -15,12 +15,16 @@ use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase}
 
 // Application Ports
 use lattice_core::application::ports::{
-    ChunkRepositoryPort, DocumentRepository, FileStoragePort, VectorSearchPort,
+    ChunkRepositoryPort, DocumentRepository, EmbeddingRepositoryPort, FileStoragePort,
+    VectorSearchPort,
 };
 
 // Embedding and storage
+use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
+use crate::features::indexing::di::IndexingPorts;
 use crate::features::indexing::engine::storage::IndexStorage;
+use crate::features::search::engine::sparse_search::SqliteSparseTermStore;
 
 // Service Traits
 use crate::features::web::{
@@ -41,6 +45,8 @@ pub struct IndexingModule {
     /// scanned pages stay in `ExtractedContent::needs_ocr` and the rest of
     /// every document is still indexed.
     ocr: Arc<dyn lattice_core::application::ports::OcrPort>,
+    /// Stored chunk vectors, the same repository the indexer writes.
+    embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
 }
 
 impl IndexingModule {
@@ -70,16 +76,43 @@ impl IndexingModule {
             ),
             Arc::clone(core.background()),
         );
+        let embedding_repo =
+            Arc::new(EmbeddingRepository::new(db_pool.clone())) as Arc<dyn EmbeddingRepositoryPort>;
+        let ports = IndexingPorts {
+            embedding: Arc::new(DynamicEmbedding::new(model_provider)),
+            embedding_repo: Arc::clone(&embedding_repo),
+            // Learned sparse postings live beside the dense vectors. Wired
+            // unconditionally: `IndexFileUseCase` only reads a sparse head when
+            // the loaded model actually has one, so this is inert for a
+            // dense-only model.
+            sparse_term_store: Arc::new(SqliteSparseTermStore::new(db_pool.clone())),
+            // Built once: the extraction adapter and the transcribe command
+            // share this engine.
+            transcription: crate::features::transcription::di::build(
+                db_pool.clone(),
+                Arc::clone(core.background()),
+            )
+            .port,
+        };
         let indexing = crate::features::indexing::di::build(
-            db_pool.clone(),
-            model_provider,
+            db_pool,
+            ports,
             vector_search,
             web.web_archive.clone(),
             Arc::clone(&ocr),
             shared,
-            Arc::clone(core.background()),
         )?;
-        Ok(Self { indexing, web, ocr })
+        Ok(Self {
+            indexing,
+            web,
+            ocr,
+            embedding_repo,
+        })
+    }
+
+    /// Stored chunk vectors, for a feature that reads them back.
+    pub fn embedding_repository(&self) -> &Arc<dyn EmbeddingRepositoryPort> {
+        &self.embedding_repo
     }
 
     // Indexing use case getters

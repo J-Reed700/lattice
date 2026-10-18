@@ -4,13 +4,12 @@
 
 use crate::features::file::commands as file_commands;
 use crate::features::indexing::commands as indexing_commands;
-use crate::features::indexing::dto::{
-    ChunkingStrategyDto, IndexDirectoryRequestDto, IndexFileRequestDto, IndexFileResponseDto,
-    IndexingStatsDto,
-};
+use crate::features::indexing::dto::{IndexFileResponseDto, IndexingStatsDto};
 use crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto;
 use crate::interfaces::commands::document_list;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::recent_documents::RecentDocument;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -32,27 +31,6 @@ fn unwrap_api_result<T>(result: lattice_core::shared::ipc::ApiResult<T>) -> Resu
     }
 }
 
-async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<String>>) {
-    match container.get_settings_use_case().execute().await {
-        Ok(settings) => {
-            let chunk_tokens = indexing_commands::chunk_tokens_for(settings.indexing.chunk_size);
-            let include_extensions = if settings.indexing.file_types.is_empty() {
-                None
-            } else {
-                Some(settings.indexing.file_types)
-            };
-            (chunk_tokens, include_extensions)
-        }
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "Failed to resolve indexing settings for file plugin; using defaults"
-            );
-            (indexing_commands::DEFAULT_CHUNK_TOKENS, None)
-        }
-    }
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn index_file(
@@ -60,19 +38,8 @@ pub async fn index_file(
     space_id: Option<String>,
     container: State<'_, Container>,
 ) -> Result<IndexFileResponseDto, ApiError> {
-    let (chunk_tokens, _) = resolve_indexing_defaults(&container).await;
-
-    let request = IndexFileRequestDto {
-        path,
-        chunking_strategy: ChunkingStrategyDto::Semantic {
-            max_tokens: chunk_tokens,
-        },
-        tags: None,
-        metadata: None,
-        space_id,
-    };
-
-    let result = indexing_commands::index_file_impl(container.inner(), request).await;
+    let result =
+        indexing_commands::index_file_with_settings_impl(container.inner(), path, space_id).await;
     unwrap_api_result(result)
 }
 
@@ -84,19 +51,13 @@ pub async fn index_directory(
     space_id: Option<String>,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    let (chunk_tokens, include_extensions) = resolve_indexing_defaults(&container).await;
-
-    let request = IndexDirectoryRequestDto {
+    let result = indexing_commands::index_directory_with_settings_impl(
+        container.inner(),
         path,
         recursive,
-        chunking_strategy: ChunkingStrategyDto::Semantic {
-            max_tokens: chunk_tokens,
-        },
-        include_extensions,
         space_id,
-    };
-
-    let result = indexing_commands::index_directory_impl(container.inner(), request).await;
+    )
+    .await;
     unwrap_api_result(result)?;
     Ok(())
 }
@@ -411,8 +372,11 @@ pub async fn get_indexing_activities(
 pub async fn get_recent_documents(
     limit: usize,
     container: State<'_, Container>,
-) -> Result<Vec<crate::features::recent::commands::RecentDocument>, ApiError> {
-    crate::features::recent::commands::get_recent_documents(limit, container)
+) -> Result<Vec<RecentDocument>, ApiError> {
+    let records = container
+        .recent_documents_repository()
+        .get_recent_documents(limit)
         .await
-        .map_err(ApiError::from)
+        .map_err(|e| AppError::Other(format!("Failed to get recent documents: {}", e)))?;
+    Ok(records.into_iter().map(RecentDocument::from).collect())
 }

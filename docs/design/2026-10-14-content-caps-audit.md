@@ -131,7 +131,7 @@ Classes: **DISCARDS** (arbitrary cap, must go) / **BUDGET** (derived from model 
 |---|---|---|
 | features/search/use_cases/hybrid_search.rs:78,88 | branch depth x3; `PER_DOCUMENT_CAP` 4 reorders for diversity, and the overflow follows (nothing dropped) | GUARD |
 | features/search/use_cases/hybrid_search/rerank.rs:12,15; engine/qwen3_reranker.rs:25 | rerank pool <= 64; reranker input 2,048 tok (scoring only; reranking off by default) | GUARD |
-| features/search/engine/vector_search/usearch_index.rs:62,64 | exact-scan / scoped-candidate work bounds | GUARD |
+| infrastructure/vector_index/usearch_index.rs:62,64 | exact-scan / scoped-candidate work bounds | GUARD |
 | features/conversation/chat/history_tools.rs:76,81,84 | read floor 512 B; per-turn read total 128 KiB (fixed; should be window-derived); 64 messages per read, paged with a cursor | GUARD |
 | features/conversation/chat/memory_context.rs:38 | 512 KiB recent-candidate read bound | GUARD |
 | features/conversation/memory/segment.rs:24-39; memory/mod.rs:83; memory/summarize.rs:29; memory/verify.rs:39; evidence_checks.rs:6; outline_linking.rs:27; coverage.rs:345 | batch/segment/fold sizes (split, not drop) | GUARD |

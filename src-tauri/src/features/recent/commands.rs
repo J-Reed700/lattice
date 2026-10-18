@@ -7,7 +7,8 @@
 //!
 //! - `recent_document_operation` - Unified dispatcher (track/getRecent/clear)
 //! - `track_document_access` - Track document access with timestamp and count
-//! - `get_recent_documents` - Get recently accessed documents with metadata
+//! - `get_recent_documents` - Get recently accessed documents with metadata (served by the
+//!   file plugin over `RecentDocumentsRepositoryPort`)
 //! - `clear_recent_documents` - Clear all recent document history
 //!
 //! # Features
@@ -51,23 +52,11 @@
 //! to database layer for simple CRUD operations on recent documents tracking table.
 
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::recent_documents::RecentDocument;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-
-/// Recent document with access metadata
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentDocument {
-    pub id: String,
-    pub document_id: String,
-    pub document_name: String,
-    pub document_path: String,
-    pub file_type: Option<String>,
-    pub last_accessed_at: String,
-    pub access_count: i64,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "camelCase")]
@@ -297,126 +286,6 @@ async fn track_document_access_internal(
     repository.track_access(document_id).await
 }
 
-/// Get recent documents with metadata and access stats
-///
-/// Retrieves recently accessed documents ordered by last access time (newest first). Returns
-/// enriched metadata including document name, path, type, timestamp, and access count. Limit
-/// is automatically capped at 100 for performance.
-///
-/// # Arguments
-///
-/// * `limit` - Max documents to return (capped at 100)
-/// * `container` - Service container with database pool
-///
-/// # Returns
-///
-/// * `Ok(Vec<RecentDocument>)` - Recent documents with metadata (empty if none)
-/// * `Err(AppError)` - Query failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface RecentDocument {
-///   id: string;
-///   documentId: string;
-///   documentName: string;
-///   documentPath: string;
-///   fileType?: string;
-///   lastAccessedAt: string;
-///   accessCount: number;
-/// }
-///
-/// // Get 10 most recent documents
-/// const recent = await invoke<RecentDocument[]>('get_recent_documents', {
-///   limit: 10
-/// });
-///
-/// console.log(`${recent.length} recent documents:`);
-/// recent.forEach(doc => {
-///   console.log(`- ${doc.documentName} (accessed ${doc.accessCount} times)`);
-/// });
-///
-/// // Display in UI recent files menu
-/// const RecentFilesMenu = () => {
-///   const [recentDocs, setRecentDocs] = useState<RecentDocument[]>([]);
-///
-///   useEffect(() => {
-///     const loadRecent = async () => {
-///       const docs = await invoke<RecentDocument[]>('get_recent_documents', {
-///         limit: 15
-///       });
-///       setRecentDocs(docs);
-///     };
-///     loadRecent();
-///   }, []);
-///
-///   return (
-///     <ul className="recent-files">
-///       {recentDocs.map(doc => (
-///         <li key={doc.id} onClick={() => openDocument(doc.documentId)}>
-///           <span className="name">{doc.documentName}</span>
-///           <span className="count">{doc.accessCount}x</span>
-///           <span className="time">{formatTime(doc.lastAccessedAt)}</span>
-///         </li>
-///       ))}
-///     </ul>
-///   );
-/// };
-///
-/// // Analytics: most accessed documents
-/// const getMostAccessedDocuments = async () => {
-///   const recent = await invoke<RecentDocument[]>('get_recent_documents', {
-///     limit: 100
-///   });
-///
-///   // Sort by access count
-///   const sorted = recent.sort((a, b) => b.accessCount - a.accessCount);
-///
-///   console.log('Top 10 most accessed documents:');
-///   sorted.slice(0, 10).forEach((doc, i) => {
-///     console.log(`${i + 1}. ${doc.documentName}: ${doc.accessCount} accesses`);
-///   });
-/// };
-/// ```
-///
-/// # Query Details
-///
-/// ```sql
-/// SELECT r.id, r.document_id, d.file_name, d.file_path, d.file_type,
-///        r.last_accessed_at, r.access_count
-/// FROM recent_documents r
-/// INNER JOIN documents d ON r.document_id = d.id
-/// ORDER BY r.last_accessed_at DESC
-/// LIMIT ?
-/// ```
-///
-/// # Limit Capping
-///
-/// - **User Request**: Any value
-/// - **Applied Limit**: `min(limit, 100)`
-/// - **Reason**: Performance protection for large result sets
-///
-/// # Performance
-///
-/// - **Query Time**: ~5-20ms (depends on limit)
-/// - **JOIN**: INNER JOIN with documents table for metadata enrichment
-/// - **Ordering**: ORDER BY last_accessed_at DESC (indexed)
-///
-/// # Architecture
-///
-/// Thin controller delegating to `get_recent_documents_internal`
-pub async fn get_recent_documents(
-    limit: usize,
-    container: State<'_, Container>,
-) -> Result<Vec<RecentDocument>, AppError> {
-    let repository = container.recent_documents_repository();
-    get_recent_documents_internal(limit, repository.as_ref())
-        .await
-        .map_err(|e| AppError::Other(format!("Failed to get recent documents: {}", e)))
-}
-
 async fn get_recent_documents_internal(
     limit: usize,
     repository: &dyn RecentDocumentsRepositoryPort,
@@ -425,15 +294,7 @@ async fn get_recent_documents_internal(
         .get_recent_documents(limit)
         .await?
         .into_iter()
-        .map(|record| RecentDocument {
-            id: record.id,
-            document_id: record.document_id,
-            document_name: record.document_name,
-            document_path: record.document_path,
-            file_type: record.file_type,
-            last_accessed_at: record.last_accessed_at,
-            access_count: record.access_count,
-        })
+        .map(RecentDocument::from)
         .collect())
 }
 

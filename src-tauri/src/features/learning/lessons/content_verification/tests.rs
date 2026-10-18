@@ -72,7 +72,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     }
     let (system, user) = fixture_messages(request);
     if let Some(batch) = fixture_batch(user) {
-        let challenge = system.starts_with("Plan independent evidence searches");
+        let challenge = system.starts_with("Review a provisional lesson claim approval");
         return batch
             .into_iter()
             .map(|(claim, passages, _)| {
@@ -90,7 +90,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
             })
             .collect();
     }
-    let challenge = system.starts_with("Plan independent evidence searches");
+    let challenge = system.starts_with("Review a provisional lesson claim approval");
     if (is_claim_check(user) && !challenge) || system.is_empty() {
         return vec![user.to_owned()];
     }
@@ -111,7 +111,7 @@ pub(crate) fn fixture_completion(
     }
     let (system, user) = fixture_messages(request);
     let text = if let Some(batch) = fixture_batch(user) {
-        let challenge = system.starts_with("Plan independent evidence searches");
+        let challenge = system.starts_with("Review a provisional lesson claim approval");
         let checks: Vec<Value> = batch
             .iter()
             .enumerate()
@@ -119,10 +119,10 @@ pub(crate) fn fixture_completion(
             .map(|((index, (_, _, evidence_ids)), reply)| {
                 let id = json!(format!("claim-{index}"));
                 if challenge {
-                    let queries = serde_json::from_str::<Value>(&reply)
-                        .map(|value| value["queries"].clone())
+                    let objections = serde_json::from_str::<Value>(&reply)
+                        .map(|value| value["objections"].clone())
                         .unwrap_or_else(|_| json!([]));
-                    json!({"id": id, "queries": queries})
+                    json!({"id": id, "objections": objections})
                 } else {
                     json!({"id": id, "response": verdict_last(&reply, evidence_ids)})
                 }
@@ -282,8 +282,8 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
         }).collect();
         return Some(json!({"changes":changes,"nonFactualReason":""}).to_string());
     }
-    if prompt.starts_with("Plan independent evidence searches") {
-        return Some(json!({"queries":[]}).to_string());
+    if prompt.starts_with("Review a provisional lesson claim approval") {
+        return Some(json!({"objections":[]}).to_string());
     }
     if prompt.starts_with("Audit inventory fidelity.") {
         return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
@@ -1061,7 +1061,8 @@ async fn contradictory_claim_is_repaired_and_rechecked_against_references() -> R
 async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() -> Result<()> {
     let model = Model::new();
     let candidate = candidate(BAD);
-    let mut report = verify(&model, &candidate, &[source()]).await?;
+    let reference = source();
+    let mut report = verify(&model, &candidate, std::slice::from_ref(&reference)).await?;
     let mut finding = report.findings[0].clone();
     let original = finding.evidence[0].clone();
     let mut conflicting = original.clone();
@@ -1075,12 +1076,14 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
             copy
         })
         .collect();
-    let payload = repair_context("{}", &candidate, &report, &[], false)?;
+    let references = ReferenceCollection::lexical(std::slice::from_ref(&reference))?;
+    let payload = repair_context("{}", &candidate, &report, &[], false, &references)?;
     assert_eq!(payload["failedClaims"].as_array().unwrap().len(), 107);
     assert_eq!(payload["evidence"].as_array().unwrap().len(), 2);
     assert_eq!(payload["evidence"][0]["text"], original.text);
     assert_eq!(payload["evidence"][1]["text"], conflicting.text);
     assert_eq!(payload["evidence"][1]["sourceId"], conflicting.source_id);
+    assert_eq!(payload["evidence"][0]["sourceTitle"], reference.title);
     for claim in payload["failedClaims"].as_array().unwrap() {
         assert_eq!(claim["evidence"], json!(["evidence-0", "evidence-1"]));
     }

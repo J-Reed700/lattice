@@ -605,7 +605,7 @@ async fn an_import_reads_its_status_and_its_files_from_one_snapshot() -> anyhow:
 }
 
 struct PublicationProbe {
-    index: crate::features::search::engine::vector_search::USearchVectorIndex,
+    index: crate::infrastructure::vector_index::USearchVectorIndex,
     fail_first: std::sync::atomic::AtomicBool,
     entered: Notify,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
@@ -681,7 +681,7 @@ async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> an
     let dir = tempfile::tempdir()?;
     let (release, receiver) = std::sync::mpsc::channel();
     let search = Arc::new(PublicationProbe {
-        index: crate::features::search::engine::vector_search::USearchVectorIndex::new(
+        index: crate::infrastructure::vector_index::USearchVectorIndex::new(
             384,
             Some(dir.path().join("search.usearch")),
         )?,

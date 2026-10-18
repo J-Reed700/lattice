@@ -1,7 +1,8 @@
 //! A shared index handle that can bind the first downloaded model without restarting.
 //! Once bound, changing vector spaces still requires the normal restart migration.
-use super::{IndexPersistence, USearchVectorIndex, VectorIndexCompression};
+use super::IndexPersistence;
 use crate::infrastructure::persistence::repositories::embedding::generation;
+use crate::infrastructure::vector_index::{USearchVectorIndex, VectorIndexCompression};
 use lattice_core::application::contracts::search::engine::SearchResult;
 use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
@@ -118,7 +119,11 @@ impl RuntimeVectorIndex {
         let compression = self.compression.clone();
         let index_path = path.clone();
         let index = tokio::task::spawn_blocking(move || {
-            let _layout = super::ensure_index_layout_match(&path, dimension, &compression)?;
+            let _layout = crate::infrastructure::vector_index::ensure_index_layout_match(
+                &path,
+                dimension,
+                &compression,
+            )?;
             let index =
                 USearchVectorIndex::open_or_create_with_compression(dimension, path, compression)?
                     .with_coalesced_saves();
@@ -357,7 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_bind_opens_the_index_as_startup_would() {
-        use super::super::{manifest::manifest_path_for, VectorQuantization};
+        use crate::infrastructure::vector_index::{manifest_path_for, VectorQuantization};
         let pool = database().await;
         let dir = tempfile::tempdir().unwrap();
         let compression = VectorIndexCompression::truncated(1, VectorQuantization::F32);
