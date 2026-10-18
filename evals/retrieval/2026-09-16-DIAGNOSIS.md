@@ -66,7 +66,7 @@ The default example policy imposes quality and evidence requirements only.
 
 ```sh
 LATTICE_LLAMACPP_SETTINGS='/path/to/app/settings.json' \
-  cargo test --manifest-path src-tauri/Cargo.toml --lib \
+  cargo test --manifest-path crates/lattice-desktop/Cargo.toml --lib \
   live_grounding_adversarial_regressions -- --ignored --nocapture
 ```
 

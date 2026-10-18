@@ -174,8 +174,8 @@ the same input preparation and query instruction the app uses. This isolates
 embedding quality; it exercises no fusion, no lexical branch, and no index.
 
 ```sh
-cd src-tauri
-SQLX_OFFLINE=true cargo run --example retrieval_eval -- /path/to/model ../../../evals/retrieval/starter.json > /tmp/model-run.jsonl
+cd crates/lattice-desktop
+SQLX_OFFLINE=true cargo run --example retrieval_eval -- /path/to/model ../../evals/retrieval/starter.json > /tmp/model-run.jsonl
 cd ../../..
 python3 scripts/rag_eval.py evals/retrieval/starter.json /tmp/model-run.jsonl --k 3
 ```
@@ -190,9 +190,9 @@ candidate coverage and ordering separately.
 Runs chat's library search over the fixture instead of raw cosine:
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
-  /path/to/model ../../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
+  /path/to/model ../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
 cd ../../..
 python3 scripts/rag_eval.py evals/retrieval/synthetic-library-v2.json /tmp/prod-run.jsonl \
   --k 5 --abstain-threshold 0.02
@@ -234,7 +234,7 @@ lookups, the corrective retry, workspace scoping, and answer generation. It has 
 page ranges, so `page_number` is always NULL.
 
 To measure what a turn adds, use the shipped-path runner
-(`src-tauri/examples/shipped_path_eval` plus `scripts/shipped_path_eval.py`). It
+(`crates/lattice-desktop/examples/shipped_path_eval` plus `scripts/shipped_path_eval.py`). It
 drives the desktop's own turn, from intent through the grounding check, against
 a live llama-server and the 34-item `desktop-path-v1.json` rubric set. See
 [`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
@@ -285,10 +285,10 @@ chunking pools dense vectors over a span and reads the sparse head from the
 per-chunk texts in a second pass, exactly as `index_file` does.
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
   --strategy late-chunking --compression mrl256-i8 --sparse auto \
-  /path/to/model ../../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
+  /path/to/model ../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
 ```
 
 ### Reranking
@@ -302,9 +302,9 @@ candidate cap (48) and query budget, then cut to `--top-k`. At `--top-k 10` that
 match:
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- \
-  /path/to/embedding/model ../../../evals/retrieval/starter.json \
+  /path/to/embedding/model ../../evals/retrieval/starter.json \
   /path/to/reranker/model > /tmp/reranked-run.jsonl
 ```
 
@@ -443,7 +443,7 @@ updated conversation. The acceptance assertions currently target the MPEP
 beginner case, including the first chapter and two specific chapter searches.
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 cargo test --lib live_corpus_retrieval_and_answer -- --ignored --nocapture
 ```
 

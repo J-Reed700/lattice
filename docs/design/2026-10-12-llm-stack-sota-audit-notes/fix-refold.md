@@ -24,7 +24,7 @@ Defect: `track-b1.md`, "Summary stability". Consolidation refolded the summary a
 4. A summary a delete or correction dropped covers nothing, so the next fold starts from the first message. Consolidation waits for a prompt to ask for it rather than folding to the watermark, which would end the summary on the newest answer and leave the next window holding only the new question.
 5. A commit that does not fold carries the summary row into the new memory revision.
 
-## What changed (paths under `src-tauri/`)
+## What changed (paths under `crates/lattice-desktop/`)
 
 - `crates/lattice-core/src/domain/conversation/memory.rs`: `MemorySnapshot::summary_covers_through`, `SummaryRefold { window_start_sequence, through_sequence }`, `SummaryRefold::is_needed`.
 - `crates/lattice-core/src/application/services/context_assembler/anchor.rs` (new): `recent_window` (the anchored step 5) and `summary_refold` (gap detection and the half-window target). `mod.rs` prices the summary before the window and calls both; `plan.rs` adds `ContextPlan::summary_refold`.

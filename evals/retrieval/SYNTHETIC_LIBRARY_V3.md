@@ -10,7 +10,7 @@ different embedding model or a reranker is worth its latency.
 
 v3 is the fixture that can. It is one person's messy vault rather than a tidy
 company wiki: **379 documents, 194 queries, 1.61 M characters**, 1.8 MB of JSON.
-The schema is v2's, so `src-tauri/examples/retrieval_eval/`, `scripts/rag_eval.py`,
+The schema is v2's, so `crates/lattice-desktop/examples/retrieval_eval/`, `scripts/rag_eval.py`,
 `scripts/compare_rag_eval.py`, `scripts/validate_rag_evals.py` and
 `scripts/eval_integrity.py` all read it unchanged.
 
@@ -98,13 +98,13 @@ The offsets already exist. `prepare_chunks` records `start_idx` and `end_idx`
 against the document text as byte offsets, and `production.rs` already binds
 them into `text_chunks.start_char` / `end_char`. Three edits:
 
-1. `src-tauri/examples/retrieval_eval/production.rs:131` — add `start: usize`
+1. `crates/lattice-desktop/examples/retrieval_eval/production.rs:131` — add `start: usize`
    and `end: usize` to `RankedChunk`.
 2. same file, around line 320 — widen `chunk_positions` from
    `HashMap<String, usize>` to carry `(chunk_index, start_idx, end_idx)`, and
    fill the two new fields in `rank()` and in the neighbour-expansion path
    (neighbours need a `SELECT start_char, end_char`, which the table already has).
-3. `src-tauri/examples/retrieval_eval/main.rs:606` — beside `chunk_ranked_ids`,
+3. `crates/lattice-desktop/examples/retrieval_eval/main.rs:606` — beside `chunk_ranked_ids`,
    emit `"chunk_spans"` as a map from `RankedChunk::locator()` to
    `[start, end]`.
 
@@ -156,10 +156,10 @@ that each integrity check fails on the mistake it exists to catch.
 ## Running and scoring it
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 SQLX_OFFLINE=true cargo run --release --example retrieval_eval -- --mode production \
   --top-k 50 /path/to/qwen3-embedding-0.6B \
-  ../evals/retrieval/synthetic-library-v3.json > /tmp/v3-prod.jsonl
+  ../../evals/retrieval/synthetic-library-v3.json > /tmp/v3-prod.jsonl
 cd ..
 python3 scripts/rag_eval.py evals/retrieval/synthetic-library-v3.json /tmp/v3-prod.jsonl \
   --k 5 --abstain-field sufficient

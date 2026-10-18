@@ -53,7 +53,7 @@ as production latency evidence.
 Re-run the opt-in checks with a local model directory:
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 LATTICE_TEST_EMBEDDING_MODEL=/path/to/qwen3 \
   cargo test --lib -- real_model_import_search_and_disk_restart_preserve_results \
   recall_across_the_production_exact_to_graph_boundary \

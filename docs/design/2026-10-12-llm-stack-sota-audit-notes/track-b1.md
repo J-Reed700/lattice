@@ -28,7 +28,7 @@ Rendering is deterministic, but message 1 still changed every turn from turn 2 o
 
 ## Verified
 
-- `cargo check --lib` → `Finished`, with no new warnings. It needs an empty, gitignored placeholder at `src-tauri/binaries/llama-server-aarch64-apple-darwin`.
+- `cargo check --lib` → `Finished`, with no new warnings. It needs an empty, gitignored placeholder at `crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin`.
 - `cargo test --lib context_assembler` → `51 passed; 0 failed`. This includes `consecutive_turns_share_every_message_up_to_the_newest_answer`: turn N+1's serialized messages begin with N's up to N's last answer, even though recall, memory, evidence, the summary and the date all differ.
 - `cargo test --lib -- conversation::chat::turn completion_input compaction memory_context` → `51 passed; 0 failed`.
 - `rustfmt --check` passes on all touched files.

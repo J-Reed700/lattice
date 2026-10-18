@@ -19,7 +19,7 @@ native CI evidence, physical-hardware acceptance, and signed/notarized installer
 validation. Its runtime dependency is published: the pinned `llama/v0.6.0-r1`
 sidecar release contains all six platform binaries, including
 `llama-server-x86_64-apple-darwin`. Fetch, install, and production-build checks
-require the checksum in `src-tauri/scripts/llama-server.lock`.
+require the checksum in `crates/lattice-desktop/scripts/llama-server.lock`.
 
 ### Development
 
@@ -28,12 +28,12 @@ and build the target normally:
 
 ```bash
 rustup target add x86_64-apple-darwin
-bash src-tauri/scripts/fetch-llama-binaries.sh
+bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
 npm run tauri -- build --debug --target x86_64-apple-darwin --bundles app
 ```
 
 To exercise the source-build path instead, install CMake and Python 3.9+, run
-`bash src-tauri/scripts/build-intel-macos-sidecar.sh`, and set
+`bash crates/lattice-desktop/scripts/build-intel-macos-sidecar.sh`, and set
 `LATTICE_ALLOW_UNPINNED_SIDECAR=1` for the following debug build. The script
 uses the pinned llama.cpp tag and release flags, signs the Intel binary, deletes
 the build tree, and checks its architecture, dependencies, and minimum OS. On
@@ -68,7 +68,7 @@ The source-built binary does not change the repository release lock.
 3. Measure memory use and model latency on a lower-memory Intel Mac. Recommend
    models using measured CPU performance; do not promise Apple Silicon speed.
 4. On the clean Intel test machine, fetch the six-file sidecar release pinned in
-   `src-tauri/scripts/llama-server.lock` and confirm the packaged application
+   `crates/lattice-desktop/scripts/llama-server.lock` and confirm the packaged application
    runs that exact verified binary.
 5. Build, sign and notarize the separate Mac installers and test installation
    on clean machines before advertising Intel as released support.

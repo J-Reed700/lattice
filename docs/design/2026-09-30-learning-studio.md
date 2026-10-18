@@ -468,13 +468,13 @@ src/components/LearningStudio/
   capabilities/                 # UI adapters registered by capability ID
   hooks/                        # queries/mutations through typed services
 src/lib/services/learning.ts     # proposed transport service
-src-tauri/src/domain/learning/   # pure, shared learning values and rules
-src-tauri/src/application/ports/learning/  # persistence and host-facing contracts
-src-tauri/src/features/learning/
+crates/lattice-desktop/src/domain/learning/   # pure, shared learning values and rules
+crates/lattice-desktop/src/application/ports/learning/  # persistence and host-facing contracts
+crates/lattice-desktop/src/features/learning/
   dto.rs plugin.rs di.rs
   programs/ sessions/ tutor/ evidence/ recommendations/ packs/
   repository/ adapters/ capabilities/
-src-tauri/migrations/<new additive migration>.sql
+crates/lattice-desktop/migrations/<new additive migration>.sql
 ```
 
 Follow existing dependency-direction checks. Domain rules import no SQL, Tauri,

@@ -12,7 +12,7 @@ The flag is per chunk, not per document. The pipeline already knows each chunk's
 
 ### Schema
 
-- New migration `src-tauri/migrations/20261013170000_chunk_ocr_flag.sql`: `text_chunks.from_ocr BOOLEAN NOT NULL DEFAULT 0 CHECK (from_ocr IN (0, 1))`. The init migration is untouched.
+- New migration `crates/lattice-desktop/migrations/20261013170000_chunk_ocr_flag.sql`: `text_chunks.from_ocr BOOLEAN NOT NULL DEFAULT 0 CHECK (from_ocr IN (0, 1))`. The init migration is untouched.
 
 ### Extraction
 
@@ -59,7 +59,7 @@ The flag is per chunk, not per document. The pipeline already knows each chunk's
 
 ## Verified
 
-Run from `src-tauri` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`, except the frontend and script checks.
+Run from `crates/lattice-desktop` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`, except the frontend and script checks.
 
 - `cargo check --lib`: finished, no warnings shown.
 - `cargo test --lib -- indexing qa:: conversation::chat::prompting conversation::chat::retrieval chunk_repository conversation::repository::workspace domain::entities`: first run 460 passed, 7 failed (the hand-built fixtures above lacked the column). After the fixture fix: 467 passed, 0 failed, 3 ignored.
@@ -70,7 +70,7 @@ Run from `src-tauri` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2
 
 ## Not verified
 
-The shared target broke partway through. From about 17:29, every cargo command fails in the `lattice-desktop` build script with `failed to run tauri-build: failed to read plugin permissions`. Cause: the build-script outputs `debug/build/tauri-00b5f5a29c8e568b` and `debug/build/tauri-0c4148f3981e549e` in `lattice-imm-target2` were copied from the old `lattice-temp/src-tauri/target`, and their permission listings point at that directory, which no longer exists. My rules forbid `cargo clean` and editing that directory, so I stopped. A likely fix for the owner: `cargo clean -p tauri` with that target dir, which reruns tauri's build script. So:
+The shared target broke partway through. From about 17:29, every cargo command fails in the `lattice-desktop` build script with `failed to run tauri-build: failed to read plugin permissions`. Cause: the build-script outputs `debug/build/tauri-00b5f5a29c8e568b` and `debug/build/tauri-0c4148f3981e549e` in `lattice-imm-target2` were copied from the old `lattice-temp/target`, and their permission listings point at that directory, which no longer exists. My rules forbid `cargo clean` and editing that directory, so I stopped. A likely fix for the owner: `cargo clean -p tauri` with that target dir, which reruns tauri's build script. So:
 
 - `cargo clippy --lib` did not run.
 - `export_bindings` did not run. I added the `fromOcr?: boolean` field to `bindings.ts` by hand, in the format the generator uses for this struct. specta marks a `#[serde(default)]` field optional, and `--check` will confirm or correct it.
