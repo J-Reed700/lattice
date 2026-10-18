@@ -151,6 +151,43 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.ExportedLearningCheckerExamplesDto | null>> =>
     learningCall('export_learning_checker_examples', { request }),
 
+  /** Levels and reasons from judgements already made; never calls a model. */
+  getLearningSourceTrust: (
+    request: Wire.GetLearningSourceTrustRequestDto,
+  ): Promise<ApiResult<Wire.LearningSourceTrustViewDto>> =>
+    learningCall('get_learning_source_trust', { request }),
+
+  setSourceTrustOverride: (
+    request: Wire.LearningTrustOverrideInputDto,
+  ): Promise<ApiResult<Wire.LearningTrustChangeResultDto>> =>
+    learningCall('set_source_trust_override', { request }),
+
+  /** Null when there was no override at that scope. */
+  clearSourceTrustOverride: (
+    scope: Wire.LearningTrustOverrideScopeDto,
+  ): Promise<ApiResult<Wire.LearningTrustChangeResultDto | null>> =>
+    learningCall('clear_source_trust_override', { scope }),
+
+  listSourceTrustOverrides: (): Promise<ApiResult<Wire.LearningSiteTrustOverrideDto[]>> =>
+    learningCall('list_source_trust_overrides'),
+
+  getSourceTrustCalibration: (): Promise<ApiResult<Wire.LearningSourceTrustCalibrationDto>> =>
+    learningCall('get_source_trust_calibration'),
+
+  reassessLearningSourceTrust: (
+    request: Wire.ReassessLearningSourceTrustRequestDto,
+  ): Promise<ApiResult<Wire.LearningSourceTrustViewDto>> =>
+    learningCall('reassess_learning_source_trust', { request }),
+
+  reprofileLearningClaim: (
+    request: Wire.ReprofileLearningClaimRequestDto,
+  ): Promise<ApiResult<Wire.LearningClaimProfileDto>> =>
+    learningCall('reprofile_learning_claim', { request }),
+
+  /** Null when the user dismissed the save dialog. */
+  exportProvenanceEvalExamples: (): Promise<ApiResult<Wire.ExportedProvenanceEvalExamplesDto | null>> =>
+    learningCall('export_provenance_eval_examples'),
+
   generateLearningProgram: (
     request: Wire.GenerateLearningProgramRequestDto,
     options?: {
