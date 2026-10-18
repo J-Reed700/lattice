@@ -121,16 +121,7 @@ impl LearningRepository {
                 ));
             }
             tx.rollback().await.map_err(db)?;
-            return Ok(LearningAttemptDto {
-                id: row.get("id"),
-                module_id: row.get("module_id"),
-                lesson_id: row.get("lesson_id"),
-                kind: parse_assessment(row.get("kind"))?,
-                correct: row.get("correct"),
-                total: row.get("total"),
-                results: decode(row.get("results_json"))?,
-                submitted_at: row.get("submitted_at"),
-            });
+            return attempt_from_row(&row);
         }
         let p = sqlx::query("SELECT revision,status FROM learning_programs WHERE id=?")
             .bind(&req.program_id)
@@ -145,57 +136,61 @@ impl LearningRepository {
                 "Program changed or is not active; reload and retry.".into(),
             ));
         }
-        let (question_rows, scope_lesson): (Vec<sqlx::sqlite::SqliteRow>, Option<String>) =
-            match req.kind {
-                LearningAssessmentKind::Practice | LearningAssessmentKind::Quiz => {
-                    let lesson_id = req.lesson_id.as_ref().ok_or_else(|| {
-                        AppError::InvalidInput(
-                            "Practice and quiz attempts require a lesson ID.".into(),
-                        )
-                    })?;
-                    let exists:i64=sqlx::query_scalar("SELECT count(*) FROM learning_lessons WHERE id=? AND program_id=? AND module_id=? AND preparation='ready'").bind(lesson_id).bind(&req.program_id).bind(&req.module_id).fetch_one(&mut *tx).await.map_err(db)?;
-                    if exists != 1 {
-                        return Err(AppError::InvalidInput(
-                            "Lesson does not belong to this active program module or is not ready."
-                                .into(),
-                        ));
-                    }
-                    (sqlx::query("SELECT q.*,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id WHERE q.lesson_id=? AND q.kind=? ORDER BY q.ordinal").bind(lesson_id).bind(assessment(req.kind.clone())).fetch_all(&mut *tx).await.map_err(db)?,Some(lesson_id.clone()))
+        // Module tests also carry the module's lesson count, for their coverage.
+        let (question_rows, scope_lesson, module_lessons): (
+            Vec<sqlx::sqlite::SqliteRow>,
+            Option<String>,
+            Option<i64>,
+        ) = match req.kind {
+            LearningAssessmentKind::Practice | LearningAssessmentKind::Quiz => {
+                let lesson_id = req.lesson_id.as_ref().ok_or_else(|| {
+                    AppError::InvalidInput("Practice and quiz attempts require a lesson ID.".into())
+                })?;
+                let exists:i64=sqlx::query_scalar("SELECT count(*) FROM learning_lessons WHERE id=? AND program_id=? AND module_id=? AND preparation='ready'").bind(lesson_id).bind(&req.program_id).bind(&req.module_id).fetch_one(&mut *tx).await.map_err(db)?;
+                if exists != 1 {
+                    return Err(AppError::InvalidInput(
+                        "Lesson does not belong to this active program module or is not ready."
+                            .into(),
+                    ));
                 }
-                LearningAssessmentKind::Test => {
-                    if req.lesson_id.is_some() {
-                        return Err(AppError::InvalidInput(
-                            "Module tests do not accept a lesson ID.".into(),
-                        ));
-                    }
-                    let module_exists: i64 = sqlx::query_scalar(
-                        "SELECT count(*) FROM learning_modules WHERE id=? AND program_id=?",
-                    )
-                    .bind(&req.module_id)
-                    .bind(&req.program_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?;
-                    if module_exists != 1 {
-                        return Err(AppError::InvalidInput(
-                            "Module does not belong to this program.".into(),
-                        ));
-                    }
-                    let not_ready: i64 = sqlx::query_scalar(
-                        "SELECT count(*) FROM learning_lessons WHERE module_id=? AND preparation!='ready'",
-                    )
-                    .bind(&req.module_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?;
-                    if not_ready != 0 {
-                        return Err(AppError::InvalidInput(
-                            "Prepare every lesson in the module before starting its test.".into(),
-                        ));
-                    }
-                    (sqlx::query("SELECT q.*,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id JOIN learning_lessons l ON l.id=q.lesson_id WHERE q.module_id=? AND q.kind='test' AND l.preparation='ready' ORDER BY l.ordinal,q.ordinal").bind(&req.module_id).fetch_all(&mut *tx).await.map_err(db)?,None)
+                (sqlx::query("SELECT q.*,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id WHERE q.lesson_id=? AND q.kind=? ORDER BY q.ordinal").bind(lesson_id).bind(assessment(req.kind.clone())).fetch_all(&mut *tx).await.map_err(db)?,Some(lesson_id.clone()),None)
+            }
+            LearningAssessmentKind::Test => {
+                if req.lesson_id.is_some() {
+                    return Err(AppError::InvalidInput(
+                        "Module tests do not accept a lesson ID.".into(),
+                    ));
                 }
-            };
+                let module_exists: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM learning_modules WHERE id=? AND program_id=?",
+                )
+                .bind(&req.module_id)
+                .bind(&req.program_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+                if module_exists != 1 {
+                    return Err(AppError::InvalidInput(
+                        "Module does not belong to this program.".into(),
+                    ));
+                }
+                // A module test covers whichever of its lessons are prepared
+                // so far; lessons prepared later add their questions to it.
+                let (module_lessons, ready_lessons): (i64, i64) = sqlx::query_as(
+                    "SELECT count(*),coalesce(sum(preparation='ready'),0) FROM learning_lessons WHERE module_id=?",
+                )
+                .bind(&req.module_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+                if ready_lessons == 0 {
+                    return Err(AppError::InvalidInput(
+                        "Prepare at least one lesson in this module before taking its test".into(),
+                    ));
+                }
+                (sqlx::query("SELECT q.*,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id JOIN learning_lessons l ON l.id=q.lesson_id WHERE q.module_id=? AND q.kind='test' AND l.preparation='ready' ORDER BY l.ordinal,q.ordinal").bind(&req.module_id).fetch_all(&mut *tx).await.map_err(db)?,None,Some(module_lessons))
+            }
+        };
         if question_rows.is_empty() {
             return Err(AppError::InvalidInput(
                 "No ready questions exist for this assessment.".into(),
@@ -208,6 +203,14 @@ impl LearningRepository {
         }
         let expected: std::collections::HashSet<String> =
             question_rows.iter().map(|q| q.get("id")).collect();
+        let coverage = module_lessons.map(|module_lessons| {
+            let covered: std::collections::HashSet<String> =
+                question_rows.iter().map(|q| q.get("lesson_id")).collect();
+            LearningModuleTestCoverageDto {
+                covered_lessons: covered.len() as i64,
+                module_lessons,
+            }
+        });
         let mut seen = std::collections::HashSet::new();
         for a in &req.answers {
             if !seen.insert(a.question_id.clone()) {
@@ -263,8 +266,8 @@ impl LearningRepository {
         }
         let submitted_at = chrono::Utc::now().timestamp_millis();
         let total = results.len() as i64;
-        sqlx::query("INSERT INTO learning_attempts(id,program_id,module_id,lesson_id,kind,correct,total,answers_json,results_json,submitted_at,payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&req.attempt_id).bind(&req.program_id).bind(&req.module_id).bind(&scope_lesson).bind(assessment(req.kind.clone())).bind(correct).bind(total).bind(json(&req.answers)?).bind(json(&results)?).bind(submitted_at).bind(hash).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_attempts(id,program_id,module_id,lesson_id,kind,correct,total,answers_json,results_json,submitted_at,payload_hash,covered_lessons,module_lessons) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(&req.attempt_id).bind(&req.program_id).bind(&req.module_id).bind(&scope_lesson).bind(assessment(req.kind.clone())).bind(correct).bind(total).bind(json(&req.answers)?).bind(json(&results)?).bind(submitted_at).bind(hash).bind(coverage.map(|c| c.covered_lessons)).bind(coverage.map(|c| c.module_lessons)).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         Ok(LearningAttemptDto {
             id: req.attempt_id.clone(),
@@ -275,6 +278,7 @@ impl LearningRepository {
             total,
             results,
             submitted_at,
+            coverage,
         })
     }
 }
