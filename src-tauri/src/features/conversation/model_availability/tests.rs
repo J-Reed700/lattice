@@ -24,6 +24,21 @@ impl DownloadedModelRepository for Rows {
     ) -> Result<bool> {
         unreachable!("a check never deletes")
     }
+    async fn find_by_id(&self, _id: &str) -> Result<Option<DownloadedModel>> {
+        unreachable!("a check reads by model id")
+    }
+    async fn save(&self, _model: &DownloadedModel) -> Result<()> {
+        unreachable!("a check never writes")
+    }
+    async fn is_downloaded(&self, _model_id: &str) -> Result<bool> {
+        unreachable!("a check reads the row itself")
+    }
+    async fn has_any_embedding_model(&self) -> Result<bool> {
+        unreachable!("a check reads one row")
+    }
+    async fn delete_if_not_active(&self, _id: &str) -> Result<Option<DownloadedModel>> {
+        unreachable!("a check never deletes")
+    }
 }
 
 fn row(name: &str, path: &Path, model_type: ModelType) -> DownloadedModel {

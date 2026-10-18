@@ -69,6 +69,7 @@
 //! }
 //! ```
 
+pub mod active_models;
 pub mod backup_port;
 pub mod backup_scheduler_port;
 pub mod chat_images;
