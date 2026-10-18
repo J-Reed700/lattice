@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const INPUT: &str = "ledger-fixture";
 
 /// An unsupported figure no reference gives.
-fn figure(n: usize) -> String {
+pub(super) fn figure(n: usize) -> String {
     format!("DictReader buffers {}00 rows before parsing.", n + 1)
 }
 
@@ -57,7 +57,7 @@ fn lesson(statements: &[&str]) -> Value {
 
 /// Repairs that trade a failed claim for a new unsupported figure (or fix
 /// it), a judge that never supports a figure, and counters for what ran.
-struct Figures {
+pub(super) struct Figures {
     inner: Model,
     repair_to_good: bool,
     fail_repair_at: Option<usize>,
@@ -69,7 +69,7 @@ struct Figures {
 }
 
 impl Figures {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             inner: Model::new(),
             repair_to_good: false,
@@ -91,7 +91,7 @@ impl Figures {
             .count()
     }
 
-    async fn respond(&self, prompt: &str) -> Result<String> {
+    pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
             let data = self::context(prompt);
             let units = data["units"].as_array().unwrap();
@@ -206,11 +206,11 @@ impl LLMPort for Figures {
 }
 
 /// One preparation pass of the lesson in the job's draft scope.
-async fn prepare(
+pub(super) async fn prepare(
     repo: &crate::features::learning::curriculum_repository::LearningCurriculumRepository,
     job: &str,
     lesson_id: &str,
-    model: &Figures,
+    model: &dyn LLMPort,
     first: Option<String>,
     sources: &[LearningSourceDto],
 ) -> Result<(String, LessonVerificationReport)> {
@@ -244,7 +244,7 @@ fn repairs(entry: &ClaimLedgerEntry) -> Vec<(u8, bool, RepairOutcome)> {
         .collect()
 }
 
-fn waiting(entries: &[ClaimLedgerEntry]) -> Vec<&ClaimLedgerEntry> {
+pub(super) fn waiting(entries: &[ClaimLedgerEntry]) -> Vec<&ClaimLedgerEntry> {
     entries
         .iter()
         .filter(|entry| entry.state().awaits_user())
