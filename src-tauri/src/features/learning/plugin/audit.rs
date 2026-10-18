@@ -4,67 +4,60 @@
 //! sees only an `LLMPort`, the claim ledger's port and its own stores.
 
 use super::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::features::learning::curriculum_repository::{
     LearningCurriculumRepository, ProgramVerifierAudit,
 };
+use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::verifier_audit::{
-    self as audit,
+    lesson::{audit_lesson, LessonAudit, LessonAuditRequest, VerifierAccess},
+    material::AuditMaterial,
+    pages::VerifierPages,
     policy::{consent, Consent},
-    runs::{AuditRun, BatchOutcome, ProgramGate, RunState, SqliteAuditRuns},
+    runs::{AuditRun, BatchOutcome, RunState, SqliteAuditRuns},
     tools::VerifierWeb,
-    AuditDeps, AuditOutcome, AuditPassage, AuditRequest, AuditStop, AuditUnit,
+    AuditOutcome, AuditProgress, AuditStop,
 };
 use crate::features::learning::persistence::now;
-use lattice_core::application::ports::llm_port::ModelRequirements;
+use lattice_core::application::ports::llm_port::{ModelRequirements, PinnedModel};
 use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::application::services::chat_model_resolution::{
     cloud_provider_id, cloud_provider_name,
 };
-use lattice_core::domain::learning::claim_review::{ClaimId, LessonReview, LessonReviewState};
+use lattice_core::domain::learning::claim_review::{LessonReview, LessonReviewState};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result as CoreResult};
 
-fn not_wired(what: &str) -> ApiError {
-    ApiError::from(AppError::ServiceNotAvailable(format!(
-        "{what} is not available in this build."
-    )))
+/// The Verifier as Settings → Models configures it, with the app's web
+/// service for its tools: what a preparation job and "Audit this lesson
+/// now" audit with.
+struct ContainerVerifier(Container);
+
+#[async_trait::async_trait]
+impl VerifierAccess for ContainerVerifier {
+    async fn model(&self) -> CoreResult<Option<ModelRef>> {
+        self.0.verifier_model().await
+    }
+
+    // Not `tools: Required`: a Verifier that cannot call tools audits on the
+    // cited passages and says so (§14.6).
+    async fn pin(&self) -> CoreResult<PinnedModel> {
+        self.0.verifier_llm(ModelRequirements::default()).await
+    }
+
+    fn web(&self, program_id: &str) -> Option<Arc<dyn VerifierWeb>> {
+        Some(Arc::new(VerifierPages {
+            pool: self.0.db_pool().clone(),
+            program_id: program_id.to_owned(),
+            web: self.0.web_service(),
+            snapshots: self.0.reference_snapshots(),
+        }))
+    }
 }
 
-/// The lesson claim ledger.
-// Integration with track L1: `Arc::new(ClaimReviewRepository::new(pool))`.
-fn claim_ledger(_container: &Container) -> Result<Arc<dyn ClaimReviewStore>, ApiError> {
-    Err(not_wired("The claim ledger"))
-}
-
-/// What one lesson's audit sends: its draft's digest, its units in the
-/// report's unit order, and each claim's passages as its card shows them.
-struct AuditMaterial {
-    draft_sha256: String,
-    units: Vec<AuditUnit>,
-    passages: HashMap<ClaimId, Vec<AuditPassage>>,
-}
-
-// Integration with track L1: the review's `draft_sha256`, the draft's units
-// rendered as the report indexes them (`claim_ledger::field_text`), and
-// `ClaimReviewRepository::shown_passages` with each source version's title.
-async fn audit_material(
-    _container: &Container,
-    _program_id: &str,
-    _lesson_id: &str,
-) -> Result<AuditMaterial, ApiError> {
-    Err(not_wired("The lesson's audit material"))
-}
-
-/// The Verifier's web tools. `None` until track S's capture service saves a
-/// fetched page with `added_by = 'verifier'`; the audit then runs on the
-/// cited passages only and says so (§14.6).
-// Integration with track S: search through `container.web_service()`, save
-// through the source library's web capture with `SourceAddedBy::Verifier`.
-fn verifier_web(_container: &Container) -> Option<Arc<dyn VerifierWeb>> {
-    None
+pub(super) fn container_verifier(container: &Container) -> Arc<dyn VerifierAccess> {
+    Arc::new(ContainerVerifier(container.clone()))
 }
 
 /// Where an audit with `model` sends lesson text, in words.
@@ -257,72 +250,32 @@ pub async fn audit_learning_lesson_now(
 ) -> Result<LearningLessonAuditResultDto, ApiError> {
     let container = container.inner();
     let pool = container.db_pool().clone();
-    let programs = LearningCurriculumRepository::new(pool.clone());
-    let setting = programs.verifier_audit(&program_id).await?;
-    if !setting.on {
-        return Err(AppError::InvalidInput(
-            "Turn the Verifier audit on for this course before auditing a lesson.".into(),
-        )
-        .into());
-    }
-    let Some(model) = container.verifier_model().await? else {
-        return Ok(stopped(&AuditStop::NoVerifier, None));
-    };
-    if let Some(stop) =
-        AuditStop::from_consent(&consent(&model, setting.consent_provider.as_deref()))
-    {
-        return Ok(stopped(&stop, None));
-    }
-    let pinned = match container.verifier_llm(ModelRequirements::default()).await {
-        Ok(pinned) => pinned,
-        Err(error) => {
-            let stop = AuditStop::Unavailable {
-                message: error.to_string(),
-            };
-            return Ok(stopped(&stop, None));
-        }
-    };
-    let store = claim_ledger(container)?;
-    let material = audit_material(container, &program_id, &lesson_id).await?;
-    // Web search is used only when the course allows it, a web service can
-    // save what it fetches, and the Verifier can call tools; otherwise the
-    // audit runs on the cited passages and notes why (§14.6).
-    let web = verifier_web(container)
-        .filter(|_| setting.web_search && pinned.llm.supports_tool_calling());
-    let web_note = (setting.web_search && web.is_none()).then(|| {
-        if pinned.llm.supports_tool_calling() {
-            "Web search is not available, so the audit used the cited passages only.".to_owned()
-        } else {
-            "The Verifier cannot call tools, so the audit used the cited passages only.".to_owned()
-        }
-    });
-    let runs = SqliteAuditRuns::new(pool);
-    let gate = ProgramGate {
-        programs,
-        program_id: program_id.clone(),
-        model: pinned.resolved.model.clone(),
-    };
-    let progress = |progress: audit::AuditProgress| {
+    let material = AuditMaterial::of_lesson(&pool, &program_id, &lesson_id).await?;
+    let progress = |progress: AuditProgress| {
         tracing::info!(operation_id, lesson_id, step = %progress.label(), "learning.audit.progress");
     };
-    let request = AuditRequest {
-        lesson_id: &lesson_id,
-        job_id: None,
-        app_version: env!("CARGO_PKG_VERSION"),
-        draft_sha256: &material.draft_sha256,
-        verifier_model: &pinned.resolved.model,
-        units: &material.units,
-        passages: &material.passages,
+    let audit = audit_lesson(
+        &ContainerVerifier(container.clone()),
+        &pool,
+        &LessonAuditRequest {
+            program_id: &program_id,
+            lesson_id: &lesson_id,
+            job_id: None,
+            material: &material,
+            progress: &progress,
+        },
+    )
+    .await?;
+    let (outcome, web_note) = match audit {
+        LessonAudit::Off => {
+            return Err(AppError::InvalidInput(
+                "Turn the Verifier audit on for this course before auditing a lesson.".into(),
+            )
+            .into())
+        }
+        LessonAudit::Refused(stop) => return Ok(stopped(&stop, None)),
+        LessonAudit::Ran { outcome, web_note } => (outcome, web_note),
     };
-    let deps = AuditDeps {
-        store: store.as_ref(),
-        runs: &runs,
-        gate: &gate,
-        web: web.as_deref(),
-        progress: &progress,
-        clock: &now,
-    };
-    let outcome = audit::run(pinned.llm.as_ref(), &request, &deps).await?;
     let summary = outcome.summary().clone();
     let progress = Some((summary.batches_done, summary.batches_planned));
     let (result, message, fix) = match &outcome {
@@ -343,13 +296,17 @@ pub async fn audit_learning_lesson_now(
         ),
     };
     if !outcome.publishable() {
-        hold_for_review(store.as_ref(), &lesson_id, &outcome, progress).await?;
+        let store = ClaimReviewRepository::new(pool.clone());
+        hold_for_review(&store, &lesson_id, &outcome, progress).await?;
     }
-    let audit = runs.latest(&lesson_id).await?.map(|run| {
-        let mut dto = lesson_audit_dto(run);
-        dto.web_note = dto.web_note.or_else(|| web_note.clone());
-        dto
-    });
+    let audit = SqliteAuditRuns::new(pool)
+        .latest(&lesson_id)
+        .await?
+        .map(|run| {
+            let mut dto = lesson_audit_dto(run);
+            dto.web_note = dto.web_note.or_else(|| web_note.clone());
+            dto
+        });
     Ok(LearningLessonAuditResultDto {
         outcome: result,
         message,

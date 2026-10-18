@@ -99,6 +99,29 @@ pub struct ClaimReviewItemDto {
     pub human: Option<HumanVerdictDto>,
     pub available_actions: Vec<ClaimActionKindDto>,
     pub history: Vec<ClaimEventDto>,
+    /// The local checker's latest verdict: the card's "Local checker said"
+    /// column (§14.5). Null before the claim's first check.
+    pub local_check: Option<CheckerVerdictDto>,
+    /// The Verifier audit's latest verdict: the "Verifier said" column. Null
+    /// until the audit has checked the claim.
+    pub verifier_check: Option<CheckerVerdictDto>,
+}
+
+/// One checker's latest verdict on a claim.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckerVerdictDto {
+    pub checker: CheckerDto,
+    /// `supported` with the passage and quote it rests on, or `failed`
+    /// with its kind.
+    pub result: CheckResultDto,
+    pub reason: String,
+    /// The source a `supported` result quotes: for the Verifier, possibly a
+    /// page it fetched during the audit (`addedBy: verifier`).
+    pub quoted_source: Option<SourceRefDto>,
+    /// The passages the checker compared.
+    pub passages: Vec<ClaimEvidencePassageDto>,
+    pub at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

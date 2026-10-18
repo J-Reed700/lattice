@@ -25,7 +25,7 @@ use citations::{
     CITED,
 };
 pub(in crate::features::learning) use claim_ledger::{
-    field_text, held_for_review, held_lessons, review_outcome, HeldForReview,
+    field_text, held_for_review, held_lessons, review_outcome, unit_texts, HeldForReview,
 };
 mod coverage;
 #[cfg(test)]

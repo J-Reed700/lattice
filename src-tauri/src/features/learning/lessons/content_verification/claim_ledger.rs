@@ -11,8 +11,11 @@
 //! `ClaimReviewRepository`; elsewhere (tests, fixtures) it lives in memory.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §4, §6, §9.
 
+mod audit;
 mod observe;
 mod receipts;
+
+pub(super) use audit::Audited;
 
 use super::general_knowledge::Resolution;
 use super::support_gate::{CheckerVerdict, SupportGate};
@@ -26,11 +29,11 @@ use crate::features::learning::persistence::now;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
-    EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision, UserAction,
-    MACHINE_ATTEMPTS,
+    EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision, StopReason,
+    UserAction, MACHINE_ATTEMPTS,
 };
 
-pub(in crate::features::learning) use observe::field_text;
+pub(in crate::features::learning) use observe::{field_text, unit_texts};
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
 const PENDING_KEY: &str = "claim-ledger-v1:pending";
@@ -143,7 +146,7 @@ impl ClaimLedger {
             program_id,
         });
         ledger
-            .write_review(LessonReviewState::Verifying, raw)
+            .write_review(LessonReviewState::Verifying, raw, None)
             .await?;
         ledger.sync().await?;
         ledger.pending = crate::features::learning::lesson_drafts::checkpoint(PENDING_KEY)
@@ -179,7 +182,12 @@ impl ClaimLedger {
         &self.findings
     }
 
-    async fn write_review(&mut self, state: LessonReviewState, raw: &str) -> Result<()> {
+    async fn write_review(
+        &mut self,
+        state: LessonReviewState,
+        raw: &str,
+        stop_reason: Option<StopReason>,
+    ) -> Result<()> {
         let Some(sink) = &self.sink else {
             return Ok(());
         };
@@ -193,7 +201,7 @@ impl ClaimLedger {
                     state,
                     draft_sha256: digest(raw),
                     checker_model: self.checker_model.clone(),
-                    stop_reason: None,
+                    stop_reason,
                 },
             )
             .await?;
@@ -488,9 +496,15 @@ impl ClaimLedger {
     }
 
     /// The lesson waits for the user: the draft stays in the job's
-    /// checkpoints and the review row says so (§6.1).
-    pub(super) async fn stop_for_review(&mut self, raw: &str) -> Result<()> {
-        self.write_review(LessonReviewState::NeedsReview, raw).await
+    /// checkpoints and the review row says so (§6.1), with the audit's stop
+    /// when the Verifier audit could not finish (§14.6).
+    pub(super) async fn stop_for_review(
+        &mut self,
+        raw: &str,
+        stop_reason: Option<StopReason>,
+    ) -> Result<()> {
+        self.write_review(LessonReviewState::NeedsReview, raw, stop_reason)
+            .await
     }
 
     pub(super) fn tally(&self) -> LearningClaimTally {

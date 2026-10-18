@@ -831,6 +831,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
+        verifier: None,
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();

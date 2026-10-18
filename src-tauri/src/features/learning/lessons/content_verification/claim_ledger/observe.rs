@@ -64,6 +64,31 @@ fn unit_fields(item: &Value, block: bool) -> Vec<String> {
     fields
 }
 
+/// Each unit of a lesson in the report's order (sections, then questions)
+/// as `(title, text)`: a section's title or a question's prompt, and every
+/// other field a claim can come from, joined. What the Verifier reads.
+pub(in crate::features::learning) fn unit_texts(candidate: &Value) -> Vec<(String, String)> {
+    let mut units = Vec::new();
+    for (list, title_field, block) in [("blocks", "title", true), ("questions", "prompt", false)] {
+        let items = candidate.get(list).and_then(Value::as_array);
+        for item in items.into_iter().flatten() {
+            let title = item
+                .get(title_field)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let text = unit_fields(item, block)
+                .iter()
+                .filter(|field| field.as_str() != title_field)
+                .filter_map(|field| item.pointer(&format!("/{field}")).and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            units.push((title, text));
+        }
+    }
+    units
+}
+
 /// Where `quote` is in unit `unit`: the first field holding it.
 pub(in crate::features::learning) fn locate(
     candidate: &Value,

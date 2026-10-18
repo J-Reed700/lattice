@@ -62,6 +62,10 @@ pub(in crate::features::learning) struct LessonGenerationWorker {
     pub load_library: LibraryLoader,
     pub refresh_sources: SourceRefresh,
     pub research_web: Option<Arc<dyn lattice_core::application::ports::WebServiceTrait>>,
+    /// The Verifier, for courses that opted into its audit (§14.3); `None`
+    /// publishes every lesson without the audit gate.
+    pub verifier:
+        Option<Arc<dyn crate::features::learning::lessons::verifier_audit::lesson::VerifierAccess>>,
 }
 
 #[async_trait::async_trait]
@@ -318,7 +322,10 @@ impl LessonGenerationWorker {
                             job.program_id.clone(),
                             format!("{}: {}", program.summary.goal, lesson.title),
                             self.research_web.clone(),
-                            preparation,
+                            crate::features::learning::lessons::verifier_audit::lesson::scope(
+                                self.verifier.clone(),
+                                preparation,
+                            ),
                         ),
                     )
                     .await;
@@ -512,6 +519,7 @@ mod repository_tests {
             let worker = LessonGenerationWorker {
                 runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
+                verifier: None,
                 load_library: Arc::new(|| Box::pin(async { None })),
                 pool: pool.clone(),
                 refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),

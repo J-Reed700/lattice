@@ -41,20 +41,20 @@ const PAGE_URL: &str = "https://docs.example.org/csv/dictreader-buffering";
 /// trade one figure for another), except that a claim a passage states word
 /// for word is supported: the page the user attaches. Counts every claim
 /// judgement, so a check the pass reuses is seen not to reach the model.
-struct Supporting {
+pub(super) struct Supporting {
     figures: Figures,
     judged: AtomicUsize,
 }
 
 impl Supporting {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             figures: Figures::new(),
             judged: AtomicUsize::new(0),
         }
     }
 
-    fn judged(&self) -> usize {
+    pub(super) fn judged(&self) -> usize {
         self.judged.load(Ordering::Relaxed)
     }
 
@@ -172,61 +172,73 @@ impl LibraryPassagesPort for NoLibrary {
 }
 
 /// A course whose lesson waits for the user's review, its job completed.
-struct Waiting {
-    pool: sqlx::SqlitePool,
-    jobs: LearningCurriculumRepository,
-    program_id: String,
-    lesson_id: String,
-    job_id: String,
+pub(super) struct Waiting {
+    pub(super) pool: sqlx::SqlitePool,
+    pub(super) jobs: LearningCurriculumRepository,
+    pub(super) program_id: String,
+    pub(super) lesson_id: String,
+    pub(super) job_id: String,
 }
 
 impl Waiting {
     /// The flagged claim: unsupported, corrected, rewritten, then handed to
     /// the user (§4); the job completes as the worker completes it (§6.1).
-    async fn new(model: &Supporting) -> Result<Self> {
+    pub(super) async fn new(model: &Supporting) -> Result<Self> {
+        let course = Self::course().await?;
+        course.hold(model).await?;
+        Ok(course)
+    }
+
+    /// The course, its lesson not prepared yet.
+    pub(super) async fn course() -> Result<Self> {
         let pool = crate::features::learning::tests::pool().await?;
         let (jobs, job_id, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
         let program_id = jobs.job(&job_id).await?.program_id;
         install_source(&pool, &program_id, SOURCE).await?;
-        let course = Self {
+        Ok(Self {
             pool,
             jobs,
             program_id,
             lesson_id,
             job_id,
-        };
+        })
+    }
+
+    /// Prepares the lesson until its flagged claim waits for the user, and
+    /// completes the job as the worker does.
+    pub(super) async fn hold(&self, model: &Supporting) -> Result<()> {
         let error = prepare(
-            &course.jobs,
-            &course.job_id,
-            &course.lesson_id,
+            &self.jobs,
+            &self.job_id,
+            &self.lesson_id,
             model,
             Some(candidate(BAD).to_string()),
-            &course.references().await?,
+            &self.references().await?,
         )
         .await
         .err()
         .unwrap()
         .to_string();
         assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
-        let held = held_for_review(&course.pool, &course.lesson_id, &course.job_id)
+        let held = held_for_review(&self.pool, &self.lesson_id, &self.job_id)
             .await?
             .unwrap();
         let (result_ref, message) = review_outcome(&[held]);
         assert!(
-            JobStore::new(course.pool.clone())
-                .complete(&course.job_id, &result_ref, &message)
+            JobStore::new(self.pool.clone())
+                .complete(&self.job_id, &result_ref, &message)
                 .await?
         );
-        Ok(course)
+        Ok(())
     }
 
-    async fn references(&self) -> Result<Vec<LearningSourceDto>> {
+    pub(super) async fn references(&self) -> Result<Vec<LearningSourceDto>> {
         LearningRepository::new(self.pool.clone())
             .verification_sources(&self.program_id)
             .await
     }
 
-    async fn revision(&self) -> Result<i64> {
+    pub(super) async fn revision(&self) -> Result<i64> {
         Ok(LearningRepository::new(self.pool.clone())
             .get(&self.program_id)
             .await?
@@ -234,11 +246,13 @@ impl Waiting {
             .revision)
     }
 
-    fn service(&self) -> ClaimReviewService {
+    pub(super) fn service(&self) -> ClaimReviewService {
         ClaimReviewService::new(self.pool.clone())
     }
 
-    async fn resume(&self) -> Result<crate::features::learning::curriculum::LearningGenerationJob> {
+    pub(super) async fn resume(
+        &self,
+    ) -> Result<crate::features::learning::curriculum::LearningGenerationJob> {
         self.service()
             .resume(
                 &self.program_id,
@@ -251,7 +265,7 @@ impl Waiting {
 
     /// Runs the resumed attempt's pass, then publishes the lesson as the
     /// worker does once every claim is resolved.
-    async fn run_and_publish(
+    pub(super) async fn run_and_publish(
         &self,
         model: &Supporting,
         job_id: &str,
@@ -302,7 +316,7 @@ impl Waiting {
         Ok(lesson)
     }
 
-    async fn assert_published(&self, job_id: &str) -> Result<()> {
+    pub(super) async fn assert_published(&self, job_id: &str) -> Result<()> {
         let program = LearningRepository::new(self.pool.clone())
             .get(&self.program_id)
             .await?;

@@ -156,7 +156,7 @@ impl ClaimReviewService {
 
     /// Whether anything about the lesson's claims changed since its last
     /// preparation stopped (§6.2): "Resume verification" reruns nothing that
-    /// has not changed.
+    /// has not changed. A Verifier audit stop always resumes (§14.6).
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
         let ledger = self.store.load(lesson_id).await?;
         let Some(review) = &ledger.review else {
@@ -167,6 +167,13 @@ impl ClaimReviewService {
             LessonReviewState::NeedsReview | LessonReviewState::Stopped
         ) {
             return Ok(false);
+        }
+        // An audit stop is fixed in Settings or with the course's switch,
+        // not in the ledger (§14.6): Resume runs the audit again.
+        if review.stop_reason.as_ref().is_some_and(|stop| {
+            crate::features::learning::lessons::verifier_audit::AuditStop::is_audit_stop(&stop.code)
+        }) {
+            return Ok(true);
         }
         let stopped_at = self
             .store

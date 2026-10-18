@@ -178,19 +178,29 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 {
                     continue;
                 }
+                // Then the Verifier audit, when the course opted in (§14.3):
+                // review pass → audit → publish. Its checks, and anything the
+                // user did while it ran, are read back before publishing.
+                match ledger.audit(&raw, &candidate).await? {
+                    claim_ledger::Audited::Off => {}
+                    claim_ledger::Audited::Agreed => {
+                        ledger.sync().await?;
+                        if review_pass::has_user_changes(&ledger, &candidate)
+                            || !matches!(ledger.decide(), claim_ledger::Decision::Publish)
+                        {
+                            continue;
+                        }
+                    }
+                    claim_ledger::Audited::Hold(stop_reason) => {
+                        ledger.sync().await?;
+                        let claims = ledger.awaiting_user();
+                        return Err(hold(&mut ledger, &raw, claims, stop_reason).await?);
+                    }
+                }
                 return Ok((raw, ledger.bind(report)));
             }
             claim_ledger::Decision::NeedsReview(claims) => {
-                crate::features::learning::lesson_drafts::save(&raw).await?;
-                ledger.stop_for_review(&raw).await?;
-                crate::features::learning::lesson_progress::phase(
-                    crate::features::learning::lesson_progress::Phase::Repair,
-                    format!(
-                        "Needs your review: {claims} claim{} could not be verified",
-                        if claims == 1 { "" } else { "s" }
-                    ),
-                );
-                return Err(claim_ledger::needs_review(claims));
+                return Err(hold(&mut ledger, &raw, claims, None).await?);
             }
             claim_ledger::Decision::Repair(targets) => {
                 remember_failed_claims(&mut repair_history, &report);
@@ -241,6 +251,31 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
         }
     }
+}
+
+/// The lesson waits for the user's review (§6.1): the draft is saved, the
+/// review row says so (with the audit's stop when the Verifier audit could
+/// not finish, §14.6), and the returned error unwinds the preparation.
+async fn hold(
+    ledger: &mut ClaimLedger,
+    raw: &str,
+    claims: usize,
+    stop_reason: Option<lattice_core::domain::learning::claim_review::StopReason>,
+) -> Result<AppError> {
+    crate::features::learning::lesson_drafts::save(raw).await?;
+    let message = match &stop_reason {
+        Some(stop) => stop.message.clone(),
+        None => format!(
+            "Needs your review: {claims} claim{} could not be verified",
+            if claims == 1 { "" } else { "s" }
+        ),
+    };
+    ledger.stop_for_review(raw, stop_reason).await?;
+    crate::features::learning::lesson_progress::phase(
+        crate::features::learning::lesson_progress::Phase::Repair,
+        message,
+    );
+    Ok(claim_ledger::needs_review(claims))
 }
 
 /// A saved repair's work, less the claims the user resolved while the job

@@ -465,6 +465,9 @@ mod review_resume_tests;
 #[path = "claim_review_flow_tests.rs"]
 mod claim_review_flow_tests;
 
+#[path = "audit_flow_tests.rs"]
+mod audit_flow_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {

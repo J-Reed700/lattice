@@ -263,6 +263,19 @@ impl LearningSourceLibraryRepository {
             .map(|row| (row.get("id"), row.get("origin")))
             .collect())
     }
+    /// The whole captured text of one version of the program's sources,
+    /// deleted ones included.
+    pub async fn version_text(&self, program_id: &str, version_id: &str) -> Result<Option<String>> {
+        sqlx::query_scalar(
+            "SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?",
+        )
+        .bind(program_id)
+        .bind(version_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)
+    }
+
     /// The whole captured text of every version in the program, by version
     /// ID: what a model receives in place of a stored preview.
     pub async fn version_texts(&self, program_id: &str) -> Result<HashMap<String, String>> {

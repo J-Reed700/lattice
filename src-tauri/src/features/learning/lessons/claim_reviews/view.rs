@@ -1,22 +1,23 @@
 //! A lesson's claim review as the panel shows it (§7.3): the ledger, with
 //! the unit and source titles each card names, the passages its latest check
-//! compared, what research and repair did, the user's verdict, and the
-//! actions the claim allows now.
+//! compared, what research and repair did, the user's verdict, each
+//! checker's latest verdict (the local checker's and the Verifier's, side by
+//! side, §14.5), and the actions the claim allows now.
 
 use std::collections::HashMap;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    AttachOutcome, CheckResult, ClaimCounts, ClaimEvent, ClaimLedgerEntry, ClaimState,
-    LessonReview, LessonReviewState,
+    AttachOutcome, Check, CheckResult, Checker, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    ClaimState, EvidenceSeen, Ledger, LessonReview, LessonReviewState,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 use super::dto::{
-    ClaimEventDto, ClaimEvidencePassageDto, ClaimLocationDto, ClaimReviewItemDto, HumanVerdictDto,
-    LessonClaimReviewDto, RepairAttemptDto, ResearchAttemptDto, SourceAddedByDto, SourceRefDto,
-    StopReasonDto,
+    CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEvidencePassageDto, ClaimLocationDto,
+    ClaimReviewItemDto, HumanVerdictDto, LessonClaimReviewDto, RepairAttemptDto,
+    ResearchAttemptDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
 };
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
@@ -43,6 +44,44 @@ impl SourceFacts {
     }
 }
 
+/// A passage by its source version and byte span.
+type PassageKey = (String, usize, usize);
+
+/// A passage's text and how it was found.
+struct PassageText {
+    text: String,
+    retrieval_kind: String,
+}
+
+/// The retrieval kind of a passage a check compared that no card shows any
+/// more, read back from its saved source version.
+const SAVED_VERSION: &str = "source_version";
+
+fn key(seen: &EvidenceSeen) -> PassageKey {
+    (
+        seen.source_version_id.clone(),
+        seen.start_byte,
+        seen.end_byte,
+    )
+}
+
+/// The claim's latest check by the Verifier (`verifier`) or the local
+/// checker, with when it was recorded.
+fn latest_check(entry: &ClaimLedgerEntry, verifier: bool) -> Option<(&Check, i64)> {
+    entry.events().iter().rev().find_map(|record| {
+        let check = match &record.event {
+            ClaimEvent::Checked(check)
+            | ClaimEvent::EvidenceAttached {
+                result: AttachOutcome::Checked(check),
+                ..
+            } => check,
+            _ => return None,
+        };
+        (matches!(check.checker, Checker::Verifier { .. }) == verifier)
+            .then_some((check, record.provenance.at))
+    })
+}
+
 impl ClaimReviewService {
     /// The review of `lesson_id` in `program_id`; not found before the
     /// lesson's first verification pass.
@@ -56,6 +95,7 @@ impl ClaimReviewService {
         let sources = self.sources(program_id).await?;
         let titles = self.unit_titles(&review, program_id, lesson_id).await?;
         let shown = self.store().shown_passages(lesson_id).await?;
+        let texts = self.passage_texts(program_id, &ledger, &shown).await?;
         let pass = self
             .drafts()
             .job(&review.job_id)
@@ -68,7 +108,7 @@ impl ClaimReviewService {
             .iter()
             .map(|entry| {
                 let passages = shown.get(entry.claim_id()).map_or(&[][..], Vec::as_slice);
-                item(entry, passages, &sources, &titles)
+                item(entry, passages, &sources, &titles, &texts)
             })
             .collect();
         Ok(LessonClaimReviewDto {
@@ -81,6 +121,69 @@ impl ClaimReviewService {
             stop_reason: review.stop_reason.as_ref().map(StopReasonDto::from),
             claims,
         })
+    }
+
+    /// The text of every passage a card shows, and of every passage a
+    /// claim's latest checks compared: from the cards' passages, else read
+    /// back from the source version (a check compared it, no card shows it
+    /// now).
+    async fn passage_texts(
+        &self,
+        program_id: &str,
+        ledger: &Ledger,
+        shown: &HashMap<ClaimId, Vec<ShownPassage>>,
+    ) -> Result<HashMap<PassageKey, PassageText>> {
+        let mut texts: HashMap<PassageKey, PassageText> = shown
+            .values()
+            .flatten()
+            .map(|passage| {
+                (
+                    (
+                        passage.source_version_id.clone(),
+                        passage.start_byte,
+                        passage.end_byte,
+                    ),
+                    PassageText {
+                        text: passage.text.clone(),
+                        retrieval_kind: passage.retrieval_kind.clone(),
+                    },
+                )
+            })
+            .collect();
+        let compared: Vec<&EvidenceSeen> = ledger
+            .claims
+            .iter()
+            .flat_map(|entry| [latest_check(entry, false), latest_check(entry, true)])
+            .flatten()
+            .flat_map(|(check, _)| &check.evidence)
+            .collect();
+        let repo = LearningSourceLibraryRepository::new(self.pool().clone());
+        let mut versions: HashMap<String, Option<String>> = HashMap::new();
+        for seen in compared {
+            if texts.contains_key(&key(seen)) {
+                continue;
+            }
+            if !versions.contains_key(&seen.source_version_id) {
+                let text = repo
+                    .version_text(program_id, &seen.source_version_id)
+                    .await?;
+                versions.insert(seen.source_version_id.clone(), text);
+            }
+            let slice = versions
+                .get(&seen.source_version_id)
+                .and_then(Option::as_deref)
+                .and_then(|text| text.get(seen.start_byte..seen.end_byte));
+            if let Some(text) = slice {
+                texts.insert(
+                    key(seen),
+                    PassageText {
+                        text: text.to_owned(),
+                        retrieval_kind: SAVED_VERSION.into(),
+                    },
+                );
+            }
+        }
+        Ok(texts)
     }
 
     /// Every version of the course's sources, deleted ones included: a card
@@ -155,12 +258,75 @@ impl ClaimReviewService {
     }
 }
 
+/// A compared passage as a card shows it.
+fn evidence_passage(
+    source_version_id: &str,
+    text: &str,
+    (start_byte, end_byte): (usize, usize),
+    retrieval_kind: &str,
+    sources: &HashMap<String, SourceFacts>,
+) -> ClaimEvidencePassageDto {
+    let facts = sources.get(source_version_id);
+    ClaimEvidencePassageDto {
+        passage: LearningEvidencePassageDto {
+            source_version_id: source_version_id.into(),
+            title: facts.map(|facts| facts.title.clone()).unwrap_or_default(),
+            url: facts.and_then(|facts| facts.url.clone()),
+            text: text.into(),
+            start_byte,
+            end_byte,
+            retrieval_kind: retrieval_kind.into(),
+        },
+        added_by: facts.map(|facts| facts.added_by),
+    }
+}
+
+/// One checker's column of a card: its latest verdict and what it compared.
+fn checker_verdict(
+    entry: &ClaimLedgerEntry,
+    verifier: bool,
+    sources: &HashMap<String, SourceFacts>,
+    texts: &HashMap<PassageKey, PassageText>,
+) -> Option<CheckerVerdictDto> {
+    let (check, at) = latest_check(entry, verifier)?;
+    let quoted_source = match &check.result {
+        CheckResult::Supported {
+            source_version_id, ..
+        } => sources
+            .get(source_version_id)
+            .map(|facts| facts.reference(source_version_id)),
+        CheckResult::Failed { .. } => None,
+    };
+    Some(CheckerVerdictDto {
+        checker: (&check.checker).into(),
+        result: CheckResultDto::from(&check.result),
+        reason: check.reason.clone(),
+        quoted_source,
+        passages: check
+            .evidence
+            .iter()
+            .filter_map(|seen| {
+                let found = texts.get(&key(seen))?;
+                Some(evidence_passage(
+                    &seen.source_version_id,
+                    &found.text,
+                    (seen.start_byte, seen.end_byte),
+                    &found.retrieval_kind,
+                    sources,
+                ))
+            })
+            .collect(),
+        at,
+    })
+}
+
 /// One claim card.
 fn item(
     entry: &ClaimLedgerEntry,
     shown: &[ShownPassage],
     sources: &HashMap<String, SourceFacts>,
     titles: &[String],
+    texts: &HashMap<PassageKey, PassageText>,
 ) -> ClaimReviewItemDto {
     let location = entry.location();
     let reference = |id: &String| sources.get(id).map(|facts| facts.reference(id));
@@ -234,19 +400,13 @@ fn item(
         evidence: shown
             .iter()
             .map(|passage| {
-                let facts = sources.get(&passage.source_version_id);
-                ClaimEvidencePassageDto {
-                    passage: LearningEvidencePassageDto {
-                        source_version_id: passage.source_version_id.clone(),
-                        title: facts.map(|facts| facts.title.clone()).unwrap_or_default(),
-                        url: facts.and_then(|facts| facts.url.clone()),
-                        text: passage.text.clone(),
-                        start_byte: passage.start_byte,
-                        end_byte: passage.end_byte,
-                        retrieval_kind: passage.retrieval_kind.clone(),
-                    },
-                    added_by: facts.map(|facts| facts.added_by),
-                }
+                evidence_passage(
+                    &passage.source_version_id,
+                    &passage.text,
+                    (passage.start_byte, passage.end_byte),
+                    &passage.retrieval_kind,
+                    sources,
+                )
             })
             .collect(),
         supporting_quote,
@@ -262,6 +422,8 @@ fn item(
             .map(Into::into)
             .collect(),
         history: entry.events().iter().map(ClaimEventDto::from).collect(),
+        local_check: checker_verdict(entry, false, sources, texts),
+        verifier_check: checker_verdict(entry, true, sources, texts),
     }
 }
 

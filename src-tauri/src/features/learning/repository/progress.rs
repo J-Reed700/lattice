@@ -281,4 +281,21 @@ impl LearningRepository {
             coverage,
         })
     }
+
+    /// Each question's answer explanation in `lesson_id`, by question id:
+    /// the part of a published lesson only its answer key holds.
+    pub async fn answer_explanations(
+        &self,
+        lesson_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let rows = sqlx::query("SELECT q.id,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id WHERE q.lesson_id=?")
+            .bind(lesson_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get("id"), row.get("explanation")))
+            .collect())
+    }
 }

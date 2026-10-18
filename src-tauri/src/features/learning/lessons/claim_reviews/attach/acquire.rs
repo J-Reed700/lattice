@@ -4,7 +4,7 @@
 //! a passage of a source already saved. Evidence the course already holds
 //! is reused, never saved twice.
 
-use lattice_core::application::ports::ReferenceSnapshot;
+use lattice_core::application::ports::{ReferenceSnapshot, ReferenceSnapshotPort, WebServiceTrait};
 use lattice_core::domain::learning::claim_review::{Provenance, SourceAddedBy};
 use lattice_core::shared::error::{AppError, Result};
 
@@ -102,7 +102,13 @@ pub(super) async fn acquire(
             source.span = Some((*start_byte, *end_byte));
             Ok(Acquired::Saved(source))
         }
-        Evidence::Link { url } => link(deps, &repo, program_id, url).await,
+        Evidence::Link { url } => {
+            let capture = PageCapture {
+                web: deps.web,
+                snapshots: deps.snapshots,
+            };
+            link(&capture, &repo, program_id, url, SourceAddedBy::User).await
+        }
         Evidence::Document { document_id } => document(deps, &repo, program_id, document_id)
             .await
             .map(Acquired::Saved),
@@ -112,18 +118,46 @@ pub(super) async fn acquire(
     }
 }
 
+/// What reading and freezing a page needs.
+pub(crate) struct PageCapture<'a> {
+    pub web: &'a dyn WebServiceTrait,
+    pub snapshots: &'a dyn ReferenceSnapshotPort,
+}
+
+/// Saves the page at `url` as a source of the course added by `added_by`
+/// (a source the course already holds at that address or with that text is
+/// reused) and requests its frozen copy: the user's link (§5.4) and a page
+/// the Verifier fetches (§14.5) take the same path. `Err` inside says why
+/// the page could not be saved; nothing was.
+pub(crate) async fn capture_page(
+    capture: &PageCapture<'_>,
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    url: &str,
+    added_by: SourceAddedBy,
+) -> Result<std::result::Result<SavedSource, AttachFailureDto>> {
+    let repo = LearningSourceLibraryRepository::new(pool.clone());
+    Ok(
+        match link(capture, &repo, program_id, url, added_by).await? {
+            Acquired::Saved(source) => Ok(source.saved),
+            Acquired::NotSaved(failure) => Err(failure),
+        },
+    )
+}
+
 async fn link(
-    deps: &AttachDeps<'_>,
+    capture: &PageCapture<'_>,
     repo: &LearningSourceLibraryRepository,
     program_id: &str,
     raw_url: &str,
+    added_by: SourceAddedBy,
 ) -> Result<Acquired> {
     let url = web_source_url(raw_url)?;
     let provenance = Provenance::Link { url: url.clone() };
     let mut source = match repo.saved_web_source(program_id, &url).await? {
         Some(saved) => acquired(saved, provenance, true),
         None => {
-            let page = match deps.web.fetch_reference_content(&url).await {
+            let page = match capture.web.fetch_reference_content(&url).await {
                 Ok(page) => page,
                 Err(error) => {
                     return Ok(Acquired::NotSaved(AttachFailureDto::from_fetch_error(
@@ -173,19 +207,20 @@ async fn link(
                     },
                     captured,
                     hash,
+                    added_by,
                 )
                 .await?;
                 acquired(saved, provenance, false)
             }
         }
     };
-    source.snapshot = freeze(deps, repo, program_id, &source.saved).await?;
+    source.snapshot = freeze(capture.snapshots, repo, program_id, &source.saved).await?;
     Ok(Acquired::Saved(source))
 }
 
 /// The frozen copy of a saved page: kept already, ready now, or queued.
 async fn freeze(
-    deps: &AttachDeps<'_>,
+    snapshots: &dyn ReferenceSnapshotPort,
     repo: &LearningSourceLibraryRepository,
     program_id: &str,
     saved: &SavedSource,
@@ -196,7 +231,7 @@ async fn freeze(
     let Some(url) = saved.url.as_deref() else {
         return Ok(SnapshotNoteDto::NotApplicable);
     };
-    Ok(match deps.snapshots.request(url, false).await {
+    Ok(match snapshots.request(url, false).await {
         Ok(ReferenceSnapshot::Ready { sha256 }) => {
             repo.link_snapshot(program_id, &saved.version_id, &sha256)
                 .await?;
@@ -256,6 +291,7 @@ async fn document(
         },
         captured,
         hash,
+        SourceAddedBy::User,
     )
     .await?;
     Ok(acquired(saved, provenance, false))
@@ -308,6 +344,7 @@ async fn text_source(
         },
         captured,
         hash,
+        SourceAddedBy::User,
     )
     .await?;
     Ok(acquired(saved, Provenance::PastedText, false))
@@ -322,7 +359,7 @@ struct Capture<'a> {
     freshness: LearningSourcePolicy,
 }
 
-/// Saves a new source the user added and reads it back as saved.
+/// Saves a new source and reads it back as saved.
 async fn save(
     repo: &LearningSourceLibraryRepository,
     program_id: &str,
@@ -330,6 +367,7 @@ async fn save(
     capture: Capture<'_>,
     captured: CapturedLearningSource,
     hash: String,
+    added_by: SourceAddedBy,
 ) -> Result<SavedSource> {
     repo.preflight_new_source(program_id, &ids.source_id, &ids.version_id)
         .await?;
@@ -347,7 +385,7 @@ async fn save(
         },
         captured,
         hash,
-        SourceAddedBy::User,
+        added_by,
     )
     .await?;
     repo.saved_version(program_id, &ids.version_id)

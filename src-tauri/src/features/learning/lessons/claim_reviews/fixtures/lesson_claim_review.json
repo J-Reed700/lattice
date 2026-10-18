@@ -151,7 +151,37 @@
             }
           }
         }
-      ]
+      ],
+      "localCheck": {
+        "checker": {
+          "role": "local",
+          "model": "qwen3.5-27b"
+        },
+        "result": {
+          "verdict": "failed",
+          "kind": {
+            "kind": "contradicted"
+          }
+        },
+        "reason": "The passage gives 99.97 °C at one atmosphere.",
+        "quotedSource": null,
+        "passages": [
+          {
+            "passage": {
+              "sourceVersionId": "v1",
+              "title": "Thermodynamics, ch. 4",
+              "url": "https://example.org/thermo",
+              "text": "At one atmosphere, pure water boils at 99.97 °C.",
+              "startByte": 120,
+              "endByte": 184,
+              "retrievalKind": "vector"
+            },
+            "addedBy": "user"
+          }
+        ],
+        "at": 1760000000001
+      },
+      "verifierCheck": null
     },
     {
       "claimId": "claim-2",
@@ -201,7 +231,41 @@
         "unconfirm",
         "undo"
       ],
-      "history": []
+      "history": [],
+      "localCheck": null,
+      "verifierCheck": {
+        "checker": {
+          "role": "verifier",
+          "model": "anthropic/claude-x"
+        },
+        "result": {
+          "verdict": "supported",
+          "sourceVersionId": "v1",
+          "supportingQuote": "pure water boils at 99.97 °C"
+        },
+        "reason": "The passage states the figure.",
+        "quotedSource": {
+          "sourceVersionId": "v1",
+          "title": "Thermodynamics, ch. 4",
+          "url": "https://example.org/thermo",
+          "addedBy": "user"
+        },
+        "passages": [
+          {
+            "passage": {
+              "sourceVersionId": "v1",
+              "title": "Thermodynamics, ch. 4",
+              "url": "https://example.org/thermo",
+              "text": "At one atmosphere, pure water boils at 99.97 °C.",
+              "startByte": 120,
+              "endByte": 184,
+              "retrievalKind": "vector"
+            },
+            "addedBy": "user"
+          }
+        ],
+        "at": 1760000400000
+      }
     }
   ]
 }

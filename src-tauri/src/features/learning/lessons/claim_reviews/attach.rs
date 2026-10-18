@@ -31,6 +31,7 @@ use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
 use self::acquire::Acquired;
+pub(crate) use self::acquire::{capture_page, PageCapture};
 use self::report::{ClaimAttachReportDto, OtherClaimsCheckedDto};
 use super::checker_examples::CheckerExamples;
 use super::dto::ClaimActionRequestDto;

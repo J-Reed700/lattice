@@ -54,6 +54,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
                 Box::pin(async move { Err(error) })
             }),
             research_web: None,
+            verifier: None,
         };
         run_attempt(worker, &job.id).await.unwrap();
         let stopped = repo.job(&job.id).await.unwrap();
@@ -437,6 +438,7 @@ async fn run_with_model(
         load_library: Arc::new(|| Box::pin(async { None })),
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
         research_web: None,
+        verifier: None,
     };
     run_attempt(worker, &job.id).await.unwrap();
     repo.job(&job.id).await.unwrap()
