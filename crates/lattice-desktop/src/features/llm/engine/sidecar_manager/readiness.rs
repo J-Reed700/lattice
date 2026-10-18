@@ -122,7 +122,35 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
             "q8_0".to_string(),
         ]);
     }
+    // Beside MTP drafting, not instead of it: the pinned server drafts and
+    // sees at once (upstream enabled it in #19493, closing #19712). A build
+    // that refuses is reported by `refused_combination`, never worked around.
+    if let Some(projector) = &config.projector_path {
+        args.extend([
+            "--mmproj".to_string(),
+            projector.to_string_lossy().to_string(),
+        ]);
+    }
     args
+}
+
+/// The line an older llama-server prints when asked to draft and see at once.
+const DRAFT_AND_SEE_REFUSAL: &str = "speculative decoding is not supported with multimodal";
+
+/// A start the server refused because it cannot run two options together,
+/// told as the settings to change rather than retried: every fallback
+/// attempt asks for the same two options and is refused the same way.
+/// Nothing is switched off for the user.
+pub(super) fn refused_combination(output: &[String]) -> Option<AttemptError> {
+    output
+        .iter()
+        .any(|line| line.to_lowercase().contains(DRAFT_AND_SEE_REFUSAL))
+        .then(|| AttemptError {
+            kind: AttemptFailure::Refused,
+            message: "This llama-server cannot draft and see at once. Turn off either Vision \
+                      or Speculative decoding for this model in Settings → Models."
+                .to_string(),
+        })
 }
 
 /// Mint a bearer token for one sidecar process.

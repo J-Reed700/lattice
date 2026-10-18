@@ -1,10 +1,10 @@
 //! Starting the bundled `llama-server` as the OCR server.
 //!
 //! This is deliberately not the chat sidecar manager. The chat server is
-//! resident for hours, shared between roles and tuned for long contexts and
-//! speculative decoding, which `--mmproj` rules out. The OCR server is a
-//! two-gigabyte process wanted for a minute at a time: spawn, wait for
-//! `/health`, kill. What it shares with the chat sidecar is the binary and the
+//! resident for hours, shared between roles and sized for long contexts; it
+//! may load its own projector and draft beside it. The OCR server serves a
+//! different model with its own small window, and is a two-gigabyte process
+//! wanted for a minute at a time: spawn, wait for `/health`, kill. What it shares with the chat sidecar is the binary and the
 //! safety rules: loopback only, a per-process bearer key passed in the
 //! environment, no web UI.
 

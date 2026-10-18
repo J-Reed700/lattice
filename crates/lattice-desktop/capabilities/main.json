@@ -86,6 +86,7 @@
     "download:allow-clear-completed-downloads",
     "download:allow-get-download-status",
     "download:allow-list-downloads",
+    "download:allow-start-vision-projector-download",
     "search:allow-search-documents",
     "search:allow-search-fast",
     "search:allow-semantic-search",

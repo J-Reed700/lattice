@@ -804,3 +804,66 @@ async fn test_executor_records_calls_and_syncs_custom_tools() {
     assert!(!result.success);
     assert_eq!(result.error_code.as_deref(), Some("chat_only"));
 }
+
+/// `web_search` hands the model every provider's outcome, so a provider that
+/// was challenged or paused is named in the result rather than missing.
+#[tokio::test]
+async fn web_search_result_carries_every_providers_outcome() {
+    use lattice_core::application::contracts::web::FinderOutcomeDto;
+
+    let web = Arc::new(MockWebService::new());
+    web.set_search_results(vec![
+        lattice_core::application::contracts::web::WebSearchResult {
+            title: "Tokio".into(),
+            url: "https://tokio.rs/".into(),
+            snippet: String::new(),
+            published_date: None,
+            source: Some("bing_html".into()),
+        },
+    ]);
+    web.set_search_outcomes(vec![
+        FinderOutcomeDto {
+            finder: "duckduckgo".into(),
+            result: "skipped".into(),
+            leads: 0,
+            elapsed_ms: 0,
+            cause: Some("paused until 14:02:00 UTC (bot challenge)".into()),
+        },
+        FinderOutcomeDto {
+            finder: "bing_html".into(),
+            result: "answered".into(),
+            leads: 1,
+            elapsed_ms: 640,
+            cause: None,
+        },
+    ]);
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: Arc::new(MockFunctionRegistry::new()) as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: Arc::new(MockEmbeddingService::default()) as Arc<dyn EmbeddingPort>,
+        search_service: Arc::new(MockSearchService::new()) as Arc<dyn SearchServiceTrait>,
+        bm25_service: Arc::new(MockBM25Search::new()) as Arc<dyn BM25SearchTrait>,
+        hybrid_search: empty_hybrid_search(),
+        document_repository: Arc::new(DddMockDocRepo::new())
+            as Arc<dyn lattice_core::application::ports::DocumentRepository>,
+        chunk_repository: Arc::new(MockChunkRepository::new()) as Arc<dyn ChunkRepositoryPort>,
+        tag_service: Arc::new(MockTagService::new()) as Arc<dyn TagServiceTrait>,
+        favorites_repository: Arc::new(MockFavoritesRepository::new()),
+        recent_documents_repository: Arc::new(MockRecentDocumentsRepository::new()),
+        file_storage: Arc::new(MockFileStoragePort) as Arc<dyn FileStoragePort>,
+        web_service: web as Arc<dyn WebServiceTrait>,
+    });
+
+    let result = executor
+        .handle_web_search(&serde_json::json!({ "query": "tokio runtime" }))
+        .await
+        .unwrap();
+
+    let data = result.data.expect("search data");
+    assert_eq!(data["outcomes"][0]["finder"], "duckduckgo");
+    assert_eq!(data["outcomes"][0]["result"], "skipped");
+    assert_eq!(
+        data["outcomes"][0]["cause"],
+        "paused until 14:02:00 UTC (bot challenge)"
+    );
+    assert_eq!(data["outcomes"][1]["leads"], 1);
+}

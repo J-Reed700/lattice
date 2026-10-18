@@ -301,7 +301,8 @@ impl SidecarManager {
                 "Sidecar startup failed; killing child to avoid zombie"
             );
             let output = tail.lock().snapshot();
-            return Err(startup_failure(binary, &end, &output, signals.facts()));
+            return Err(refused_combination(&output)
+                .unwrap_or_else(|| startup_failure(binary, &end, &output, signals.facts())));
         }
 
         // Recorded explicitly so a mismatch between what the sidecar runs and

@@ -56,6 +56,7 @@ fn web_capture(truncated: bool, url: &str, content: &str) -> Arc<ResearchWeb> {
             fetch_time_ms: 1.,
             content_type: None,
             from_cache: false,
+            read_via: Default::default(),
         },
     );
     Arc::new(ResearchWeb(web))
@@ -255,6 +256,7 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
                 fetch_time_ms: 1.,
                 content_type: None,
                 from_cache: false,
+                read_via: Default::default(),
             },
         );
     }

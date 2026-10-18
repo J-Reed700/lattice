@@ -382,6 +382,7 @@ fn main() {
                     "clear_completed_downloads",
                     "get_download_status",
                     "list_downloads",
+                    "start_vision_projector_download",
                 ]),
             )
             .plugin(

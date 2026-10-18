@@ -83,6 +83,9 @@ pub(super) enum AttemptFailure {
     /// later attempt, on any build and with any offload, reads the same bytes
     /// and fails the same way, so this alone is remembered against the file.
     Unsupported,
+    /// The server refused two options asked for together; the user's
+    /// settings, not the file, decide whether the next start works.
+    Refused,
 }
 
 #[derive(Debug)]
@@ -107,6 +110,7 @@ impl AttemptError {
             }
             AttemptFailure::Fatal => LLMError::Other(self.message),
             AttemptFailure::Unsupported => LLMError::ModelUnsupported(self.message),
+            AttemptFailure::Refused => LLMError::InvalidConfig(self.message),
         }
     }
 
@@ -142,9 +146,10 @@ pub(super) fn next_attempt(
         gpu_offload: false,
     });
     match (failed.binary, failure) {
-        (SidecarBinary::Cpu, _) | (_, AttemptFailure::Fatal) | (_, AttemptFailure::Unsupported) => {
-            None
-        }
+        (SidecarBinary::Cpu, _)
+        | (_, AttemptFailure::Fatal)
+        | (_, AttemptFailure::Unsupported)
+        | (_, AttemptFailure::Refused) => None,
         // A bind collision that survived its retries is not fixed by a
         // different build or a smaller context.
         (_, AttemptFailure::Retry) => None,

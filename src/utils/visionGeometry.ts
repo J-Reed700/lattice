@@ -17,6 +17,9 @@ export type VisionDeclaration = VisionDeclarationDto;
 /** The backend's `VisionPreset`, in its serde names. No command carries it, so bindings omit it. */
 export type VisionPreset = 'qwen3_vl' | 'qwen25_vl' | 'gemma_siglip' | 'open_ai' | 'anthropic' | 'gemini';
 
+/** The catalog capability tag of a model that can see, beside `tool-calling`. */
+export const VISION_CAPABILITY = 'vision';
+
 export interface FittedPicture {
   width: number;
   height: number;

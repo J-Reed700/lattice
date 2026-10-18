@@ -185,4 +185,24 @@ describe('LocalModelConfigModal', () => {
     expect(onClose).toHaveBeenCalled();
     expect(onLoadModel).toHaveBeenCalled();
   });
+
+  it('keeps the vision switch, which the model row owns, when it saves', async () => {
+    const user = userEvent.setup();
+    mockSettings.llm.localModelConfigs = { 'qwen2.5-coder-7b': { contextLength: null, vision: false } };
+
+    render(
+      <TooltipProvider>
+        <LocalModelConfigModal isOpen onClose={vi.fn()} model={sampleModel()} />
+      </TooltipProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(mockUpdateSettings).toHaveBeenCalledWith({
+      category: 'llm',
+      updates: expect.objectContaining({
+        localModelConfigs: { 'qwen2.5-coder-7b': expect.objectContaining({ vision: false }) },
+      }),
+    });
+    mockSettings = makeAppSettings();
+  });
 });

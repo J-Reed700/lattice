@@ -5,6 +5,10 @@
 use crate::features::download::commands::{
     self, DownloadCommandState, DownloadStatusResponse, StartDownloadRequest,
 };
+use crate::features::download::vision_projector::{
+    start_vision_projector_download_impl, VisionProjectorDownloadDto,
+};
+use crate::interfaces::di::Container;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -108,6 +112,21 @@ pub async fn list_downloads(
         .map_err(ApiError::from)
 }
 
+/// Start downloading the catalog vision projector for the downloaded model
+/// `id`, beside its weights. Follow it like any download, by the returned id.
+#[tauri::command]
+#[specta::specta]
+pub async fn start_vision_projector_download(
+    container: State<'_, Container>,
+    id: String,
+) -> Result<VisionProjectorDownloadDto, ApiError> {
+    let manager = container.download_manager().map_err(ApiError::from)?;
+    let repository = container.downloaded_models();
+    start_vision_projector_download_impl(manager.as_ref(), repository.as_ref(), &id)
+        .await
+        .map_err(ApiError::from)
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("download")
         .invoke_handler(tauri::generate_handler![
@@ -120,6 +139,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             clear_completed_downloads,
             get_download_status,
             list_downloads,
+            start_vision_projector_download,
         ])
         .build()
 }

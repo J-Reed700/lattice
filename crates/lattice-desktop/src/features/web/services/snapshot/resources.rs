@@ -24,7 +24,7 @@ use super::{
     MAX_FAVICON_BYTES, MAX_IMPORT_DEPTH, MAX_RESOURCES, MAX_RESOURCE_BYTES, MAX_TOTAL_BYTES,
     RESOURCE_CONCURRENCY, RESOURCE_TIMEOUT,
 };
-use crate::features::web::services::stealth::{self, BrowserProfile};
+use crate::features::web::services::identity::{self, BrowserProfile};
 use crate::features::web::services::web::{fetchable_url, validate_url_resolved};
 use crate::features::web::traits::page_snapshot::{
     CaptureProgress, DataUri, DroppedResource, ProgressSink, ResourceReport,
@@ -173,7 +173,7 @@ async fn download(
 ) -> ResolvedResource {
     let response = match client
         .get(url)
-        .headers(stealth::browser_headers(profile, Some(referer)))
+        .headers(identity::browser_headers(profile, Some(referer)))
         .header(ACCEPT, kind.accept())
         .send()
         .await
