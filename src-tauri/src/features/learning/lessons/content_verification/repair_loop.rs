@@ -194,7 +194,9 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     claim_ledger::Audited::Hold(stop_reason) => {
                         ledger.sync().await?;
                         let claims = ledger.awaiting_user();
-                        return Err(hold(&mut ledger, &raw, claims, stop_reason).await?);
+                        return Err(
+                            hold(&mut ledger, &raw, claims, stop_reason.map(|stop| *stop)).await?,
+                        );
                     }
                 }
                 return Ok((raw, ledger.bind(report)));

@@ -21,8 +21,9 @@ pub(in crate::features::learning) enum Audited {
     /// The Verifier agrees with every claim: the lesson may publish.
     Agreed,
     /// The lesson waits for the user: claims the Verifier disputes, or the
-    /// stop that kept the audit from finishing.
-    Hold(Option<StopReason>),
+    /// stop that kept the audit from finishing (boxed: a stop is far larger
+    /// than the other variants).
+    Hold(Option<Box<StopReason>>),
 }
 
 impl ClaimLedger {
@@ -67,7 +68,7 @@ impl ClaimLedger {
             LessonAudit::Off => Audited::Off,
             LessonAudit::Refused(stop) => {
                 tracing::info!(lesson_id = %sink.lesson_id, code = stop.code(), "lesson.audit.refused");
-                Audited::Hold(Some(stop.stop_reason(None, now())))
+                Audited::Hold(Some(Box::new(stop.stop_reason(None, now()))))
             }
             LessonAudit::Ran { outcome, web_note } => {
                 let summary = outcome.summary();
@@ -86,10 +87,10 @@ impl ClaimLedger {
                     match outcome {
                         AuditOutcome::Deferred { error, .. } => return Err(error),
                         AuditOutcome::Stopped { stop, summary } => {
-                            Audited::Hold(Some(stop.stop_reason(
+                            Audited::Hold(Some(Box::new(stop.stop_reason(
                                 Some((summary.batches_done, summary.batches_planned)),
                                 now(),
-                            )))
+                            ))))
                         }
                         AuditOutcome::Completed(_) => Audited::Hold(None),
                     }
