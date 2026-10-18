@@ -146,3 +146,23 @@ Feature edges 82 → 61 (−21), in two commits. `infrastructure-imports-feature
 **Left in scope: file→indexing 4.** `features/file/plugin/commands.rs` is indexing's IPC adapter, and `bin/export_bindings/main.rs:278-297` pins its paths, so the commands cannot move without editing that file. What remains is the `indexing::commands` alias and three response types (`IndexFileResponseDto`, `IndexingStatsDto`, `RenameDocumentResponseDto`). Moving those types to core would lower the count, but the edge would stay. It closes when the commands move to an indexing plugin together with the bindings list.
 
 The other 57 references belong to PR 6 (download, model management, llm, embedding, settings) or to conversation.
+
+## 8. Closing note (PR 6d, 2026-10-17)
+
+`feature-edge` is 0, down from 297 references across 54 pairs when this plan was written, and is now held at zero (§5.5): the rule has no baseline, and any edge outside the allowlist fails, `--write-baseline` included. `infrastructure-imports-feature`, `feature-cycle`, `container-import`, `composition-root-import`, `raw-spawn`, `global-state` and `file-length` are all 0. How PR 6 got there is in `docs/design/2026-10-17-feature-graph-pr6-design.md`.
+
+Left deliberately:
+
+- **3 allowed edges, 7 references**, in `scripts/rust-architecture-check/feature-graph.txt`: batch→indexing 4 and batch→web 2 (batch drives indexing's `IndexFileUseCase` and web's `IngestWebUrlUseCase` once per queued item) and compare→search 1 (compare's `ScopedLibrarySearch` port has one adapter over search's hybrid use case). Each is one feature built on a lower-level one; a port would add indirection without decoupling anything.
+- **10 feature re-exports in 8 files**, still ratcheted by `feature-reexport`. No other feature imports through them any more (that would be a feature edge); what is left is the feature's own files, its tests and the interfaces layer. Rewriting those imports is mechanical and was out of PR 6's scope.
+
+| File | Re-exports | Why it is still there |
+|---|---|---|
+| `conversation/chat/ports.rs` | `SettingsDto`, `FetchUrlContentOutput` (`pub(crate)`) | The chat ports name them in their signatures; `chat/turn/prepare.rs` imports `SettingsDto` through the ports module. |
+| `favorites/dto.rs` | `FavoriteRecord as FavoriteDto` | Keeps favorites' DTO name for its mapper and a function-calling test. |
+| `recent/dto.rs` | `RecentDocumentRecord as RecentDocumentDto` | The same, for recent's mapper and a function-calling test. |
+| `file/commands.rs` | `IndexedFolder`, `IndexingActivity` | The file library commands' response types; `file/plugin/commands.rs` names them as `file_commands::…`. |
+| `indexing/outcome.rs` | `IndexingOutcome` | A compatibility module that `indexing/mod.rs` declares. |
+| `llm/engine/models.rs` | `ModelFormat` | llm's engine model types; `engine/factory.rs` and the download use case's `metadata.rs` import it from there. |
+| `model_management/domain.rs` | `selection::*` | Model management's commands and `interfaces/dto/model_catalog_dto.rs` name the selection types through it. |
+| `settings/dto/mod.rs` | `contracts::settings::*` | 18 settings files and `interfaces/settings_side_effects.rs` import the settings contracts through it. |

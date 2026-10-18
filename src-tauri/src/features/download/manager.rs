@@ -6,8 +6,6 @@
 //!
 //! This module is a façade over focused submodules:
 //!
-//! - [`types`] — `DownloadRequest`, `DownloadEvent` and the `DownloadManager`
-//!   port other layers depend on.
 //! - [`state`] — `DownloadManagerService` and its bookkeeping (active table,
 //!   pending queue, auth tokens, event channel, stop signal).
 //! - [`queue`] — draining the pending queue while slots are free.
@@ -16,6 +14,8 @@
 //! - [`validation`] — resume arithmetic and downloaded-file checks.
 //! - [`operations`] — the `DownloadManager` implementation callers drive.
 //!
+//! The port it implements, with `DownloadRequest`, `DownloadBatchItem` and
+//! `DownloadEvent`, lives in `lattice_core::application::ports::download_manager`.
 //! Domain types (`DownloadSession`, `DownloadError`, …) live in
 //! `lattice_core::domain::download`; UI-facing events live in
 //! `crate::features::download::events`.
@@ -24,7 +24,6 @@ mod operations;
 mod queue;
 mod state;
 mod task;
-mod types;
 mod validation;
 
 #[cfg(test)]
@@ -35,4 +34,3 @@ mod tests;
 mod pause_resume_tests;
 
 pub use state::DownloadManagerService;
-pub use types::{DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest};

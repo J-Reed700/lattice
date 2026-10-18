@@ -76,7 +76,7 @@ pub async fn activate_embedding(container: &Container, dir: &Path, model_id: &st
         "qwen3".to_owned(),
         None,
     )?;
-    container.downloaded_model_repository().save(&model).await?;
+    container.downloaded_models().save(&model).await?;
     set_active_embedding_model_impl(container, model_id).await?;
     let embedding = container.get_or_load_embedding().await?;
     Ok(json!({
@@ -100,7 +100,7 @@ pub async fn assign_utility(container: &Container, model_id: &str, served_as: &s
         "qwen35".to_owned(),
         None,
     )?;
-    container.downloaded_model_repository().save(&model).await?;
+    container.downloaded_models().save(&model).await?;
     set_active_utility_model_impl(container, model_id).await?;
     let loaded = container.get_or_load_utility_llm().await?;
     let name = loaded.as_ref().map(|llm| llm.model_name().to_owned());

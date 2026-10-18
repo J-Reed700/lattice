@@ -5,9 +5,8 @@
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
-use crate::features::download::manager::{
-    DownloadManager, DownloadManagerService, DownloadRequest,
-};
+use crate::features::download::manager::DownloadManagerService;
+use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
 use lattice_core::domain::download::DownloadState;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -70,7 +70,7 @@ impl IndexingModule {
         )?;
         let ocr = crate::features::ocr::di::build(
             Arc::new(
-                crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
+                crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
                     db_pool.clone(),
                 ),
             ),

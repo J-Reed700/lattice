@@ -209,20 +209,6 @@ pub async fn test_ollama_connection(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn test_llama_cpp_connection(
-    request: lattice_core::application::contracts::settings::LlamaCppSettingsDto,
-) -> Result<TestOllamaConnectionResponse, ApiError> {
-    let models = crate::features::llm::llama_cpp::LlamaCppLlm::test_connection(&request)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(TestOllamaConnectionResponse {
-        endpoint: "/v1/chat/completions".into(),
-        models,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn test_custom_tool(
     request: TestCustomToolRequest,
 ) -> Result<TestCustomToolResponse, ApiError> {
@@ -636,7 +622,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_system_theme,
             validate_folder_path,
             test_ollama_connection,
-            test_llama_cpp_connection,
+            crate::interfaces::commands::model_setup::test_llama_cpp_connection,
             test_custom_tool,
             add_watch_folder,
             remove_watch_folder,

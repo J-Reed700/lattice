@@ -19,9 +19,9 @@ use candle_transformers::models::whisper::{quantized_model, Config};
 use tokenizers::Tokenizer;
 use tracing::info;
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
 use lattice_core::application::ports::transcription_port::{Transcript, TranscriptionPort};
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::with_autorelease_pool;
@@ -121,7 +121,7 @@ struct DecodeResult {
 
 /// Whisper-backed implementation of [`TranscriptionPort`].
 pub struct WhisperTranscriptionService {
-    models: DownloadedModelRepository,
+    models: Arc<dyn DownloadedModelRepository>,
     /// Admission control: exactly one transcription at a time, waiting in
     /// async-land rather than occupying blocking-pool threads.
     permits: Arc<tokio::sync::Semaphore>,
@@ -134,7 +134,10 @@ pub struct WhisperTranscriptionService {
 
 impl WhisperTranscriptionService {
     /// Build the service. Cheap: no file I/O, no model load.
-    pub fn new(models: DownloadedModelRepository, background: Arc<BackgroundTasks>) -> Self {
+    pub fn new(
+        models: Arc<dyn DownloadedModelRepository>,
+        background: Arc<BackgroundTasks>,
+    ) -> Self {
         Self {
             models,
             background,

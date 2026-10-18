@@ -7,6 +7,7 @@
 //! - `check_first_run_status_impl` - Check if first-run setup is needed
 //! - `download_default_embedding_model_impl` - Download and activate default model
 //! - `download_model_impl` - Download a catalog model by id
+//! - `test_llama_cpp_connection` - Reach a llama.cpp server and list its models
 //!
 //! # Gateway Pattern
 //!
@@ -15,10 +16,13 @@
 
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
+use crate::features::llm::llama_cpp::LlamaCppLlm;
+use crate::features::settings::plugin::TestOllamaConnectionResponse;
 use crate::interfaces::di::Container;
 use lattice_core::domain::download::DownloadOperationState;
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::ipc::ApiError;
 
 #[derive(Debug, serde::Serialize)]
 struct DownloadDefaultModelResponse {
@@ -39,7 +43,7 @@ pub async fn check_first_run_status_impl(
 ) -> std::result::Result<String, String> {
     tracing::info!("Command: check_first_run_status - ENTRY");
 
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
     // Pass the system_info probe so the chat recommendation is sized to the
     // user's actual RAM, not a one-size-fits-all small-tier default.
     let use_case =
@@ -245,6 +249,20 @@ pub async fn download_model_impl(
     Ok(response)
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn test_llama_cpp_connection(
+    request: lattice_core::application::contracts::settings::LlamaCppSettingsDto,
+) -> Result<TestOllamaConnectionResponse, ApiError> {
+    let models = LlamaCppLlm::test_connection(&request)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(TestOllamaConnectionResponse {
+        endpoint: "/v1/chat/completions".into(),
+        models,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,7 +309,7 @@ mod tests {
         let (container, _temp_dir) = create_test_container().await;
 
         // Resolve the repository from the container (proper DI) and run the use case.
-        let repository = (*container.downloaded_model_repository()).clone();
+        let repository = container.downloaded_models();
         let use_case = CheckFirstRunStatusUseCase::new(repository);
         let response = use_case.execute().await.unwrap();
 

@@ -8,11 +8,13 @@
 //! counted by the component's size, so a new cycle or a cycle that pulls in
 //! another feature fails exactly like a new reference does.
 //!
-//! `feature-graph.txt` allows a few feature edges outright, each with a
-//! reason: one feature built on a lower-level one (see `feature_graph`).
-//! Their references leave `feature-edge` but still feed the cycle check; the
-//! allowed edges must form no cycle, and one with no references left is
-//! STALE. `feature-reexport` counts the `use` items through which a feature
+//! `feature-edge` is held at zero: it has no baseline, so every reference
+//! from one feature into another fails, `--write-baseline` included, unless
+//! `feature-graph.txt` allows its edge. That file allows a few edges outright,
+//! each with a reason: one feature built on a lower-level one (see
+//! `feature_graph`). Their references leave `feature-edge` but still feed the
+//! cycle check; the allowed edges must form no cycle, and one with no
+//! references left is STALE. `feature-reexport` counts the `use` items through which a feature
 //! hands out core's or another feature's items, since every caller that
 //! imports through one becomes a feature edge of its own.
 //!
@@ -65,6 +67,9 @@ const RULES: [&str; 9] = [
     GLOBAL_STATE,
     FILE_LENGTH,
 ];
+/// Rules held at zero. They never appear in the baseline, so any finding
+/// fails, even while the baseline is being written.
+const ZERO_RULES: [&str; 1] = [FEATURE_EDGE];
 
 const RAW_SPAWNS: [&[&str]; 4] = [
     &["tokio", "spawn"],
@@ -127,8 +132,10 @@ const HEADER: &str = "\
 # Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
 # then split it by responsibility.
 #
-# A feature edge that is one feature built on a lower-level one may instead be
-# allowed in scripts/rust-architecture-check/feature-graph.txt, one
+# feature-edge is held at zero and never appears here: a reference from one
+# feature into another fails. Depend on a core port or move the code; only an
+# edge that is one feature built on a lower-level one may instead be allowed in
+# scripts/rust-architecture-check/feature-graph.txt, one
 # `allow features::<a> features::<b>  # <reason>` line each. Its references
 # leave feature-edge but still count toward feature-cycle. To see every site
 # of a rule, baselined or not:
@@ -137,7 +144,8 @@ const HEADER: &str = "\
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another,
-#                                                         except edges in feature-graph.txt
+#                                                         except edges in feature-graph.txt; held at
+#                                                         zero, so never listed here
 #   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
 #                                                         its strongly connected component
 #   feature-reexport <file> <lattice_core|features::b>    a `use` in a feature, visible outside it,
@@ -1193,6 +1201,12 @@ pub fn parse_baseline(text: &str) -> Result<Counts, String> {
         if !RULES.contains(&rule) {
             return Err(format!("baseline line {}: unknown rule {rule}", index + 1));
         }
+        if ZERO_RULES.contains(&rule) {
+            return Err(format!(
+                "baseline line {}: {rule} is held at zero and cannot be baselined",
+                index + 1
+            ));
+        }
         let count = count
             .parse::<usize>()
             .ok()
@@ -1210,10 +1224,10 @@ pub fn parse_baseline(text: &str) -> Result<Counts, String> {
 
 pub fn render_baseline(counts: &Counts) -> String {
     let mut text = HEADER.to_string();
-    for rule in RULES {
+    for rule in RULES.iter().filter(|rule| !ZERO_RULES.contains(rule)) {
         let lines: Vec<String> = counts
             .iter()
-            .filter(|(key, _)| key.rule == rule)
+            .filter(|(key, _)| key.rule == *rule)
             .map(|(key, count)| format!("{} {} {} {count}\n", key.rule, key.subject, key.target))
             .collect();
         if !lines.is_empty() {
@@ -1332,6 +1346,27 @@ fn check_feature_graph(current: &Current, path: &Path, failures: &mut usize) {
     }
 }
 
+/// Fails every entry of a rule held at zero, with its sites. Nothing is
+/// baselined for these rules, so a write reports them too.
+fn check_zero_rules(current: &Counts, found: &[Finding], failures: &mut usize) {
+    for (key, count) in current.iter().filter(|(key, _)| held_at_zero(key)) {
+        *failures += 1;
+        eprintln!(
+            "VIOLATION: {key}: {count} reference(s); {} is held at zero. Depend on a core \
+             port or move the code; only one feature built on a lower-level one may be \
+             allowed in feature-graph.txt",
+            key.rule
+        );
+        for finding in found.iter().filter(|finding| finding.key == *key) {
+            eprintln!("    at {}", finding.location);
+        }
+    }
+}
+
+fn held_at_zero(key: &Key) -> bool {
+    ZERO_RULES.contains(&key.rule.as_str())
+}
+
 pub fn check(
     roots: &[&Path],
     files: &Files,
@@ -1347,14 +1382,20 @@ pub fn check(
         allowed_counts,
         ..
     } = current_tree;
+    check_zero_rules(&current, &found, failures);
     if write {
         fs::write(baseline_path, render_baseline(&current))?;
         println!("Wrote {} ({}).", baseline_path.display(), summary(&current));
         return Ok(());
     }
     let baseline = read_baseline(baseline_path)?;
+    let ratcheted: Counts = current
+        .iter()
+        .filter(|(key, _)| !held_at_zero(key))
+        .map(|(key, &count)| (key.clone(), count))
+        .collect();
     let mut shrank = 0;
-    for (key, change) in compare(&baseline, &current) {
+    for (key, change) in compare(&baseline, &ratcheted) {
         *failures += 1;
         let cycle = key.rule == FEATURE_CYCLE;
         match change {
@@ -1444,6 +1485,8 @@ pub fn list(
         total += count;
         let status = if current.allowed_counts.contains_key(*key) {
             "allowed by feature-graph.txt".to_string()
+        } else if held_at_zero(key) {
+            "held at zero".to_string()
         } else {
             baseline
                 .get(*key)
@@ -2272,26 +2315,33 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             feature_graph: &feature_graph,
         };
 
-        let mut failures = 0;
-        check(&[&root], &files, true, &mut failures).unwrap();
+        // The two edges are held at zero, so every run fails them; only the
+        // cycle entries are ratcheted.
+        let mut writing = 0;
+        check(&[&root], &files, true, &mut writing).unwrap();
         let written = fs::read_to_string(&baseline).unwrap();
-        check(&[&root], &files, false, &mut failures).unwrap();
-        let clean = failures;
+        let mut recorded = 0;
+        check(&[&root], &files, false, &mut recorded).unwrap();
 
-        // A baseline that records the edges but not the cycle they form.
+        // A baseline that records nothing but its header: the cycle is missing.
         let without_cycles: String = written
             .lines()
             .filter(|line| !line.starts_with(FEATURE_CYCLE))
             .map(|line| format!("{line}\n"))
             .collect();
         fs::write(&baseline, without_cycles).unwrap();
-        check(&[&root], &files, false, &mut failures).unwrap();
+        let mut missing = 0;
+        check(&[&root], &files, false, &mut missing).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert!(written.contains("feature-cycle features::a features::b 2\n"));
         assert!(written.contains("feature-cycle features::b features::a 2\n"));
-        assert_eq!(clean, 0);
-        assert_eq!(failures, 2);
+        assert!(!written
+            .lines()
+            .any(|line| line.starts_with("feature-edge ")));
+        assert_eq!(writing, 2);
+        assert_eq!(recorded, 2);
+        assert_eq!(missing, 4);
     }
 
     #[test]
@@ -2392,6 +2442,13 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         assert!(parse_baseline("raw-spawn features/a.rs tokio::spawn 0").is_err());
         assert!(parse_baseline("raw-spawns features/a.rs tokio::spawn 1").is_err());
         assert!(parse_baseline("raw-spawn a b 1\nraw-spawn a b 2").is_err());
+        let edge = parse_baseline("feature-edge features::a features::b 1").unwrap_err();
+        assert!(edge.contains("held at zero"), "{edge}");
+        assert!(!render_baseline(&Counts::from([(
+            key(FEATURE_EDGE, "features::a", "features::b"),
+            1
+        )]))
+        .contains("feature-edge features::a"));
         assert_eq!(
             parse_baseline("global-state shared/runtime/background.rs REGISTRY 1").unwrap(),
             Counts::from([(
@@ -2464,6 +2521,13 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             .all(|finding| finding.key.rule != FEATURE_REEXPORT));
     }
 
+    /// An allowlist covering every edge of `graph_tree` but `c -> a`.
+    const LAYERED: &str = "\
+allow features::a features::b # a is built on b
+allow features::a features::c # a is built on c
+allow features::b features::c # b is built on c
+";
+
     /// A tree where `a` uses `b` and `c`, `b` uses `c`, and `c` uses `a`
     /// only when `back` is set.
     fn graph_tree(name: &str, back: bool) -> PathBuf {
@@ -2504,6 +2568,40 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
     }
 
     #[test]
+    fn feature_edges_are_held_at_zero_even_while_the_baseline_is_written() {
+        let root = graph_tree("zero", false);
+        let baseline = root.join("baseline.txt");
+        let feature_graph = root.join("feature-graph.txt");
+        let files = Files {
+            baseline: &baseline,
+            feature_graph: &feature_graph,
+        };
+        fs::write(&feature_graph, "allow features::a features::b # r\n").unwrap();
+        let mut writing = 0;
+        check(&[&root], &files, true, &mut writing).unwrap();
+        let written = fs::read_to_string(&baseline).unwrap();
+        let mut checking = 0;
+        check(&[&root], &files, false, &mut checking).unwrap();
+        // A hand-edited baseline cannot excuse an edge either.
+        fs::write(
+            &baseline,
+            format!("{written}feature-edge features::a features::c 1\n"),
+        )
+        .unwrap();
+        let mut excused = 0;
+        let excuse = check(&[&root], &files, false, &mut excused).map_err(|e| e.to_string());
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(!written
+            .lines()
+            .any(|line| line.starts_with("feature-edge ")));
+        // a -> c and b -> c, on both runs; the allowed a -> b is not counted.
+        assert_eq!(writing, 2);
+        assert_eq!(checking, 2);
+        assert!(excuse.unwrap_err().contains("held at zero"));
+    }
+
+    #[test]
     fn allowed_edges_leave_feature_edge_but_still_close_cycles() {
         let root = graph_tree("allowed", false);
         let baseline = root.join("baseline.txt");
@@ -2512,11 +2610,7 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             baseline: &baseline,
             feature_graph: &feature_graph,
         };
-        fs::write(
-            &feature_graph,
-            "allow features::a features::b  # a is built on b\n",
-        )
-        .unwrap();
+        fs::write(&feature_graph, LAYERED).unwrap();
         let mut failures = 0;
         check(&[&root], &files, true, &mut failures).unwrap();
         let written = fs::read_to_string(&baseline).unwrap();
@@ -2532,13 +2626,17 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         let cyclic = current(&[&root], &feature_graph).unwrap().counts;
         fs::remove_dir_all(&root).unwrap();
 
-        assert!(!written.contains("feature-edge features::a features::b"));
-        assert!(written.contains("feature-edge features::a features::c 1\n"));
-        assert!(written.contains("feature-edge features::b features::c 1\n"));
+        assert!(!written
+            .lines()
+            .any(|line| line.starts_with("feature-edge ")));
         assert_eq!(clean, 0);
         assert_eq!(
             cyclic.get(&key(FEATURE_EDGE, "features::a", "features::b")),
             None
+        );
+        assert_eq!(
+            cyclic.get(&key(FEATURE_EDGE, "features::c", "features::a")),
+            Some(&1)
         );
         assert_eq!(cyclic.get(&cycle("a", "b")), Some(&3));
         assert_eq!(cyclic.get(&cycle("c", "a")), Some(&3));
@@ -2560,21 +2658,20 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
                 .map(|()| failures)
                 .map_err(|e| e.to_string())
         };
-        let clean = run("allow features::a features::b # a is built on b\n");
-        // c -> a has no references, so it is stale as well as on a cycle
-        // with the other two.
-        let tangled = run("\
-allow features::a features::b # r
-allow features::b features::c # r
-allow features::c features::a # r
-");
-        let stale = run("allow features::b features::a # b was built on a\n");
+        let clean = run(LAYERED);
+        // c -> a has no references, so it is stale as well as putting all
+        // four allowed edges on one cycle.
+        let tangled = run(&format!("{LAYERED}allow features::c features::a # r\n"));
+        let stale = run(&format!("{LAYERED}allow features::a features::d # r\n"));
+        // a -> c and b -> c are not allowed, so they fail as feature edges.
+        let partial = run("allow features::a features::b # a is built on b\n");
         let unexplained = run("allow features::a features::b\n");
         fs::remove_dir_all(&root).unwrap();
 
         assert_eq!(clean, Ok(0));
-        assert_eq!(tangled, Ok(4));
+        assert_eq!(tangled, Ok(5));
         assert_eq!(stale, Ok(1));
+        assert_eq!(partial, Ok(2));
         assert!(unexplained.unwrap_err().contains("reason"));
     }
 
@@ -2588,7 +2685,7 @@ allow features::c features::a # r
             feature_graph: &feature_graph,
         };
         fs::write(&feature_graph, "allow features::a features::b # r\n").unwrap();
-        fs::write(&baseline, "feature-edge features::a features::c 1\n").unwrap();
+        fs::write(&baseline, "# nothing baselined\n").unwrap();
         let edges = list(&[&root], &files, FEATURE_EDGE, None).unwrap();
         let from_a = list(&[&root], &files, FEATURE_EDGE, Some("a")).unwrap();
         let cycles = list(&[&root], &files, FEATURE_CYCLE, Some("features::c")).unwrap();
@@ -2601,11 +2698,11 @@ allow features::c features::a # r
 [feature-edge] features::a -> features::b: 2 (allowed by feature-graph.txt)
     at features/a/mod.rs:1 features::b::run
     at features/a/mod.rs:1 features::b::stop
-[feature-edge] features::a -> features::c: 1 (baseline 1)
+[feature-edge] features::a -> features::c: 1 (held at zero)
     at features/a/mod.rs:1 features::c::run
-[feature-edge] features::b -> features::c: 1 (not in the baseline)
+[feature-edge] features::b -> features::c: 1 (held at zero)
     at features/b/mod.rs:1 features::c::run
-[feature-edge] features::c -> features::a: 1 (not in the baseline)
+[feature-edge] features::c -> features::a: 1 (held at zero)
     at features/c/mod.rs:1 features::a::run
 feature-edge: 5 in 4 entries.
 "

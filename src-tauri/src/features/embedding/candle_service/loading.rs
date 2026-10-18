@@ -296,7 +296,7 @@ impl CandleEmbeddingService {
     /// activation path; it streams every weights file through SHA-256.
     pub fn open_unregistered(model_dir: impl AsRef<Path>) -> Result<Self> {
         let dir = model_dir.as_ref();
-        let identity = crate::features::download::artifact_identity::compute(dir)?;
+        let identity = crate::infrastructure::ml::artifact_identity::compute(dir)?;
         Self::open(dir, identity)
     }
 }
