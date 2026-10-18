@@ -11,6 +11,7 @@
 
 pub mod capture;
 pub mod overrides;
+pub mod pack;
 pub mod repository;
 mod rows;
 

@@ -12,6 +12,7 @@ use super::{
     validation::validate_source_id,
     value_i64, value_option_str, value_str,
 };
+use crate::features::learning::references::trust::pack::SourceTrustPackEntry;
 use crate::features::learning::{
     dto::{LearningPreparation, LearningProgramDto, LearningProgramStatus},
     pack::{
@@ -497,6 +498,19 @@ pub(super) async fn insert_source_workspace(
             .bind(active).bind(pending).bind(&source_id).bind(program_id).execute(&mut *tx).await.map_err(db)?;
     }
     Ok(())
+}
+
+/// A pack's trust rows, after the source versions they hang from.
+pub(super) async fn insert_source_trust(
+    tx: &mut SqliteConnection,
+    program_id: &str,
+    rows: SourceTrustPackEntry,
+    map: &HashMap<String, String>,
+) -> Result<()> {
+    rows.check()?;
+    rows.remapped(program_id, |id| remap(map, id))
+        .write(tx, program_id)
+        .await
 }
 
 pub(super) async fn insert_source_history(
