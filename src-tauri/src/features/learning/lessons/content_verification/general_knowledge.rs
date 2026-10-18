@@ -1,15 +1,31 @@
-//! Which unsupported lesson claims are kept as general knowledge.
+//! Which unsupported lesson claims the machine proposes as general knowledge,
+//! and the human resolutions a published claim may carry.
 //!
-//! After research, a claim the saved references neither support nor
-//! contradict is shown to the learner as general knowledge, not checked
-//! against a source; it is not a lesson issue and is never repaired. The
-//! exceptions are where invented specifics concentrate: a number, version,
-//! date or percentage that the claim's evidence does not give, or an
-//! absolute. Those stay issues, so repair removes or softens them.
-//! Contradicted and unverified claims are never general knowledge.
+//! A claim the saved references neither support nor contradict, without
+//! invented specifics, is *proposed* as general knowledge: the claim waits for
+//! the user, who accepts the label or not (§13 D1). Only an accepted label, or
+//! the user's confirmation, lets a claim publish without a supporting passage.
+//! The exceptions are where invented specifics concentrate: a number,
+//! version, date or percentage that the claim's evidence does not give, or an
+//! absolute. Those are plain unsupported claims, so repair removes or softens
+//! them. Contradicted and unverified claims are never general knowledge.
+//! Design: docs/design/2026-10-16-lesson-claim-review.md §5.6, §13 D1.
 
 use super::{ClaimVerdict, Finding};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+/// How a claim without a supporting passage was resolved by the user. Set on
+/// the report's finding from the claim ledger at publication; never by the
+/// machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(in crate::features::learning) enum Resolution {
+    /// "Confirmed by you", with the user's note (required over a contradiction).
+    Confirmed { at: i64, note: Option<String> },
+    /// The general-knowledge label, accepted by the user.
+    GeneralKnowledge { at: i64 },
+}
 
 /// Words that overstate what a source would say; their inflections included.
 const ABSOLUTES: &[&str] = &[
@@ -46,9 +62,15 @@ fn figures(text: &str) -> impl Iterator<Item = String> + '_ {
 }
 
 impl Finding {
-    /// An unsupported claim the lesson keeps, labelled as general knowledge.
-    pub(super) fn general_knowledge(&self) -> bool {
+    /// The machine's proposal: an unsupported claim without invented
+    /// specifics may be general knowledge. Only the user accepts it.
+    pub(super) fn proposes_general_knowledge(&self) -> bool {
         self.verdict == ClaimVerdict::Unsupported && !self.states_specifics()
+    }
+
+    /// May publish: supported by a passage, or resolved by the user.
+    pub(super) fn publishable(&self) -> bool {
+        self.verdict == ClaimVerdict::Supported || self.resolution.is_some()
     }
 
     /// Whether the claim states an absolute, or a figure or percentage none
@@ -93,19 +115,20 @@ mod tests {
                 })
                 .collect(),
             supporting_quote: None,
+            resolution: None,
         }
     }
 
     #[test]
     fn an_unsupported_claim_without_specifics_is_general_knowledge() {
         let claim = "Command handlers change state while query handlers read it.";
-        assert!(finding(claim, ClaimVerdict::Unsupported, &[]).general_knowledge());
+        assert!(finding(claim, ClaimVerdict::Unsupported, &[]).proposes_general_knowledge());
         for verdict in [
             ClaimVerdict::Supported,
             ClaimVerdict::Contradicted,
             ClaimVerdict::Unverified,
         ] {
-            assert!(!finding(claim, verdict, &[]).general_knowledge());
+            assert!(!finding(claim, verdict, &[]).proposes_general_knowledge());
         }
     }
 
@@ -120,7 +143,7 @@ mod tests {
         ] {
             assert!(
                 !finding(claim, ClaimVerdict::Unsupported, &["Unrelated text."])
-                    .general_knowledge(),
+                    .proposes_general_knowledge(),
                 "{claim}"
             );
         }
@@ -130,13 +153,13 @@ mod tests {
             ClaimVerdict::Unsupported,
             &["Version 12.1 changed how notifications are published."]
         )
-        .general_knowledge());
+        .proposes_general_knowledge());
         assert!(finding(
             "Read models serve 90% of requests.",
             ClaimVerdict::Unsupported,
             &["In that survey 90 percent of requests were reads."]
         )
-        .general_knowledge());
+        .proposes_general_knowledge());
     }
 
     #[test]
@@ -176,7 +199,7 @@ mod tests {
         for word in ABSOLUTES {
             let claim = format!("Aggregates {word} enforce their own invariants.");
             assert!(
-                !finding(&claim, ClaimVerdict::Unsupported, &[]).general_knowledge(),
+                !finding(&claim, ClaimVerdict::Unsupported, &[]).proposes_general_knowledge(),
                 "{word}"
             );
         }
@@ -186,6 +209,6 @@ mod tests {
             ClaimVerdict::Unsupported,
             &[]
         )
-        .general_knowledge());
+        .proposes_general_knowledge());
     }
 }

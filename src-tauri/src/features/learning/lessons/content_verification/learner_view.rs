@@ -1,5 +1,6 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
+use super::general_knowledge::Resolution;
 use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
     dto::LearningLessonDto,
@@ -96,12 +97,29 @@ impl LessonVerificationReport {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let source_removed = finding.evidence.iter().any(|passage| {
+                    by_id
+                        .get(passage.source_id.as_str())
+                        .is_some_and(|version| version.deleted_at.is_some())
+                });
+                let (resolution, note) = match &finding.resolution {
+                    Some(Resolution::Confirmed { note, .. }) => ("confirmed_by_you", note.clone()),
+                    Some(Resolution::GeneralKnowledge { .. }) => ("general_knowledge", None),
+                    None if source_removed => ("source_removed", None),
+                    None => ("verified", None),
+                };
                 Ok(LearningClaimEvidenceDto {
                     section_index: finding.unit,
                     content_quote: finding.quote.clone(),
                     claim: finding.statement.clone(),
                     verdict: match finding.verdict {
-                        _ if finding.general_knowledge() => "general_knowledge",
+                        _ if matches!(
+                            finding.resolution,
+                            Some(Resolution::GeneralKnowledge { .. })
+                        ) =>
+                        {
+                            "general_knowledge"
+                        }
                         ClaimVerdict::Supported => "supported",
                         ClaimVerdict::Contradicted => "contradicted",
                         ClaimVerdict::Unsupported => "unsupported",
@@ -111,6 +129,8 @@ impl LessonVerificationReport {
                     reason: finding.reason.clone(),
                     supporting_quote: finding.supporting_quote.clone(),
                     passages,
+                    resolution: resolution.into(),
+                    note,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -125,7 +145,17 @@ impl LessonVerificationReport {
             general_knowledge_count: self
                 .findings
                 .iter()
-                .filter(|finding| finding.general_knowledge())
+                .filter(|finding| {
+                    matches!(
+                        finding.resolution,
+                        Some(Resolution::GeneralKnowledge { .. })
+                    )
+                })
+                .count(),
+            confirmed_count: self
+                .findings
+                .iter()
+                .filter(|finding| matches!(finding.resolution, Some(Resolution::Confirmed { .. })))
                 .count(),
             executed_examples: self.executions.len(),
             unexecuted_languages: self.unexecuted_languages.clone(),

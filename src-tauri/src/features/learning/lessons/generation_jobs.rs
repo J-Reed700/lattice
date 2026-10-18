@@ -77,20 +77,47 @@ impl JobHandler for LessonGenerationWorker {
         // request immediately. Publication stays outside the cancellable part,
         // so its transaction commits or rolls back whole before shutdown
         // releases the database.
-        match context
-            .until_cancelled(crate::features::learning::lesson_progress::run(
-                context,
-                self.prepare(&repo, context),
-            ))
-            .await
-        {
-            Some(Ok((revision, staged))) if !context.is_cancelled() => {
-                repo.publish_prepared_lessons(context.id(), revision, &staged)
-                    .await?;
-                Ok(JobOutcome::Committed)
+        loop {
+            let prepared = match context
+                .until_cancelled(crate::features::learning::lesson_progress::run(
+                    context,
+                    self.prepare(&repo, context),
+                ))
+                .await
+            {
+                Some(Ok(prepared)) if !context.is_cancelled() => prepared,
+                Some(Err(error)) => return Err(error),
+                _ => return Ok(JobOutcome::Stopped),
+            };
+            // Every lesson waits for the user: nothing to publish, and the
+            // job completed, not failed (§6.1).
+            if prepared.staged.is_empty() {
+                let (result_ref, message) =
+                    crate::features::learning::content_verification::review_outcome(&prepared.held);
+                return Ok(JobOutcome::Completed {
+                    result_ref,
+                    message,
+                });
             }
-            Some(Err(error)) => Err(error),
-            _ => Ok(JobOutcome::Stopped),
+            match repo
+                .publish_prepared(
+                    context.id(),
+                    prepared.revision,
+                    &prepared.staged,
+                    &prepared.held,
+                )
+                .await
+            {
+                // A reference changed between verification and publication:
+                // verify again (saved checks are reused), never fail (§12).
+                Err(error)
+                    if crate::features::learning::content_verification::sources_changed(&error) =>
+                {
+                    tracing::info!(job_id = context.id(), %error, "Lesson references changed before publication; verifying again");
+                }
+                Err(error) => return Err(error),
+                Ok(()) => return Ok(JobOutcome::Committed),
+            }
         }
     }
 
@@ -99,18 +126,23 @@ impl JobHandler for LessonGenerationWorker {
     }
 }
 
+/// What a delivery prepared: the lessons to publish, and the lessons that
+/// wait for the user's review (§6.1).
+struct Prepared {
+    revision: i64,
+    staged: Vec<(
+        String,
+        crate::features::learning::dto::PreparedLearningLesson,
+    )>,
+    held: Vec<crate::features::learning::content_verification::HeldForReview>,
+}
+
 impl LessonGenerationWorker {
     async fn prepare(
         &self,
         repo: &LearningCurriculumRepository,
         context: &JobContext,
-    ) -> Result<(
-        i64,
-        Vec<(
-            String,
-            crate::features::learning::dto::PreparedLearningLesson,
-        )>,
-    )> {
+    ) -> Result<Prepared> {
         use crate::features::learning::curriculum::LearningGenerationJobKind;
         let job_id = context.id();
         let job = repo.job(job_id).await?;
@@ -230,10 +262,15 @@ impl LessonGenerationWorker {
         // Own the targets so source snapshots can refresh between lessons.
         let candidates: Vec<_> = candidates.into_iter().cloned().collect();
         let mut staged = Vec::new();
+        let mut held: Vec<crate::features::learning::content_verification::HeldForReview> =
+            Vec::new();
         let mut completed_count = job.progress_completed;
         loop {
             staged.clear();
             for (index, lesson) in candidates.iter().enumerate() {
+                if held.iter().any(|hold| hold.lesson_id == lesson.id) {
+                    continue;
+                }
                 crate::features::learning::lesson_progress::lesson(&lesson.title);
                 let sources = program_repo.verification_sources(&job.program_id).await?;
                 references = references
@@ -272,7 +309,7 @@ impl LessonGenerationWorker {
                             &references,
                         ),
                     );
-                    crate::features::learning::lesson_drafts::run(
+                    let prepared = crate::features::learning::lesson_drafts::run(
                         repo,
                         job_id,
                         &lesson.id,
@@ -284,7 +321,27 @@ impl LessonGenerationWorker {
                             preparation,
                         ),
                     )
-                    .await?
+                    .await;
+                    match prepared {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            // A lesson whose claims wait for the user is held,
+                            // not failed; the others still publish (§6.1).
+                            let hold =
+                                crate::features::learning::content_verification::held_for_review(
+                                    &self.pool, &lesson.id, job_id,
+                                )
+                                .await?;
+                            let Some(hold) = hold else {
+                                return Err(error);
+                            };
+                            tracing::info!(lesson_id = %lesson.id, job_id, claims = hold.claims, "lesson.needs_review");
+                            held.push(hold);
+                            completed_count = completed_count.max(index as u32 + 1);
+                            crate::features::learning::lesson_progress::completed(completed_count);
+                            continue;
+                        }
+                    }
                 };
                 // Research before writing may have saved references this
                 // lesson cites.
@@ -331,7 +388,11 @@ impl LessonGenerationWorker {
             crate::features::learning::lesson_progress::Phase::Publishing,
             "Publishing verified lesson material",
         );
-        Ok((program.summary.revision, staged))
+        Ok(Prepared {
+            revision: program.summary.revision,
+            staged,
+            held,
+        })
     }
 }
 

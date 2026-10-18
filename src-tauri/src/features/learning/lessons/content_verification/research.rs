@@ -138,34 +138,48 @@ impl std::fmt::Display for Exhausted {
     }
 }
 
+/// What a research round searched and saved: the claim ledger records it
+/// for every claim the round researched (§3 `Researched`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct Searched {
+    /// The queries this round sent, the user's hints first.
+    pub(super) queries: Vec<String>,
+    /// Source version ids this round saved.
+    pub(super) sources_added: Vec<String>,
+}
+
 /// What a research round did for the lesson's gaps.
 pub(super) enum Expansion<'a> {
     /// New references were saved; the gaps are checked again against them.
-    Saved(Box<ReferenceCollection<'a>>),
+    Saved(Box<ReferenceCollection<'a>>, Searched),
     /// The planner found nothing public left to search for these gaps.
     Exhausted(Exhausted),
     /// No research ran, or its searches saved nothing new.
-    Unchanged,
+    Unchanged(Searched),
 }
 
 impl<'a> Expansion<'a> {
     /// The expanded references, when this round saved any.
     pub(super) fn saved(self) -> Option<ReferenceCollection<'a>> {
         match self {
-            Self::Saved(references) => Some(*references),
-            Self::Exhausted(_) | Self::Unchanged => None,
+            Self::Saved(references, _) => Some(*references),
+            Self::Exhausted(_) | Self::Unchanged(_) => None,
         }
     }
 }
 
+/// Research for `findings`, the claims the ledger allows to be researched
+/// (once per claim and evidence), with the user's `hints` searched verbatim
+/// before the planned queries (§5.1 "Research again with a hint").
 pub(super) async fn expand<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
     findings: &[Finding],
+    hints: &[String],
     checks: &ClaimChecks,
 ) -> Result<Expansion<'a>> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
-        return Ok(Expansion::Unchanged);
+        return Ok(Expansion::Unchanged(Searched::default()));
     };
     let gaps: Vec<_> = findings
         .iter()
@@ -178,17 +192,18 @@ pub(super) async fn expand<'a>(
         .map(|f| json!({"claim":f.statement,"missingEvidence":f.reason}))
         .collect();
     if gaps.is_empty() {
-        return Ok(Expansion::Unchanged);
+        return Ok(Expansion::Unchanged(Searched::default()));
     }
-    let expanded = match research(llm, references, &context, &gaps, Gaps::Claims).await? {
-        Expansion::Saved(expanded) => *expanded,
-        unresearched => return Ok(unresearched),
-    };
+    let (expanded, searched) =
+        match research(llm, references, &context, &gaps, hints, Gaps::Claims).await? {
+            Expansion::Saved(expanded, searched) => (*expanded, searched),
+            unresearched => return Ok(unresearched),
+        };
     // Persist the claim-to-source scope before returning. If the app exits
     // between research and rechecking, recovery still reopens only the failed
     // comparisons that requested these automatically captured references.
     evidence_selection::record_research_scope(&expanded, findings, checks).await?;
-    Ok(Expansion::Saved(Box::new(expanded)))
+    Ok(Expansion::Saved(Box::new(expanded), searched))
 }
 
 /// Before a lesson is written, search for references on its topics that no
@@ -210,7 +225,7 @@ pub(in crate::features::learning) async fn research_topics<'a>(
     if gaps.is_empty() {
         return Ok(None);
     }
-    match research(llm, references, &context, &gaps, Gaps::Topics).await {
+    match research(llm, references, &context, &gaps, &[], Gaps::Topics).await {
         Err(error @ (AppError::InvalidInput(_) | AppError::Other(_))) => {
             tracing::warn!(%error, topics = gaps.len(), "Lesson topic research gave no usable answer; the topics stay uncovered");
             Ok(None)
@@ -235,6 +250,7 @@ async fn research<'a>(
     references: &ReferenceCollection<'a>,
     context: &Context,
     gaps: &[Value],
+    hints: &[String],
     kind: Gaps,
 ) -> Result<Expansion<'a>> {
     crate::features::learning::lesson_progress::phase(
@@ -269,7 +285,7 @@ async fn research<'a>(
         .iter()
         .cloned()
         .collect();
-    let queries = web_research::plan_queries(
+    let planned = web_research::plan_queries(
         llm,
         &context.topic,
         gaps,
@@ -277,9 +293,15 @@ async fn research<'a>(
         &already_searched,
     )
     .await?;
+    let mut queries: Vec<String> = hints.to_vec();
+    for query in planned {
+        if !queries.contains(&query) {
+            queries.push(query);
+        }
+    }
     // An empty plan is the planner's answer that public search cannot help
     // these gaps, not a failure: topics stay uncovered, and claims go on to
-    // the repair, labelling or best-draft stop that follows research.
+    // the repair that follows research, or to the user.
     if queries.is_empty() {
         let exhausted = Exhausted {
             claims: gaps.len(),
@@ -307,6 +329,7 @@ async fn research<'a>(
         .await?;
     let mut urls: HashSet<_> = sources.iter().filter_map(|s| s.url.clone()).collect();
     let mut added = 0;
+    let mut searched = Searched::default();
     for query in queries {
         if !context
             .searched
@@ -316,6 +339,7 @@ async fn research<'a>(
         {
             continue;
         }
+        searched.queries.push(query.clone());
         crate::features::learning::lesson_progress::stage(
             "Searching the web for missing lesson evidence",
         );
@@ -376,6 +400,7 @@ async fn research<'a>(
                 )
                 .await?;
             urls.insert(resolved);
+            searched.sources_added.push(version_id.clone());
             // The repository normalizes captures. Retrieve those canonical
             // bytes so the report and vectors bind to exactly what is saved.
             sources = program_repo
@@ -395,7 +420,7 @@ async fn research<'a>(
         }
     }
     if added == 0 && sources.len() == references.sources.len() {
-        return Ok(Expansion::Unchanged);
+        return Ok(Expansion::Unchanged(searched));
     }
     crate::features::learning::lesson_progress::stage(format!(
         "Indexing {added} additional references; checking which saved comparisons can be reused"
@@ -403,5 +428,5 @@ async fn research<'a>(
     references
         .reload(&context.pool, &context.program_id, &sources)
         .await
-        .map(|references| Expansion::Saved(Box::new(references)))
+        .map(|references| Expansion::Saved(Box::new(references), searched))
 }

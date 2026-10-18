@@ -30,6 +30,11 @@ pub struct LearningClaimEvidenceDto {
     pub reason: String,
     pub supporting_quote: Option<String>,
     pub passages: Vec<LearningEvidencePassageDto>,
+    /// How the claim stands in the published lesson (§5.6): `verified`,
+    /// `confirmed_by_you`, `general_knowledge` or `source_removed`.
+    pub resolution: String,
+    /// The user's note on a claim confirmed by them.
+    pub note: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +50,9 @@ pub struct LearningLessonEvidenceDto {
     /// reference supports or contradicts them, and they were not checked
     /// against a source.
     pub general_knowledge_count: usize,
+    /// Of `claim_count`, the claims the user confirmed without a supporting
+    /// passage; shown apart from the machine-verified ones (§5.6).
+    pub confirmed_count: usize,
     pub executed_examples: usize,
     pub unexecuted_languages: Vec<String>,
     pub sources_current: bool,

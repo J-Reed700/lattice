@@ -108,6 +108,12 @@ impl LearningCurriculumRepository {
         Self { pool }
     }
 
+    /// The database the repository writes, for the lesson's claim ledger,
+    /// which a preparation job writes beside its drafts.
+    pub(in crate::features::learning) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     pub(in crate::features::learning) async fn seed_accepted(
         &self,
         program_id: &str,

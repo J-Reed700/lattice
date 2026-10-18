@@ -3,8 +3,8 @@
 //! concurrent chat, outline generation, or other jobs.
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
-    LearningDeeperEvidence, LearningGenerationActivity, LearningGenerationPhase,
-    LearningGenerationStep,
+    LearningClaimTally, LearningDeeperEvidence, LearningGenerationActivity,
+    LearningGenerationPhase, LearningGenerationStep,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
@@ -184,11 +184,36 @@ pub(in crate::features::learning) fn checkpoint_saved() {
     });
 }
 
+/// A new candidate text is about to be verified: the first draft, a repair or
+/// the user's edits (§6.3). Research rechecks and deeper evidence pages are
+/// steps inside a pass, not passes.
+pub(in crate::features::learning) fn new_pass() {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .verification_pass += 1;
+    });
+}
+
+/// Where the lesson's claims stand after a pass observed them (§6.3).
+pub(in crate::features::learning) fn claims(tally: LearningClaimTally) {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .claims = Some(tally);
+    });
+}
+
 pub(in crate::features::learning) fn begin_checks(total: usize) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         let activity = &mut state.activity;
-        activity.verification_pass += 1;
         activity.checks_total = total as u32;
         activity.checks_completed = 0;
         activity.checks_reused = 0;
@@ -381,6 +406,7 @@ mod tests {
         CURRENT
             .scope(progress.clone(), async {
                 lesson("A lesson");
+                new_pass();
                 phase(Phase::Evidence, "Checking claims");
                 begin_checks(3);
                 let first = model_call();
@@ -402,7 +428,8 @@ mod tests {
                 begin_checks(3);
                 checked(true, false);
                 let activity = progress.snapshot().2;
-                assert_eq!(activity.verification_pass, 2);
+                // A recheck after research is a step of the same pass (§6.3).
+                assert_eq!(activity.verification_pass, 1);
                 assert_eq!(activity.checks_reused, 1);
                 assert_eq!(activity.checks_unresolved, 0);
                 assert!(activity.last_checkpoint_at.is_some());

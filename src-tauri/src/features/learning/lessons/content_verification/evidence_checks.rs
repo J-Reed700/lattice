@@ -286,6 +286,7 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
         reason,
         evidence: pending.evidence,
         supporting_quote,
+        resolution: None,
     };
     if finding.verdict != ClaimVerdict::Unverified {
         crate::features::learning::lesson_drafts::record_checkpoint(
