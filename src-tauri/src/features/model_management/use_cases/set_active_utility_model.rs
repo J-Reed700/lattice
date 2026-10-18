@@ -1,16 +1,25 @@
 //! Sets the active utility model (HyDE expansion, router/intent classification).
 
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::application::ports::active_models::ActiveModels;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
+use std::sync::Arc;
 use tracing::info;
 
 pub struct SetActiveUtilityModelUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
+    active_models: Arc<dyn ActiveModels>,
 }
 
 impl SetActiveUtilityModelUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn DownloadedModelRepository>,
+        active_models: Arc<dyn ActiveModels>,
+    ) -> Self {
+        Self {
+            repository,
+            active_models,
+        }
     }
 
     pub async fn execute(&self, model_id: &str) -> Result<()> {
@@ -30,14 +39,16 @@ impl SetActiveUtilityModelUseCase {
         // Utility is a chat-style generation role -- reject embedding the same way the chat slot does.
         model.validate_for_operation(true)?;
 
-        self.repository.set_active_utility_model(model_id).await?;
+        self.active_models
+            .set_active_utility_model(model_id)
+            .await?;
         info!(model_id = %model_id, "Active utility model updated");
         Ok(())
     }
 
     /// Clear the utility model slot, reverting HyDE/router to the chat model.
     pub async fn clear(&self) -> Result<()> {
-        self.repository.clear_active_utility_model().await?;
+        self.active_models.clear_active_utility_model().await?;
         Ok(())
     }
 }
@@ -46,9 +57,10 @@ impl SetActiveUtilityModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn setup_repo() -> DownloadedModelRepository {
+    async fn setup_repo() -> Arc<DownloadedModelRepository> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -58,13 +70,13 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        DownloadedModelRepository::new(pool)
+        Arc::new(DownloadedModelRepository::new(pool))
     }
 
     #[tokio::test]
     async fn ollama_row_is_accepted_as_utility() {
         let repo = setup_repo().await;
-        let use_case = SetActiveUtilityModelUseCase::new(repo.clone());
+        let use_case = SetActiveUtilityModelUseCase::new(repo.clone(), repo.clone());
 
         use_case
             .execute("__ollama_server__")
@@ -81,7 +93,7 @@ mod tests {
     #[tokio::test]
     async fn clear_removes_active_utility_assignment() {
         let repo = setup_repo().await;
-        let use_case = SetActiveUtilityModelUseCase::new(repo.clone());
+        let use_case = SetActiveUtilityModelUseCase::new(repo.clone(), repo.clone());
 
         repo.set_active_utility_model("__ollama_server__")
             .await
@@ -98,7 +110,7 @@ mod tests {
     #[tokio::test]
     async fn returns_not_found_for_unknown_model_id() {
         let repo = setup_repo().await;
-        let use_case = SetActiveUtilityModelUseCase::new(repo);
+        let use_case = SetActiveUtilityModelUseCase::new(repo.clone(), repo);
 
         let err = use_case
             .execute("model-that-does-not-exist")

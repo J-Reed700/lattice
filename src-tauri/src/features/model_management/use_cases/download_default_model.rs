@@ -28,10 +28,10 @@
 //! ```
 
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -59,7 +59,7 @@ pub struct DownloadDefaultModelUseCase {
     /// Uses trait for testability (commands inject DownloadManagerService from Container)
     download_manager: Arc<dyn DownloadManager>,
     /// Repository for tracking downloaded models
-    downloaded_model_repo: DownloadedModelRepository,
+    downloaded_model_repo: Arc<dyn DownloadedModelRepository>,
     /// Base path for models directory
     models_path: PathBuf,
 }
@@ -88,7 +88,7 @@ impl DownloadDefaultModelUseCase {
     /// * `models_path` - Base directory for storing models (from Container)
     pub fn new(
         download_manager: Arc<dyn DownloadManager>,
-        downloaded_model_repo: DownloadedModelRepository,
+        downloaded_model_repo: Arc<dyn DownloadedModelRepository>,
         models_path: PathBuf,
     ) -> Self {
         Self {
@@ -116,7 +116,7 @@ impl DownloadDefaultModelUseCase {
         // Ensure models directory exists
         self.ensure_models_directory().await?;
 
-        let existing_models = self.downloaded_model_repo.list_all().await?;
+        let existing_models = self.downloaded_model_repo.list().await?;
         for model in existing_models {
             if model.model_id() == Self::DEFAULT_MODEL_ID {
                 warn!("Model already downloaded: {}", Self::DEFAULT_MODEL_ID);
@@ -201,6 +201,7 @@ impl DownloadDefaultModelUseCase {
 mod tests {
     use super::*;
     use crate::features::download::manager::DownloadEvent;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use async_trait::async_trait;
     use lattice_core::domain::download::{DownloadError, DownloadSession};
     use lattice_core::domain::models::embedding_defaults::{
@@ -320,7 +321,7 @@ mod tests {
             .unwrap();
 
         let download_manager = Arc::new(MockDownloadManager::new(false));
-        let repo = DownloadedModelRepository::new(pool);
+        let repo = Arc::new(DownloadedModelRepository::new(pool));
 
         let use_case =
             DownloadDefaultModelUseCase::new(download_manager.clone(), repo, models_path.clone());
@@ -345,7 +346,7 @@ mod tests {
             .unwrap();
 
         let download_manager = Arc::new(MockDownloadManager::new(false));
-        let repo = DownloadedModelRepository::new(pool);
+        let repo = Arc::new(DownloadedModelRepository::new(pool));
 
         let use_case = DownloadDefaultModelUseCase::new(
             download_manager.clone(),

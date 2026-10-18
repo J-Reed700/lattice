@@ -43,7 +43,7 @@ pub async fn check_first_run_status_impl(
 ) -> std::result::Result<String, String> {
     tracing::info!("Command: check_first_run_status - ENTRY");
 
-    let repository = (*container.downloaded_model_repository()).clone();
+    let repository = container.downloaded_models();
     // Pass the system_info probe so the chat recommendation is sized to the
     // user's actual RAM, not a one-size-fits-all small-tier default.
     let use_case =
@@ -309,7 +309,7 @@ mod tests {
         let (container, _temp_dir) = create_test_container().await;
 
         // Resolve the repository from the container (proper DI) and run the use case.
-        let repository = (*container.downloaded_model_repository()).clone();
+        let repository = container.downloaded_models();
         let use_case = CheckFirstRunStatusUseCase::new(repository);
         let response = use_case.execute().await.unwrap();
 

@@ -1,8 +1,8 @@
 use crate::infrastructure::ml::compute_device::gpu_acceleration_available;
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::ports::system_info::SystemInfoPort;
 use lattice_core::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -29,13 +29,13 @@ pub struct FirstRunStatusResponse {
 }
 
 pub struct CheckFirstRunStatusUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
     /// Without a probe, falls back to the small-tier chat recommendation.
     system_info: Option<Arc<dyn SystemInfoPort>>,
 }
 
 impl CheckFirstRunStatusUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
+    pub fn new(repository: Arc<dyn DownloadedModelRepository>) -> Self {
         Self {
             repository,
             system_info: None,
@@ -43,7 +43,7 @@ impl CheckFirstRunStatusUseCase {
     }
 
     pub fn with_system_info(
-        repository: DownloadedModelRepository,
+        repository: Arc<dyn DownloadedModelRepository>,
         system_info: Arc<dyn SystemInfoPort>,
     ) -> Self {
         Self {
@@ -163,10 +163,11 @@ fn embedding_recommendation() -> Option<RecommendedModel> {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn setup_repo() -> DownloadedModelRepository {
+    async fn setup_repo() -> Arc<DownloadedModelRepository> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -176,7 +177,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        DownloadedModelRepository::new(pool)
+        Arc::new(DownloadedModelRepository::new(pool))
     }
 
     fn make_local_embedding_model(model_id: &str) -> DownloadedModel {
@@ -295,7 +296,7 @@ mod tests {
         .await
         .expect("insert pending embedding row");
 
-        let pending_repo = DownloadedModelRepository::new(pool);
+        let pending_repo = Arc::new(DownloadedModelRepository::new(pool));
         let use_case = CheckFirstRunStatusUseCase::new(pending_repo);
         let response = use_case.execute().await.expect("execute should succeed");
 

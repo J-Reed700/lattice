@@ -2,18 +2,19 @@
 //!
 //! Gets the currently active embedding model.
 
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::domain::models::downloaded::DownloadedModel;
 use lattice_core::shared::error::Result;
+use std::sync::Arc;
 
 /// Use case for getting the active embedding model
 pub struct GetActiveEmbeddingModelUseCase {
-    repository: DownloadedModelRepository,
+    active_models: Arc<dyn ActiveModels>,
 }
 
 impl GetActiveEmbeddingModelUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
-        Self { repository }
+    pub fn new(active_models: Arc<dyn ActiveModels>) -> Self {
+        Self { active_models }
     }
 
     /// Execute the use case
@@ -22,6 +23,6 @@ impl GetActiveEmbeddingModelUseCase {
     ///
     /// Some(DownloadedModel) if an active embedding model exists, None otherwise
     pub async fn execute(&self) -> Result<Option<DownloadedModel>> {
-        self.repository.get_active_embedding_model().await
+        self.active_models.get_active_embedding_model().await
     }
 }

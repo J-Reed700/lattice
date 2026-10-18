@@ -1,16 +1,25 @@
 //! Sets the active chat model.
 
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::application::ports::active_models::ActiveModels;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
+use std::sync::Arc;
 use tracing::info;
 
 pub struct SetActiveChatModelUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
+    active_models: Arc<dyn ActiveModels>,
 }
 
 impl SetActiveChatModelUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn DownloadedModelRepository>,
+        active_models: Arc<dyn ActiveModels>,
+    ) -> Self {
+        Self {
+            repository,
+            active_models,
+        }
     }
 
     pub async fn execute(&self, model_id: &str) -> Result<()> {
@@ -31,7 +40,7 @@ impl SetActiveChatModelUseCase {
             model.validate_for_operation(true)?;
         }
 
-        self.repository.set_active_chat_model(model_id).await?;
+        self.active_models.set_active_chat_model(model_id).await?;
 
         info!(model_id = %model_id, "Active chat model updated");
         Ok(())
@@ -42,10 +51,11 @@ impl SetActiveChatModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::ModelLocation;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn setup_repo() -> DownloadedModelRepository {
+    async fn setup_repo() -> Arc<DownloadedModelRepository> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -55,14 +65,14 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        DownloadedModelRepository::new(pool)
+        Arc::new(DownloadedModelRepository::new(pool))
     }
 
     #[tokio::test]
     async fn activates_synthetic_ollama_row_without_filesystem_check() {
         // Synthetic Ollama row has zero on-disk files -- download check is Local-only.
         let repo = setup_repo().await;
-        let use_case = SetActiveChatModelUseCase::new(repo.clone());
+        let use_case = SetActiveChatModelUseCase::new(repo.clone(), repo.clone());
 
         use_case
             .execute("__ollama_server__")
@@ -81,7 +91,7 @@ mod tests {
     #[tokio::test]
     async fn returns_not_found_for_unknown_model_id() {
         let repo = setup_repo().await;
-        let use_case = SetActiveChatModelUseCase::new(repo);
+        let use_case = SetActiveChatModelUseCase::new(repo.clone(), repo);
 
         let err = use_case
             .execute("model-that-does-not-exist")

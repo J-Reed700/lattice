@@ -50,7 +50,7 @@ impl Container {
         ActiveEmbedding::new(
             Arc::clone(&self.embedding_runtime),
             EmbeddingLoader {
-                downloaded_models: self.ai.downloaded_model_repo().clone(),
+                active_models: self.ai.downloaded_model_repo().clone(),
                 security: self.core.security_context().clone(),
                 index: self.search.runtime_index(),
                 strategy: self.search.embedding_strategy(),

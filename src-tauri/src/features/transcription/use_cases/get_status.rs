@@ -58,7 +58,7 @@ mod tests {
     async fn reports_not_ready_without_a_model() {
         let pool = empty_pool().await;
         let port = Arc::new(WhisperTranscriptionService::new(
-            DownloadedModelRepository::new(pool),
+            Arc::new(DownloadedModelRepository::new(pool)),
             Arc::default(),
         )) as Arc<dyn TranscriptionPort>;
 

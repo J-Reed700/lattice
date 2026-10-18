@@ -2,14 +2,14 @@
 
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::infrastructure::security::SecurityContext;
+use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::{EmbeddingIndexBinding, EmbeddingPort};
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 pub(crate) struct EmbeddingLoader {
-    pub downloaded_models: Arc<DownloadedModelRepository>,
+    pub active_models: Arc<dyn ActiveModels>,
     pub security: Arc<SecurityContext>,
     pub index: Arc<dyn EmbeddingIndexBinding>,
     /// How chunk vectors are produced, straight from the user's settings.
@@ -28,7 +28,7 @@ impl EmbeddingLoader {
     /// Returns Ok(None) if no active model or file doesn't exist
     /// Returns Err only on unrecoverable errors
     async fn try_load_active_embedding_model(&self) -> Result<Option<Arc<dyn EmbeddingPort>>> {
-        let active_model = match self.downloaded_models.get_active_embedding_model().await {
+        let active_model = match self.active_models.get_active_embedding_model().await {
             Ok(Some(model)) => model,
             Ok(None) => {
                 tracing::debug!("No active embedding model configured in database");

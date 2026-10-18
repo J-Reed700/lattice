@@ -2,16 +2,17 @@
 //!
 //! Checks if a model is already downloaded.
 
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
+use std::sync::Arc;
 
 /// Use case for checking if a model is downloaded
 pub struct CheckIsDownloadedUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
 }
 
 impl CheckIsDownloadedUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
+    pub fn new(repository: Arc<dyn DownloadedModelRepository>) -> Self {
         Self { repository }
     }
 

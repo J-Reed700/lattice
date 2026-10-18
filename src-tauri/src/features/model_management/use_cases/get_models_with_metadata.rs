@@ -2,17 +2,18 @@
 //!
 //! Returns all downloaded models with metadata.
 
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
+use std::sync::Arc;
 
 /// Use case for getting all downloaded models with metadata
 pub struct GetDownloadedModelsWithMetadataUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
 }
 
 impl GetDownloadedModelsWithMetadataUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
+    pub fn new(repository: Arc<dyn DownloadedModelRepository>) -> Self {
         Self { repository }
     }
 
@@ -22,6 +23,6 @@ impl GetDownloadedModelsWithMetadataUseCase {
     ///
     /// Vector of all downloaded models, ordered by download date (newest first)
     pub async fn execute(&self) -> Result<Vec<DownloadedModel>> {
-        self.repository.list_all().await
+        self.repository.list().await
     }
 }

@@ -214,3 +214,22 @@ Four commits on `arch/feature-graph-6acd`, steps 1–7 in order. `feature-edge` 
 - **Step 7.** `ports/mock_llm_port.rs` held only `DegradedLLMPort` and its test, so the whole module is gone. The use case's tests pass the flag instead of a mock `LLMPort`.
 
 **Behaviour.** The health check's `llm` flag now reads "a model is loaded and not degraded" instead of always `false`; `status` is unchanged. Nothing else changes: error texts, the `spawn_blocking` in the activation load, command names, invoke strings and JSDoc are the same.
+
+## 6a as built
+
+Three commits on `arch/feature-graph-6acd`, on top of 6c, steps 1–4 in order (step 4 rides in the third commit). `feature-edge` 49 → 27 (model_management→download 21 → 6, llm→download 9 → 7, embedding→download 2 → 0, transcription→download 2 → 0, initialization→download 1 → 0). 6b is not on this branch, so the table's 37 → 15 reads 49 → 27 here; with 6b merged it is 15. `feature-reexport` stays 14 and `infrastructure-imports-feature` stays 0. No `pub use` was added, and the generated TypeScript is unchanged.
+
+1. **Move.** `git mv` to `infrastructure/persistence/repositories/downloaded_models{.rs,/activation.rs,/ports.rs,/rows.rs,/tests.rs}` and `infrastructure/ml/artifact_identity.rs`, with only `use` paths and the two `mod` lists changed. The 22 edges close here; the baseline shrinks in this commit.
+2. **Ports.** The records trait gains `find_by_id`, `save`, `is_downloaded`, `has_any_embedding_model` and `delete_if_not_active`; core `application/ports/active_models.rs` holds `ActiveModels` with the nine signatures unchanged. Both are implemented in `downloaded_models/ports.rs` as one-line delegations to the inherent methods, so the SQL in `activation.rs` and `downloaded_models.rs` is untouched. `Rows` gains the five stubs, each `unreachable!`.
+3. **Consumers.** All 12 model-management use cases that held the repository (the plan said 11) and `commands_extra{,/active_models,/external_models,/warm_up}.rs` hold `Arc<dyn …>`. `SetActive{Chat,Embedding,Utility}ModelUseCase::new` and `ModelLoader::new` take `(records, active)`; `EmbeddingLoader` holds `active_models: Arc<dyn ActiveModels>`; whisper and `CheckFirstRunStatusUseCase` hold the records port. `list_all` callers call `list`, which delegates to it.
+4. **Accessors.** `Container::downloaded_model_repository()`, the registrar method in `model_management/di.rs`, is gone; `downloaded_models()` and `active_models()` replace it, both coercing the one `Arc` that `LlmDi` builds. `examples/shipped_path_eval/app.rs` called the old accessor and now calls `downloaded_models()`.
+
+**Deviations.**
+- **Composition root untouched after step 1.** `interfaces/di/modules/{ai,search,indexing}.rs` and `bootstrap/{app,startup_reconciliation}.rs` changed paths only. They build or pass the concrete repository, and every port field it reaches coerces at the call (`ModelLoader::new`, the `EmbeddingLoader` literal in `embedding/di.rs`, `WhisperTranscriptionService::new`), so they need no edit. `AIModule::downloaded_model_repo()` keeps its concrete return type because `conversation/plugin_impl/model_choice.rs` reads it, and conversation belongs to 6b.
+- **`llm/di.rs` and `transcription/di.rs`** still construct the concrete repository, from infrastructure: `LlmDi` until 6d moves it into `AIModule`, and the transcription registrar wrapping it in `Arc`.
+- **`conversation/model_availability/tests.rs`** is the one conversation file touched, for the `Rows` stubs; 6b does not touch it.
+- **No `container.rs` or `container/*` edits.**
+
+**Tests.** Every SQLite-backed test still runs against the real repository: the use-case tests' `setup_repo()` returns `Arc<DownloadedModelRepository>` and passes the same `Arc` as both ports. No test double stands in for the active-row rule.
+
+**Behaviour.** None intended. The active readers are the same SQL, so an active row whose files are incomplete still reads as `None`; neither delete guard checks `is_active_for_utility`, as before. The repository holds only a pool, so sharing one `Arc` instead of cloning it by value changes no state, and construction order is the same.

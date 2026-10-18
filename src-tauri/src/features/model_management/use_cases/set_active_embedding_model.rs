@@ -5,18 +5,27 @@
 //! activation, so launch never hashes model files.
 
 use crate::infrastructure::ml::artifact_identity;
-use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::application::ports::active_models::ActiveModels;
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
+use std::sync::Arc;
 use tracing::info;
 
 pub struct SetActiveEmbeddingModelUseCase {
-    repository: DownloadedModelRepository,
+    repository: Arc<dyn DownloadedModelRepository>,
+    active_models: Arc<dyn ActiveModels>,
 }
 
 impl SetActiveEmbeddingModelUseCase {
-    pub fn new(repository: DownloadedModelRepository) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn DownloadedModelRepository>,
+        active_models: Arc<dyn ActiveModels>,
+    ) -> Self {
+        Self {
+            repository,
+            active_models,
+        }
     }
 
     /// Validate and activate `model_id`, returning the identity it was
@@ -58,7 +67,7 @@ impl SetActiveEmbeddingModelUseCase {
         model_id: &str,
         identity: Option<&ArtifactIdentity>,
     ) -> Result<()> {
-        self.repository
+        self.active_models
             .set_active_embedding_model(model_id, identity)
             .await?;
 
@@ -71,11 +80,12 @@ impl SetActiveEmbeddingModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::Path;
 
-    async fn setup_repo() -> DownloadedModelRepository {
+    async fn setup_repo() -> Arc<DownloadedModelRepository> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -85,7 +95,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        DownloadedModelRepository::new(pool)
+        Arc::new(DownloadedModelRepository::new(pool))
     }
 
     fn embedding_model_dir() -> tempfile::TempDir {
@@ -135,7 +145,7 @@ mod tests {
         save_directory_model(&repo, "local-embed", dir.path()).await;
         let expected = artifact_identity::compute(dir.path()).expect("compute identity");
 
-        let returned = SetActiveEmbeddingModelUseCase::new(repo.clone())
+        let returned = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
             .execute("local-embed")
             .await
             .expect("activate local model");
@@ -158,7 +168,7 @@ mod tests {
         let repo = setup_repo().await;
         let dir = embedding_model_dir();
         save_directory_model(&repo, "local-embed", dir.path()).await;
-        let use_case = SetActiveEmbeddingModelUseCase::new(repo.clone());
+        let use_case = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone());
         let first = use_case
             .execute("local-embed")
             .await
@@ -192,7 +202,7 @@ mod tests {
         let dir = embedding_model_dir();
         save_directory_model(&repo, "local-embed", dir.path()).await;
 
-        let established = SetActiveEmbeddingModelUseCase::new(repo.clone())
+        let established = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
             .establish("local-embed")
             .await
             .expect("establish identity");
@@ -219,7 +229,7 @@ mod tests {
     async fn ollama_backed_model_bypasses_filesystem_and_type_checks() {
         // Synthetic Ollama row has model_type='chat' and zero files -- downloads gated behind Local.
         let repo = setup_repo().await;
-        let use_case = SetActiveEmbeddingModelUseCase::new(repo);
+        let use_case = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo);
 
         let identity = use_case
             .execute("__ollama_server__")
@@ -231,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn returns_not_found_for_unknown_model_id() {
         let repo = setup_repo().await;
-        let use_case = SetActiveEmbeddingModelUseCase::new(repo);
+        let use_case = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo);
 
         let err = use_case
             .execute("model-that-does-not-exist")

@@ -162,6 +162,7 @@ impl Container {
     fn model_loader(&self) -> ModelLoader {
         ModelLoader::new(
             self.ai.downloaded_model_repo().clone(),
+            self.ai.downloaded_model_repo().clone(),
             self.app_handle(),
             self.llm_runtime.clone(),
         )

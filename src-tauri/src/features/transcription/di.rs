@@ -24,7 +24,7 @@ pub struct TranscriptionDi {
 pub fn build(db_pool: SqlitePool, background: Arc<BackgroundTasks>) -> TranscriptionDi {
     TranscriptionDi {
         port: Arc::new(WhisperTranscriptionService::new(
-            DownloadedModelRepository::new(db_pool),
+            Arc::new(DownloadedModelRepository::new(db_pool)),
             background,
         )) as Arc<dyn TranscriptionPort>,
     }
