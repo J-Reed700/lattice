@@ -239,6 +239,10 @@ hound = "=3.5.1"   # generates WAV fixtures for the audio-decode unit tests
 tokio = { workspace = true, features = ["test-util"] }   # paused clocks for the stream-timeout tests
 
 
+# Marks the multi-GiB model files tests create as sparse, so they take no disk space.
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.52", features = ["Win32_System_IO", "Win32_System_Ioctl"] }
+
 [features]
 default = ["custom-protocol", "learning-labs"]
 custom-protocol = ["tauri/custom-protocol"]
