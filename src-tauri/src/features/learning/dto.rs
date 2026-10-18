@@ -6,6 +6,7 @@ mod assessment;
 mod canvas;
 mod memory;
 mod practice;
+mod programs;
 mod sources;
 mod tangents;
 
@@ -16,6 +17,7 @@ pub use assessment::*;
 pub use canvas::*;
 pub use memory::*;
 pub use practice::*;
+pub use programs::*;
 pub use sources::*;
 pub use tangents::*;
 

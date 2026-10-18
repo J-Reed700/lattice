@@ -69,6 +69,8 @@ mod study;
 pub use study::*;
 mod tangents;
 pub use tangents::*;
+mod audit;
+pub use audit::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -128,6 +130,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             list_learning_programs,
             get_learning_program,
             get_learning_lesson_evidence,
+            get_learning_program_verifier_audit,
+            set_learning_program_verifier_audit,
+            get_learning_lesson_audit,
+            audit_learning_lesson_now,
             get_learning_outline_evidence,
             generate_learning_program,
             cancel_learning_outline,
