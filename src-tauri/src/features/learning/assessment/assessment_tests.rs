@@ -50,7 +50,7 @@ async fn fixture(pool: &SqlitePool) -> Result<(LearningProgramDto, String, Strin
     let source = LearningSourceLibraryRepository::new(pool.clone());
     let source_id = id();
     let version_id = id();
-    source.add(crate::features::learning::source_library::NewLearningSource{operation_id:&id(),source_id:&source_id,version_id:&version_id,program_id:&program.summary.id,kind:LearningSourceKind::Pasted,operation_kind:"add_text",origin:"pasted text",requested_url:None,freshness:LearningSourcePolicy::Fixed},CapturedLearningSource{title:"Assessment source".into(),publisher:None,requested_url:None,resolved_url:None,text:"A system contains interacting parts. Each part contributes to a larger process. The relationships between the parts help explain how the system behaves.".into(),truncated:false,extraction_version:"test_v1".into()},"hash".into()).await?;
+    source.add(crate::features::learning::source_library::NewLearningSource{operation_id:&id(),source_id:&source_id,version_id:&version_id,program_id:&program.summary.id,kind:LearningSourceKind::Pasted,operation_kind:"add_text",origin:"pasted text",requested_url:None,freshness:LearningSourcePolicy::Fixed},CapturedLearningSource{title:"Assessment source".into(),publisher:None,requested_url:None,resolved_url:None,text:"A system contains interacting parts. Each part contributes to a larger process. The relationships between the parts help explain how the system behaves.".into(),truncated:false,extraction_version:"test_v1".into(),signals:crate::features::learning::references::trust::capture::not_extracted("test fixture")},"hash".into()).await?;
     let ws = LearningAssessmentRepository::new(pool.clone())
         .workspace(&program.summary.id)
         .await?;

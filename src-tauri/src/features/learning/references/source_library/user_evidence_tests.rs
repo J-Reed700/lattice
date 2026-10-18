@@ -31,6 +31,9 @@ fn page(text: &str) -> CapturedLearningSource {
         text: text.into(),
         truncated: false,
         extraction_version: "test_v1".into(),
+        signals: crate::features::learning::references::trust::capture::not_extracted(
+            "test fixture",
+        ),
     }
 }
 
