@@ -9,7 +9,7 @@
     "supports": [{"level": "community", "origin": "web:forum.example"}],
     "decision": "insufficient",
     "bar": "any",
-    "note": "A source repeating a claim supports it only when the source meets the bar: an anonymous forum post does not."
+    "note": "Repetition supports a claim only when its source meets the bar: an anonymous forum post does not."
   },
   {
     "domain": "biology",
