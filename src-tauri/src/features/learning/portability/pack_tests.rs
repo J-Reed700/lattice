@@ -19,6 +19,7 @@ mod export_all;
 mod r#move;
 mod provenance;
 mod replace;
+mod source_trust;
 
 pub(super) fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -125,6 +126,9 @@ fn captured(text: &str) -> CapturedLearningSource {
         text: text.into(),
         truncated: false,
         extraction_version: "pack_test_capture_v1".into(),
+        signals: crate::features::learning::references::trust::capture::not_extracted(
+            "test fixture",
+        ),
     }
 }
 

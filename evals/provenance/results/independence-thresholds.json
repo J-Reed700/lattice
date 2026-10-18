@@ -1,0 +1,27 @@
+{
+  "policy": "source-trust-v1",
+  "pairs_file": "independence-pairs-v1.jsonl",
+  "pairs": 219,
+  "shingling": {
+    "words": 5,
+    "chars": 5,
+    "word_break_ratio": 0.1
+  },
+  "rule": "centre of the widest run of 0.01-grid thresholds with the highest F1; score >= threshold predicts positive",
+  "resemblance_copy": {
+    "threshold": 0.64,
+    "f1": 1.0,
+    "optimal_from": 0.6,
+    "optimal_to": 0.69,
+    "positives": 72,
+    "negatives": 147
+  },
+  "containment_copy": {
+    "threshold": 0.6,
+    "f1": 1.0,
+    "optimal_from": 0.4,
+    "optimal_to": 0.81,
+    "positives": 132,
+    "negatives": 87
+  }
+}

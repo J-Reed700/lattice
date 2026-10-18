@@ -313,6 +313,9 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
                     text: source.excerpt.clone(),
                     truncated: false,
                     extraction_version: "live-fixture-v1".into(),
+                    signals: crate::features::learning::references::trust::capture::not_extracted(
+                        "test fixture",
+                    ),
                 },
             },
         )

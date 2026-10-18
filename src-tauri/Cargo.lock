@@ -4627,6 +4627,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "proptest",
+ "psl",
  "rand 0.8.6",
  "regex",
  "reqwest 0.12.28",
@@ -4641,6 +4642,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "unicode-normalization",
  "url",
  "urlencoding",
  "uuid",
@@ -6995,6 +6997,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8991c4cbdb8bc5b11f0b074ffe286c30e523de90fee5ba8132f1399f23cb3dd7"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "psl"
+version = "2.1.241"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7319b480e204d67e759cad7886178335d26324c7c8573c126cc9dfa7350d064"
+dependencies = [
+ "psl-types",
 ]
 
 [[package]]

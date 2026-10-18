@@ -5,6 +5,7 @@ use super::recall::{
     study_dto::{StudyCardDto, StudyCardFormat, StudySourceDto},
     study_repository::StudyRepository,
 };
+use super::references::trust::capture;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
@@ -399,7 +400,28 @@ pub(super) async fn insert_source(
     let digest = hash_text(&text);
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,?,NULL,0,?,?,?)")
         .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(requested_url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).bind(lattice_core::domain::learning::claim_review::SourceAddedBy::Outline.as_str()).execute(&mut **tx).await.map_err(db)?;
-    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,?,NULL,?,?,?,?,?,?,?,?,?)")
-        .bind(&source.id).bind(program_id).bind(&source.id).bind(source.title.trim()).bind(requested_url).bind(resolved_url).bind(&text).bind(text.chars().take(2400).collect::<String>()).bind(&digest).bind(text.split_whitespace().count() as i64).bind(reference.is_none() as i64).bind(reference.map(|r| r.captured.extraction_version.as_str()).unwrap_or("program_seed_bounded_v1")).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+    let publisher = reference.and_then(|r| r.captured.publisher.as_deref());
+    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(&source.id).bind(program_id).bind(&source.id).bind(source.title.trim()).bind(publisher).bind(requested_url).bind(resolved_url).bind(&text).bind(text.chars().take(2400).collect::<String>()).bind(&digest).bind(text.split_whitespace().count() as i64).bind(reference.is_none() as i64).bind(reference.map(|r| r.captured.extraction_version.as_str()).unwrap_or("program_seed_bounded_v1")).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+    let signals = reference.map_or_else(
+        || capture::not_extracted(capture::SEED_WITHOUT_CAPTURE),
+        |r| r.captured.signals.clone(),
+    );
+    let kind = if kind == "web" {
+        LearningSourceKind::Web
+    } else {
+        LearningSourceKind::Document
+    };
+    let version = capture::CapturedVersion {
+        program_id,
+        source_id: &source.id,
+        version_id: &source.id,
+        kind: &kind,
+        title: source.title.trim(),
+        resolved_url,
+        text: &text,
+        acquired_at_ms: source.acquired_at,
+    };
+    capture::record(tx, &version, &signals).await?;
     Ok(())
 }

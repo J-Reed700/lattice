@@ -1,0 +1,105 @@
+# Restricted registries: suffixes under which only a vetted class of registrant
+# may register a name, so the suffix itself says something about the publisher.
+# One suffix and its class per line; the longest label-aligned match wins.
+#
+# Sources: the IANA Root Zone Database's sponsoring-organisation records for the
+# generic restricted TLDs (gov, mil, edu, int), and each country registry's
+# published eligibility rules for its second-level government, academic and
+# military zones (e.g. Nominet for gov.uk/ac.uk, JPRS for go.jp/ac.jp, Registro.br
+# for gov.br/jus.br, auDA for gov.au/edu.au, CNNIC for gov.cn/edu.cn). Compiled
+# 2026-10-18 for source provenance (docs/design/2026-10-18-source-provenance-and-
+# trust.md §4, §15). Refreshed with the code, never at runtime.
+#
+# Deliberately absent: open second-level zones (co.uk, com.au, org.uk), country
+# codes on their own (a country code is never a signal), and brand TLDs.
+
+gov	government
+mil	military
+edu	education
+int	intergovernmental
+
+# Americas
+gc.ca	government
+gob.mx	government
+edu.mx	education
+gov.br	government
+jus.br	government
+leg.br	government
+mil.br	military
+edu.br	education
+gob.ar	government
+gov.ar	government
+edu.ar	education
+gob.cl	government
+gov.co	government
+edu.co	education
+gob.pe	government
+edu.pe	education
+
+# Europe
+gov.uk	government
+ac.uk	education
+mod.uk	military
+nhs.uk	government
+police.uk	government
+gouv.fr	government
+gob.es	government
+gv.at	government
+ac.at	education
+gov.it	government
+gov.pt	government
+gov.pl	government
+edu.pl	education
+gov.gr	government
+gov.ie	government
+gov.tr	government
+edu.tr	education
+gov.ua	government
+edu.ua	education
+
+# Asia and Oceania
+go.jp	government
+ac.jp	education
+lg.jp	government
+go.kr	government
+ac.kr	education
+gov.cn	government
+edu.cn	education
+gov.tw	government
+edu.tw	education
+gov.hk	government
+edu.hk	education
+gov.sg	government
+edu.sg	education
+gov.in	government
+nic.in	government
+ac.in	education
+edu.in	education
+gov.au	government
+edu.au	education
+govt.nz	government
+ac.nz	education
+go.id	government
+ac.id	education
+gov.ph	government
+edu.ph	education
+go.th	government
+ac.th	education
+gov.my	government
+edu.my	education
+gov.vn	government
+edu.vn	education
+gov.il	government
+ac.il	education
+gov.sa	government
+edu.sa	education
+
+# Africa
+gov.za	government
+ac.za	education
+gov.ng	government
+edu.ng	education
+go.ke	government
+ac.ke	education
+gov.eg	government
+edu.eg	education

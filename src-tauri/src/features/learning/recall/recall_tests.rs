@@ -182,6 +182,9 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
                 text: "A prefix 🦀 repeated rule. A second 🦀 repeated rule. Recall safely.".into(),
                 truncated: false,
                 extraction_version: "test_v1".into(),
+                signals: crate::features::learning::references::trust::capture::not_extracted(
+                    "test fixture",
+                ),
             },
             "first-source".into(),
         )

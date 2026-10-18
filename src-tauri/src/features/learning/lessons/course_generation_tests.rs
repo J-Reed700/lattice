@@ -1242,6 +1242,9 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         ),
         truncated: false,
         extraction_version: "test_full_capture".into(),
+        signals: crate::features::learning::references::trust::capture::not_extracted(
+            "test fixture",
+        ),
     };
     let id = uuid::Uuid::new_v4().to_string();
     let preview = crate::features::learning::sources::preview(&id, &captured);
@@ -1764,6 +1767,9 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     text: article.content,
                     truncated: article.content_truncated,
                     extraction_version: "web_reference_v1".into(),
+                    signals: crate::features::learning::references::trust::capture::not_extracted(
+                        "test fixture",
+                    ),
                 };
                 assert!(!captured.truncated);
                 let id = uuid::Uuid::new_v4().to_string();

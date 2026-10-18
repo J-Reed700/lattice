@@ -1,6 +1,7 @@
 //! Web search and page capture shared by outline reference gathering and
 //! lesson research. Search snippets never become evidence: only a complete
 //! capture of a page, validated for full text, is returned.
+use crate::features::learning::references::trust::capture::web_capture;
 use crate::features::learning::source_library::CapturedLearningSource;
 use lattice_core::application::contracts::web::{WebSearchInput, WebSearchResult};
 use lattice_core::application::ports::LLMPort;
@@ -147,28 +148,22 @@ pub(in crate::features::learning) async fn capture(
     result: &WebSearchResult,
     query: &str,
 ) -> Result<Option<CapturedLearningSource>> {
-    let article = web
-        .fetch_reference_content(&result.url)
+    let page = web
+        .fetch_reference_page(&result.url)
         .await
         .map_err(|error| AppError::Network(format!("{}: {error}", result.url)))?;
-    if !within_search_scope(query, &article.url) {
+    if !within_search_scope(query, &page.output.url) {
         return Ok(None);
     }
-    let captured = CapturedLearningSource {
-        title: article
-            .title
-            .unwrap_or_else(|| result.title.clone())
-            .chars()
-            .take(180)
-            .collect(),
-        publisher: None,
-        requested_url: Some(result.url.clone()),
-        resolved_url: Some(article.url),
-        text: article.content,
-        truncated: article.content_truncated,
-        extraction_version:
-            lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
-    };
+    let title = page
+        .output
+        .title
+        .clone()
+        .unwrap_or_else(|| result.title.clone())
+        .chars()
+        .take(180)
+        .collect();
+    let captured = web_capture(page, &result.url, title);
     if crate::features::learning::sources::validate_capture(&captured).is_err() {
         return Ok(None);
     }

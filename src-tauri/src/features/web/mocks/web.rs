@@ -8,8 +8,11 @@ use crate::features::web::traits::web::{WebIngestionResult, WebIngestionServiceT
 use async_trait::async_trait;
 #[cfg(test)]
 use lattice_core::application::contracts::web::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
+    FetchUrlContentOutput, ProvenanceSignals, ReferencePage, WebSearchInput, WebSearchOutput,
+    WebSearchResult,
 };
+#[cfg(test)]
+use lattice_core::application::ports::web_service::NO_PROVENANCE_READER;
 #[cfg(test)]
 use lattice_core::application::ports::WebServiceTrait;
 #[cfg(test)]
@@ -147,6 +150,7 @@ impl WebIngestionServiceTrait for MockWebIngestionService {
 pub struct MockWebService {
     search_results: Arc<RwLock<Vec<WebSearchResult>>>,
     url_contents: Arc<RwLock<HashMap<String, FetchUrlContentOutput>>>,
+    page_signals: Arc<RwLock<HashMap<String, ProvenanceSignals>>>,
 }
 
 #[cfg(test)]
@@ -155,7 +159,18 @@ impl MockWebService {
         Self {
             search_results: Arc::new(RwLock::new(Vec::new())),
             url_contents: Arc::new(RwLock::new(HashMap::new())),
+            page_signals: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Set the provenance signals `fetch_reference_page` returns for `url`.
+    /// A URL without any gets `NotExtracted`, as a fetcher without a
+    /// metadata reader would.
+    pub fn set_page_signals(&self, url: impl Into<String>, signals: ProvenanceSignals) {
+        self.page_signals
+            .write()
+            .expect("Mock lock poisoned")
+            .insert(url.into(), signals);
     }
 
     /// Set canned web search results
@@ -234,6 +249,24 @@ impl WebServiceTrait for MockWebService {
                 from_cache: false,
             })
         }
+    }
+
+    async fn fetch_reference_page(&self, url: &str) -> Result<ReferencePage> {
+        let output = self.fetch_reference_content(url).await?;
+        let signals = self
+            .page_signals
+            .read()
+            .expect("Mock lock poisoned")
+            .get(url)
+            .cloned()
+            .unwrap_or_else(|| ProvenanceSignals::NotExtracted {
+                reason: NO_PROVENANCE_READER.to_string(),
+            });
+        Ok(ReferencePage {
+            output,
+            signals,
+            fetched_at: chrono::Utc::now().timestamp(),
+        })
     }
 
     fn validate_url(&self, url: &str) -> Result<()> {

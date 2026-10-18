@@ -4,7 +4,7 @@ use crate::features::learning::dto::{GenerateLearningProgramRequestDto, Learning
 use crate::features::learning::dto::{
     LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
 };
-use lattice_core::application::contracts::web::REFERENCE_TEXT_EXTRACTION_VERSION;
+use crate::features::learning::references::trust::capture;
 use lattice_core::application::ports::LibraryPassagesPort;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
@@ -96,19 +96,22 @@ pub(in crate::features::learning) async fn capture_document(
             "The document has no indexed text. Let its import finish first.".into(),
         )
     })?;
+    let text = document
+        .chunks
+        .iter()
+        .map(|chunk| chunk.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let signals = capture::document_signals(&document, &text);
     let captured = crate::features::learning::source_library::CapturedLearningSource {
         title: document.title,
-        publisher: None,
+        publisher: capture::publisher(&signals),
         requested_url: None,
         resolved_url: None,
         truncated: false,
-        text: document
-            .chunks
-            .iter()
-            .map(|chunk| chunk.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n"),
+        text,
         extraction_version: "document_chunks_v2".into(),
+        signals,
     };
     validate_capture(&captured)?;
     Ok(captured)
@@ -163,23 +166,16 @@ pub async fn acquire(
         // This safe host service validates the URL with its public-only
         // resolver, revalidates every redirect, and pins checked DNS answers
         // into the connection before performing the actual read.
-        let article = match safe_web.fetch_reference_content(url).await {
-            Ok(article) => article,
+        let page = match safe_web.fetch_reference_page(url).await {
+            Ok(page) => page,
             Err(error) => {
                 tracing::warn!(url, %error, "Skipping unreachable or blocked reference URL");
                 acquisition_errors.push(format!("{url}: {error}"));
                 continue;
             }
         };
-        let captured = crate::features::learning::source_library::CapturedLearningSource {
-            title: article.title.unwrap_or_else(|| url.into()),
-            publisher: None,
-            requested_url: Some(url.into()),
-            resolved_url: Some(article.url),
-            text: article.content,
-            truncated: article.content_truncated,
-            extraction_version: REFERENCE_TEXT_EXTRACTION_VERSION.into(),
-        };
+        let title = page.output.title.clone().unwrap_or_else(|| url.into());
+        let captured = capture::web_capture(page, url, title);
         if let Err(error) = validate_capture(&captured) {
             tracing::warn!(url, %error, "Skipping invalid captured reference content");
             acquisition_errors.push(format!("{url}: {error}"));
@@ -239,22 +235,13 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
                     "Web source has no requested URL".into(),
                 )
             })?;
-            let article = deps
+            let page = deps
                 .web
-                .fetch_reference_content(url)
+                .fetch_reference_page(url)
                 .await
                 .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
-            Ok::<_, lattice_core::shared::error::AppError>(
-                crate::features::learning::source_library::CapturedLearningSource {
-                    title: article.title.unwrap_or_else(|| url.into()),
-                    publisher: None,
-                    requested_url: Some(url.into()),
-                    resolved_url: Some(article.url),
-                    text: article.content,
-                    truncated: article.content_truncated,
-                    extraction_version: REFERENCE_TEXT_EXTRACTION_VERSION.into(),
-                },
-            )
+            let title = page.output.title.clone().unwrap_or_else(|| url.into());
+            Ok::<_, lattice_core::shared::error::AppError>(capture::web_capture(page, url, title))
         }
         .await;
         let (captured, failure) = match refreshed {

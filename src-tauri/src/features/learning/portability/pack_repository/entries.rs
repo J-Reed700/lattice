@@ -12,7 +12,7 @@ use super::{
     export, importers, parse,
     program_entry::{ATTEMPTS, PROGRAM},
     provenance,
-    source_entries::{SourceBodies, SourceHistory, SourceLibrary, SourceSelectors},
+    source_entries::{SourceBodies, SourceHistory, SourceLibrary, SourceSelectors, SourceTrust},
     validation::validate_answer_keys,
     value_str,
 };
@@ -117,6 +117,7 @@ pub(super) const SECTION_ROWS: &[&dyn SectionRows] = &[
     &SourceLibrary,
     &SourceHistory,
     &SourceSelectors,
+    &SourceTrust,
     &EVIDENCE_TABLE_ROWS,
     &AnswerKeys,
     &Provenance,

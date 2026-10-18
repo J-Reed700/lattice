@@ -60,6 +60,7 @@ impl LibraryPassagesPort for LibraryPassages {
         Ok(Some(LibraryDocumentText {
             title: document.file_name().to_owned(),
             file_path: document.file_path().to_string_lossy().into_owned(),
+            mime_type: document.mime_type().to_owned(),
             chunks: chunks
                 .iter()
                 .map(|chunk| LibraryChunk {

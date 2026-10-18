@@ -702,3 +702,65 @@ Fix PR (`lattice-evidence`, uncommitted): `content_verification/research.rs` (`E
 Claim-review design: CR §0, §2.1-2.3, §3, §4, §5.1, §5.3, §5.4, §6.1, §7.1, §8.2, §14, §15, §16 (tracks R, L0, L1, S, F, V, I and the per-chat-model collision table).
 
 Scratchpad evidence: `/private/tmp/claude-501/-Users-josh-Code-lattice-temp/9f78b884-57bd-495c-8a76-b7447ad904e3/scratchpad/lesson-failure-function-calling.md` §1, §3 (causes 2-5, 7), §4 (fix 7: the policy decision).
+
+## As-built notes: P2 web (2026-10-17)
+
+Branch `feat/provenance-web`, from P1's contracts commit `40f2be17`, fast-forwarded to P1's rules commit `ccedb536` so the page origin uses core's rules instead of a second copy.
+
+**Where it is.** `features/web/services/provenance/{mod, metadata, json_ld, dates, links}.rs` with `tests.rs` (fixture pages) and `parts_tests.rs` (link scanner, dates); fixtures in `provenance/fixtures/` (documentation page, blog post, news article, Wayback capture, a page falsely claiming to be official, malformed markup). `WebServiceTrait::fetch_reference_page` has its default in `lattice-core/src/application/ports/web_service.rs` (the trait moved there in phase 2 round C; §17/§22 still say `web/traits/web.rs`), returning `NotExtracted { reason: NO_PROVENANCE_READER }`; `WebService` overrides it and `fetch_reference_content` now delegates to it. `ReadPage.signals` carries the signals for every read; `MockWebService::set_page_signals` configures them per URL. `conversation/chat/test_runtime.rs` and the learning fakes are unchanged.
+
+**What each read records.**
+
+| Read | Signals |
+|---|---|
+| HTTP, reference | markup metadata + `links` from the reference markdown |
+| HTTP, chat | markup metadata; `links` empty (chat text is paragraph text, whose brackets are the page's prose) |
+| Browser, reference | new `BrowserReader::read_document` (the rendered DOM without the snapshot fix-ups); the same markdown extraction and metadata reader run on it; `via_browser_reader = true`, `status` = what the HTTP client was answered, `last_modified = None` |
+| Browser, chat; page-cache hit | `NotExtracted` with the reason (the text report and the cache carry no markup) |
+
+The browser fallback for reference reads used to return flat paragraph text stamped as `web_reference_markdown_v2`; it now returns that markdown. `PageRead::Reference`'s doc said "no browser fallback"; the code always had one, and the doc now says what it does.
+
+**Deviations from §4/§17.**
+
+- **Links are a scanner, not a regex.** The reader reads the reference reader's own grammar: backslash escapes, code spans and fenced blocks are honoured, brackets are matched, only absolute http(s) destinations count, images are skipped, and the anchor is the plain text (escapes and the reader's `&amp;`/`&lt;`/`&gt;` decoded, emphasis markers dropped). A regex would match `\[click here\](https://…)`, which is how the reader writes a link-shaped string from the page's *prose*, and links inside code. **Resolved (P1 `4e694074`, P3):** the scanner moved into core as `domain::provenance::markdown_links` (`links.rs`, P2's tests ported); the web feature's copy and its tests are deleted and the web reader calls core's.
+- **Cross-origin canonicals are carried.** `Origin::apply_canonical` keeps a same-origin canonical and returns `CrossOrigin { url }` otherwise; that URL becomes `PageSignals.canonical_elsewhere` (`CanonicalElsewhere::of`, P1 `4e694074`), with the other site's origin key after archive unwrapping, and capture writes it as a `CanonicalOf` relation (P3). The page's own origin never moves, and the relation grants no level by itself (§5 step 4 requires matching content). An archived page's canonical is unwrapped to the original before it is applied (Wayback rewrites it into its own address space).
+- **`self_description` is filled at extraction** with core's `signals::self_description` over title, site name and description, rather than left to the judgement path.
+- **Archive unwrapping is core's** (`Origin::of_url`); web has no archive module. `dates.archived_at` comes from `origin.archived`.
+
+**Precedence (first that parses wins; each present-but-unparsable field is a `DateBasis::Malformed { field }`).** Published: JSON-LD `datePublished` → `article:published_time` → meta (`datePublished` itemprop, `date`, `dc.date`, `dc.date.issued`, `dcterms.date|issued|created`, `citation_publication_date`, `citation_date`, `pubdate`, `publishdate`) → `time[itemprop~=datePublished]`, `time[pubdate]`, `article time[datetime]`. Modified: JSON-LD `dateModified` → `article:modified_time`, `og:updated_time` → meta (`dateModified`, `dc.date.modified`, `dcterms.modified`, `http-equiv=last-modified`) → `time[itemprop~=dateModified]`. Publisher: JSON-LD `publisher` (content nodes first, untyped `@id` references resolved to the typed node on the page) → `dc.publisher`/`dcterms.publisher`/`citation_publisher` → microdata `itemprop=publisher` → the first JSON-LD organisation node. Author: JSON-LD `author`/`creator` → `author`/`dc.creator`/`dcterms.creator`/`citation_author` → `article:author` → microdata → `rel=author`. Values are cleaned (control characters removed, whitespace collapsed) and otherwise kept as declared: no caps, since oversized metadata is core's `OversizedMetadata` flag.
+
+## As-built notes: P3 learning store + capture (2026-10-18)
+
+Branch `feat/provenance-store` (P1 contracts and rules, P2 web, the evidence-fix merge, then P1 `4e694074`). Migration `20261018120000_source_provenance_and_trust.sql`, after L0's `20261017150000` and main's `20261017130000`.
+
+**Where it is.** `learning/references/trust/{mod, rows, repository, capture, overrides, pack}.rs` with `{repository, capture, overrides, migration}_tests.rs` and `test_support.rs`; DTOs in `learning/dto/trust.rs` (types only, for P6); the pack round trip in `portability/pack_tests/source_trust.rs`. `SqliteSourceTrustStore::new(pool)` implements the core port; no DI module changes.
+
+**The hook.** `trust::capture::record(tx, &CapturedVersion { program_id, source_id, version_id, kind, title, resolved_url, text, acquired_at_ms }, &signals)` writes the provenance row and the version's relations in the caller's transaction. `CapturedLearningSource` carries a required `signals` field, so no capture can omit them. Called from every place a version row is inserted:
+
+| Insert site | Capture paths behind it | Signals |
+|---|---|---|
+| `source_library/capture.rs` `add` | user link (`source_workflows.rs`), user document and pasted text (`plugin/sources.rs`), lesson research (`content_verification/research.rs` via `web_research::capture`) | page signals from `fetch_reference_page`; `document_signals`; `pasted_signals` (the typed publisher is the declared origin) |
+| `source_library/capture.rs` `refresh` | refresh command, before-use refresh (`sources.rs`) | page signals |
+| `repository.rs` `insert_source` | course creation and outline drafts with initial references (`sources.rs` documents and URLs, outline references) | the reference's signals; a seed without a capture records `NotExtracted { SEED_WITHOUT_CAPTURE }` |
+| `source_library/lifecycle.rs` `reimport_source` | restoring a removed source | the restored version's signals, carried forward (else `NotExtracted { NO_PRIOR_PROVENANCE }`); sketch and links of the new text |
+
+Capture paths now fetch with `fetch_reference_page` (the test fakes keep `fetch_reference_content`; the default returns `NotExtracted`). `publisher` = the declared publisher, else the site name, skipping a name over the column's 180 characters (the signals keep it whole); documents have none; pasted text keeps what the user typed. `grep "publisher: None"` in learning now matches only test fixtures and a DTO literal in a test.
+
+**Relations at capture.** `page_relations` against the active versions of the course's other sources (`CopyOf`/`ContainsCopyOf`); `ArchiveOf` when the origin unwrapped an archive; `CanonicalOf` from `PageSignals.canonical_elsewhere` (P1 `4e694074`; P2's reader now sets it, so no P7 TODO remains). Archive and canonical targets resolve to a captured version of another source when one has that URL, else stay URLs.
+
+**Deviations from §16 (code beats doc).**
+
+- Versions are keyed by `(program_id, id)`, so every reference to one is a composite foreign key; `source_provenance` is keyed `(source_version_id, program_id)`.
+- `source_provenance` gains `site` (`Origin::site()`: what site overrides are keyed by, and how an override finds the versions it covers) and `origin_json` (the whole `Origin`, so the row round-trips); `sketch` is checked to be 512 bytes.
+- `source_subject_authority` gains `input_sha256` and the token columns; `claim_profiles` is keyed by `input_sha256`, not `statement_sha256`, because P1's `claim_profile_key` hashes the statement with the offered subject classes, and gains the token columns. Without them `StoredJudgement` would not round-trip.
+- `source_relations`: exactly one of `to_version_id`/`to_url`; the edge index includes `program_id`.
+- `source_trust_overrides` follows Josh's three scopes, not §16's two: `source` (course + source, any level), `site` (registrable domain, a **standing** in its own column, never a level), `site_subject` (domain + class key + class JSON, any level). A per-scope CHECK fixes which columns each scope fills, and a second CHECK states the rule: `primary` only for `source` or `site_subject`. One override per scope key via partial unique indexes; a source override goes with its source.
+- `source_trust_outcomes.right` is `decision_right` (`RIGHT` is an SQL keyword); vocabularies are CHECKed against the core enums (a test compares each list with `ALL`).
+- Trust-table times are unix seconds (the domain's clock); `extracted_at` is the version's `acquired_at` converted from the library's milliseconds.
+- The row's `links` are read from the saved `full_text` with core's `markdown_links`, so their offsets index the stored text exactly; web signals keep the reader's own links.
+- The pack is a new section `sources/trust.json` (`PackSection::SourceTrust`, `SOURCE_TRUST_ENTRY`): provenance rows, relations with their detection time, source overrides. This touched `pack/sections.rs`, `pack_repository/{entries.rs, source_entries.rs}` beyond `export.rs`/`importers.rs`, because the codec reserves paths per section. A copy remaps version, source and claim ids, and a pasted origin follows its version's new id.
+- `LibraryDocumentText` gains `mime_type` (core port and the search use case), since `DocumentSignals.mime_type` has no other honest source; `page_count` stays `None`.
+
+**Overrides reopening.** `trust::overrides::{set, clear, preview}` answer with the versions an override covers (a source's versions; a site's versions in every course, for both site scopes). The reopen itself (`ReopenCause::TrustChanged`) is P5's ledger work; P6's menu counts the same versions.
+
+**Not done here.** `lessons/claim_profiles.rs` (the per-unit profile runner) is not written: it runs P1's `claim_profile` service, which is not committed on `feat/source-provenance` yet; the store side (`claim_profile`, `save_claim_profiles`) is ready for it.

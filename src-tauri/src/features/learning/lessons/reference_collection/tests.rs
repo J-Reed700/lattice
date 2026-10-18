@@ -137,6 +137,7 @@ impl LibraryPassagesPort for FakeLibrary {
             lattice_core::application::ports::LibraryDocumentText {
                 title: format!("{document_id}.md"),
                 file_path: format!("/library/{document_id}"),
+                mime_type: "text/markdown".into(),
                 chunks: chunks.clone(),
             }
         }))
@@ -215,6 +216,9 @@ async fn collection_fixture(
                 text: text.clone(),
                 truncated: false,
                 extraction_version: "fixture_full_text".into(),
+                signals: crate::features::learning::references::trust::capture::not_extracted(
+                    "test fixture",
+                ),
             },
         })
         .collect();

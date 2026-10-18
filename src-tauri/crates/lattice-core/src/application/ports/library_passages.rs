@@ -16,11 +16,14 @@ pub struct LibraryChunk {
     pub text: String,
 }
 
-/// An indexed library document's name, location and every chunk in order.
+/// An indexed library document's name, location, type and every chunk in
+/// order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryDocumentText {
     pub title: String,
     pub file_path: String,
+    /// The MIME type the library recorded at import.
+    pub mime_type: String,
     pub chunks: Vec<LibraryChunk>,
 }
 
