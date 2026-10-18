@@ -571,3 +571,60 @@ fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
         "a round that can call tools never thinks"
     );
 }
+
+fn picture_request() -> CompletionRequest {
+    use lattice_core::application::ports::llm_port::ImagePart;
+    CompletionRequest {
+        input: vec![CompletionInput::Multimodal {
+            role: "user".into(),
+            parts: vec![
+                ContentPart::Image(ImagePart {
+                    mime: "image/png".into(),
+                    data_base64: "iVBORw0KGgo=".into(),
+                    width: 448,
+                    height: 448,
+                    tokens: 258,
+                    alt: "chart.png".into(),
+                }),
+                ContentPart::Text {
+                    text: "What does it show?".into(),
+                },
+            ],
+        }],
+        ..Default::default()
+    }
+}
+
+fn llava() -> OllamaClient {
+    OllamaClient::with_model_and_timeouts(
+        "http://localhost:11434",
+        "llava:7b",
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap()
+}
+
+#[test]
+fn pictures_go_in_the_messages_images_list_beside_its_text() {
+    use lattice_core::domain::models::vision::VisionPreset;
+    let client = llava().with_vision(Some(VisionPreset::GemmaSiglip.geometry()));
+    let sent = serde_json::to_value(client.chat_request(&picture_request()).unwrap()).unwrap();
+    assert_eq!(
+        sent["messages"][0],
+        serde_json::json!({
+            "role": "user",
+            "content": "What does it show?",
+            "images": ["iVBORw0KGgo="]
+        })
+    );
+}
+
+#[test]
+fn a_model_nobody_declared_able_to_see_refuses_pictures() {
+    let refused = llava().chat_request(&picture_request()).unwrap_err();
+    assert!(matches!(refused, AppError::InvalidConfig(_)), "{refused}");
+    assert!(refused
+        .to_string()
+        .contains("llava:7b is not set up to see images"));
+}

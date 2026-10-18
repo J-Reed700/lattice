@@ -156,3 +156,83 @@ fn first_token_alternatives_are_read_from_the_openai_logprobs_shape() {
     );
     assert_eq!(first_token_logprobs(&serde_json::Value::Null), None);
 }
+
+fn picture_message(role: &str) -> CompletionInput {
+    CompletionInput::Multimodal {
+        role: role.into(),
+        parts: vec![
+            ContentPart::Image(ImagePart {
+                mime: "image/png".into(),
+                data_base64: "iVBORw0KGgo=".into(),
+                width: 640,
+                height: 480,
+                tokens: 402,
+                alt: "plot.png".into(),
+            }),
+            ContentPart::Text {
+                text: "Read the axis".into(),
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_multimodal_message_round_trips_with_tagged_parts() {
+    let json = serde_json::to_value(picture_message("user")).unwrap();
+    assert_eq!(json["type"], "multimodal");
+    assert_eq!(json["parts"][0]["type"], "image");
+    assert_eq!(json["parts"][0]["tokens"], 402);
+    assert_eq!(
+        json["parts"][1],
+        serde_json::json!({"type":"text","text":"Read the axis"})
+    );
+    let back: CompletionInput = serde_json::from_value(json).unwrap();
+    assert_eq!(back.image_tokens(), 402);
+}
+
+#[test]
+fn pictures_count_by_declared_tokens_and_fall_back_to_captions() {
+    let request = CompletionRequest {
+        input: vec![
+            CompletionInput::Message {
+                role: "system".into(),
+                content: "Be brief".into(),
+            },
+            picture_message("user"),
+        ],
+        ..Default::default()
+    };
+    assert!(request.has_images());
+    assert_eq!((request.image_tokens(), request.image_count()), (402, 1));
+    assert_eq!(request.user_text(), "Read the axis");
+    assert!(!request.input[0].is_user() && request.input[1].is_user());
+    assert!(matches!(
+        request.input[1].without_images(),
+        CompletionInput::Message { content, .. } if content == "Read the axis\n[Picture: plot.png (640×480)]"
+    ));
+    assert!(matches!(
+        request.input[0].without_images(),
+        CompletionInput::Message { content, .. } if content == "Be brief"
+    ));
+}
+
+#[test]
+fn a_model_sees_nothing_unless_declared() {
+    struct Plain;
+    #[async_trait]
+    impl LLMPort for Plain {
+        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::default())
+        }
+        fn model_name(&self) -> &str {
+            "plain"
+        }
+        fn max_context_tokens(&self) -> usize {
+            1
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    assert_eq!(Plain.vision(), None);
+}

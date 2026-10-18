@@ -104,6 +104,10 @@ impl LLMPort for PinnedLlm {
         self.inner().supports_tool_calling()
     }
 
+    fn vision(&self) -> Option<lattice_core::domain::models::vision::VisionGeometry> {
+        self.inner().vision()
+    }
+
     fn provider_name(&self) -> &str {
         self.inner().provider_name()
     }

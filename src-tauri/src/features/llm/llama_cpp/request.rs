@@ -1,21 +1,44 @@
 //! The Chat Completions body one request becomes: messages, the output
 //! reservation, sampling for the thinking mode, the thinking switch and tools.
 use super::*;
+use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::scheduler::rejection::{window_refusal, RequestSize};
 use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
+use std::borrow::Cow;
+
+/// The characters a tokenizer reads in `input`: each message's role and
+/// text, each call's name and arguments, each result, and opaque provider
+/// state as its JSON. A picture's bytes are not characters; its tokens come
+/// from the model's declared geometry (see [`CompletionInput::image_tokens`]).
+pub(super) fn input_chars(input: &[CompletionInput]) -> usize {
+    input
+        .iter()
+        .map(|item| match item {
+            CompletionInput::Native { value } => value.to_string().chars().count(),
+            CompletionInput::Message { role, .. } | CompletionInput::Multimodal { role, .. } => {
+                role.chars().count() + item.text().chars().count()
+            }
+            CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. } => {
+                item.text().chars().count()
+            }
+        })
+        .sum()
+}
+
+/// The text tokens of `input` by the rough estimate the budgeter uses: four
+/// characters a token.
+pub(super) fn text_tokens(input: &[CompletionInput]) -> usize {
+    lattice_core::application::ports::llm_port::tokens_for_chars(
+        input_chars(input),
+        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+    )
+}
 
 impl LlamaCppLlm {
     /// The prompt's tokens by the rough estimate the budgeter uses: four
-    /// characters a token over each message as sent.
-    fn plain_prompt_tokens(messages: &[Value]) -> usize {
-        let prompt_chars: usize = messages
-            .iter()
-            .map(|message| message.to_string().chars().count())
-            .sum();
-        lattice_core::application::ports::llm_port::tokens_for_chars(
-            prompt_chars,
-            lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
-        )
+    /// characters a token over its text, plus each picture's declared cost.
+    fn plain_prompt_tokens(input: &[CompletionInput]) -> usize {
+        text_tokens(input).saturating_add(input.iter().map(CompletionInput::image_tokens).sum())
     }
 
     /// [`Self::plain_prompt_tokens`] with a margin, for sizing the answer's
@@ -25,14 +48,17 @@ impl LlamaCppLlm {
     /// overruns the window (see [`Self::output_room_for`]); one sized from a
     /// high count only lowers the answer's ceiling. Scaling by 3/2 reads the
     /// prompt at 2⅔ characters a token, which covers that dense text without
-    /// halving the answer's room on plain prose. It never refuses a request
-    /// on its own: [`Self::measured_body`] counts exactly, or falls back to
-    /// the plain estimate, before it refuses.
-    fn estimated_prompt_tokens(messages: &[Value]) -> usize {
+    /// halving the answer's room on plain prose. Pictures are added at their
+    /// declared cost, unscaled: the geometry already charges what the encoder
+    /// produces. It never refuses a request on its own:
+    /// [`Self::measured_body`] counts exactly, or falls back to the plain
+    /// estimate, before it refuses.
+    fn estimated_prompt_tokens(input: &[CompletionInput]) -> usize {
         /// The margin: estimated prompt tokens are scaled by this fraction.
         const ESTIMATE_SAFETY: usize = 3;
         const ESTIMATE_SAFETY_DIVISOR: usize = 2;
-        Self::plain_prompt_tokens(messages) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR
+        let images: usize = input.iter().map(CompletionInput::image_tokens).sum();
+        (text_tokens(input) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR).saturating_add(images)
     }
 
     /// What the server can still be asked to generate once this prompt is in
@@ -44,8 +70,8 @@ impl LlamaCppLlm {
     /// 75k prompt tokens into a 163k slot, asked for 131k more on top, and the
     /// server failed the batch — a 500 forty-eight seconds in, after it had
     /// already done the work.
-    pub(super) fn output_room_for(&self, messages: &[Value], requested: u32) -> u32 {
-        self.output_room_after(Self::estimated_prompt_tokens(messages), requested)
+    pub(super) fn output_room_for(&self, input: &[CompletionInput], requested: u32) -> u32 {
+        self.output_room_after(Self::estimated_prompt_tokens(input), requested)
     }
 
     /// The output reservation once `prompt_tokens` are in the configured
@@ -97,26 +123,29 @@ impl LlamaCppLlm {
                 size.output_tokens > 0
             }
         };
-        let messages = body
-            .get("messages")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let estimated = Self::estimated_prompt_tokens(&messages);
+        let input = &request.input;
+        let pictures = RequestSize {
+            image_tokens: request.image_tokens(),
+            image_count: request.image_count(),
+            ..RequestSize::default()
+        };
+        let estimated = Self::estimated_prompt_tokens(input);
         let mut size = RequestSize {
             prompt_tokens: estimated,
             counted_exactly: false,
             output_tokens: self.output_room_after(estimated, requested),
+            ..pictures
         };
         if !fits(&size) {
-            let (prompt_tokens, counted_exactly) = match self.exact_prompt_tokens(&messages).await {
+            let (prompt_tokens, counted_exactly) = match self.exact_prompt_tokens(input).await {
                 Some(exact) => (exact, true),
-                None => (Self::plain_prompt_tokens(&messages), false),
+                None => (Self::plain_prompt_tokens(input), false),
             };
             size = RequestSize {
                 prompt_tokens,
                 counted_exactly,
                 output_tokens: self.output_room_after(prompt_tokens, requested),
+                ..pictures
             };
         }
         if !fits(&size) {
@@ -141,26 +170,31 @@ impl LlamaCppLlm {
     /// about five special tokens (`<|im_start|>`, the role, a newline,
     /// `<|im_end|>`, a newline) and opens the answer with about six more
     /// (the assistant header and an empty think block); eight per message and
-    /// sixteen for the answer cover those with room to spare. `None` when the
-    /// server cannot tokenize.
-    async fn exact_prompt_tokens(&self, messages: &[Value]) -> Option<usize> {
+    /// sixteen for the answer cover those with room to spare. Pictures are
+    /// added at their declared cost: a tokenizer reads text, not images.
+    /// `None` when the server cannot tokenize.
+    async fn exact_prompt_tokens(&self, input: &[CompletionInput]) -> Option<usize> {
         const TEMPLATE_TOKENS_PER_MESSAGE: usize = 8;
         const TEMPLATE_TOKENS_FOR_ANSWER: usize = 16;
-        let text = messages
+        let text = input
             .iter()
-            .map(|message| match message.get("content") {
-                Some(Value::String(content)) => content.clone(),
-                _ => message.to_string(),
+            .map(|item| match item {
+                CompletionInput::Native { value } => Cow::Owned(value.to_string()),
+                _ => item.text(),
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let images: usize = input.iter().map(CompletionInput::image_tokens).sum();
         let tokenizer = crate::features::llm::scheduler::ServerTokenizer::new(
             self.client.clone(),
             self.server_root(),
         );
         match tokenizer.count(&text).await {
             Ok(tokens) => Some(
-                tokens + TEMPLATE_TOKENS_PER_MESSAGE * messages.len() + TEMPLATE_TOKENS_FOR_ANSWER,
+                tokens
+                    + TEMPLATE_TOKENS_PER_MESSAGE * input.len()
+                    + TEMPLATE_TOKENS_FOR_ANSWER
+                    + images,
             ),
             Err(error) => {
                 tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
@@ -170,7 +204,8 @@ impl LlamaCppLlm {
     }
 
     /// The streamed Chat Completions body for `request`, refusing tool traffic
-    /// a model without a tool-call template would render as text.
+    /// a model without a tool-call template would render as text, and
+    /// pictures a model nobody declared able to see would never receive.
     pub(super) fn body(&self, request: &CompletionRequest) -> Result<Value> {
         let carries_tools = !request.tools.is_empty()
             || request.input.iter().any(|item| {
@@ -184,11 +219,14 @@ impl LlamaCppLlm {
                 "This local model does not support tool calling".into(),
             ));
         }
+        if request.has_images() && self.config.vision.is_none() {
+            return Err(not_set_up_to_see(&self.config.model));
+        }
         let messages = chat_messages(&request.input)?;
         let generation = &self.config.generation;
         let configured_output = u32::try_from(generation.max_tokens).unwrap_or(u32::MAX);
         let requested_output = request.effective_max_output_tokens(configured_output);
-        let max_tokens = self.output_room_for(&messages, requested_output);
+        let max_tokens = self.output_room_for(&request.input, requested_output);
         // The user's pin first, then the model's own, then the request.
         let thinking = generation
             .thinking_override

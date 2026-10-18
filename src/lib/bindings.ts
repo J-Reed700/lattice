@@ -6445,6 +6445,12 @@ localContextWindow: number | null;
  */
 localModelConfigs: { [key in string]: LocalModelConfigDto };
 /**
+ * What remote llama.cpp, Ollama and cloud models see pictures with, keyed
+ * by `ModelRef::to_string()`. A cloud model with no entry falls back to its
+ * provider's documented default; any other model without one cannot see.
+ */
+visionDeclarations: { [key in string]: VisionDeclarationDto };
+/**
  * Speculative decoding for the bundled local server. Experimental, and
  * applied only to a model that carries a multi-token-prediction head;
  * every other model starts as it always has.
@@ -7076,7 +7082,13 @@ seed?: number | null;
  * Quantize the KV cache (`-ctk q8_0 -ctv q8_0`) to roughly halve KV cache
  * memory usage and allow a larger context window to fit in memory.
  */
-kvCacheQuantization?: boolean }
+kvCacheQuantization?: boolean;
+/**
+ * Whether the model is started with its vision projector. `None` means on
+ * once the catalog's projector is downloaded; `Some(false)` keeps a model
+ * with a projector text-only.
+ */
+vision?: boolean | null }
 export type MatchLearningSourceSelectorRequestDto = { programId: string; selectorId: string; targetVersionId: string }
 /**
  * One quoted passage behind a memory item.
@@ -8916,6 +8928,38 @@ verification: JsonValue;
  */
 turn?: TurnRecordDto | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
+/**
+ * A user's statement that a model takes pictures, and how its encoder
+ * resizes and charges for them.
+ */
+export type VisionDeclarationDto = { enabled: boolean; geometry: VisionGeometry }
+/**
+ * How a model's vision encoder takes a picture: what size it is resized to
+ * and what that costs in prompt tokens. Declared per model (catalog, Settings
+ * or provider default), never measured from a server.
+ */
+export type VisionGeometry =
+/**
+ * Dynamic resolution on a token grid (Qwen2-VL, Qwen2.5-VL, Qwen3-VL and
+ * the Qwen3.5+ chat models built on them). The picture is resized so both
+ * sides are multiples of `token_side` pixels (vision patch × spatial
+ * merge: 28 for Qwen2/2.5-VL, 32 for Qwen3-VL and later) with its area
+ * held within `min_pixels..=max_pixels`; one token per `token_side²`
+ * square plus `overhead_tokens` (vision start/end markers).
+ */
+{ kind: "grid"; token_side: number; min_pixels: number; max_pixels: number; overhead_tokens: number } |
+/**
+ * A fixed input (SigLIP-style encoders: Gemma 3/4, PaliGemma, most LLaVA
+ * builds): resized to fit `side`×`side`, always `tokens` tokens.
+ */
+{ kind: "fixed"; side: number; tokens: number } |
+/**
+ * Tiled encoders (OpenAI "high" detail, Gemini, Llama 3.2 Vision): the
+ * picture is scaled so its long side is at most `max_side`, cut into
+ * `tile_side` tiles (at most `max_tiles`), `tokens_per_tile` each plus
+ * `base_tokens` for the overview.
+ */
+{ kind: "tiles"; tile_side: number; tokens_per_tile: number; base_tokens: number; max_tiles: number; max_side: number }
 /**
  * Response from web ingestion command
  */
