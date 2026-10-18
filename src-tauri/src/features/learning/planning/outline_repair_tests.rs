@@ -73,7 +73,7 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
             "This assertion needs evidence from the saved references.",
         )]),
         judged("supported", Some(0)),
-        no_questions(),
+        no_objections(),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -91,7 +91,7 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
     assert_eq!(prompts.len(), 4);
     assert!(prompts[2].starts_with("Source passages:"));
     assert!(prompts[2].contains(&format!("Claim: {ADDITIONAL}")));
-    assert!(prompts[3].starts_with("Plan independent evidence searches"));
+    assert!(prompts[3].starts_with("Review a provisional lesson claim approval"));
     assert!(!prompts
         .iter()
         .any(|p| p.starts_with("Repair a saved curriculum module")));
@@ -499,7 +499,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         json!({"queries":["random assignment confounding textbook"]}),
         select_all(1),
         judged("supported", Some(0)),
-        no_questions(),
+        no_objections(),
     ]);
     let repaired = repair_saved(
         &repo,

@@ -6,14 +6,14 @@ use lattice_core::application::services::claim_verification::{
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BatchQuestions {
-    checks: Vec<CheckQuestions>,
+struct BatchObjections {
+    checks: Vec<CheckObjections>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CheckQuestions {
+struct CheckObjections {
     id: String,
-    queries: Vec<Question>,
+    objections: Vec<Objection>,
 }
 
 pub(in crate::features::learning::lessons::content_verification) async fn guard_batch(
@@ -35,11 +35,11 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
         .filter_map(|index| claims.get(*index).cloned())
         .collect::<Vec<_>>();
     let (prompt, _) = render_batch_evidence(&targets);
-    let system = format!("{SYSTEM}\n\nThis request contains several independent claims and a bank of shared source passages. For EACH claim, use only the passages in that claim's evidenceIds. Other claims and evidence allocated only to them are not evidence for this claim. Review each claim separately; do not infer that approval or a concern applies to the whole batch. Plan for every supplied claim ID exactly once. Keep queries empty only when that claim has no concrete unresolved concern. Do not omit any claim or invent an ID.");
+    let system = format!("{SYSTEM}\n\nThis request contains several independent claims and a bank of shared source passages. For EACH claim, use only the passages in that claim's evidenceIds. Other claims and evidence allocated only to them are not evidence for this claim. Review each claim separately; do not infer that approval or a concern applies to the whole batch. Review every supplied claim ID exactly once, quoting only that claim's own passages. Keep objections empty when that claim's passages give no contrary evidence. Do not omit any claim or invent an ID.");
     let ids: Vec<_> = (0..targets.len())
         .map(|index| format!("claim-{index}"))
         .collect();
-    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}});
+    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","objections"],"properties":{"id":{"type":"string","enum":ids},"objections":{"type":"array","items":objection_schema()}}}}}});
     // Claims whose pages do not fit this request's own room together are
     // challenged one at a time, each sized to its own request.
     if !crate::features::learning::model_call::fits(
@@ -48,7 +48,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
             &system,
             prompt.clone(),
             schema.clone(),
-            QUESTIONS_OUTPUT_TOKENS * targets.len(),
+            OBJECTIONS_OUTPUT_TOKENS * targets.len(),
         ),
     ) {
         let mut result = provisional;
@@ -70,7 +70,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
         response.finish_reason.as_str(),
         "stop" | "end_turn" | "completed"
     ) {
-        serde_json::from_str::<BatchQuestions>(&response.text)
+        serde_json::from_str::<BatchObjections>(&response.text)
             .ok()
             .and_then(|reply| {
                 if reply.checks.len() != targets.len() {
@@ -86,11 +86,11 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
                     {
                         return None;
                     }
-                    let questions = Questions {
-                        queries: check.queries,
+                    let objections = Objections {
+                        objections: check.objections,
                     };
-                    validate_questions(&questions).ok()?;
-                    results.push((index, questions));
+                    validate_objections(&objections).ok()?;
+                    results.push((index, objections));
                 }
                 Some(results)
             })
@@ -99,12 +99,15 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
     };
     let mut result = provisional;
     if let Some(checks) = checks {
-        for (index, questions) in checks {
-            if let Some(finding) = selected
-                .get(index)
-                .and_then(|original| result.get_mut(*original))
-            {
-                *finding = apply_questions(finding.clone(), questions);
+        for (index, objections) in checks {
+            if let (Some(finding), Some(target)) = (
+                selected
+                    .get(index)
+                    .and_then(|original| result.get_mut(*original)),
+                targets.get(index),
+            ) {
+                *finding =
+                    apply_objections(finding.clone(), objections, target.passages.as_slice());
             }
         }
     } else {

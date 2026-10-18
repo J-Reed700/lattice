@@ -208,3 +208,35 @@ async fn a_resume_during_an_escalation_keeps_it() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn a_stop_after_research_found_nothing_to_search_says_so() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let exhausted = research::Exhausted {
+        claims: 4,
+        searched: 10,
+    };
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        lesson_drafts::resume("progress-fixture".into()).await?;
+        let issues = vec!["Section 1: an unsupported claim".to_owned()];
+        let mut progress = RepairProgress::default();
+        progress.record("{}", &issues, Some(exhausted)).await?;
+        progress.record("{}", &issues, Some(exhausted)).await?;
+        let error = progress
+            .record("{}", &issues, Some(exhausted))
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains(
+                "No further public search can help 4 unresolved claims (10 searches already tried)."
+            ),
+            "{error}"
+        );
+        assert!(!error.contains("malformed"), "{error}");
+        Ok(())
+    })
+    .await
+}
