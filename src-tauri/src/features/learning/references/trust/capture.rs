@@ -187,15 +187,9 @@ pub async fn record(
         extraction_version: extraction_version(signals),
         extracted_at: version.acquired_at_ms.div_euclid(MILLIS_PER_SECOND),
     };
-    write_provenance(&mut **tx, &record).await?;
+    write_provenance(tx, &record).await?;
     let relations = relate(tx, version, &record, &text_shingles).await?;
-    write_relations(
-        &mut **tx,
-        version.program_id,
-        &relations,
-        record.extracted_at,
-    )
-    .await?;
+    write_relations(tx, version.program_id, &relations, record.extracted_at).await?;
     Ok(Recorded { record, relations })
 }
 
