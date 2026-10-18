@@ -1,6 +1,7 @@
 //! Shared business entities, value objects, and rules.
 //!
-//! `conversation`, `download`, and `models` group domain-specific concepts.
+//! `conversation`, `download`, `learning`, and `models` group domain-specific
+//! concepts.
 //! `entities`, `value_objects`, and `services` hold shared document and search
 //! primitives. Repository traits and external-access ports define boundaries;
 //! implementations belong to infrastructure or the owning feature.
@@ -9,6 +10,7 @@ pub mod conversation;
 pub mod download;
 pub mod entities;
 pub mod error;
+pub mod learning;
 pub mod models;
 pub mod ports;
 pub mod qa;
