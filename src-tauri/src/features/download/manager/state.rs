@@ -4,10 +4,10 @@
 //! queue, per-session auth tokens and the event channel — plus the stop
 //! signal that running transfer tasks listen on.
 
-use super::types::DownloadEvent;
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::DownloadEngine;
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
+use lattice_core::application::ports::download_manager::DownloadEvent;
 use lattice_core::domain::download::DownloadSession;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::collections::{HashMap, VecDeque};

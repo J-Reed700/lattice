@@ -51,6 +51,8 @@ const ROW_CLASS =
 const ICON_SLOT_CLASS = 'flex h-5 w-5 shrink-0 items-center justify-center text-[hsl(var(--text-tertiary))]';
 const BADGE_CLASS =
   'shrink-0 rounded-sm border border-border-default px-1 py-px text-xxs leading-4 text-[hsl(var(--text-secondary))]';
+const SEES_IMAGES_BADGE_CLASS =
+  'shrink-0 rounded-sm border border-accent/25 bg-accent-muted px-1 py-px text-xxs leading-4 text-accent';
 
 export function ModelPickerPopover({
   choice,
@@ -246,6 +248,11 @@ function OptionRow({
           {option.supportsTools === false && (
             <span className={BADGE_CLASS} title="This model cannot call tools, so it answers without searching.">
               no tools
+            </span>
+          )}
+          {option.seesImages === true && (
+            <span className={SEES_IMAGES_BADGE_CLASS} title="Pictures you attach are shown to this model.">
+              sees images
             </span>
           )}
           {degraded && (

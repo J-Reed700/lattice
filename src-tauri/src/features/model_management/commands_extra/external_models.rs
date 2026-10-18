@@ -199,7 +199,7 @@ fn is_external_directory_model(model: &DownloadedModel) -> bool {
 
 pub(super) async fn sync_external_model_directories(
     container: &Container,
-    repository: &DownloadedModelRepository,
+    repository: &dyn DownloadedModelRepository,
 ) -> Result<(), AppError> {
     let settings = container
         .get_settings_use_case()
@@ -272,7 +272,7 @@ pub(super) async fn sync_external_model_directories(
     }
 
     let existing_models = repository
-        .list_all()
+        .list()
         .await
         .map_err(|e| e.with_context("Failed to list models for external sync cleanup"))?;
 

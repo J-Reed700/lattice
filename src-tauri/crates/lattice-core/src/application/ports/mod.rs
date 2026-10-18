@@ -69,6 +69,7 @@
 //! }
 //! ```
 
+pub mod active_models;
 pub mod backup_port;
 pub mod backup_scheduler_port;
 pub mod chat_images;
@@ -85,6 +86,7 @@ pub mod credentials_port;
 pub mod database_stats_port;
 pub mod document_repository_port;
 pub mod document_scope;
+pub mod download_manager;
 pub mod embedding_index_binding;
 pub mod embedding_port;
 pub mod embedding_repository_port;
@@ -102,7 +104,6 @@ pub mod loaded_embedding_model;
 pub mod mention_repository_port;
 pub mod metrics_port;
 pub mod mock_embedding_port;
-pub mod mock_llm_port;
 pub mod model_catalog;
 pub mod model_file_inspector;
 pub mod model_storage;
@@ -165,7 +166,6 @@ pub use loaded_embedding_model::LoadedEmbeddingModelPort;
 pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWithContextData};
 pub use metrics_port::{MetricsPort, MetricsSnapshotData};
 pub use mock_embedding_port::MockEmbeddingPort;
-pub use mock_llm_port::DegradedLLMPort;
 pub use model_catalog::{ExternalModelMetadata, MockModelCatalogPort, ModelCatalogPort};
 pub use model_file_inspector::ModelFileInspector;
 pub use model_storage::{DownloadedModel, ModelStoragePort};

@@ -5,16 +5,18 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
+use crate::features::llm::engine::vision::declared_vision;
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::instances::LaunchProfile;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
+use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
+use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
 
 /// A bundled llama-server that cannot execute is an install problem, not a
@@ -118,7 +120,8 @@ impl UnloadableArtifacts {
 }
 
 pub(crate) struct ModelLoader {
-    downloaded_models: Arc<DownloadedModelRepository>,
+    downloaded_models: Arc<dyn DownloadedModelRepository>,
+    active_models: Arc<dyn ActiveModels>,
     app_handle: Option<tauri::AppHandle>,
     runtime: LlmRuntime,
 }
@@ -148,12 +151,14 @@ pub(crate) fn launch_profile_for(model: &ModelRef, settings: &LLMSettingsDto) ->
 
 impl ModelLoader {
     pub(crate) fn new(
-        downloaded_models: Arc<DownloadedModelRepository>,
+        downloaded_models: Arc<dyn DownloadedModelRepository>,
+        active_models: Arc<dyn ActiveModels>,
         app_handle: Option<tauri::AppHandle>,
         runtime: LlmRuntime,
     ) -> Self {
         Self {
             downloaded_models,
+            active_models,
             app_handle,
             runtime,
         }
@@ -163,7 +168,7 @@ impl ModelLoader {
     /// file.
     pub(crate) async fn active_local_chat_model(&self) -> Result<Option<String>> {
         Ok(self
-            .downloaded_models
+            .active_models
             .get_active_chat_model()
             .await?
             .filter(|model| model.location().is_local())
@@ -174,7 +179,7 @@ impl ModelLoader {
     pub(crate) async fn active_utility_model(
         &self,
     ) -> Result<Option<lattice_core::domain::DownloadedModel>> {
-        self.downloaded_models.get_active_utility_model().await
+        self.active_models.get_active_utility_model().await
     }
 
     /// The downloaded row `model_id` names, ready to start, or `None` when no
@@ -224,22 +229,27 @@ impl ModelLoader {
                 .load_ollama(settings, model, generation)
                 .await
                 .map(remote),
-            ModelRef::LlamaCpp { model } => {
+            ModelRef::LlamaCpp { model: name } => {
                 let mut connection = with_generation(settings, &generation);
-                connection.llama_cpp.model = model.clone();
+                connection.llama_cpp.model = name.clone();
                 Ok(remote(
                     crate::features::llm::llama_cpp::LlamaCppLlm::new(&connection)?
+                        .with_vision(declared_vision(settings, model))
                         .schedule(&self.runtime.schedulers)
                         .await,
                 ))
             }
-            ModelRef::Cloud { provider, model } => {
+            ModelRef::Cloud {
+                provider,
+                model: name,
+            } => {
                 let key = cloud_api_key(*provider)?;
                 let mut connection = with_generation(settings, &generation);
                 connection.provider = llm_provider(*provider);
-                connection.model = model.clone();
+                connection.model = name.clone();
                 Ok(remote(
                     crate::features::llm::cloud::CloudLlm::new(&connection, key)?
+                        .with_vision(declared_vision(settings, model))
                         .schedule(&self.runtime.schedulers),
                 ))
             }
@@ -349,11 +359,18 @@ impl ModelLoader {
             .then(|| (auth_header_name.to_string(), auth_header_value.to_string()));
 
         tracing::info!(endpoint, model, "Connecting to Ollama");
+        let vision = declared_vision(
+            settings,
+            &ModelRef::Ollama {
+                model: model.to_owned(),
+            },
+        );
         create_ollama_llm(
             endpoint,
             model,
             auth_header,
             generation_config,
+            vision,
             &self.runtime.schedulers,
         )
         .await

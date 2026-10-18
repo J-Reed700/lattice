@@ -10,6 +10,7 @@ import type { DownloadedModel } from '@/types/downloadedModels';
 import { resolveDefaultChatOption } from '@/utils/chatModelSelection';
 
 import { AIModelsTab } from './AIModelsTab';
+import { LlmSettingsProvider } from './AITab/LlmSettingsProvider';
 
 let settings = makeAppSettings();
 let models: DownloadedModel[];
@@ -22,7 +23,11 @@ async function renderModels() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  render(<QueryClientProvider client={client}><AIModelsTab /></QueryClientProvider>);
+  render(
+    <QueryClientProvider client={client}>
+      <LlmSettingsProvider><AIModelsTab /></LlmSettingsProvider>
+    </QueryClientProvider>,
+  );
   await screen.findByText('Local model', { exact: true });
   return userEvent.setup();
 }
@@ -190,6 +195,29 @@ describe('Downloaded model chat selection', () => {
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('local-model');
     expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
     expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  describe('Vision', () => {
+    it('declares that the llama.cpp model sees, saved under its model reference', async () => {
+      const user = await renderModels();
+      const vision = screen.getByRole('combobox', { name: 'Vision' });
+      expect(vision).toHaveValue('off');
+
+      await user.selectOptions(vision, 'gemma_siglip');
+      await waitFor(() => expect(settings.llm.visionDeclarations).toEqual({
+        'llamacpp:remote-model.gguf': { enabled: true, geometry: { kind: 'fixed', side: 896, tokens: 256 } },
+      }));
+      expect(await screen.findByText('A 1280×960 photo costs about 256 tokens on this model.')).toBeInTheDocument();
+    });
+
+    it('lists the configured cloud model on its provider default', async () => {
+      settings.llm.provider = 'google';
+      settings.llm.model = 'gemini-test';
+      await renderModels();
+      expect(screen.getByText('Google connection')).toBeInTheDocument();
+      expect(screen.getAllByRole('combobox', { name: 'Vision' }).map((select) => (select as HTMLSelectElement).value))
+        .toEqual(['off', 'gemini']);
+    });
   });
 
   describe('Learning', () => {

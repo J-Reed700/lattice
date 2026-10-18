@@ -5,9 +5,9 @@
 //! (validation, checksum verification, terminal state and event emission).
 
 use super::state::{ActiveDownload, DownloadManagerService, StopReason};
-use super::types::DownloadEvent;
 use super::validation::{recover_resume_offset, validate_downloaded_file};
 use crate::features::download::engine::{DownloadOptions, ProgressCallback};
+use lattice_core::application::ports::download_manager::DownloadEvent;
 use lattice_core::domain::download::DownloadError;
 use std::sync::Arc;
 use tokio::sync::mpsc;

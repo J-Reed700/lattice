@@ -455,13 +455,13 @@ fn connections_reject_unsafe_urls_and_partial_auth() {
         ("https://example.com?token=secret", false),
     ] {
         assert_eq!(
-            validate_connection(&settings(url.into()).llama_cpp).is_ok(),
+            settings(url.into()).llama_cpp.validated_base_url().is_ok(),
             valid
         );
     }
     let mut connection = settings("https://example.com".into()).llama_cpp;
     connection.auth_header_value.clear();
-    assert!(validate_connection(&connection).is_err());
+    assert!(connection.validated_base_url().is_err());
 }
 
 #[tokio::test]
@@ -1410,6 +1410,7 @@ fn server_config(prefill_guard: bool) -> ServerConfig {
         supports_tools: true,
         model_thinking: ThinkingPolicy::PerRequest,
         prefill_guard,
+        vision: None,
     }
 }
 
@@ -1584,7 +1585,10 @@ fn slow_prefill() -> Vec<(u64, String)> {
 /// A flat first-token wait failed this turn; progress frames are liveness.
 #[tokio::test(start_paused = true)]
 async fn a_bundled_servers_prompt_progress_keeps_its_first_frame_wait_alive() {
-    let allowance = retry::prefill_allowance(&[json!({"role":"user","content":"hi"})]);
+    let allowance = retry::prefill_allowance(&[CompletionInput::Message {
+        role: "user".into(),
+        content: "hi".into(),
+    }]);
     assert_eq!(
         allowance,
         retry::FIRST_FRAME_FLOOR,
@@ -1622,7 +1626,10 @@ async fn silence_after_generation_starts_is_still_a_stall() {
 /// A long prompt with no progress frames gets one batch at the floor rate.
 #[test]
 fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
-    let long = json!({"role":"user","content":"x".repeat(40_000)});
+    let long = CompletionInput::Message {
+        role: "user".into(),
+        content: "x".repeat(40_000),
+    };
     assert_eq!(
         retry::prefill_allowance(&[long]),
         retry::FIRST_FRAME_FLOOR
@@ -1643,7 +1650,12 @@ fn the_estimated_reservation_never_reaches_past_the_window() {
         },
     )
     .unwrap();
-    let prompt = |chars: usize| vec![json!({"role":"user","content":"x".repeat(chars)})];
+    let prompt = |chars: usize| {
+        vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "x".repeat(chars),
+        }]
+    };
     // A prompt the estimate puts past the window leaves no room at all.
     assert_eq!(client.output_room_for(&prompt(30_000), 4_096), 0);
     assert_eq!(client.output_room_for(&prompt(30_000), 512), 0);

@@ -121,7 +121,7 @@ fn pytorch_bin_repo_is_reported_candle_compatible() {
     assert!(
         matches!(
             compatibility,
-            crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible { .. }
+            lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible { .. }
         ),
         "pickle-only repo must not be rejected: {compatibility:?}",
     );
@@ -135,7 +135,7 @@ fn repo_without_any_weights_names_both_candidates() {
         .embedding_compatibility
         .expect("embedding repos carry a compatibility verdict");
     let reason = match compatibility {
-        crate::features::embedding::compatibility::EmbeddingCompatibility::Incompatible {
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
             reason,
             ..
         } => reason,
@@ -350,7 +350,7 @@ fn config_model_type_drives_embedding_compatibility_when_tags_do_not() {
     assert!(metadata.tags.iter().any(|tag| tag == "modernbert"));
     assert!(matches!(
         metadata.embedding_compatibility,
-        Some(crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible {
+        Some(lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible {
             ref architecture
         }) if architecture == "modernbert"
     ));

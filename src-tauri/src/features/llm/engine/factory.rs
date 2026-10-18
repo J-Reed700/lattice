@@ -203,11 +203,14 @@ pub(crate) async fn create_llm(
             auth_header,
             generation_config,
         } => {
+            // A bare configuration carries no Settings to read a vision
+            // declaration from, so this client cannot see.
             let llm = create_ollama_llm(
                 &endpoint,
                 &model,
                 auth_header,
                 generation_config,
+                None,
                 schedulers,
             )
             .await?;
@@ -411,6 +414,7 @@ pub(crate) async fn create_ollama_llm(
     model: &str,
     auth_header: Option<(String, String)>,
     generation_config: GenerationConfig,
+    vision: Option<lattice_core::domain::models::vision::VisionGeometry>,
     schedulers: &SchedulerRegistry,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     info!("Creating Ollama LLM client: {} @ {}", model, endpoint);
@@ -432,7 +436,9 @@ pub(crate) async fn create_ollama_llm(
     })?;
 
     let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
-    let client = client.with_generation_config(generation_config);
+    let client = client
+        .with_generation_config(generation_config)
+        .with_vision(vision);
 
     // A server that cannot be connected to is an outage and stays one, so
     // the caller can wait for it rather than give up on the work.
@@ -629,6 +635,7 @@ fn map_local_model_load_error(error: LLMError, model_path: &Path) -> LLMError {
 /// Returns fixed responses without actual LLM inference.
 pub struct MockLLMPort {
     model_name: String,
+    vision: Option<lattice_core::domain::models::vision::VisionGeometry>,
 }
 
 impl Default for MockLLMPort {
@@ -641,7 +648,17 @@ impl MockLLMPort {
     pub fn new() -> Self {
         Self {
             model_name: "mock-llm".to_string(),
+            vision: None,
         }
+    }
+
+    /// A mock declared to see with `vision`.
+    pub fn with_vision(
+        mut self,
+        vision: lattice_core::domain::models::vision::VisionGeometry,
+    ) -> Self {
+        self.vision = Some(vision);
+        self
     }
 }
 
@@ -707,6 +724,10 @@ impl LLMPort for MockLLMPort {
 
     fn model_name(&self) -> &str {
         &self.model_name
+    }
+
+    fn vision(&self) -> Option<lattice_core::domain::models::vision::VisionGeometry> {
+        self.vision
     }
 
     fn max_context_tokens(&self) -> usize {

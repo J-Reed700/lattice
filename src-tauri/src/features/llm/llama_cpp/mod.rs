@@ -6,6 +6,7 @@
 //! (the base URL), how it authenticates (default headers) and who owns its
 //! process: a sidecar's client holds the handle that keeps it running.
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
+use crate::features::llm::engine::vision::pictures_outside_a_user_message;
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use async_trait::async_trait;
@@ -13,10 +14,11 @@ use futures::StreamExt;
 use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
-        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
-        ThinkingPolicy,
+        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse,
+        ContentPart, LLMPort, ThinkingPolicy,
     },
 };
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
@@ -58,6 +60,9 @@ pub(crate) struct ServerConfig {
     /// silence means it has hung. A server the user runs may be busy with
     /// other clients' work; waiting for it is bounded only by the time budget.
     pub prefill_guard: bool,
+    /// The geometry the model was declared to see with; `None` refuses
+    /// pictures.
+    pub vision: Option<VisionGeometry>,
 }
 
 pub struct LlamaCppLlm {
@@ -73,7 +78,7 @@ impl LlamaCppLlm {
     /// A server the user runs, as Chat settings describe it.
     pub fn new(settings: &LLMSettingsDto) -> Result<Self> {
         let connection = &settings.llama_cpp;
-        let base_url = validate_connection(connection)?;
+        let base_url = connection.validated_base_url()?;
         if connection.model.trim().is_empty() {
             return Err(AppError::InvalidConfig(
                 "Choose a llama.cpp model in Chat settings".into(),
@@ -91,6 +96,7 @@ impl LlamaCppLlm {
                 // A server the user runs names no file to read a header from.
                 model_thinking: ThinkingPolicy::PerRequest,
                 prefill_guard: false,
+                vision: None,
             },
             process: None,
         })
@@ -115,10 +121,17 @@ impl LlamaCppLlm {
             supports_tools,
             model_thinking,
             prefill_guard: true,
+            vision: None,
         };
         let mut client = Self::connect(process.endpoint(), process.api_token(), config)?;
         client.process = Some(process);
         Ok(client)
+    }
+
+    /// This client with the geometry its model was declared to see with.
+    pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
+        self.config.vision = vision;
+        self
     }
 
     /// A client for the llama-server at `endpoint` that authenticates with a
@@ -139,7 +152,7 @@ impl LlamaCppLlm {
     }
 
     pub async fn test_connection(connection: &LlamaCppSettingsDto) -> Result<Vec<String>> {
-        let base_url = validate_connection(connection)?;
+        let base_url = connection.validated_base_url()?;
         let client = http_client(remote_headers(connection)?)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
@@ -270,6 +283,9 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
             CompletionInput::Message { role, content } => {
                 messages.push(json!({"role":role,"content":content}))
             }
+            CompletionInput::Multimodal { role, parts } => {
+                messages.push(json!({"role":role,"content":openai_content_parts(role, parts)?}))
+            }
             CompletionInput::ToolCall {
                 id,
                 name,
@@ -298,6 +314,24 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
         previous_was_call = is_call;
     }
     coalesce_system_messages(messages)
+}
+
+/// A user message's parts as OpenAI Chat Completions content: each picture an
+/// `image_url` data URI, each text a `text` part, in the order given. Shared
+/// with the cloud adapter's OpenAI-compatible chat path.
+pub(crate) fn openai_content_parts(role: &str, parts: &[ContentPart]) -> Result<Vec<Value>> {
+    if role != "user" {
+        return Err(pictures_outside_a_user_message(role));
+    }
+    Ok(parts
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text { text } => json!({"type":"text","text":text}),
+            ContentPart::Image(image) => {
+                json!({"type":"image_url","image_url":{"url":image.data_uri()}})
+            }
+        })
+        .collect())
 }
 
 /// The server's chat template may allow only one system message at index zero.
@@ -334,6 +368,9 @@ fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
 impl LLMPort for LlamaCppLlm {
     fn supports_tool_calling(&self) -> bool {
         self.config.supports_tools
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        self.config.vision
     }
     fn provider_name(&self) -> &str {
         if self.process.is_some() {
@@ -416,33 +453,6 @@ impl LLMPort for LlamaCppLlm {
         self.complete_reliably(request, on_text, Some(on_reasoning), Some(on_retry))
             .await
     }
-}
-
-pub fn validate_connection(connection: &LlamaCppSettingsDto) -> Result<String> {
-    let raw = connection.url.trim().trim_end_matches('/');
-    let parsed = url::Url::parse(raw)
-        .map_err(|_| AppError::InvalidConfig("Invalid llama.cpp server URL".into()))?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
-        return Err(AppError::InvalidConfig("Use an HTTP(S) server URL without credentials, query, or fragment; configure authentication in the header fields".into()));
-    }
-    if connection.auth_header_name.trim().is_empty()
-        ^ connection.auth_header_value.trim().is_empty()
-    {
-        return Err(AppError::InvalidConfig(
-            "Set both authentication header fields, or clear both".into(),
-        ));
-    }
-    Ok(if raw.ends_with("/v1") {
-        raw.to_owned()
-    } else {
-        format!("{raw}/v1")
-    })
 }
 
 /// The authentication header Chat settings configure for a remote server.

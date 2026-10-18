@@ -1,6 +1,7 @@
 // Single-file command modules grouped under domains/ for filesystem organization.
 pub mod consolidated;
 pub mod document_list;
+pub mod indexing;
 pub mod model_setup;
 
 #[cfg(test)]

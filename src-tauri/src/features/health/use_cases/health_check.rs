@@ -5,7 +5,7 @@
 //! This use case orchestrates:
 //! 1. Database connectivity check
 //! 2. Embedding service availability check
-//! 3. LLM service availability check
+//! 3. LLM readiness, as the caller reports it
 //! 4. Overall system status determination
 //!
 //! ## Example
@@ -14,7 +14,7 @@
 //! use lattice_core::application::use_cases::health::HealthCheckUseCase;
 //!
 //! # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute().await?;
+//! let response = use_case.execute(false).await?;
 //! println!("System status: {}", response.status);
 //! println!("Database: {}", response.database);
 //! println!("Embedding: {}", response.embedding_model);
@@ -28,7 +28,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::features::health::dto::HealthCheckResponseDto;
-use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::Result;
 
 /// Health check use case.
@@ -36,17 +36,19 @@ use lattice_core::shared::error::Result;
 /// Coordinates system health checks by verifying the availability of core services:
 /// - Database connection
 /// - Embedding service
-/// - LLM service
+/// - LLM readiness
+///
+/// The `llm` flag means "a language model is loaded and not degraded" (not
+/// on the CPU fallback, and not given a smaller window than asked for).
+/// Models load lazily, on first use, so it reads `false` until one has.
 ///
 /// ## Dependencies
 ///
 /// - `db_pool` - Database connection pool for health checks
 /// - `embedding_service` - Embedding service to verify availability
-/// - `llm_service` - LLM service to verify availability
 pub struct HealthCheckUseCase {
     db_pool: SqlitePool,
     embedding_service: Arc<dyn EmbeddingPort>,
-    llm_service: Arc<dyn LLMPort>,
 }
 
 impl HealthCheckUseCase {
@@ -56,7 +58,6 @@ impl HealthCheckUseCase {
     ///
     /// * `db_pool` - SQLite connection pool
     /// * `embedding_service` - Service for generating embeddings
-    /// * `llm_service` - Service for LLM interactions
     ///
     /// # Example
     ///
@@ -64,29 +65,26 @@ impl HealthCheckUseCase {
     /// use lattice_core::application::use_cases::health::HealthCheckUseCase;
     /// # use std::sync::Arc;
     /// # use sqlx::SqlitePool;
-    /// # use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+    /// # use lattice_core::application::ports::EmbeddingPort;
     ///
     /// # async fn example(
     /// #     pool: SqlitePool,
     /// #     embedder: Arc<dyn EmbeddingPort>,
-    /// #     llm: Arc<dyn LLMPort>
     /// # ) {
-    /// let use_case = HealthCheckUseCase::new(pool, embedder, llm);
+    /// let use_case = HealthCheckUseCase::new(pool, embedder);
     /// # }
     /// ```
-    pub fn new(
-        db_pool: SqlitePool,
-        embedding_service: Arc<dyn EmbeddingPort>,
-        llm_service: Arc<dyn LLMPort>,
-    ) -> Self {
+    pub fn new(db_pool: SqlitePool, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self {
             db_pool,
             embedding_service,
-            llm_service,
         }
     }
 
     /// Execute health check.
+    ///
+    /// `llm_ready` is whether a language model is loaded and not degraded;
+    /// it is reported as given.
     ///
     /// # Returns
     ///
@@ -103,7 +101,7 @@ impl HealthCheckUseCase {
     /// ```rust,no_run
     /// # use lattice_core::application::use_cases::health::HealthCheckUseCase;
     /// # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let response = use_case.execute().await?;
+    /// let response = use_case.execute(false).await?;
     ///
     /// if response.status == "healthy" {
     ///     println!("All systems operational");
@@ -115,15 +113,15 @@ impl HealthCheckUseCase {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn execute(&self) -> Result<HealthCheckResponseDto> {
+    pub async fn execute(&self, llm_ready: bool) -> Result<HealthCheckResponseDto> {
         // 1. Check database health
         let db_healthy = self.check_database().await;
 
         // 2. Check embedding service health
         let embedding_healthy = self.check_embedding_service().await;
 
-        // 3. Check LLM service health
-        let llm_healthy = self.check_llm_service().await;
+        // 3. LLM readiness, as the caller read it
+        let llm_healthy = llm_ready;
 
         // 4. Determine overall system status
         let status = self.determine_status(db_healthy, embedding_healthy, llm_healthy);
@@ -152,14 +150,6 @@ impl HealthCheckUseCase {
     /// Returns false if the service is not ready or if the check fails.
     async fn check_embedding_service(&self) -> bool {
         self.embedding_service.is_ready().await.unwrap_or(false)
-    }
-
-    /// Check LLM service availability.
-    ///
-    /// Calls the service's `is_ready()` method to verify availability.
-    /// Returns false if the service is not ready or if the check fails.
-    async fn check_llm_service(&self) -> bool {
-        self.llm_service.is_ready().await.unwrap_or(false)
     }
 
     /// Determine overall system status based on individual component health.
@@ -194,7 +184,6 @@ impl HealthCheckUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
     struct MockEmbedder {
         is_ready: bool,
@@ -219,39 +208,6 @@ mod tests {
         }
     }
 
-    struct MockLLM {
-        is_ready: bool,
-    }
-
-    #[async_trait]
-    impl LLMPort for MockLLM {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            Ok(CompletionResponse::from_text(
-                self.respond(request.user_text()).await?,
-            ))
-        }
-        fn model_name(&self) -> &str {
-            "mock-model"
-        }
-
-        fn max_context_tokens(&self) -> usize {
-            4096
-        }
-
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(self.is_ready)
-        }
-    }
-    impl MockLLM {
-        async fn respond(&self, _prompt: &str) -> Result<String> {
-            Ok("response".to_string())
-        }
-    }
-
     async fn create_test_pool() -> SqlitePool {
         SqlitePool::connect(":memory:").await.unwrap()
     }
@@ -260,10 +216,9 @@ mod tests {
     async fn test_health_check_all_healthy() {
         let pool = create_test_pool().await;
         let embedder = Arc::new(MockEmbedder { is_ready: true });
-        let llm = Arc::new(MockLLM { is_ready: true });
 
-        let use_case = HealthCheckUseCase::new(pool, embedder, llm);
-        let response = use_case.execute().await.unwrap();
+        let use_case = HealthCheckUseCase::new(pool, embedder);
+        let response = use_case.execute(true).await.unwrap();
 
         assert_eq!(response.status, "healthy");
         assert!(response.database);
@@ -275,10 +230,9 @@ mod tests {
     async fn test_health_check_embedding_down() {
         let pool = create_test_pool().await;
         let embedder = Arc::new(MockEmbedder { is_ready: false });
-        let llm = Arc::new(MockLLM { is_ready: true });
 
-        let use_case = HealthCheckUseCase::new(pool, embedder, llm);
-        let response = use_case.execute().await.unwrap();
+        let use_case = HealthCheckUseCase::new(pool, embedder);
+        let response = use_case.execute(true).await.unwrap();
 
         assert_eq!(response.status, "degraded");
         assert!(response.database);
@@ -289,10 +243,9 @@ mod tests {
     async fn test_health_check_llm_optional() {
         let pool = create_test_pool().await;
         let embedder = Arc::new(MockEmbedder { is_ready: true });
-        let llm = Arc::new(MockLLM { is_ready: false });
 
-        let use_case = HealthCheckUseCase::new(pool, embedder, llm);
-        let response = use_case.execute().await.unwrap();
+        let use_case = HealthCheckUseCase::new(pool, embedder);
+        let response = use_case.execute(false).await.unwrap();
 
         // LLM is optional, so status should still be healthy if db and embedding are ok
         assert_eq!(response.status, "healthy");
@@ -305,10 +258,9 @@ mod tests {
     async fn test_health_check_timestamp() {
         let pool = create_test_pool().await;
         let embedder = Arc::new(MockEmbedder { is_ready: true });
-        let llm = Arc::new(MockLLM { is_ready: true });
 
-        let use_case = HealthCheckUseCase::new(pool, embedder, llm);
-        let response = use_case.execute().await.unwrap();
+        let use_case = HealthCheckUseCase::new(pool, embedder);
+        let response = use_case.execute(true).await.unwrap();
 
         chrono::DateTime::parse_from_rfc3339(&response.timestamp).unwrap();
     }

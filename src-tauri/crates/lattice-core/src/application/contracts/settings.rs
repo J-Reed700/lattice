@@ -23,8 +23,8 @@ pub use generation::{
 pub use llm::{
     CustomToolSettingsDto, LLMPromptSettingsDto, LLMProvider, LLMSettingsDto,
     LLMVerificationSettingsDto, LlamaCppSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
-    ToolOutputTemplatesDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS,
-    MIN_LLM_STALL_TIMEOUT_SECONDS,
+    ToolOutputTemplatesDto, VisionDeclarationDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
+    MAX_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 pub use preferences::{
     BackupSettingsDto, OnboardingSettingsDto, PrivacySettingsDto, SyncSettingsDto, UISettingsDto,

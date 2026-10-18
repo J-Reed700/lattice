@@ -426,3 +426,6 @@ impl Drop for Waiting<'_> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod vision_tests;

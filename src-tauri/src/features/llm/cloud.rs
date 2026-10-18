@@ -1,5 +1,6 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
+use crate::features::llm::engine::vision::not_set_up_to_see;
 use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::{LLMProvider, LLMSettingsDto},
@@ -7,10 +8,12 @@ use lattice_core::application::{
         CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingMode, ToolChoice,
     },
 };
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
+mod messages;
 mod streaming;
 
 pub struct CloudLlm {
@@ -23,6 +26,9 @@ pub struct CloudLlm {
     stall_timeout: Duration,
     max_tokens: u32,
     context_window: usize,
+    /// The geometry the model was declared to see with; `None` refuses
+    /// pictures.
+    vision: Option<VisionGeometry>,
 }
 
 impl CloudLlm {
@@ -75,17 +81,29 @@ impl CloudLlm {
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
             max_tokens: settings.max_tokens,
             context_window: settings.context_window as usize,
+            vision: None,
         })
     }
 
+    /// This client with the geometry its model was declared to see with.
+    pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
+        self.vision = vision;
+        self
+    }
+
+    /// This client sending to `endpoint` instead of the provider's public
+    /// API: a gateway that speaks the same format, or a stub server in tests.
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = endpoint.into();
+        self
+    }
+
     fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
+        if request.has_images() && self.vision.is_none() {
+            return Err(not_set_up_to_see(&self.model));
+        }
         if self.provider == LLMProvider::Openai {
-            let input: Vec<Value> = request.input.iter().map(|item| match item {
-                CompletionInput::Native { value } => value.clone(),
-                CompletionInput::Message { role, content } => json!({"role":role,"content":content}),
-                CompletionInput::ToolCall { id, name, arguments } => json!({"type":"function_call","call_id":id,"name":name,"arguments":arguments.to_string()}),
-                CompletionInput::ToolResult { id, output } => json!({"type":"function_call_output","call_id":id,"output":output}),
-            }).collect();
+            let input = messages::openai_input(&request.input)?;
             let max_output = request.effective_max_output_tokens(self.max_tokens);
             let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":max_output});
             if !request.tools.is_empty() {
@@ -135,50 +153,7 @@ impl CloudLlm {
             }
             Ok(body)
         } else if self.provider == LLMProvider::Google {
-            let mut messages = Vec::new();
-            for item in &request.input {
-                match item {
-                    CompletionInput::Native { value } => messages.push(value.clone()),
-                    CompletionInput::Message { role, content } => {
-                        messages.push(json!({"role": role, "content": content}));
-                    }
-                    CompletionInput::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => {
-                        let call = json!({
-                            "id": id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": arguments.to_string(),
-                            }
-                        });
-                        if let Some(last) = messages.last_mut().filter(|m| {
-                            field(m, "role") == "assistant" && field(m, "tool_calls").is_array()
-                        }) {
-                            if let Some(calls) =
-                                last.get_mut("tool_calls").and_then(Value::as_array_mut)
-                            {
-                                calls.push(call);
-                            }
-                        } else {
-                            messages.push(json!({
-                                "role": "assistant",
-                                "tool_calls": [call],
-                            }));
-                        }
-                    }
-                    CompletionInput::ToolResult { id, output } => {
-                        messages.push(json!({
-                            "role": "tool",
-                            "tool_call_id": id,
-                            "content": output,
-                        }));
-                    }
-                }
-            }
+            let messages = messages::chat_messages(&request.input)?;
             let max_output = request.effective_max_output_tokens(self.max_tokens);
             let model = self.model.strip_prefix("models/").unwrap_or(&self.model);
             let mut body = json!({
@@ -243,22 +218,7 @@ impl CloudLlm {
             }
             Ok(body)
         } else {
-            let mut system = Vec::new();
-            let mut messages = Vec::new();
-            for item in &request.input {
-                match item {
-                    CompletionInput::Native { value } => messages.push(value.clone()),
-                    CompletionInput::Message { role, content } if role == "system" || role == "developer" => system.push(content.clone()),
-                    CompletionInput::Message { role, content } => messages.push(json!({"role":role,"content":content})),
-                    CompletionInput::ToolCall { id, name, arguments } => messages.push(json!({"role":"assistant","content":[{"type":"tool_use","id":id,"name":name,"input":arguments}]})),
-                    CompletionInput::ToolResult { id, output } => {
-                        let result = json!({"type":"tool_result","tool_use_id":id,"content":output});
-                        if let Some(last) = messages.last_mut().filter(|m| field(m, "role") == "user" && field(m, "content").is_array()) {
-                            if let Some(content) = last.get_mut("content").and_then(Value::as_array_mut) { content.push(result); }
-                        } else { messages.push(json!({"role":"user","content":[result]})); }
-                    },
-                }
-            }
+            let (system, messages) = messages::anthropic_messages(&request.input)?;
             let mut body = json!({"model":self.model,"messages":messages,"max_tokens":request.effective_max_output_tokens(self.max_tokens),"stream":stream});
             if let Some(sampling) = request.sampling {
                 if let Some(temperature) = sampling.temperature {
@@ -414,6 +374,9 @@ impl CloudLlm {
 
 #[async_trait]
 impl LLMPort for CloudLlm {
+    fn vision(&self) -> Option<VisionGeometry> {
+        self.vision
+    }
     fn supports_tool_calling(&self) -> bool {
         true
     }

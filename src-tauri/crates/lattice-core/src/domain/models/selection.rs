@@ -51,6 +51,7 @@ use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+mod embedding_compatibility;
 mod model_metadata;
 mod scoring;
 

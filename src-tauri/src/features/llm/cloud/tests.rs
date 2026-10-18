@@ -387,3 +387,86 @@ fn google_sends_the_tool_choice_with_tools() {
         .get("tool_choice")
         .is_none());
 }
+
+fn picture_request() -> CompletionRequest {
+    use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
+    CompletionRequest {
+        input: vec![CompletionInput::Multimodal {
+            role: "user".into(),
+            parts: vec![
+                ContentPart::Image(ImagePart {
+                    mime: "image/png".into(),
+                    data_base64: "iVBORw0KGgo=".into(),
+                    width: 512,
+                    height: 512,
+                    tokens: 255,
+                    alt: "chart.png".into(),
+                }),
+                ContentPart::Text {
+                    text: "What does it show?".into(),
+                },
+            ],
+        }],
+        ..Default::default()
+    }
+}
+
+fn seeing(provider: LLMProvider) -> CloudLlm {
+    use lattice_core::domain::models::vision::VisionPreset;
+    let settings = LLMSettingsDto {
+        provider,
+        model: "vision-model".into(),
+        ..Default::default()
+    };
+    CloudLlm::new(&settings, "test".into())
+        .unwrap()
+        .with_vision(Some(VisionPreset::OpenAi.geometry()))
+}
+
+#[test]
+fn each_provider_receives_a_picture_in_its_own_format_before_the_text() {
+    let request = picture_request();
+    let openai = seeing(LLMProvider::Openai).body(&request, false).unwrap();
+    assert_eq!(
+        openai["input"][0],
+        json!({"role":"user","content":[
+            {"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo=","detail":"auto"},
+            {"type":"input_text","text":"What does it show?"}
+        ]})
+    );
+    let anthropic = seeing(LLMProvider::Anthropic)
+        .body(&request, false)
+        .unwrap();
+    assert_eq!(
+        anthropic["messages"][0],
+        json!({"role":"user","content":[
+            {"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},
+            {"type":"text","text":"What does it show?"}
+        ]})
+    );
+    let google = seeing(LLMProvider::Google).body(&request, false).unwrap();
+    assert_eq!(
+        google["messages"][0],
+        json!({"role":"user","content":[
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}},
+            {"type":"text","text":"What does it show?"}
+        ]})
+    );
+}
+
+#[test]
+fn a_cloud_model_nobody_declared_able_to_see_refuses_pictures() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Openai,
+        model: "gpt-3.5-turbo".into(),
+        ..Default::default()
+    };
+    let refused = CloudLlm::new(&settings, "test".into())
+        .unwrap()
+        .body(&picture_request(), false)
+        .unwrap_err();
+    assert!(matches!(refused, AppError::InvalidConfig(_)), "{refused}");
+    assert!(refused
+        .to_string()
+        .contains("gpt-3.5-turbo is not set up to see images"));
+}
