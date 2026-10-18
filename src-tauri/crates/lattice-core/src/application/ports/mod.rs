@@ -73,6 +73,7 @@ pub mod backup_port;
 pub mod backup_scheduler_port;
 pub mod chat_images;
 pub mod chunk_repository_port;
+pub mod claim_review;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
 pub mod conversation_context;
@@ -126,6 +127,7 @@ pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
 pub use chat_images::{ChatImagesPort, CopiedMessage, ImageTurnScope};
 pub use chunk_repository_port::ChunkRepositoryPort;
+pub use claim_review::ClaimReviewStore;
 pub use content_addressed_storage_port::{
     is_blob_hash, BlobLease, BlobLeases, BlobReferenceCheck, BlobRemoval,
     ContentAddressedStoragePort, ImportedBlob, RetainReason,
