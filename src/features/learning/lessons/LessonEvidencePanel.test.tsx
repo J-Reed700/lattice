@@ -21,7 +21,7 @@ describe('lesson evidence', () => {
     show();
     expect(mocks.evidence).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/9 claims checked/)).toBeVisible();
+    expect(await screen.findByText(/9 claims verified against sources/)).toBeVisible();
     expect(screen.getByText(/were not compiled or executed/)).toBeVisible();
     expect(screen.getByText(/collection has changed/)).toBeVisible();
     await userEvent.click(screen.getByText('Borrowing does not transfer ownership.'));
