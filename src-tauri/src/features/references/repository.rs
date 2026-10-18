@@ -3,8 +3,7 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
-// Temporary: chat's test runtime still names the record at this path.
-pub(crate) use lattice_core::application::contracts::references::PassageReferenceRecord;
+use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};

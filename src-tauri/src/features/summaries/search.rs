@@ -11,9 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::features::summaries::repository::SummaryRepositoryPort;
-// Temporary: chat's test runtime still names the port at this path.
 use lattice_core::application::ports::summary_search::SummaryHit;
-pub(crate) use lattice_core::application::ports::summary_search::SummarySearchPort;
+use lattice_core::application::ports::summary_search::SummarySearchPort;
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::Result;

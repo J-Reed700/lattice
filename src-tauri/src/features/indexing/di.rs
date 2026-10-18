@@ -4,8 +4,6 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::features::embedding::repository::EmbeddingRepository;
-use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::engine::extraction::{ContentExtractor, ExtractionWorkers};
 use crate::features::indexing::use_cases::{
@@ -24,8 +22,8 @@ use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
     DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
-    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, TranscriptionPort,
-    VectorSearchPort,
+    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, SparseTermStorePort,
+    TranscriptionPort, VectorSearchPort,
 };
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::Result;
@@ -65,41 +63,46 @@ pub struct IndexingShared {
     pub extraction_workers: ExtractionWorkers,
 }
 
+/// What indexing writes through that other features own, built by the
+/// composition root: the embedder and its vector rows, the learned sparse
+/// postings search reads, and on-device speech-to-text for audio.
+pub struct IndexingPorts {
+    pub embedding: Arc<dyn EmbeddingPort>,
+    pub embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
+    pub sparse_term_store: Arc<dyn SparseTermStorePort>,
+    pub transcription: Arc<dyn TranscriptionPort>,
+}
+
 pub fn build(
     db_pool: SqlitePool,
-    model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+    ports: IndexingPorts,
     vector_search: Arc<dyn VectorSearchPort>,
     web_archive: Arc<dyn ArticleArchive>,
     ocr: Arc<dyn OcrPort>,
     shared: IndexingShared,
-    background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
 ) -> Result<IndexingDi> {
     let IndexingShared {
         query_cache,
         index_observer,
         extraction_workers,
     } = shared;
+    let IndexingPorts {
+        embedding: indexing_embedding,
+        embedding_repo,
+        sparse_term_store,
+        transcription,
+    } = ports;
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
     let chunk_repo =
         Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn ChunkRepositoryPort>;
-    let embedding_repo =
-        Arc::new(EmbeddingRepository::new(db_pool.clone())) as Arc<dyn EmbeddingRepositoryPort>;
-    let uow_factory =
-        Arc::new(SqliteUnitOfWorkFactory::new(db_pool.clone())) as Arc<dyn UnitOfWorkFactory>;
+    let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
 
     let content_storage =
         Arc::new(ContentAddressedStorage::new()?) as Arc<dyn ContentAddressedStoragePort>;
     let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
-    // Learned sparse postings live beside the dense vectors. Wired
-    // unconditionally: `IndexFileUseCase` only reads a sparse head when the
-    // loaded model actually has one, so this is inert for a dense-only model.
-    let sparse_term_store = Arc::new(
-        crate::features::search::engine::sparse_search::SqliteSparseTermStore::new(db_pool.clone()),
-    ) as Arc<dyn lattice_core::application::ports::SparseTermStorePort>;
-    // Build the transcription port once and share the same Arc with the
-    // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
-    let transcription = crate::features::transcription::di::build(db_pool, background).port;
+    // The transcription port is shared by the extraction adapter (audio
+    // ingest) and IndexingDi (the transcribe command).
     // Import and re-index share this adapter, so both read scanned pages.
     let content_extractor = Arc::new(
         ContentExtractionAdapter::with_transcription(transcription.clone())
@@ -107,9 +110,6 @@ pub fn build(
             .with_ocr(ocr),
     ) as Arc<dyn ContentExtractionPort>;
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
-
-    let indexing_embedding =
-        Arc::new(DynamicEmbedding::new(model_provider)) as Arc<dyn EmbeddingPort>;
 
     let indexing_state = Arc::new(crate::features::indexing::engine::IndexingState::new());
     let library_gc = Arc::new(LibraryGc::new(
@@ -212,5 +212,10 @@ impl Container {
     /// Chunk repository accessor (from IndexingModule)
     pub fn chunk_repository(&self) -> Arc<dyn ChunkRepositoryPort> {
         Arc::clone(self.indexing.chunk_repository())
+    }
+
+    /// The stored chunk vectors the indexer writes (from IndexingModule).
+    pub fn embedding_repository(&self) -> Arc<dyn EmbeddingRepositoryPort> {
+        Arc::clone(self.indexing.embedding_repository())
     }
 }

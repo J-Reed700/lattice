@@ -11,6 +11,7 @@ use tokio::sync::Notify;
 
 use lattice_core::application::ports::NoteIndexSink;
 use lattice_core::application::ports::SettingsReaderPort;
+use lattice_core::application::ports::WorkspaceNotesPort;
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
@@ -154,8 +155,7 @@ async fn run_worker(
     pool: SqlitePool,
     cancel: tokio_util::sync::CancellationToken,
 ) {
-    let repository =
-        crate::features::daily_notes::repository::DailyNotesRepository::new(pool.clone());
+    let repository = super::repository::workspace_notes(&pool);
     loop {
         // Intents survive process shutdown. Finish the current atomic write;
         // leave the rest in SQLite for startup replay.

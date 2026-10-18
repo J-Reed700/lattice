@@ -35,9 +35,7 @@ mod production;
 use lattice::features::embedding::candle_service::CandleEmbeddingService;
 use lattice::features::embedding::late_chunking::EmbeddingStrategy;
 use lattice::features::search::engine::reranker::{blend_rerank_scores, load_reranker, Reranker};
-use lattice::features::search::engine::vector_search::{
-    VectorIndexCompression, VectorQuantization,
-};
+use lattice::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
 use lattice_core::application::ports::EmbeddingPort;
 use serde::Deserialize;
 use std::{

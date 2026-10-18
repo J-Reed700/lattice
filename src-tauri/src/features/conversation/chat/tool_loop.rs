@@ -157,7 +157,7 @@ pub(super) async fn run_agentic_tool_loop(
     pages_already_read: FetchMemory,
     // The folder of an Explorer conversation; `None` for every other turn. The
     // folder tools are only in `request.tools` when this is set.
-    explorer: Option<&crate::features::explorer::prompt::ExplorerTurn>,
+    explorer: Option<&super::ExplorerTurn>,
 ) -> Result<ToolLoopOutcome> {
     use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
 

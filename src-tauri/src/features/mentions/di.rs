@@ -5,11 +5,11 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::features::mentions::mapper::MentionMapper;
-use crate::features::mentions::repository::MentionRepository;
 use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
 };
+use crate::infrastructure::persistence::repositories::mentions::MentionRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::MentionRepositoryPort;
 

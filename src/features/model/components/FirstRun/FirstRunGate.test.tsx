@@ -122,4 +122,26 @@ describe('FirstRunGate', () => {
       });
     });
   });
+
+  it('lets the user skip while the dialog re-reads the status', async () => {
+    // The gate's read opens the dialog; the dialog's own re-read never
+    // answers. The cached recommendation is on screen, so skipping must work.
+    vi.mocked(VaultAPI.checkFirstRunStatus)
+      .mockResolvedValueOnce({ ok: true, data: FIRST_RUN_STATUS })
+      .mockImplementation(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    renderGate();
+
+    const skip = await screen.findByRole('button', { name: 'Not now' });
+    await waitFor(() => expect(VaultAPI.checkFirstRunStatus).toHaveBeenCalledTimes(2));
+    expect(skip).toBeEnabled();
+    await user.click(skip);
+
+    await waitFor(() => {
+      expect(VaultAPI.updateSettings).toHaveBeenCalledWith({
+        category: 'onboarding',
+        updates: { firstRunDismissed: true },
+      });
+    });
+  });
 });

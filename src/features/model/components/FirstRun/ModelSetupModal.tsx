@@ -171,10 +171,12 @@ export function ModelSetupModal({
         </div>
 
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center">
-          <Button variant="ghost" onClick={handleSkip} disabled={loading} className="sm:mr-auto">
+          {/* Skipping never depends on the status, so a re-read never blocks
+              it; only Install waits for the fresh recommendation. */}
+          <Button variant="ghost" onClick={handleSkip} className="sm:mr-auto">
             Not now
           </Button>
-          <Button variant="ghost" onClick={handleMoreOptions} disabled={loading}>
+          <Button variant="ghost" onClick={handleMoreOptions}>
             Choose models
           </Button>
           <Button

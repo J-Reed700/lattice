@@ -79,7 +79,7 @@ pub(super) fn fixture() -> LearningProgramDto {
         attempts: vec![],
     }
 }
-fn prepared(lesson_id: &str) -> PreparedLearningLesson {
+pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     let mut questions = Vec::new();
     let mut keys = Vec::new();
     for kind in [
@@ -274,7 +274,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         .deck_id
         .is_none());
     let notes_repo =
-        crate::features::daily_notes::repository::DailyNotesRepository::new(pool.clone());
+        crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(pool.clone());
     notes_repo.delete(&note_id).await?;
     sqlx::query("DELETE FROM journals WHERE id=?")
         .bind(&original_journal_id)
@@ -310,7 +310,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     repo.delete(&program.summary.id).await?;
     assert!(study.get(&deck_id).await.is_ok());
     assert!(
-        crate::features::daily_notes::repository::DailyNotesRepository::new(pool.clone())
+        crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(pool.clone())
             .get(&recreated_note_id)
             .await
             .is_ok()
@@ -549,50 +549,6 @@ async fn module_test_requires_every_ready_lesson_question() -> Result<()> {
     complete.answers.reverse();
     complete.expected_revision += 1;
     assert_eq!(repo.submit(&complete).await?.id, submitted.id);
-    Ok(())
-}
-
-#[tokio::test]
-async fn module_test_rejects_a_partially_prepared_module() -> Result<()> {
-    let pool = pool().await?;
-    let repo = LearningRepository::new(pool);
-    let p = fixture();
-    let program_id = p.summary.id.clone();
-    let module = p.modules[0].clone();
-    repo.create(&p).await?;
-    repo.accept(&AcceptLearningProgramRequestDto {
-        program_id: program_id.clone(),
-        expected_revision: 0,
-        title: p.summary.title,
-    })
-    .await?;
-    repo.prepare(
-        &program_id,
-        &module.lessons[0].id,
-        1,
-        &prepared(&module.lessons[0].id),
-    )
-    .await?;
-    let test = repo.get(&program_id).await?;
-    let question = &test.modules[0].lessons[0]
-        .questions
-        .iter()
-        .find(|q| q.kind == LearningAssessmentKind::Test)
-        .unwrap()
-        .id;
-    let req = SubmitLearningAttemptRequestDto {
-        attempt_id: id(),
-        program_id,
-        expected_revision: test.summary.revision,
-        module_id: module.id,
-        lesson_id: None,
-        kind: LearningAssessmentKind::Test,
-        answers: vec![LearningAnswerDto {
-            question_id: question.clone(),
-            selected_index: 0,
-        }],
-    };
-    assert!(repo.submit(&req).await.is_err());
     Ok(())
 }
 
