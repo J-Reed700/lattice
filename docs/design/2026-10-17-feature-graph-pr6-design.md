@@ -182,3 +182,22 @@ Before building, check that no other checkout holds uncommitted edits to `conver
 **Coercions** to check with `cargo check`: `Arc<DownloadedModelRepository>` into the `Arc<dyn ActiveModels>` field (`embedding/di.rs:32`), `Arc<ExplorerTurn>` to `Arc<dyn ExplorerTurnPort>`, and `Arc<HyDEService>` to `Arc<dyn QueryInterpreter>`.
 
 **Later.** Three overlapping traits sit over `models`: `ModelStoragePort` (`ports/model_storage.rs:55`, also implemented at `llm/engine/model_storage_adapter.rs:87`), the records trait, and `ModelRepositoryPort` tx. Merging them is out of scope.
+
+## 6b as built (2026-10-17)
+
+Branch `arch/feature-graph-6b` on `arch/feature-graph-4b-5`, four commits in the planned order. `feature-edge` 61 → 49 (conversation→explorer 7, function_calling 2, search 1, web 2; conversation now has no feature edges). `feature-reexport` 15 → 11 (`chat.rs:116`, `summaries/search.rs:16`, `references/repository.rs:7`, `daily_notes/dto.rs:3`). Every other count is unchanged, `infrastructure-imports-feature` stays 0.
+
+1. **Chat runtime.** `git mv` to `interfaces/di/chat_runtime.rs`; the `mod` line moves to `interfaces/di/mod.rs`. Every path in the file was already absolute, so the move changes no line of it.
+2. **Explorer.** Core `contracts::tools::explorer` holds the five `TOOL_*` names, `is_explorer_tool`, `activity_label` (with the `search_folder` label as a private helper), `arg_str`, `arg_u32` and `folder_path`. Core `ports::explorer_turn::ExplorerTurnPort` is the port as designed; explorer's struct implements it by calling its inherent methods, and `add_tools` calls `tools::add_to_turn`. `chat.rs` declares `pub(crate) type ExplorerTurn = Arc<dyn ExplorerTurnPort>`; `chat/turn/prepare.rs` is untouched. Tool definitions, prompt text and the explorer tool loop stay in the explorer feature, unchanged.
+3. **HyDE.** Core `ports::query_interpreter::QueryInterpreter`, implemented by `HyDEService` by delegation. `ChatRetrieval::query_interpreter(llm, cancel)` builds a fresh `HyDEService::new(llm).with_cancellation(cancel)` on every call, in `chat_runtime.rs` and in `test_runtime.rs`; `external_lookup.rs` calls it once per turn with the utility LLM and `turn_token(request_id)`, as before.
+4. **Test runtime.** Imports core directly, per the table; the three cfg(test) shims are deleted and the three remaining re-exports become private `use`s.
+
+**Deviations.**
+- The port's `add_tools` takes `ports::llm_port::ToolDefinition` (what `add_to_turn` and the turn's tool list use), not `contracts::tools::ToolDefinition`; they are different types.
+- `index/tool.rs`'s own `arg_str` was not a duplicate: it also reads "/", "." and "./" as absent. Core keeps that reading as `index_arg_str` (`arg_str` then that filter, the same result), used by the `search_folder` label and by `index/tool.rs`, which imports it under its old name.
+- `arg_bool` stays private in explorer's `tools.rs`: no label reads it.
+- Commit 2 already changes `test_runtime.rs:389` to the alias, because the trait's return type changes in that commit and the tests would not compile otherwise. Commit 3 adds `query_interpreter` there for the same reason.
+- `WorkspaceNoteDto` had two more outside readers than the grep found: `daily_notes/plugin.rs` and `daily_notes/tests.rs` named it through `commands.rs`'s `pub use super::dto::*` glob. Both now import it from core.
+- Explorer's own tests that called `tools::activity_label`/`is_explorer_tool` now call the core functions.
+
+**Behaviour.** No intended change. The labels and `is_explorer_tool` were moved byte for byte, and the tool definitions and prompt text were not touched. The explorer turn now sits behind an `Arc`; the chat only borrows it, so nothing else differs. The query interpreter is built per turn with that turn's token and is never cached.

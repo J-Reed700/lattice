@@ -10,6 +10,7 @@ use uuid::Uuid;
 pub(super) use super::dto::row_to_dto;
 use super::dto::to_json;
 pub use super::dto::*;
+use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 
 async fn get_note_by_id(
     container: &Container,
