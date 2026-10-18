@@ -30,7 +30,7 @@ The order matters. PR1's `--list` saves work in every later PR. PRs 2–3 put th
 
 ## 3. Classification of the 297
 
-| Kind | Refs | Representative sites (relative to `src-tauri/src/features/`) |
+| Kind | Refs | Representative sites (relative to `crates/lattice-desktop/src/features/`) |
 |---|---|---|
 | **(a0) Vocabulary already in core**, reached through a feature re-export. `settings/dto/mod.rs:3` and `model_management/domain.rs:5` are both `pub use lattice_core::…::*` | **42** | `conversation/chat/retrieval/kb_retrieval.rs:13`, `llm/use_cases/download_model/single_file.rs:22`, `backup/use_cases/start_auto.rs:1` |
 | **(a) Vocabulary still defined in a feature** | **117** | `conversation/chat/attachments.rs:31` (qa `SourceDto`, 23 refs overall), `conversation/chat/history_tools.rs:42` (`FunctionCall`/`FunctionResult`), `conversation/chat/prior_evidence.rs:10` (`select_informative_terms`, a pure function) |
@@ -123,10 +123,10 @@ Conversation already defines its own ports (`chat/ports.rs`). The leak is that t
 
 ### Critical files for implementation
 - scripts/rust-architecture-check/src/ratchet.rs
-- src-tauri/src/features/conversation/chat/ports.rs
-- src-tauri/src/features/conversation/di/chat_runtime.rs
-- src-tauri/crates/lattice-core/src/application/contracts/mod.rs
-- src-tauri/src/features/download/downloaded_model_repository.rs
+- crates/lattice-desktop/src/features/conversation/chat/ports.rs
+- crates/lattice-desktop/src/features/conversation/di/chat_runtime.rs
+- crates/lattice-core/src/application/contracts/mod.rs
+- crates/lattice-desktop/src/features/download/downloaded_model_repository.rs
 ## 7. PR 5 as built
 
 Feature edges 82 → 61 (−21), in two commits. `infrastructure-imports-feature` stays 0 and `feature-reexport` stays 15. No feature gained a `crate::interfaces` import, and `interfaces/di/container.rs` and `container/*` are untouched.

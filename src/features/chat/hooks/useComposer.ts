@@ -31,7 +31,7 @@ interface ComposerOptions {
   /** Whether `/compact` has anything to fold. */
   canCompact: boolean;
   onCompact: (_conversationId: string) => void;
-  attachments: Pick<AttachmentImport, 'staged' | 'importStaged'>;
+  attachments: Pick<AttachmentImport, 'staged' | 'importStaged' | 'takePictures'>;
 }
 
 /**
@@ -196,6 +196,8 @@ export function useComposer({
       if (imported.names.length > 0) attachmentNames = imported.names;
       if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
     }
+    // Pictures are already stored; the send claims them by id.
+    const pictures = attachments.takePictures();
 
     setInput('');
     if (textareaRef.current) {
@@ -207,7 +209,8 @@ export function useComposer({
       conversationId,
       resolveEffectiveToolPreferences(),
       attachmentNames,
-      attachmentDocumentIds
+      attachmentDocumentIds,
+      pictures.length > 0 ? pictures : undefined
     );
   };
 

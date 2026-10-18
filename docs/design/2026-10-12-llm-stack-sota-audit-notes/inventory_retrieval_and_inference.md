@@ -1,6 +1,6 @@
 # Lattice retrieval + inference inventory (as of 2026-10-12, main + uncommitted tree)
 
-Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts/`, `src-tauri/` or `docs/`. Descriptive only; no judgments.
+Paths are relative to `crates/lattice-desktop/src/` unless they start with `evals/`, `scripts/`, `crates/lattice-desktop/` or `docs/`. Descriptive only; no judgments.
 
 ## 1. Chunking & parsing
 
@@ -12,7 +12,7 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
   - **Zero overlap, on purpose** (`:128-134`). A trailing fragment under 15% is merged into the previous chunk (`:18`, `:142`).
 - **Structure spans**: markdown-heading sections (with a `CodeFence` tracker), intersected with PDF page ranges. Code MIME types are never split by `#` headings (`embedding_input.rs:53-60`, `:200-330`). Each chunk stores `section` (breadcrumb "Parent > Child"), byte offsets and page (`:95-103`).
 - **Contextual header on every embedded chunk**: `heading leaf | source group title | edition | file name | group description`, each truncated (100/64/24/48/64 chars), followed by `\n\n` (`embedding_input.rs:169-189`). The header is shrunk to ≤64 tokens (`:68-79`). The header is embedded but is not part of the stored chunk text (provenance field).
-- **PDF**: `lopdf 0.44` (`src-tauri/Cargo.toml:115`) plus a custom content-stream layout walker (`features/indexing/engine/extraction/pdf_layout.rs:1-25`):
+- **PDF**: `lopdf 0.44` (`crates/lattice-desktop/Cargo.toml:115`) plus a custom content-stream layout walker (`features/indexing/engine/extraction/pdf_layout.rs:1-25`):
   - A line at ≥1.2× body font size becomes a `##`/`###`/`####` heading (`HEADING_RATIO`, `:33`, max level 4 `:38`, ≤140 chars `:43`).
   - ≥3 aligned columns × ≥2 rows become a markdown table (`:46-49`).
   - Fallback is lopdf `extract_text` (`pdf.rs:1-9`).
@@ -55,7 +55,7 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
 - **Exact-scan fallback**:
   - Brute force when the index holds ≤ `EXACT_SEARCH_MAX_VECTORS = 20_000` vectors, or when the scoped eligible set is ≤ 20k (`:65`, `:432-443`).
   - Scoped candidate cap `MAX_SCOPED_CANDIDATES = 8_192` (`:67`).
-- **Lexical**: SQLite FTS5 `chunks_fts` with `tokenize='porter unicode61 remove_diacritics 2'`, plus a `chunks_trigram` FTS5 table (`src-tauri/migrations/20260916000000_init_schema.sql:233-250`).
+- **Lexical**: SQLite FTS5 `chunks_fts` with `tokenize='porter unicode61 remove_diacritics 2'`, plus a `chunks_trigram` FTS5 table (`crates/lattice-desktop/migrations/20260916000000_init_schema.sql:233-250`).
   - Ranking uses FTS5 `bm25()` with default column weights (`search/engine/text_search/sqlite_text_search.rs:260-274`).
   - Query terms are OR-joined after normalization (`search/engine/fts_query.rs:95-111`).
   - A separate in-Rust `BM25Search` is also constructed (`search/di.rs:280`). Its use in the chat path was not traced.
@@ -135,7 +135,7 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
 
 ## 7. Inference config
 
-- **Pinned llama.cpp**: `llama_cpp_tag v0.6.0`, release `llama/v0.6.0-r1` in `J-Reed700/lattice`, macOS min 13.3 (`src-tauri/scripts/llama-server.lock`; the file is under `src-tauri/scripts/`, not `scripts/`).
+- **Pinned llama.cpp**: `llama_cpp_tag v0.6.0`, release `llama/v0.6.0-r1` in `J-Reed700/lattice`, macOS min 13.3 (`crates/lattice-desktop/scripts/llama-server.lock`; the file is under `crates/lattice-desktop/scripts/`, not `scripts/`).
   - CI build flags: `-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF`, and `-DGGML_METAL_USE_BF16=ON` on macOS (`.github/workflows/llama-build.yml:171-188`).
 - **Exact sidecar argv**: `-m <gguf> --port <ephemeral> --host 127.0.0.1 --no-webui -ngl <n> --ctx-size <n> --jinja` (`features/llm/engine/sidecar_manager/readiness.rs:49-73`). The API key goes in via the `LLAMA_API_KEY` env var.
   - **Not passed**: `-fa`, `--cache-type-k/v`, `-b`/`-ub`, `--parallel`/`-np`, `-t`, `--reasoning-format`, `--reasoning-budget`, draft/speculative/MTP flags, `--cache-reuse`, `--slot-save-path`, `--mlock`/`--no-mmap`. All of these are left to llama-server defaults.
@@ -201,7 +201,7 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
 
 ## 9. Evaluation
 
-- **Retrieval harness**: the Rust example `src-tauri/examples/retrieval_eval/{main.rs,production.rs}` writes JSONL, which `scripts/rag_eval.py` scores.
+- **Retrieval harness**: the Rust example `crates/lattice-desktop/examples/retrieval_eval/{main.rs,production.rs}` writes JSONL, which `scripts/rag_eval.py` scores.
   - Metrics: recall@k, nDCG@k, MRR@k, passage recall@k, per-dimension breakdown, latency. A missing query fails the run.
   - `scripts/compare_rag_eval.py`: paired query-cluster bootstrap.
   - `scripts/validate_rag_evals.py` and `scripts/eval_integrity.py`: integrity checks (schema v2).
@@ -233,8 +233,8 @@ Paths are relative to `src-tauri/src/` unless they start with `evals/`, `scripts
 - **Answer harness**: `scripts/chat_rag_eval.py` calls an OpenAI-compatible llama.cpp server with the default prompts and records pattern matches, citation structure, abstention signals and latency. Its own docstring says it is not the desktop chat path.
   - Latest output: `evals/retrieval/results/chat/qwen3.5-9b-local/2026-09-25-synthetic-v1-qwen3-local-qwen3.5-9b-chat.jsonl`. No summarized score was found in a doc.
   - Human evidence-bound review: `scripts/review_rag_eval.py`.
-- **Memory evals**: `src-tauri/tests/conversation_memory_evals.rs`, where every test is `#[ignore]` and needs `LATTICE_EVAL_UTILITY_MODEL` and similar (`:14`, `:2921-3080`). Results live per model in `evals/conversation-memory/results/{qwen3.5-9b-local,qwen3.8-27b-remote}/` (latest 2026-09-26).
-- **Learning / LLM-judge style evals**: `src-tauri/tests/teaching_course_evals.rs` (`:218,321,373,455`) and `learning_studio_evals.rs:330`, all `#[ignore]` and needing a configured provider.
+- **Memory evals**: `crates/lattice-desktop/tests/conversation_memory_evals.rs`, where every test is `#[ignore]` and needs `LATTICE_EVAL_UTILITY_MODEL` and similar (`:14`, `:2921-3080`). Results live per model in `evals/conversation-memory/results/{qwen3.5-9b-local,qwen3.8-27b-remote}/` (latest 2026-09-26).
+- **Learning / LLM-judge style evals**: `crates/lattice-desktop/tests/teaching_course_evals.rs` (`:218,321,373,455`) and `learning_studio_evals.rs:330`, all `#[ignore]` and needing a configured provider.
 - **Embedding tests needing real Qwen3 weights**: `#[ignore]` (`features/embedding/candle_service.rs:2240,2279`).
 - **Runtime grounding check**: claim verification (lexical plus LLM judge) runs per turn (`conversation/chat/verification/`). It is a runtime feature, not an offline eval.
 

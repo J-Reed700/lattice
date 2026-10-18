@@ -13,7 +13,7 @@ import {
 
 const idOf = (path: string, backendId?: string | null) => resolveLanguage(path, backendId)?.id ?? null;
 
-// Every name `language_for` in src-tauri/src/features/explorer/fs.rs returns.
+// Every name `language_for` in crates/lattice-desktop/src/features/explorer/fs.rs returns.
 const BACKEND_IDS = [
   'dockerfile', 'makefile', 'rust', 'typescript', 'tsx', 'javascript', 'jsx', 'python', 'go', 'java', 'kotlin',
   'swift', 'c', 'cpp', 'csharp', 'ruby', 'php', 'shell', 'json', 'toml', 'yaml', 'markdown', 'html', 'css', 'scss',

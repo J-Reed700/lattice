@@ -13,6 +13,7 @@ describe('TurnModelSchema', () => {
       id: 'ornith', name: 'Ornith-1.5-9B',
       model: { kind: 'local', model_id: 'ornith-1.5-9b' },
       origin: 'request_override', provider: 'local', contextTokens: 8704, degraded: 'Metal buffer limit',
+      seesImages: false,
     };
     expect(TurnModelSchema.parse(sent)).toEqual(sent);
     const cloud: TurnModelDto = { ...sent, model: { kind: 'cloud', provider: 'anthropic', model: 'claude-x' } };

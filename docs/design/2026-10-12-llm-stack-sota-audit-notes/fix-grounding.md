@@ -4,7 +4,7 @@ The lexical shortcut no longer certifies a cited claim on word overlap. Only a n
 
 ## What changed
 
-All in `src-tauri/src/features/conversation/chat/verification/`.
+All in `crates/lattice-desktop/src/features/conversation/chat/verification/`.
 
 - **`lexical.rs`**
   - `:28` `MIN_COPIED_TOKENS = 4` replaces `STRONG_MATCHING_TOKENS`. `STRONG_OVERLAP_RATIO = 0.55` is gone.
@@ -74,7 +74,7 @@ Renamed because the rule changed what they assert:
 
 ## Verified
 
-- **Build and lint** (from `src-tauri`, with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`):
+- **Build and lint** (from `crates/lattice-desktop`, with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`):
   - `cargo check --lib`: clean. The first run warned that `overlap_ratio` was never read; fixed as above.
   - `cargo test --lib -- conversation::chat::verification`: 64 passed, 0 failed, 1 ignored (the live test).
   - `cargo fmt`, then `rustfmt --edition 2021 --check` on the three touched files: clean.
@@ -89,7 +89,7 @@ Renamed because the rule changed what they assert:
 Steps:
 
 1. `pgrep -fl llama-server-aarch64-apple-darwin` listed nothing before the run.
-2. Started `src-tauri/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8092 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 4096 -np 1 --jinja`. No server-wide thinking flag.
+2. Started `crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8092 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 4096 -np 1 --jinja`. No server-wide thinking flag.
 3. Ran `claim_checker_eval --lexical-only` and `claim_checker_eval --judge-url http://127.0.0.1:8092` over `evals/grounding/claim-pairs-v1.jsonl`.
 4. Killed the server. `pgrep` then counted 0 llama-server processes.
 5. Scored with `python3 scripts/claim_checker_bakeoff_score.py --library evals/retrieval/synthetic-library-v3.json --json-out evals/grounding/results/2026-10-13-scores.json` on the two new result files.

@@ -31,7 +31,7 @@ Slice 1 is built and is the pattern to extend, not replace:
    `git add` or commit. Never revert a change you did not make.
 3. **No legacy support.** Pre-release; no compatibility shims, no dual code paths, no deprecated
    aliases. Schema changes go into the single squashed migration
-   `src-tauri/migrations/20260916000000_init_schema.sql`.
+   `crates/lattice-desktop/migrations/20260916000000_init_schema.sql`.
 4. **Space isolation is a hard invariant.** Any path that hands documents or document names to a
    model or to the user as "what this chat can use" derives its allow-list from
    `ConversationRepository::retrieval_document_scope` / `space_document_scope`. It may narrow that
@@ -75,7 +75,7 @@ Slice 1 is built and is the pattern to extend, not replace:
 
 | Track | Scope | Owns (may edit) |
 | --- | --- | --- |
-| **A — Turn record** | Step events, persisted per-turn provenance, the timeline UI; backend contracts the other tracks need | All of `src-tauri/`; `src/lib/bindings.ts`, `src/lib/api.ts`, `src/types/**`; `src/hooks/useConversationsController.ts`; `src/stores/conversationsStore*`; `src/components/Chat/RetrievalTrace.tsx`, `ActivityNote.tsx`; new `src/components/Chat/turn/**` |
+| **A — Turn record** | Step events, persisted per-turn provenance, the timeline UI; backend contracts the other tracks need | All of `crates/lattice-desktop/`; `src/lib/bindings.ts`, `src/lib/api.ts`, `src/types/**`; `src/hooks/useConversationsController.ts`; `src/stores/conversationsStore*`; `src/components/Chat/RetrievalTrace.tsx`, `ActivityNote.tsx`; new `src/components/Chat/turn/**` |
 | **B — Docked reader** | The source reader becomes a resizable third pane | `src/components/Chat/ChatView.tsx`, `Message.tsx`, `FilePreviewModal.tsx`, `CitationRail.tsx`, `viewers/**`; `src/index.css`; new `src/stores/chatReaderStore.ts`, `src/components/Chat/reader/**`; `__tests__/Message.test.tsx` |
 | **C — Composer** | `@` documents, `/` commands, visible modes, attach button | `src/components/Chat/ChatPanel.tsx`, `ComposerControls.tsx`, `ChatDropStaging.tsx`; new `src/components/Chat/composer/**`; their tests |
 | **D — Out of chat** | Export, compare/journal/flashcard from an answer or a claim, branch lineage | `src/components/Chat/MessageActions.tsx`, `EvidenceMargin.tsx`, `ClaimHoverCard.tsx`, `ConversationSidebar.tsx`, `sidebar/**`; new `src/components/Chat/actions/**`, `src/utils/conversationExport.ts`; their tests |

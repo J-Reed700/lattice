@@ -64,7 +64,7 @@ SUMMARY=$ROOT/$LABEL-summary.txt
 print "BINARY $BIN sha256=$(shasum -a 256 $BIN | cut -d' ' -f1)" >> $SUMMARY
 print "COMMIT $(git -C $REPO rev-parse --short HEAD 2>/dev/null || print unknown)" >> $SUMMARY
 
-cd $REPO/src-tauri
+cd $REPO/crates/lattice-desktop
 for request in $requests; do
   name=${request:t:r}
   dir=$ROOT/$LABEL-$name

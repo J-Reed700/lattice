@@ -36,14 +36,21 @@ const basename = (path: string): string => {
   return name || path;
 };
 
+/**
+ * `onDrop` hears every dropped path; `stageable` says which of them this hook
+ * stages itself (the rest are the caller's, as pictures are).
+ */
 export function useChatFileDrop(
   panelRef: React.RefObject<HTMLElement | null>,
-  onDrop: (_paths: string[]) => void
+  onDrop: (_paths: string[]) => void,
+  stageable: (_path: string) => boolean = () => true
 ): ChatFileDropState {
   const [isDragging, setIsDragging] = useState(false);
   const [staged, setStaged] = useState<StagedFile[]>([]);
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
+  const stageableRef = useRef(stageable);
+  stageableRef.current = stageable;
 
   const isInsidePanel = useCallback(
     (position?: { x: number; y: number }) => {
@@ -61,7 +68,7 @@ export function useChatFileDrop(
   );
 
   const add = useCallback((paths: string[]) => {
-    const usable = paths.filter(Boolean);
+    const usable = paths.filter((path) => Boolean(path) && stageableRef.current(path));
     if (usable.length === 0) return;
     setStaged((current) => {
       const seen = new Set(current.map((file) => file.path));
@@ -97,7 +104,7 @@ export function useChatFileDrop(
             setStaged((current) => {
               const seen = new Set(current.map((file) => file.path));
               const added = paths
-                .filter((path) => !seen.has(path))
+                .filter((path) => !seen.has(path) && stageableRef.current(path))
                 .map((path) => ({ path, name: basename(path) }));
               return added.length > 0 ? [...current, ...added] : current;
             });

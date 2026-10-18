@@ -115,7 +115,7 @@ export default [
       'node_modules/**',
       '*.config.js',
       '*.config.ts',
-      'src-tauri/**', // Rust source directory
+      'crates/**', // Rust crates (and the vendored readability JS)
       'public/**',
       'coverage/**',
       '.tauri/**',

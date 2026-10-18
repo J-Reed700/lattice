@@ -27,4 +27,9 @@ describe('chat picture records', () => {
     const pictures = parseImages([image, { ...image, ref: 'img-2', sourceUrl: 'javascript:alert(1)' }]);
     expect(pictures.map((picture) => picture.ref)).toEqual(['img-1']);
   });
+
+  it('keeps an attached picture, which has no source page', () => {
+    const attached = { ...image, ref: 'att-1', sourceUrl: null, sourceTitle: null, origin: 'attachment', originalName: 'pad.jpg' };
+    expect(parseImages([attached])).toEqual([attached]);
+  });
 });

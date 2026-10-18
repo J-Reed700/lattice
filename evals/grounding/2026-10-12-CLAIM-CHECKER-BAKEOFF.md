@@ -37,7 +37,7 @@ report measures it against MiniCheck, HHEM-2.1-open and LettuceDetect on the
 | | |
 | --- | --- |
 | pairs | 101: 40 supported, 36 unsupported, 25 contradicted. Synthetic, written to stress named failure modes, one annotator. |
-| Lattice | The shipped `GroundingVerifier::verify` via [`src-tauri/examples/claim_checker_eval.rs`](../../src-tauri/examples/claim_checker_eval.rs). Each pair is a one-paragraph answer ending in `[1]`, with the passage as source 1. Two runs: no judge (`lattice-lexical`) and with the judge (`lattice`). |
+| Lattice | The shipped `GroundingVerifier::verify` via [`crates/lattice-desktop/examples/claim_checker_eval.rs`](../../crates/lattice-desktop/examples/claim_checker_eval.rs). Each pair is a one-paragraph answer ending in `[1]`, with the passage as source 1. Two runs: no judge (`lattice-lexical`) and with the judge (`lattice`). |
 | judge model | unsloth Qwen3.5-9B Q4_K_M on the bundled llama-server (llama.cpp v0.6.0), Metal, `-ngl 99 --ctx-size 4096 -np 1 --jinja`. Greedy, as the default verification settings ask. |
 | thinking | Off, set server-wide with `--chat-template-kwargs '{"enable_thinking":false}'`. Lattice's client sends no switch. A probe showed the rendered prompt ending in an empty `<think></think>`, and all 81 judge calls returned no reasoning text. |
 | external | One process per checker on CPU with 4 threads (torch 2.14.1, transformers 5.19.0), via [`scripts/claim_checker_bakeoff.py`](../../scripts/claim_checker_bakeoff.py). Each used its publisher's decision rule: MiniCheck P(supported) > 0.5, HHEM score ≥ 0.5, LettuceDetect "any token hallucinated". Revisions are recorded in `results/*.meta.json`. |
@@ -246,7 +246,7 @@ parity test against the Python reference on these pairs.
 
 This measures item 2 of the recommendation with the same harness, the same
 101 pairs and the same 9B judge. `needs_judge`
-(`src-tauri/src/features/conversation/chat/verification/lexical.rs`, branch
+(`crates/lattice-desktop/src/features/conversation/chat/verification/lexical.rs`, branch
 `fix/grounding`) now settles a cited claim without the judge only when both
 of these hold:
 

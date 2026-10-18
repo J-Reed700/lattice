@@ -8,24 +8,24 @@
 
 A chat's model picker sets the model for **that chat only**. The app-wide default is set in **Settings** and nowhere else. Learning work runs on its own **Learning model** role, never on a chat's choice. A turn resolves its model once, at the start, and nothing that happens in the picker afterwards touches the turn that is running. Every assistant message records the model that actually produced it. When a chosen model cannot be used, the turn or job fails with the true cause and the fix, never with a substitute model.
 
-Today's incident, mechanically: the Explorer picker called the global `set_active_chat_model` plus `updateSettings({provider})` (`src/features/chat/hooks/useChatSwitchActions.ts:97-111`), which invalidated the single-slot chat cache (`src-tauri/src/features/model_management/commands_extra/active_models.rs:26`). The lesson job loads "the chat model" through the same single slot (`src-tauri/src/features/learning/plugin/generation.rs:81-84` → `Container::get_or_load_llm`, `src-tauri/src/features/llm/di.rs:182-190`) and retries that load through `patiently` after any transient failure (`src-tauri/src/features/learning/plugin/program.rs:79-85`; the job kind is `RecoveryPolicy::Requeue`, `src-tauri/src/features/learning/lessons/generation_jobs.rs:343`). The retry got the 9B, launched with its saved per-model `context_length` of 8,704 (`src-tauri/src/features/llm/loading.rs:535-536` → `LocalServerOptions::with_model_config`, `src-tauri/src/features/llm/engine/factory.rs:114-128`), and the lesson's grounded request did not fit (`src-tauri/src/features/learning/model_call.rs:1-8`).
+Today's incident, mechanically: the Explorer picker called the global `set_active_chat_model` plus `updateSettings({provider})` (`src/features/chat/hooks/useChatSwitchActions.ts:97-111`), which invalidated the single-slot chat cache (`crates/lattice-desktop/src/features/model_management/commands_extra/active_models.rs:26`). The lesson job loads "the chat model" through the same single slot (`crates/lattice-desktop/src/features/learning/plugin/generation.rs:81-84` → `Container::get_or_load_llm`, `crates/lattice-desktop/src/features/llm/di.rs:182-190`) and retries that load through `patiently` after any transient failure (`crates/lattice-desktop/src/features/learning/plugin/program.rs:79-85`; the job kind is `RecoveryPolicy::Requeue`, `crates/lattice-desktop/src/features/learning/lessons/generation_jobs.rs:343`). The retry got the 9B, launched with its saved per-model `context_length` of 8,704 (`crates/lattice-desktop/src/features/llm/loading.rs:535-536` → `LocalServerOptions::with_model_config`, `crates/lattice-desktop/src/features/llm/engine/factory.rs:114-128`), and the lesson's grounded request did not fit (`crates/lattice-desktop/src/features/learning/model_call.rs:1-8`).
 
 ## 1. Verified current state and what is worse than the brief
 
 | # | Finding | Where |
 |---|---|---|
-| 1 | Chat model cache is **one slot keyed by `()`**; any picker change evicts whatever every consumer was using. | `src-tauri/src/interfaces/di/container.rs:41-44`, `di.rs:182-190`, `src-tauri/src/infrastructure/ml/model_cache.rs:60-70` (`state.entry` is a single `Option`) |
+| 1 | Chat model cache is **one slot keyed by `()`**; any picker change evicts whatever every consumer was using. | `crates/lattice-desktop/src/interfaces/di/container.rs:41-44`, `di.rs:182-190`, `crates/lattice-desktop/src/infrastructure/ml/model_cache.rs:60-70` (`state.entry` is a single `Option`) |
 | 2 | The router and utility caches are *also* single-slot despite `String` keys: the key is compared, not indexed. Two utility keys alternate → thrash. | `model_cache.rs:29-33, 60-70` |
 | 3 | **Explicit Ollama rows in the picker are a lie.** Selecting one sets the row active and `provider=ollama`, but the chat loader talks to `settings.model`, not the row's tag. | `useChatSwitchActions.ts:101-106`; `loading.rs:590` (`let model = llm_settings.model.clone()`) |
 | 4 | "Try with another model" flips the **global** model and provider, regenerates, and only offers "Switch back" in a toast. Anything running in the gap uses the wrong model; an unclicked toast leaves the global changed for good. | `src/features/chat/components/message/useMessageActions.ts:99-188` |
-| 5 | Warmup failure **deactivates the global chat model** (`ClearActiveChatModelUseCase`) on `ModelLoadFailed`. | `src-tauri/src/features/model_management/commands_extra/warm_up.rs:16-38` |
-| 6 | Utility failures "fall back to chat LLM" in four places. With per-chat overrides "the chat LLM" is ambiguous. | `di.rs:254-259, 314-322`; `src-tauri/src/features/conversation/compaction.rs:39-45`; `src-tauri/src/features/conversation/starters.rs:480-482` |
-| 7 | `conversations.model_name` has three meanings: the frontend's guess at creation (`src/features/chat/controller/useConversationActions.ts:56-70`), a copy on fork (`src-tauri/src/features/conversation/repository/fork.rs:67, 172, 283`), the learning program's recorded model on tangents (`src-tauri/src/features/learning/repository/tangents.rs:208-218`). The turn never reads it (`src-tauri/src/features/conversation/chat/turn/prepare.rs:130`). |
+| 5 | Warmup failure **deactivates the global chat model** (`ClearActiveChatModelUseCase`) on `ModelLoadFailed`. | `crates/lattice-desktop/src/features/model_management/commands_extra/warm_up.rs:16-38` |
+| 6 | Utility failures "fall back to chat LLM" in four places. With per-chat overrides "the chat LLM" is ambiguous. | `di.rs:254-259, 314-322`; `crates/lattice-desktop/src/features/conversation/compaction.rs:39-45`; `crates/lattice-desktop/src/features/conversation/starters.rs:480-482` |
+| 7 | `conversations.model_name` has three meanings: the frontend's guess at creation (`src/features/chat/controller/useConversationActions.ts:56-70`), a copy on fork (`crates/lattice-desktop/src/features/conversation/repository/fork.rs:67, 172, 283`), the learning program's recorded model on tangents (`crates/lattice-desktop/src/features/learning/repository/tangents.rs:208-218`). The turn never reads it (`crates/lattice-desktop/src/features/conversation/chat/turn/prepare.rs:130`). |
 | 8 | `conversation_spaces.default_model_name` / `journals.default_model_name` is a dead third tier: only the frontend reads it, to seed `model_name` (`useConversationActions.ts:62-63`). The backend never resolves a model from it. | `init_schema.sql:315, 869`; §3.1 lists every reader and writer |
-| 9 | Sidecar sharing is keyed by the **whole `SidecarConfig`** (`derive Eq, Hash`), and `resident_gpu_bytes` *excludes* servers on the same path, so a second window of the same GGUF is under-budgeted. | `src-tauri/src/features/llm/engine/sidecar_manager/config.rs:36-76`; `startup.rs:33-62`; `registry.rs:261-272` |
+| 9 | Sidecar sharing is keyed by the **whole `SidecarConfig`** (`derive Eq, Hash`), and `resident_gpu_bytes` *excludes* servers on the same path, so a second window of the same GGUF is under-budgeted. | `crates/lattice-desktop/src/features/llm/engine/sidecar_manager/config.rs:36-76`; `startup.rs:33-62`; `registry.rs:261-272` |
 | 10 | Memory is not admitted up front: a load that does not fit the GPU retries with `n_gpu_layers=0` and is reported as "degraded" in a log line only. | `factory.rs:317-325`; `startup.rs:64-92` |
-| 11 | Provenance is thin: the turn record stores `model {id, name}` from `llm.model_name()`; the UI prints the name. | `src-tauri/src/features/conversation/chat/turn/finalize.rs:67-71`; `turn_record.rs:131-134`; `src/features/chat/components/turn/TurnRecord.tsx:239` |
-| 12 | A remote llama.cpp client reports `settings.context_window` without asking the server (`src-tauri/src/features/llm/llama_cpp/mod.rs:88`); three window knobs exist (`crates/lattice-core/src/application/contracts/settings/llm.rs:77-94`). |
+| 11 | Provenance is thin: the turn record stores `model {id, name}` from `llm.model_name()`; the UI prints the name. | `crates/lattice-desktop/src/features/conversation/chat/turn/finalize.rs:67-71`; `turn_record.rs:131-134`; `src/features/chat/components/turn/TurnRecord.tsx:239` |
+| 12 | A remote llama.cpp client reports `settings.context_window` without asking the server (`crates/lattice-desktop/src/features/llm/llama_cpp/mod.rs:88`); three window knobs exist (`crates/lattice-core/src/application/contracts/settings/llm.rs:77-94`). |
 | 13 | No learning job declares a minimum window; generators divide whatever window they are handed (`model_call.rs:1-8`, `lessons/reference_collection.rs:651`, `planning/outline_evidence.rs:75`). |
 | 14 | The Settings roles grid is row-flag based (`is_active_for_*` on `models`, `src/features/settings/components/modelRoles/roleConfig.ts:28, 42, 52, 62`), so a settings-backed role needs a second activity source (§6.3). |
 
@@ -59,7 +59,7 @@ impl ModelRef {
 ```
 
 - **Endpoints are connection configuration, not identity.** `Ollama`/`LlamaCpp` carry the tag only; the URL and auth header come from Settings at resolve time (`llm.rs:102-125`). Move the server, every chat follows.
-- **Cloud carries provider + model** because the keyring entry and endpoint are per provider (`loading.rs:157-183`, `src-tauri/src/features/llm/cloud.rs:44-71`).
+- **Cloud carries provider + model** because the keyring entry and endpoint are per provider (`loading.rs:157-183`, `crates/lattice-desktop/src/features/llm/cloud.rs:44-71`).
 - **Local carries `model_id`, not a path** (`loading.rs:299`, `find_by_model_id`).
 - Picker ids map 1:1: `__llamacpp_server__` → `LlamaCpp{settings.llamaCpp.model}`, `__ollama_server__` → `Ollama{settings.model}`, `__cloud_provider__` → `Cloud{settings.provider, settings.model}`, a local row → `Local{model_id}`, an explicit Ollama row (`backend === 'ollama'`) → `Ollama{row.model_id}`. Finding #3 is fixed by construction.
 
@@ -106,11 +106,11 @@ pub struct ModelRequirements {
 
 ### 2.4 Reconciling `conversations.model_name`
 
-Dropped, replaced by `model_choice` (§3). The aggregate field (`crates/lattice-core/src/domain/conversation/aggregate.rs:449`), the DTO field (`src-tauri/src/features/conversation/dto.rs:22`), `CreateConversationRequestDto.model_name`, the `create_conversation(title, model_name, system_prompt)` command (`src-tauri/src/features/conversation/commands.rs:139-166`), and the frontend `createConversation(title, modelName)` all lose the parameter. A chat can exist before a model does; the first turn reports the real problem instead of creation throwing "No chat model available" (`useConversationActions.ts:64-67`).
+Dropped, replaced by `model_choice` (§3). The aggregate field (`crates/lattice-core/src/domain/conversation/aggregate.rs:449`), the DTO field (`crates/lattice-desktop/src/features/conversation/dto.rs:22`), `CreateConversationRequestDto.model_name`, the `create_conversation(title, model_name, system_prompt)` command (`crates/lattice-desktop/src/features/conversation/commands.rs:139-166`), and the frontend `createConversation(title, modelName)` all lose the parameter. A chat can exist before a model does; the first turn reports the real problem instead of creation throwing "No chat model available" (`useConversationActions.ts:64-67`).
 
 ## 3. Persistence, migration, DTOs, commands, bindings
 
-### 3.1 Migration `src-tauri/migrations/20261016120000_model_choice_and_learning_role.sql`
+### 3.1 Migration `crates/lattice-desktop/migrations/20261016120000_model_choice_and_learning_role.sql`
 
 ```sql
 -- A chat's own model choice. NULL means "the Settings default, live".
@@ -127,18 +127,18 @@ ALTER TABLE conversation_spaces DROP COLUMN default_model_name;
 ALTER TABLE journals DROP COLUMN default_model_name;
 ```
 
-Legality: bundled SQLite is 3.46 (`libsqlite3-sys 0.30.1`, `src-tauri/Cargo.lock`; `DROP COLUMN` needs ≥ 3.35). None of the three columns is in an index, trigger, view or FK (`init_schema.sql:474-490, 722-745, 1325-1335` reference `space_id`, `title`, `updated_at`, `is_saved`; no `INDEX … default_model_name` in any migration). No table rebuild, so the sqlx `PRAGMA foreign_keys=OFF` trap does not apply.
+Legality: bundled SQLite is 3.46 (`libsqlite3-sys 0.30.1`, `Cargo.lock`; `DROP COLUMN` needs ≥ 3.35). None of the three columns is in an index, trigger, view or FK (`init_schema.sql:474-490, 722-745, 1325-1335` reference `space_id`, `title`, `updated_at`, `is_saved`; no `INDEX … default_model_name` in any migration). No table rebuild, so the sqlx `PRAGMA foreign_keys=OFF` trap does not apply.
 
 **Every reader and writer of `default_model_name` to remove (Track B backend, Track C frontend):**
 
 | File | Lines (df6029b8) |
 |---|---|
-| `src-tauri/src/features/conversation/space_dto.rs` | 14, 31, 47, 59, 72, 87 (six DTOs) |
-| `src-tauri/src/features/conversation/space_repository.rs` | 41, 56, 66, 120 |
-| `src-tauri/src/features/conversation/repository/workspace/spaces.rs` | 62, 96, 109, 129 |
-| `src-tauri/src/features/conversation/repository/workspace/journals.rs` | 34, 52, 62, 73, 91, 120, 133, 153 |
-| `src-tauri/src/features/conversation/repository/workspace/tests.rs` | 24 |
-| `src-tauri/src/features/learning/repository/tangents.rs` | 139-148 (space INSERT) |
+| `crates/lattice-desktop/src/features/conversation/space_dto.rs` | 14, 31, 47, 59, 72, 87 (six DTOs) |
+| `crates/lattice-desktop/src/features/conversation/space_repository.rs` | 41, 56, 66, 120 |
+| `crates/lattice-desktop/src/features/conversation/repository/workspace/spaces.rs` | 62, 96, 109, 129 |
+| `crates/lattice-desktop/src/features/conversation/repository/workspace/journals.rs` | 34, 52, 62, 73, 91, 120, 133, 153 |
+| `crates/lattice-desktop/src/features/conversation/repository/workspace/tests.rs` | 24 |
+| `crates/lattice-desktop/src/features/learning/repository/tangents.rs` | 139-148 (space INSERT) |
 | `src/types/api/conversation.ts` | 143, 153, 164, 177 (replaced by bindings types anyway) |
 | `src/features/chat/controller/useConversationActions.ts` | 62-63 |
 | `src/features/journal/hooks/useJournalSpaces.ts` | 102 |
@@ -151,7 +151,7 @@ Legality: bundled SQLite is 3.46 (`libsqlite3-sys 0.30.1`, `src-tauri/Cargo.lock
 
 ### 3.2 Repository
 
-`src-tauri/src/features/conversation/repository/conversations.rs`: every `SELECT … model_name …` (127, 202) and the INSERT (98-115) swap to `model_choice`; `persistence_mapper.rs:29, 92, 129` map `Option<String>` ↔ `ChatModelChoice` (JSON). A row whose JSON fails to parse is `AppError::Database("conversation <id> has an unreadable model_choice: <err>")`, never silently Default.
+`crates/lattice-desktop/src/features/conversation/repository/conversations.rs`: every `SELECT … model_name …` (127, 202) and the INSERT (98-115) swap to `model_choice`; `persistence_mapper.rs:29, 92, 129` map `Option<String>` ↔ `ChatModelChoice` (JSON). A row whose JSON fails to parse is `AppError::Database("conversation <id> has an unreadable model_choice: <err>")`, never silently Default.
 
 New methods on `ConversationRepository`, exposed through the `ChatRecords` port (`chat/ports.rs`):
 
@@ -175,7 +175,7 @@ Fork (`fork.rs:67, 162-172, 280-283`) copies `model_choice`. Chat tangents (`rep
 pub learning_model: Option<ModelRef>,
 ```
 
-Written through the existing `update_settings` category path (`src-tauri/src/features/settings/use_cases/update.rs:33-98`; the LLM category merges JSON keys, so the frontend sends `{category: 'llm', updates: {learningModel: {...} | null}}`). Validation in `validate_security_constraints` (`update.rs:102-121`): when `learningModel` is present and non-null, deserialize it as `ModelRef` and reject malformed JSON with `InvalidInput("learningModel is not a model reference")`. No existence check at write time beyond shape: the roles UI only offers rows that exist, and the refusal at use time names the real state (§6.3).
+Written through the existing `update_settings` category path (`crates/lattice-desktop/src/features/settings/use_cases/update.rs:33-98`; the LLM category merges JSON keys, so the frontend sends `{category: 'llm', updates: {learningModel: {...} | null}}`). Validation in `validate_security_constraints` (`update.rs:102-121`): when `learningModel` is present and non-null, deserialize it as `ModelRef` and reject malformed JSON with `InvalidInput("learningModel is not a model reference")`. No existence check at write time beyond shape: the roles UI only offers rows that exist, and the refusal at use time names the real state (§6.3).
 
 ### 3.4 DTOs
 
@@ -194,7 +194,7 @@ Written through the existing `update_settings` category path (`src-tauri/src/fea
   }
   ```
 - `ChatStreamEventDto` (`chat/dto.rs`, `pub struct ChatStreamEventDto`): add `#[serde(skip_serializing_if = "Option::is_none")] pub model: Option<TurnModelDto>`, sent once right after the turn pins its model (§7).
-- `DownloadedModelResponse` (`src-tauri/src/features/model_management/commands_extra.rs:50-68`): add `supports_tool_calling: Option<bool>` (from `GgufModelInfo::supports_tool_calling`, `engine/gguf_metadata.rs:136`, via the existing `ModelFileInspector`) and `configured_context_length: Option<u32>` (from `settings.llm.local_model_configs[model_id].context_length`).
+- `DownloadedModelResponse` (`crates/lattice-desktop/src/features/model_management/commands_extra.rs:50-68`): add `supports_tool_calling: Option<bool>` (from `GgufModelInfo::supports_tool_calling`, `engine/gguf_metadata.rs:136`, via the existing `ModelFileInspector`) and `configured_context_length: Option<u32>` (from `settings.llm.local_model_configs[model_id].context_length`).
 - `ActiveModels` (`model_management/plugin/commands.rs:298-301`) is unchanged; the learning model is read from settings.
 - `LoadedModelDto { model: ModelRef, provider: String, context_tokens: u32, in_flight: u32, pinned_by: Vec<String>, loaded_at: String, last_used_at: String, gpu_bytes: Option<u64>, degraded: Option<String> }`.
 
@@ -208,7 +208,7 @@ Written through the existing `update_settings` category path (`src-tauri/src/fea
 | `warm_up_learning_model` (model) | `() -> Result<(), ApiError>` | Loads the Learning model via `llm_for(Learning)`; emits `model:warmup-status {role:'learning', …}`; a failure reports and **changes no setting**. |
 | `list_loaded_models` (model) | `() -> Result<Vec<LoadedModelDto>, ApiError>` | Diagnostics (§11) and the manual script. |
 
-Registered in `src-tauri/src/bin/export_bindings/main.rs` (conversation block ~248-255; model block ~220), regenerated into `src/lib/bindings.ts`; `npm run type-check:e2e` then fails until `e2e/` fixtures drop `model_name`/`defaultModelName` and add `learningModel` to the settings fixture (`e2e/helpers/learningStudioBackend.ts:1085`, `get_settings`).
+Registered in `crates/lattice-desktop/src/bin/export_bindings/main.rs` (conversation block ~248-255; model block ~220), regenerated into `src/lib/bindings.ts`; `npm run type-check:e2e` then fails until `e2e/` fixtures drop `model_name`/`defaultModelName` and add `learningModel` to the settings fixture (`e2e/helpers/learningStudioBackend.ts:1085`, `get_settings`).
 
 ### 3.6 Validation at set time (`set_conversation_model_choice`)
 
@@ -243,7 +243,7 @@ Precedence for chats: **request override > chat override > Settings default.**
 
 `Auto`'s *load-time* fallback (local broken → llama.cpp → Ollama) is kept **only for `Default`**; an explicit ref never falls through to another backend.
 
-### 4.2 Container API (`src-tauri/src/features/llm/di.rs`, and the `ChatModels` port)
+### 4.2 Container API (`crates/lattice-desktop/src/features/llm/di.rs`, and the `ChatModels` port)
 
 ```rust
 pub struct PinnedModel {
@@ -276,7 +276,7 @@ impl Container {
 
 ### 5.1 `LlmInstances` replaces the three single-slot caches
 
-Generic `InstancePool<K, V>` in `src-tauri/src/infrastructure/ml/instance_pool.rs`; `src-tauri/src/features/llm/instances.rs` wraps it as `LlmInstances`:
+Generic `InstancePool<K, V>` in `crates/lattice-desktop/src/infrastructure/ml/instance_pool.rs`; `crates/lattice-desktop/src/features/llm/instances.rs` wraps it as `LlmInstances`:
 
 ```rust
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -338,7 +338,7 @@ Reason: the ladder exists for driver faults where CPU is the only way the model 
 - **On demand** (§5.4 step 2) is the policy. No idle timer.
 - **Model deleted** (`model_management/plugin/commands.rs:108` `delete_model`): `invalidate_llm_instances(ModelDeleted(model_id))` — running holders finish on the mmap'd file; the process dies on the last drop. **No setting is changed**: a chat override or the Learning role pointing at it stays and is shown as unavailable (§6.3, §9).
 - **Chat override cleared/changed**: unloads nothing.
-- **Settings changes** (`src-tauri/src/interfaces/settings_side_effects.rs:97-102` currently invalidates all three caches on any `Llm` write) → `invalidate_llm_instances(SettingsChanged{..})` with a predicate: `local_model_configs[id]` changed → keys on `Local{id}`; `ollama_url`/auth → Ollama keys; `llama_cpp.*` → LlamaCpp keys; sampling/thinking/`max_tokens`/`timeout` → all keys (`GenerationConfig` is baked into each client, `factory.rs:337-343`); `provider`/`model`/active row/`learning_model` → **nothing** (they change what resolution returns, and resolution is per request). The side-effect impl diffs the previous and new `LLMSettingsDto` to decide.
+- **Settings changes** (`crates/lattice-desktop/src/interfaces/settings_side_effects.rs:97-102` currently invalidates all three caches on any `Llm` write) → `invalidate_llm_instances(SettingsChanged{..})` with a predicate: `local_model_configs[id]` changed → keys on `Local{id}`; `ollama_url`/auth → Ollama keys; `llama_cpp.*` → LlamaCpp keys; sampling/thinking/`max_tokens`/`timeout` → all keys (`GenerationConfig` is baked into each client, `factory.rs:337-343`); `provider`/`model`/active row/`learning_model` → **nothing** (they change what resolution returns, and resolution is per request). The side-effect impl diffs the previous and new `LLMSettingsDto` to decide.
 - **App exit**: `registry.rs:225` `kill_all`, unchanged.
 
 ### 5.6 Concurrency
@@ -381,7 +381,7 @@ Lessons belong to a program, not a chat. The one chat-shaped thing nearby — a 
 
 ### 6.2 Requirements derived from measured sizes
 
-`src-tauri/src/features/learning/model_requirements.rs` (new): one function per job kind returning `ModelRequirements` from the job's own inputs — the token count of the fixed prompt parts the generator will send, plus the answer reservation, plus the smallest evidence room the planner accepts, using the existing primitives (`model_call::fits`/`source_room`, `model_call.rs:105-120`; `grounded_generation::evidence_room`). Token counts need a counter before the model is loaded: use `estimate_tokens` (`llm_port.rs:56`) for the floor, and re-check with the loaded model's exact counter after load (the loaded model may be refused at that point too, with the same message and exact numbers). No constants.
+`crates/lattice-desktop/src/features/learning/model_requirements.rs` (new): one function per job kind returning `ModelRequirements` from the job's own inputs — the token count of the fixed prompt parts the generator will send, plus the answer reservation, plus the smallest evidence room the planner accepts, using the existing primitives (`model_call::fits`/`source_room`, `model_call.rs:105-120`; `grounded_generation::evidence_room`). Token counts need a counter before the model is loaded: use `estimate_tokens` (`llm_port.rs:56`) for the floor, and re-check with the loaded model's exact counter after load (the loaded model may be refused at that point too, with the same message and exact numbers). No constants.
 
 ### 6.3 The Learning model role — **decided: yes, a dedicated role**
 
@@ -497,9 +497,9 @@ v1 refuses up front with the numbers and the fix. Rationale kept for the later c
 
 **lattice-core unit**: resolver precedence and every `provider` row; explicit refs never fall through; `resolve_learning` unset → `InvalidConfig`; `ModelRef`/`ChatModelChoice` JSON round-trips; unreadable JSON is an error; `LLMSettingsDto` with and without `learningModel` deserialises.
 
-**src-tauri unit**: `InstancePool` per-key single flight, parallel loads of different keys, dead eviction, `invalidate(pred)` keeps holders, `evict_idle` skips `in_flight > 0`, LRU order; admission fits / evict-then-fits / refuse-with-pinners / no-GPU skip; `resident_gpu_bytes` counts a same-path different-window server; invalidation predicate (`provider`/`learning_model` → none; `local_model_configs[x]` → x only); warm-up failure (chat and learning) leaves settings and rows untouched; `model_requirements` floors equal measured parts on fixtures.
+**crates/lattice-desktop unit**: `InstancePool` per-key single flight, parallel loads of different keys, dead eviction, `invalidate(pred)` keeps holders, `evict_idle` skips `in_flight > 0`, LRU order; admission fits / evict-then-fits / refuse-with-pinners / no-GPU skip; `resident_gpu_bytes` counts a same-path different-window server; invalidation predicate (`provider`/`learning_model` → none; `local_model_configs[x]` → x only); warm-up failure (chat and learning) leaves settings and rows untouched; `model_requirements` floors equal measured parts on fixtures.
 
-**src-tauri integration** (`chat/tests.rs`; `test_runtime.rs` fake implements `chat_llm_for`/`learning_llm`): override chat runs on B while Default is A, provenance `ChatOverride`; global change moves a Default chat, not an overridden one; `regenerate(model: C)` persists nothing; **Learning role**: a lesson job runs on `learning_model` regardless of any chat's choice and of the chat default; unset → fails once with the text; below the floor → fails once, not requeued; deleted → refusal text, setting intact; same GGUF/profile as chat → one instance id in `list_loaded_models`. Fork/tangent/handoff inherit; learning tangent is Default. Migration applies on a populated DB (three columns dropped, FTS triggers still fire, space CRUD round-trips without `default_model_name`).
+**crates/lattice-desktop integration** (`chat/tests.rs`; `test_runtime.rs` fake implements `chat_llm_for`/`learning_llm`): override chat runs on B while Default is A, provenance `ChatOverride`; global change moves a Default chat, not an overridden one; `regenerate(model: C)` persists nothing; **Learning role**: a lesson job runs on `learning_model` regardless of any chat's choice and of the chat default; unset → fails once with the text; below the floor → fails once, not requeued; deleted → refusal text, setting intact; same GGUF/profile as chat → one instance id in `list_loaded_models`. Fork/tangent/handoff inherit; learning tangent is Default. Migration applies on a populated DB (three columns dropped, FTS triggers still fire, space CRUD round-trips without `default_model_name`).
 
 **Frontend (Vitest)**: `modelRefForOption` for all five id shapes; `resolveEffectiveChatOption`; `useChatSwitchActions` calls only `setConversationModelChoice` (global mocks uncalled; creates a conversation first when none); `useMessageActions` regenerate carries `model`, toast action persists; `ModelPickerPopover` "Use default" row, `aria-checked`, badges, degraded suffix; roles: fourth `RoleButton` renders for chat-type rows and the Ollama/llama.cpp meta rows, `assignRole('learning')` sends `{learningModel}`; banner states (unset / unavailable / set); ESLint rule fixture fails lint.
 
@@ -524,7 +524,7 @@ A0 is one agent, first, alone (small, ~2 h). Then A1, B, C concurrently. Then I 
 
 ### A0 — contract commit (Track A, first)
 
-Owned files: `crates/lattice-core/src/domain/models/model_ref.rs` (new) + `mod.rs` export; `crates/lattice-core/src/domain/conversation/model_choice.rs` (new) + export; `crates/lattice-core/src/application/services/chat_model_resolution.rs` (new) + `services/mod.rs`; `crates/lattice-core/src/application/ports/llm_port.rs` (add `ModelRole`, `ModelRequirements`, `ToolSupport`, `ModelOrigin`, `ResolvedModel`); `crates/lattice-core/src/application/contracts/settings/llm.rs` (`learning_model`); `src-tauri/src/features/llm/di.rs` (new Container methods, **implemented as thin delegations to today's loader** so everything compiles: in A0 `chat_llm_for` and `learning_llm` ignore their inputs and return today's `load_llm_with_fallback` result wrapped in a `PinnedModel` with `origin: Default`, marked `// A1 replaces`; A0 touches no conversation or learning file); `src-tauri/src/features/conversation/chat/ports.rs` (`ChatModels` gains `chat_llm_for`, `learning_llm`, `default_chat_llm`; `get_or_load_llm` stays in A0 and is removed by B); `src-tauri/src/features/conversation/chat/turn_record.rs` (`TurnModelDto` fields, all `Option`); `src-tauri/src/features/conversation/chat/dto.rs` (`ChatStreamEventDto.model`); `src-tauri/src/features/model_management/commands_extra.rs` (`DownloadedModelResponse` fields, `LoadedModelDto`); `src-tauri/src/bin/export_bindings/main.rs` (register `warm_up_learning_model`, `list_loaded_models` as stubs returning `Ok(vec![])`/`Ok(())`); regenerate `src/lib/bindings.ts`.
+Owned files: `crates/lattice-core/src/domain/models/model_ref.rs` (new) + `mod.rs` export; `crates/lattice-core/src/domain/conversation/model_choice.rs` (new) + export; `crates/lattice-core/src/application/services/chat_model_resolution.rs` (new) + `services/mod.rs`; `crates/lattice-core/src/application/ports/llm_port.rs` (add `ModelRole`, `ModelRequirements`, `ToolSupport`, `ModelOrigin`, `ResolvedModel`); `crates/lattice-core/src/application/contracts/settings/llm.rs` (`learning_model`); `crates/lattice-desktop/src/features/llm/di.rs` (new Container methods, **implemented as thin delegations to today's loader** so everything compiles: in A0 `chat_llm_for` and `learning_llm` ignore their inputs and return today's `load_llm_with_fallback` result wrapped in a `PinnedModel` with `origin: Default`, marked `// A1 replaces`; A0 touches no conversation or learning file); `crates/lattice-desktop/src/features/conversation/chat/ports.rs` (`ChatModels` gains `chat_llm_for`, `learning_llm`, `default_chat_llm`; `get_or_load_llm` stays in A0 and is removed by B); `crates/lattice-desktop/src/features/conversation/chat/turn_record.rs` (`TurnModelDto` fields, all `Option`); `crates/lattice-desktop/src/features/conversation/chat/dto.rs` (`ChatStreamEventDto.model`); `crates/lattice-desktop/src/features/model_management/commands_extra.rs` (`DownloadedModelResponse` fields, `LoadedModelDto`); `crates/lattice-desktop/src/bin/export_bindings/main.rs` (register `warm_up_learning_model`, `list_loaded_models` as stubs returning `Ok(vec![])`/`Ok(())`); regenerate `src/lib/bindings.ts`.
 
 Exposes (exact):
 ```rust
@@ -540,7 +540,7 @@ pub fn resolve(Option<&ModelRef>, &ChatModelChoice, &DefaultChatModel) -> Result
 pub fn resolve_learning(&LLMSettingsDto) -> Result<ResolvedModel>;
 // LLMSettingsDto
 pub learning_model: Option<ModelRef>,
-// src-tauri Container + ChatModels port
+// crates/lattice-desktop Container + ChatModels port
 pub struct PinnedModel { pub llm: Arc<dyn LLMPort>, pub resolved: ResolvedModel, pub instance_id: u64, pub degraded: Option<String> }
 async fn chat_llm_for(&self, conversation_id: &str, request_override: Option<&ModelRef>, requirements: ModelRequirements) -> Result<PinnedModel>;
 async fn learning_llm(&self, requirements: ModelRequirements) -> Result<PinnedModel>;
@@ -550,21 +550,21 @@ Tests: resolver unit tests; settings DTO deserialisation with/without the field.
 
 ### A1 — instances, admission, loaders (Track A, after A0)
 
-Owned files: `src-tauri/src/infrastructure/ml/instance_pool.rs` (new), `src-tauri/src/features/llm/instances.rs` (new), `src-tauri/src/features/llm/di.rs`, `src-tauri/src/features/llm/loading.rs` (add `load_ref(&ModelRef, &LLMSettingsDto, GenerationConfig) -> Result<Arc<dyn LLMPort>>`, `launch_profile_for(&ModelRef, &LLMSettingsDto) -> LaunchProfile`; keep `load(settings)` for Default), `src-tauri/src/features/llm/engine/sidecar_manager/registry.rs` (resident bytes fix; `pub fn admission(&self, path, window) -> Admission`), `src-tauri/src/features/llm/engine/sidecar_manager/config.rs` (make `auto_context_size`, `resident_bytes_of` `pub(crate)`), `src-tauri/src/interfaces/di/container.rs` (replace the three caches with one `LlmInstances`), `src-tauri/src/interfaces/settings_side_effects.rs` (predicate invalidation, diff old/new settings), `src-tauri/src/features/model_management/commands_extra/{active_models.rs, warm_up.rs}` (stop clearing; `warm_up_learning_model_impl`), `src-tauri/src/features/model_management/plugin/commands.rs` (the two new commands; `delete_model` → `invalidate_llm_instances(ModelDeleted)`), `src-tauri/src/features/llm/loading/tests.rs`, new `instances/tests.rs`.
+Owned files: `crates/lattice-desktop/src/infrastructure/ml/instance_pool.rs` (new), `crates/lattice-desktop/src/features/llm/instances.rs` (new), `crates/lattice-desktop/src/features/llm/di.rs`, `crates/lattice-desktop/src/features/llm/loading.rs` (add `load_ref(&ModelRef, &LLMSettingsDto, GenerationConfig) -> Result<Arc<dyn LLMPort>>`, `launch_profile_for(&ModelRef, &LLMSettingsDto) -> LaunchProfile`; keep `load(settings)` for Default), `crates/lattice-desktop/src/features/llm/engine/sidecar_manager/registry.rs` (resident bytes fix; `pub fn admission(&self, path, window) -> Admission`), `crates/lattice-desktop/src/features/llm/engine/sidecar_manager/config.rs` (make `auto_context_size`, `resident_bytes_of` `pub(crate)`), `crates/lattice-desktop/src/interfaces/di/container.rs` (replace the three caches with one `LlmInstances`), `crates/lattice-desktop/src/interfaces/settings_side_effects.rs` (predicate invalidation, diff old/new settings), `crates/lattice-desktop/src/features/model_management/commands_extra/{active_models.rs, warm_up.rs}` (stop clearing; `warm_up_learning_model_impl`), `crates/lattice-desktop/src/features/model_management/plugin/commands.rs` (the two new commands; `delete_model` → `invalidate_llm_instances(ModelDeleted)`), `crates/lattice-desktop/src/features/llm/loading/tests.rs`, new `instances/tests.rs`.
 
 Consumes A0's types. Exposes: the Container methods for real; `invalidate_llm_instances(InvalidationCause)`; `loaded_models()`. Keeps `get_or_load_utility_llm`/`get_or_load_router_llm`/`utility_llm_loader` signatures (they now go through the pool). `chat_llm_for` reads the choice through `self.conversation_records().model_choice(id)` — the `ChatRecords` method B adds; until B lands, A1 calls `ConversationRepository::model_choice` directly on `db_pool()` with the SQL `SELECT model_choice FROM conversations WHERE id = ?` (the column exists once B's migration is applied; A1's tests use an in-memory DB with B's migration file, which B commits first thing — see B order).
 
-Tests: §12 src-tauri unit list. Done when: `cargo check` green; `cargo test -p lattice --lib llm::` and `infrastructure::ml::` green; `list_loaded_models` returns the sidecar(s) in a manual run.
+Tests: §12 crates/lattice-desktop unit list. Done when: `cargo check` green; `cargo test -p lattice --lib llm::` and `infrastructure::ml::` green; `list_loaded_models` returns the sidecar(s) in a manual run.
 
 ### B — conversation, migration, learning consumers (Track B, after A0)
 
 Order inside B: (1) commit the migration file alone first (A1 depends on it); (2) repository + DTOs + mapper; (3) commands; (4) turn/pin/provenance; (5) consumers; (6) learning requirements; (7) tests.
 
-Owned files: `src-tauri/migrations/20261016120000_model_choice_and_learning_role.sql`; `src-tauri/src/features/conversation/{dto.rs, mapper.rs, persistence_mapper.rs, commands.rs, plugin.rs, plugin_impl.rs, service.rs, trait_def.rs, mocks.rs, handoff.rs, synthesis.rs, starters.rs, compaction.rs, space_dto.rs, space_repository.rs}`; `conversation/repository/{conversations.rs, fork.rs, tangents.rs, workspace/spaces.rs, workspace/journals.rs, workspace/tests.rs}`; `conversation/chat/{ports.rs (remove get_or_load_llm; ChatRecords::model_choice/set_model_choice; ChatPolicy::compact_for_turn signature), research_job.rs, test_runtime.rs, tests.rs}`; `conversation/chat/turn/{prepare.rs, finalize.rs, mod.rs}`; `conversation/di/chat_runtime.rs`; `crates/lattice-core/src/domain/conversation/aggregate.rs` (drop `model_name`); `learning/{model_requirements.rs (new), plugin/generation.rs, plugin/program.rs, plugin/practice.rs, plugin/study.rs, plugin/practical.rs, plugin/assessment.rs, plugin/diagnostics.rs, plugin/memory.rs, lessons/generation_jobs.rs, repository/tangents.rs}`; `qa/commands.rs`, `qa/dto.rs`; `tags/commands/generation.rs`; `compare/plugin.rs`; `backup/{export_repository.rs, use_cases/export_conversations.rs}`; `src-tauri/src/bin/export_bindings/main.rs` (register `set_conversation_model_choice`, update `regenerate_response`, `create_conversation`).
+Owned files: `crates/lattice-desktop/migrations/20261016120000_model_choice_and_learning_role.sql`; `crates/lattice-desktop/src/features/conversation/{dto.rs, mapper.rs, persistence_mapper.rs, commands.rs, plugin.rs, plugin_impl.rs, service.rs, trait_def.rs, mocks.rs, handoff.rs, synthesis.rs, starters.rs, compaction.rs, space_dto.rs, space_repository.rs}`; `conversation/repository/{conversations.rs, fork.rs, tangents.rs, workspace/spaces.rs, workspace/journals.rs, workspace/tests.rs}`; `conversation/chat/{ports.rs (remove get_or_load_llm; ChatRecords::model_choice/set_model_choice; ChatPolicy::compact_for_turn signature), research_job.rs, test_runtime.rs, tests.rs}`; `conversation/chat/turn/{prepare.rs, finalize.rs, mod.rs}`; `conversation/di/chat_runtime.rs`; `crates/lattice-core/src/domain/conversation/aggregate.rs` (drop `model_name`); `learning/{model_requirements.rs (new), plugin/generation.rs, plugin/program.rs, plugin/practice.rs, plugin/study.rs, plugin/practical.rs, plugin/assessment.rs, plugin/diagnostics.rs, plugin/memory.rs, lessons/generation_jobs.rs, repository/tangents.rs}`; `qa/commands.rs`, `qa/dto.rs`; `tags/commands/generation.rs`; `compare/plugin.rs`; `backup/{export_repository.rs, use_cases/export_conversations.rs}`; `crates/lattice-desktop/src/bin/export_bindings/main.rs` (register `set_conversation_model_choice`, update `regenerate_response`, `create_conversation`).
 
 Consumes: A0 types and Container methods (A1's real implementations arrive at integration; B's tests use `test_runtime.rs` fakes). Exposes: the commands in §3.5 with exact signatures; `ChatRecords::{model_choice, set_model_choice}`; `learning::model_requirements::{lesson_preparation, outline, study_deck, practice, assessment, diagnostics}(…) -> ModelRequirements`.
 
-Tests: §12 src-tauri integration list; migration test on a populated DB. Done when: `cargo check` green; `cargo test -p lattice --lib conversation::` and `learning::` green; `grep -rn "get_or_load_llm" src-tauri/src` returns nothing; `grep -rn "default_model_name\|model_name" src-tauri/src/features/conversation` returns nothing.
+Tests: §12 crates/lattice-desktop integration list; migration test on a populated DB. Done when: `cargo check` green; `cargo test -p lattice --lib conversation::` and `learning::` green; `grep -rn "get_or_load_llm" crates/lattice-desktop/src` returns nothing; `grep -rn "default_model_name\|model_name" crates/lattice-desktop/src/features/conversation` returns nothing.
 
 ### C — frontend (Track C, after A0's bindings)
 
@@ -606,7 +606,7 @@ Chat cache `di.rs:182-190`; aliases `container.rs:41-44`; cache internals `model
 Built by tracks A0 (`bf661de2`), B (`b9c892ad`…`faec7fad`), C (`71c52a83`…`0275b85a`), A1 (`91342d8a`, `904bce71`, `eab0a15f`, `9faaad9a`, `f39f83bc`, `97137902`) and integration I: merge `d138dc64` (main at `bba563ec`), `27589047` (memory refusal fails once), `ab5da4d0` (the window shortfall beside the Learning role), `6292f697` (clippy), `dc7ffcf4` (e2e label), `73f287fb` (structured-call window refusal), merge `a1e7d767` (main at `32c379c4`). What differs from §1–§16, and why:
 
 **Contracts and resolution**
-- `PinnedModel` lives in lattice-core (`application/ports/llm_port.rs`), not in `src-tauri`: the `ChatModels` port in core names it in its signatures.
+- `PinnedModel` lives in lattice-core (`application/ports/llm_port.rs`), not in `crates/lattice-desktop`: the `ChatModels` port in core names it in its signatures.
 - `ChatModelChoice::to_stored` / `from_stored` exist: the repository stores Default as `NULL` and a choice as `ModelRef` JSON, and the backup export writes the same shape.
 - `createConversation` keeps its request object (`CreateConversationRequestDto` without `model_name`), not positional `(title, systemPrompt)`.
 - `chat_llm_for` reads `model_choice` with its own `SELECT model_choice FROM conversations WHERE id = ?` in the llm feature instead of `conversation_records().model_choice(id)`, so llm does not import conversation (no new feature edge).

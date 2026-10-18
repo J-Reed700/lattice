@@ -13,6 +13,7 @@ import { MessageHeader } from '@/features/chat/components/message/MessageHeader'
 import { useMessageActions } from '@/features/chat/components/message/useMessageActions';
 import { useMessageMetadata } from '@/features/chat/components/message/useMessageMetadata';
 import { useMessageVerification } from '@/features/chat/components/message/useMessageVerification';
+import { UserPictures } from '@/features/chat/components/message/UserPictures';
 import { VerificationDetails } from '@/features/chat/components/message/VerificationDetails';
 import { MessageActions } from '@/features/chat/components/MessageActions';
 import { MessageEditor } from '@/features/chat/components/MessageEditor';
@@ -36,6 +37,10 @@ interface MessageProps {
   isLastTurn?: boolean;
   /** Id of the message immediately before this one, for "Send as branch". */
   previousMessageId?: string;
+  /** Id of the message after this one: a question's answer, whose record names the model. */
+  nextMessageId?: string;
+  /** The model answering this chat's next turn can see pictures. */
+  chatModelSeesImages?: boolean;
 }
 
 export const Message = memo(({
@@ -43,6 +48,8 @@ export const Message = memo(({
   isFresh = false,
   isLastTurn = false,
   previousMessageId,
+  nextMessageId,
+  chatModelSeesImages = false,
 }: MessageProps) => {
   const navigate = useNavigate();
   const answerRef = useRef<HTMLDivElement>(null);
@@ -93,7 +100,7 @@ export const Message = memo(({
 
   const isAssistantWithSources = !isUser && sources.length > 0;
 
-  const { attachmentNames, continuedFrom } = useMessageMetadata(message, isUser);
+  const { attachmentNames, pictures, picturesSeen, continuedFrom } = useMessageMetadata(message, isUser);
 
   const conversationId = 'conversationId' in message ? message.conversationId : undefined;
   const conversationTitle = useConversationsStore(
@@ -304,6 +311,16 @@ export const Message = memo(({
             </span>
           )}
         </div>
+        )}
+
+        {/* The pictures this message carried. */}
+        {isUser && pictures.length > 0 && (
+          <UserPictures
+            pictures={pictures}
+            picturesSeen={picturesSeen}
+            answeredBy={nextMessageId ? messageTurn.get(nextMessageId)?.model?.name ?? null : null}
+            restageIn={messageId && conversationId && chatModelSeesImages ? conversationId : null}
+          />
         )}
 
         {/* The files this message brought into the conversation. */}

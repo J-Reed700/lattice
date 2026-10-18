@@ -2,7 +2,7 @@
 
 Defect §2 of `evals/retrieval/2026-10-12-SHIPPED-PATH-BASELINE.md`. The planner answered 0 of 16 requests: 12 were refused as larger than the 16,384-token window and 4 timed out at 20 s. One timeout stood the planner down for 10 minutes, so 26 of 41 turns never asked, and the corrective retry could never replan.
 
-Worktree `/Users/josh/Code/lattice-fix-planner`, branch `fix/planner`, uncommitted. Paths below are under `src-tauri/src/features/conversation/chat/retrieval/`.
+Worktree `/Users/josh/Code/lattice-fix-planner`, branch `fix/planner`, uncommitted. Paths below are under `crates/lattice-desktop/src/features/conversation/chat/retrieval/`.
 
 ## What was wrong, from the request log
 
@@ -81,7 +81,7 @@ The same log gives the reference machine's speeds. Prefill ran at a median 296 t
 
 ## Verified
 
-All commands ran from `src-tauri` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`, `jobs = 2`.
+All commands ran from `crates/lattice-desktop` with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`, `jobs = 2`.
 
 - `cargo check --lib`: clean, no warnings.
 - `cargo test --lib -- conversation::chat::retrieval`: 98 passed, 0 failed, 1 ignored (the live test that needs a model).

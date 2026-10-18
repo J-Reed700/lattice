@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const bundle = path.resolve(process.argv[2] || path.join(repository, 'src-tauri/resources/learning-python'));
+const bundle = path.resolve(process.argv[2] || path.join(repository, 'crates/lattice-desktop/resources/learning-python'));
 const lock = JSON.parse(await readFile(path.join(repository, 'scripts/learning-python.lock.json'), 'utf8'));
 const manifest = JSON.parse(await readFile(path.join(bundle, 'runtime-manifest.json'), 'utf8'));
 assert.equal(manifest.pythonVersion, lock.python.version, 'Bundled Python differs from the pinned source release');

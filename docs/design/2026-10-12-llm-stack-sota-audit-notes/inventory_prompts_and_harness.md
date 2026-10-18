@@ -1,6 +1,6 @@
 # Lattice prompt and agent-harness inventory (2026-10-12, read-only, tree = main + uncommitted)
 
-All paths are relative to `src-tauri/src/`. Line numbers come from the working tree on 2026-10-12.
+All paths are relative to `crates/lattice-desktop/src/`. Line numbers come from the working tree on 2026-10-12.
 
 ## 1. Prompt format
 
