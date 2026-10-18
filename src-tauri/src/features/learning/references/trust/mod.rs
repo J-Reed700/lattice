@@ -10,6 +10,7 @@
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §16-§18.
 
 pub mod capture;
+pub mod overrides;
 pub mod repository;
 mod rows;
 
@@ -19,6 +20,8 @@ pub use repository::SqliteSourceTrustStore;
 mod capture_tests;
 #[cfg(test)]
 mod migration_tests;
+#[cfg(test)]
+mod overrides_tests;
 #[cfg(test)]
 mod repository_tests;
 #[cfg(test)]
