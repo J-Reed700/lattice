@@ -744,6 +744,102 @@ async exportLearningCheckerExamples(request: ExportLearningCheckerExamplesReques
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Each source's level with its reasons, standing, provenance, relations,
+ * track record and the overrides that can touch it; with a claim, its
+ * supports levelled for its subject and the bar for its kind. Reads
+ * judgements already made and never calls a model.
+ */
+async getLearningSourceTrust(request: GetLearningSourceTrustRequestDto) : Promise<Result<LearningSourceTrustViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_source_trust", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates or replaces one override and reports the waiting claims it sends
+ * back to be re-decided.
+ */
+async setSourceTrustOverride(request: LearningTrustOverrideInputDto) : Promise<Result<LearningTrustChangeResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_source_trust_override", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes the override at `scope`; `None` when there was none.
+ */
+async clearSourceTrustOverride(scope: LearningTrustOverrideScopeDto) : Promise<Result<LearningTrustChangeResultDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|clear_source_trust_override", { scope }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every site and site-for-subject override, with the track record of the
+ * claims its pages supported.
+ */
+async listSourceTrustOverrides() : Promise<Result<LearningSiteTrustOverrideDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_source_trust_overrides") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The bars in force per claim kind and level, every automatic change and
+ * the policy parameters with their derivations (§13).
+ */
+async getSourceTrustCalibration() : Promise<Result<LearningSourceTrustCalibrationDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_source_trust_calibration") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Judges a source's publisher again with the Learning model, then answers
+ * with the source's trust.
+ */
+async reassessLearningSourceTrust(request: ReassessLearningSourceTrustRequestDto) : Promise<Result<LearningSourceTrustViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reassess_learning_source_trust", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Profiles one claim of a lesson review again with the Learning model.
+ */
+async reprofileLearningClaim(request: ReprofileLearningClaimRequestDto) : Promise<Result<LearningClaimProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reprofile_learning_claim", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Writes the user's overrides as `sources-v1` eval lines to a file the user
+ * picks (§21). `None` when the user dismissed the dialog.
+ */
+async exportProvenanceEvalExamples() : Promise<Result<ExportedProvenanceEvalExamplesDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|export_provenance_eval_examples") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningRecallWorkspace(programId: string) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_recall_workspace", { programId }) };
@@ -6151,6 +6247,10 @@ export type ExportedLearningCheckerExamplesDto = { path: string;
  */
 pairs: number }
 export type ExportedLearningPackDto = { programId: string; title: string; path: string }
+/**
+ * Where the provenance eval lines were written.
+ */
+export type ExportedProvenanceEvalExamplesDto = { path: string; examples: number }
 export type ExtractAndResolveResponseDto = { links: ResolvedLinkDto[] }
 export type ExtractMentionsResultDto = { mentions: MentionWithContextDto[]; count: number }
 export type FailedLearningPackExportDto = { programId: string; title: string; error: string }
@@ -6444,6 +6544,19 @@ export type GetConversationResponseDto = {
  */
 conversation: ConversationDto | null }
 export type GetLearningPracticalDraftRequestDto = { programId: string; activityId: string; activityRevision: number }
+export type GetLearningSourceTrustRequestDto = { programId: string;
+/**
+ * These sources only; empty for every active source of the course.
+ */
+sourceIds: string[];
+/**
+ * Also level these supports for one claim's subject.
+ */
+claim: LearningTrustClaimRequestDto | null;
+/**
+ * Count what each override scope would reopen.
+ */
+includeImpact: boolean }
 export type GetLearningSourceVersionRequestDto = { programId: string; sourceId: string; versionId: string }
 export type GetMentionsForDocumentResultDto = { documentId: string; mentions: MentionWithContextDto[]; count: number }
 export type HealthStatus = { status: string; database: boolean; embedding_model: boolean; llm: boolean; timestamp: string }
@@ -6885,6 +6998,22 @@ export type LearningAuditOutcome =
  * Tokens a course's audits sent and received, as the provider reported.
  */
 export type LearningAuditUsageDto = { audits: number; inputTokens: number; outputTokens: number }
+/**
+ * Why a level is or is not accepted alone for a kind.
+ */
+export type LearningBarBasis =
+/**
+ * The design's table, unmoved.
+ */
+"static" |
+/**
+ * Below the table's bar, accepted alone because its claims held.
+ */
+"relaxed" |
+/**
+ * At or above the table's bar, no longer accepted alone.
+ */
+"tightened"
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
 export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
 export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
@@ -6911,13 +7040,41 @@ resolution: LearningClaimResolutionDto;
 /**
  * The user's note on a claim confirmed by them.
  */
-note: string | null }
+note: string | null;
+/**
+ * Whether the claim's support met the bar for its kind; `None` when it
+ * was not weighed.
+ */
+sufficiency: LearningSufficiencyDto | null }
+/**
+ * A claim's profile (§12.3): its kind and subject.
+ */
+export type LearningClaimProfileDto = {
+/**
+ * `specification`, `measurement`, `version_bound`, `definition`,
+ * `practice`, `opinion`, `historical` or `general`.
+ */
+claimKind: string; subject: LearningClaimSubjectDto | null; measurementOrigin: string | null;
+/**
+ * Empty for a judged profile; why it is the `general` fallback
+ * otherwise.
+ */
+reasons: LearningTrustReasonDto[] }
 /**
  * How a published claim stands (§5.6): verified against a source, confirmed
  * by the user, accepted as general knowledge, or verified against a source
  * since removed. A string union, like the review panel's.
  */
 export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "general_knowledge" | "source_removed"
+/**
+ * The subject a claim is about, with what a site-for-subject override can
+ * be scoped to: the subject, its aliases and its broader classes.
+ */
+export type LearningClaimSubjectDto = { name: string; kind: string; aliases: string[];
+/**
+ * Broader classes, most specific first.
+ */
+classes: string[] }
 /**
  * The lesson's claims by who acts next (§6.3): "Pass 3 · 2 claims being
  * repaired · 5 waiting for you · 108 verified".
@@ -6939,6 +7096,15 @@ verified: number;
  * Closed by the user or removed: confirmed, general knowledge, removed.
  */
 resolvedByYou: number }
+/**
+ * A claim's trust as its review card shows it: the profile, each support
+ * levelled for the claim's subject, and the bar for its kind.
+ */
+export type LearningClaimTrustDto = {
+/**
+ * `None` until the claim is profiled under the current subject classes.
+ */
+profile: LearningClaimProfileDto | null; supports: LearningSourceTrustEntryDto[]; bar: LearningKindBarDto | null }
 export type LearningContainerEngine = "docker" | "podman"
 export type LearningCourseDepth = "focused" | "course" | "deep_dive"
 export type LearningCurriculumChange = { kind: LearningCurriculumChangeKind; lessonId: string; fromModuleId: string | null; toModuleId: string | null;
@@ -6979,7 +7145,12 @@ export type LearningDiagnosticSignal = "needs_practice" | "ready_for_challenge" 
 export type LearningDiagnosticStatus = "active" | "submitted" | "skipped"
 export type LearningEvidenceDimension = "recall" | "explanation" | "application" | "transfer"
 export type LearningEvidenceEventDto = { id: string; outcomeId: string | null; sourceKind: LearningEvidenceSourceKind; sourceId: string; dimension: LearningEvidenceDimension; result: LearningEvidenceResult; score: number | null; observation: string; evidenceQuote: string | null; assistance: JsonValue; observedAt: number }
-export type LearningEvidencePassageDto = { sourceVersionId: string; title: string; url: string | null; text: string; startByte: number; endByte: number; retrievalKind: string }
+export type LearningEvidencePassageDto = { sourceVersionId: string; title: string; url: string | null; text: string; startByte: number; endByte: number; retrievalKind: string;
+/**
+ * The level of this passage's source for the claim's subject, when the
+ * passage supports the claim and its support was weighed.
+ */
+trust: LearningSourceTrustDto | null }
 export type LearningEvidenceResult = "observed" | "not_observed" | "uncertain" | "not_assessed"
 export type LearningEvidenceSourceKind = "practice" | "assessment" | "recall" | "practical" | "simulation" | "manual"
 export type LearningFeedbackTiming = "immediate" | "after_batch" | "after_submission"
@@ -7019,6 +7190,23 @@ export type LearningGenerationJobStatus = "pending" | "running" | "completed" | 
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
 export type LearningItemFormat = "multiple_choice" | "short_answer" | "explanation" | "ordering" | "artifact"
+/**
+ * One claim kind's bar in force (§13).
+ */
+export type LearningKindBarDto = { claimKind: string;
+/**
+ * The lowest level the design's table accepts alone.
+ */
+staticLowest: LearningTrustLevel;
+/**
+ * The lowest level accepted alone now; `None` when only corroboration
+ * meets the bar.
+ */
+lowestAccepted: LearningTrustLevel | null; levels: LearningLevelBarDto[];
+/**
+ * Each automatic change, with its numbers.
+ */
+reasons: LearningTrustReasonDto[] }
 export type LearningLabExecutionResult = { status: LearningLabRunStatus; exitCode: number | null; stdout: string; stderr: string; outputTruncated: boolean; durationMs: number }
 export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
@@ -7073,6 +7261,22 @@ generalKnowledgeCount: number;
  */
 confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
+/**
+ * One level under one kind's bar, with its verdicts.
+ */
+export type LearningLevelBarDto = { level: LearningTrustLevel; acceptedAlone: boolean; basis: LearningBarBasis;
+/**
+ * Claims at this level and kind that held, and that did not.
+ */
+held: number; failed: number;
+/**
+ * `P(reliability ≥ accept_reliability)` under the cell's posterior.
+ */
+probabilityReliable: number;
+/**
+ * When a moved bar's current run began (unix seconds).
+ */
+since: number | null }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 /**
@@ -7348,6 +7552,17 @@ export type LearningSimulationSessionDto = { id: string; programId: string; acti
 export type LearningSimulationSpeaker = "learner" | "counterpart" | "coach"
 export type LearningSimulationStatus = "active" | "submitted" | "cancelled"
 export type LearningSimulationTurnDto = { id: string; ordinal: number; speaker: LearningSimulationSpeaker; content: string; citations: LearningPracticeCitationDto[]; modelName: string | null; createdAt: number }
+/**
+ * The standings a site override may set (never a level: a site is primary
+ * only for a subject class).
+ */
+export type LearningSiteStanding = "institutional" | "identified" | "community" | "distrusted"
+/**
+ * A site override with what its sources' claims did since (§13: "you set
+ * example.org to institutional; 2 of 9 claims it supported were
+ * overturned").
+ */
+export type LearningSiteTrustOverrideDto = { trustOverride: LearningTrustOverrideDto; trackRecord: LearningTrackRecordDto }
 export type LearningSourceCheckDto = { operationId: string; status: LearningSourceCheckStatus; checkedAt: number; activeDigest: string | null; pendingVersionId: string | null; message: string | null }
 export type LearningSourceCheckStatus = "unchanged" | "update_available" | "failed"
 export type LearningSourceDto = { id: string; title: string; url: string | null; excerpt: string; acquiredAt: number }
@@ -7358,9 +7573,94 @@ export type LearningSourceLibraryItemDto = { id: string; kind: LearningSourceKin
  */
 addedBy: SourceAddedByDto; origin: string; requestedUrl: string | null; freshnessPolicy: LearningSourcePolicy; activeVersionId: string | null; pendingVersionId: string | null; revision: number; deletedAt: number | null; deletionReason: string | null; activeVersion: LearningSourceVersionSummaryDto | null; pendingVersion: LearningSourceVersionSummaryDto | null; versions: LearningSourceVersionSummaryDto[]; latestCheck: LearningSourceCheckDto | null; checks: LearningSourceCheckDto[]; createdAt: number; updatedAt: number }
 export type LearningSourcePolicy = "fixed" | "manual" | "before_use"
+/**
+ * What capture recorded about one source version.
+ */
+export type LearningSourceProvenanceDto = { sourceVersionId: string; originKey: string;
+/**
+ * The registrable domain (or host) site overrides name.
+ */
+site: string | null; publisher: string | null; author: string | null; siteName: string | null;
+/**
+ * Unix seconds.
+ */
+publishedAt: number | null; modifiedAt: number | null;
+/**
+ * The original address when the page was an archived copy.
+ */
+archivedFrom: string | null;
+/**
+ * Why nothing was extracted, when nothing was.
+ */
+notExtracted: string | null; relations: LearningSourceRelationDto[] }
+/**
+ * One relation: "mirror of …", "archived copy of …", "cites …".
+ */
+export type LearningSourceRelationDto = { kind: LearningSourceRelationKind; fromVersionId: string;
+/**
+ * The captured version it points at, or else the URL.
+ */
+toVersionId: string | null; toUrl: string | null }
+/**
+ * An edge of the provenance graph.
+ */
+export type LearningSourceRelationKind = "copy_of" | "contains_copy_of" | "archive_of" | "canonical_of" | "cites" | "cited_for_claim"
 export type LearningSourceSearchResultDto = { sourceId: string; versionId: string; title: string; excerpt: string }
 export type LearningSourceSelectorDto = { id: string; sourceId: string; sourceVersionId: string; selector: LearningTextQuoteSelector; matchStatus: LearningQuoteMatchStatus; startByte: number | null; endByte: number | null; candidateCount: number; createdAt: number }
 export type LearningSourceSemanticSearchResultDto = { sourceId: string; version: LearningSourceVersionSummaryDto; excerpt: string; score: number; retrievalKind: string; selector: LearningTextQuoteSelector }
+/**
+ * A publisher's judged standing (§12.1).
+ */
+export type LearningSourceStanding = "institutional" | "identified" | "community" | "unknown"
+/**
+ * The bars in force and why (§13), for Settings.
+ */
+export type LearningSourceTrustCalibrationDto = { policyVersion: string; parameters: LearningTrustPolicyParameterDto[]; kinds: LearningKindBarDto[];
+/**
+ * Verdicts recorded across every course.
+ */
+verdicts: number }
+/**
+ * A source version's level for one subject, with the rules that set it.
+ */
+export type LearningSourceTrustDto = { sourceVersionId: string; level: LearningTrustLevel;
+/**
+ * The subject the level is relative to; `None` for a level that holds
+ * whatever the subject.
+ */
+subject: string | null; reasons: LearningTrustReasonDto[]; overrideScope: LearningTrustOverrideScopeDto | null }
+/**
+ * One source's trust as the Sources tab, its override menu and a claim
+ * card show it.
+ */
+export type LearningSourceTrustEntryDto = { sourceId: string; sourceVersionId: string;
+/**
+ * The level whatever the subject in the Sources tab; for the claim's
+ * subject on a claim card.
+ */
+trust: LearningSourceTrustDto;
+/**
+ * `None` until the publisher's standing has been judged.
+ */
+standing: LearningSourceStanding | null;
+/**
+ * The standing judgement's own reasons, verbatim.
+ */
+standingReasons: LearningTrustReasonDto[];
+/**
+ * `None` when capture recorded no provenance for the version.
+ */
+provenance: LearningSourceProvenanceDto | null; trackRecord: LearningTrackRecordDto;
+/**
+ * Every override that can touch this source: its own, its site's
+ * standing, and its site's per-class levels.
+ */
+overrides: LearningTrustOverrideDto[];
+/**
+ * Filled only when the request asks for it (the override menu).
+ */
+impact: LearningTrustImpactsDto | null }
+export type LearningSourceTrustViewDto = { sources: LearningSourceTrustEntryDto[]; claim: LearningClaimTrustDto | null }
 export type LearningSourceUsageDto = { lessonId: string; lessonTitle: string; referenceKind: string; referenceTitle: string }
 export type LearningSourceVersionDto = { sourceId: string; version: LearningSourceVersionSummaryDto; fullText: string; usage: LearningSourceUsageDto[] }
 export type LearningSourceVersionSummaryDto = { id: string; versionNumber: number; title: string; publisher: string | null; resolvedUrl: string | null; excerpt: string; contentSha256: string; wordCount: number; truncated: boolean; extractionVersion: string; acquiredAt: number;
@@ -7370,8 +7670,94 @@ export type LearningSourceVersionSummaryDto = { id: string; versionNumber: numbe
  */
 snapshotHash: string | null }
 export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[] }
+/**
+ * A subject class as the user named it ("Web platform APIs").
+ */
+export type LearningSubjectClassDto = { label: string; key: string }
+/**
+ * Whether a verified claim's support met the bar for its kind (§6, §18.9):
+ * the claim's kind and subject, the bar, the label it is shown with when
+ * its support is below primary, and the rules that decided.
+ */
+export type LearningSufficiencyDto = {
+/**
+ * `specification`, `measurement`, `version_bound`, `definition`,
+ * `practice`, `opinion`, `historical` or `general`.
+ */
+claimKind: string; subject: string | null; sufficient: boolean;
+/**
+ * The bar an insufficient support failed (`primary`, `origin`,
+ * `authoritative`, `established`, `attributed`, `any`).
+ */
+bar: string | null;
+/**
+ * How a sufficient claim is shown when its support is below primary
+ * (`practice`, `attributed`, `community_consensus`, `reported_by`,
+ * `secondary`, `mirror`).
+ */
+label: string | null; reasons: LearningTrustReasonDto[] }
 export type LearningTangentDto = { conversationId: string; programId: string; programTitle: string; spaceId: string; moduleId: string; moduleTitle: string; lessonId: string; lessonTitle: string; sectionIndex: number | null; sectionTitle: string | null; selectedText: string; title: string; createdAt: number; updatedAt: string; messageCount: number; contextMessageCount: number }
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
+/**
+ * An origin's record on the user's verdicts (§13): claims it supported
+ * that held, and that were overturned. Shown, never a level by itself.
+ */
+export type LearningTrackRecordDto = { right: number; wrong: number }
+/**
+ * What an override change moves: the versions it covers, so the menu can
+ * say how many claims will be re-decided.
+ */
+export type LearningTrustChangeDto = { scope: LearningTrustOverrideScopeDto; sourceVersionIds: string[] }
+/**
+ * An override change and what it sends back to be re-decided.
+ */
+export type LearningTrustChangeResultDto = { change: LearningTrustChangeDto; impact: LearningTrustImpactDto }
+/**
+ * The claim a trust read is for: its statement and the versions it cites.
+ */
+export type LearningTrustClaimRequestDto = { statement: string; sourceVersionIds: string[] }
+/**
+ * The claims an override would send back to be re-decided: those waiting
+ * in review that cite a version it covers (§19).
+ */
+export type LearningTrustImpactDto = { versions: number; claims: number; lessons: number }
+/**
+ * What each override scope would reach for one source: the source alone
+ * (this course), or its whole site (every course; with or without a
+ * subject class, a site override covers the same versions).
+ */
+export type LearningTrustImpactsDto = { source: LearningTrustImpactDto;
+/**
+ * `None` for a source with no site (a file, pasted text).
+ */
+site: LearningTrustImpactDto | null }
+/**
+ * How far a source can be relied on for a claim's subject, highest first.
+ */
+export type LearningTrustLevel = "primary" | "authoritative" | "established" | "community" | "unknown" | "distrusted"
+/**
+ * One override as the user set it; each scope carries only what it may
+ * set.
+ */
+export type LearningTrustOverrideDto = { scope: "source"; programId: string; sourceId: string; level: LearningTrustLevel; note: string | null; setAt: number } | { scope: "site"; registrableDomain: string; standing: LearningSiteStanding; note: string | null; setAt: number } | { scope: "site_subject"; registrableDomain: string; class: LearningSubjectClassDto; level: LearningTrustLevel; note: string | null; setAt: number }
+/**
+ * An override as the user sets it. A site override sets a standing; only
+ * a source, or a site for a subject class, may set a level (Primary
+ * included).
+ */
+export type LearningTrustOverrideInputDto = { scope: "source"; programId: string; sourceId: string; level: LearningTrustLevel; note: string | null } | { scope: "site"; registrableDomain: string; standing: LearningSiteStanding; note: string | null } | { scope: "site_subject"; registrableDomain: string; classLabel: string; level: LearningTrustLevel; note: string | null }
+/**
+ * Where an override applies.
+ */
+export type LearningTrustOverrideScopeDto = { scope: "source"; programId: string; sourceId: string } | { scope: "site"; registrableDomain: string } | { scope: "site_subject"; registrableDomain: string; class: LearningSubjectClassDto }
+/**
+ * One stated policy parameter and its derivation (`policy.rs`).
+ */
+export type LearningTrustPolicyParameterDto = { name: string; value: number; derivation: string }
+/**
+ * One rule that fired, shown verbatim.
+ */
+export type LearningTrustReasonDto = { code: string; text: string }
 export type LearningTutorRequestKind = "hint" | "question" | "critique"
 /**
  * The audit switch of one course, with what turning it on would send where.
@@ -7976,6 +8362,7 @@ export type QuickCaptureResultDto = { noteId: string; noteTitle: string;
  * True when today's page had to be created for this capture.
  */
 created: boolean }
+export type ReassessLearningSourceTrustRequestDto = { programId: string; sourceId: string }
 /**
  * Recency search options for time-aware search.
  *
@@ -8074,6 +8461,11 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
 export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
+export type ReprofileLearningClaimRequestDto = { programId: string;
+/**
+ * A claim of one of the course's lesson reviews.
+ */
+claimId: string }
 export type RequestFactsDto = { promptTokensExact: number | null; promptTokensEstimated: number | null; windowTokens: number; outputReserved: number; serverKind: string; serverMessageSanitized: string | null; attempts: number; step: string }
 export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**

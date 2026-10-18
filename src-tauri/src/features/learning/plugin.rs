@@ -73,6 +73,8 @@ mod tangents;
 pub use tangents::*;
 mod audit;
 pub use audit::*;
+mod trust;
+pub use trust::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -177,6 +179,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             capture_learning_source_snapshot,
             get_learning_checker_accuracy,
             export_learning_checker_examples,
+            get_learning_source_trust,
+            set_source_trust_override,
+            clear_source_trust_override,
+            list_source_trust_overrides,
+            get_source_trust_calibration,
+            reassess_learning_source_trust,
+            reprofile_learning_claim,
+            export_provenance_eval_examples,
             get_learning_recall_workspace,
             save_learning_recall_card,
             decide_learning_recall_duplicate,

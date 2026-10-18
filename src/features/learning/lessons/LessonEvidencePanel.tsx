@@ -4,6 +4,8 @@ import { ExternalLink, FileSearch, ShieldCheck } from 'lucide-react';
 
 import { useLearningLessonEvidence, type LessonEvidenceQuery } from '@/features/learning/api/evidenceQueries';
 import { passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
+import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
+import { sufficiencyNote, verifiedByLevel } from '@/features/learning/sources/trust/trustPresentation';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import {
   fromLearningEvidencePassage,
@@ -51,7 +53,13 @@ export function Passage({
         </span>
         {passage.title}
         {provenance && <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-text-secondary">{provenance}</span>}
+        {passage.trust && <span className="ml-2"><TrustLevelChip trust={passage.trust} /></span>}
       </summary>
+      {passage.trust && passage.trust.reasons.length > 0 && (
+        <ul aria-label="Why this level" className="mt-2 list-disc space-y-0.5 pl-4 text-[10px] leading-4 text-text-muted">
+          {passage.trust.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}>{reason.text}</li>)}
+        </ul>
+      )}
       <p className="mt-2 break-all text-[10px] text-text-muted">
         Saved version {passage.sourceVersionId} · bytes {passage.startByte}–{passage.endByte} · {passage.retrievalKind.replace(/_/g, ' ')}
       </p>
@@ -99,8 +107,9 @@ function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
 /** "12 claims verified against sources · 3 confirmed by you · 2 general knowledge" (§5.6). */
 export function evidenceSummary(report: LearningLessonEvidenceDto): string {
   const verified = Math.max(0, report.claimCount - report.generalKnowledgeCount - report.confirmedCount);
+  const byLevel = verifiedByLevel(report.teachingClaims);
   return [
-    `${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`,
+    ...(byLevel.length ? byLevel : [`${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`]),
     report.confirmedCount > 0 ? `${report.confirmedCount} confirmed by you` : null,
     report.generalKnowledgeCount > 0 ? `${report.generalKnowledgeCount} general knowledge, not checked against a source` : null,
   ].filter(Boolean).join(' · ');
@@ -137,6 +146,7 @@ function ClaimEvidence({
           {claim.contentQuote}
         </blockquote>
       )}
+      {claim.sufficiency && <p className="mt-2 text-xs leading-5 text-text-primary">{sufficiencyNote(claim.sufficiency)}</p>}
       <p className="mt-2 text-xs leading-5 text-text-secondary">{claim.reason}</p>
       {claim.supportingQuote && (
         <blockquote className="mt-2 border-l-2 border-accent pl-3 text-xs leading-5 text-text-primary">

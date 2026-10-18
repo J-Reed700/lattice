@@ -1,0 +1,286 @@
+import type {
+  LearningClaimEvidenceDto,
+  LearningClaimTrustDto,
+  LearningKindBarDto,
+  LearningSiteStanding,
+  LearningSourceRelationDto,
+  LearningSourceTrustDto,
+  LearningSufficiencyDto,
+  LearningTrustImpactDto,
+  LearningTrustLevel,
+  LearningTrustOverrideDto,
+} from '@/lib/bindings';
+
+/** Highest first, as the bars read them (source provenance §5). */
+export const TRUST_LEVELS: readonly LearningTrustLevel[] = ['primary', 'authoritative', 'established', 'community', 'unknown', 'distrusted'];
+
+/** What a site override may set: a standing, never a level (decision 4). */
+export const SITE_STANDINGS: readonly LearningSiteStanding[] = ['institutional', 'identified', 'community', 'distrusted'];
+
+export const LEVEL_WORD: Record<LearningTrustLevel, string> = {
+  primary: 'Primary',
+  authoritative: 'Authoritative',
+  established: 'Established',
+  community: 'Community',
+  unknown: 'Unknown standing',
+  distrusted: 'Distrusted',
+};
+
+/** One line each, for the level picker and the reasons popover. */
+export const LEVEL_MEANING: Record<LearningTrustLevel, string> = {
+  primary: 'The owner of the subject, or the record itself.',
+  authoritative: 'An institution with an editorial or peer-review process.',
+  established: 'An identified author or publisher.',
+  community: 'A forum, wiki, Q&A site or other community page.',
+  unknown: 'The publisher could not be identified.',
+  distrusted: 'Excluded from every bar.',
+};
+
+export const STANDING_WORD: Record<LearningSiteStanding | 'unknown', string> = {
+  institutional: 'Institutional',
+  identified: 'Identified',
+  community: 'Community',
+  distrusted: 'Distrusted',
+  unknown: 'Unknown',
+};
+
+export const STANDING_MEANING: Record<LearningSiteStanding, string> = {
+  institutional: 'An organisation publishing on its own behalf.',
+  identified: 'An identified person or small publisher.',
+  community: 'A community platform: forum, wiki, Q&A.',
+  distrusted: 'Never counted as support.',
+};
+
+const KIND_WORD: Record<string, string> = {
+  specification: 'Specification',
+  measurement: 'Measurement',
+  version_bound: 'Version-bound',
+  definition: 'Definition',
+  practice: 'Practice',
+  opinion: 'Opinion',
+  historical: 'Historical',
+  general: 'General',
+};
+
+/** What a claim of each kind asserts, in plain words. */
+const KIND_PHRASE: Record<string, string> = {
+  specification: 'how an API, standard or rule is defined',
+  measurement: 'a number or measurement',
+  version_bound: 'a claim tied to a version or date',
+  definition: 'what a term means',
+  practice: 'a recommendation',
+  opinion: 'an evaluation',
+  historical: 'a historical fact',
+  general: 'a general statement',
+};
+
+/** A support of each level, as a sentence's subject. */
+const LEVEL_PHRASE: Record<LearningTrustLevel, string> = {
+  primary: 'a primary source',
+  authoritative: 'an authoritative source',
+  established: 'an established source (an identified author, such as a blog)',
+  community: 'a community page (a forum, wiki or Q&A)',
+  unknown: 'a source whose publisher is unknown',
+  distrusted: 'a distrusted source',
+};
+
+/** What research looks for next, by claim kind (§6.2 next steps). */
+const LOOKING_FOR: Record<string, string> = {
+  specification: 'looking for the owner’s documentation',
+  version_bound: 'looking for the owner’s documentation for that version',
+  measurement: 'looking for whoever measured it',
+  definition: 'looking for a reference work or a second independent source',
+  practice: 'looking for an identified practitioner or a second independent source',
+  historical: 'looking for an authoritative reference or a second independent source',
+};
+
+export const levelRank = (level: LearningTrustLevel) => TRUST_LEVELS.length - TRUST_LEVELS.indexOf(level);
+
+export const kindWord = (kind: string) => KIND_WORD[kind] ?? kind.replace(/_/g, ' ');
+
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+function capitalised(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function hasReason(trust: LearningSourceTrustDto, code: string) {
+  return trust.reasons.some((reason) => reason.code === code);
+}
+
+/**
+ * The badge's words (§19): "Primary for Python", "Authoritative",
+ * "Distrusted (you)", "Added by you · origin not stated".
+ */
+export function badgeText(trust: LearningSourceTrustDto): string {
+  if (trust.level === 'unknown' && hasReason(trust, 'added_by_you')) return 'Added by you · origin not stated';
+  const relational = trust.level === 'primary' && trust.subject ? ` for ${trust.subject}` : '';
+  const yours = trust.overrideScope || hasReason(trust, 'distrusted_by_you') ? ' (you)' : '';
+  return `${LEVEL_WORD[trust.level]}${relational}${yours}`;
+}
+
+/** The copy relation a level was inherited through, verbatim, when one was. */
+export function inheritedNote(trust: LearningSourceTrustDto): string | null {
+  return trust.reasons.find((reason) => reason.code === 'mirror')?.text ?? null;
+}
+
+const RELATION_WORD: Record<LearningSourceRelationDto['kind'], string> = {
+  copy_of: 'Copy of',
+  contains_copy_of: 'Contains a copy of',
+  archive_of: 'Archived copy of',
+  canonical_of: 'Republished from',
+  cites: 'Cites',
+  cited_for_claim: 'Cited for a claim',
+};
+
+/** "Mirror of …", "Cites …", "Cited by …", read from this version's side. */
+export function relationLine(relation: LearningSourceRelationDto, versionId: string, titleOf: (versionId: string) => string | null): string {
+  const outbound = relation.fromVersionId === versionId;
+  const other = outbound
+    ? (relation.toVersionId ? titleOf(relation.toVersionId) ?? 'another saved source' : relation.toUrl ?? 'a page')
+    : titleOf(relation.fromVersionId) ?? 'another saved source';
+  if (outbound) return `${RELATION_WORD[relation.kind]} ${other}`;
+  return relation.kind === 'cites' || relation.kind === 'cited_for_claim' ? `Cited by ${other}` : `${other} is a copy of this source`;
+}
+
+export function trackRecordLine(record: { right: number; wrong: number }): string | null {
+  const total = record.right + record.wrong;
+  if (total === 0) return null;
+  return `Your verdicts: ${record.right} of ${plural(total, 'claim')} it supported held${record.wrong ? `, ${record.wrong} overturned` : ''}`;
+}
+
+/** "Trust learn.microsoft.com as primary for: .NET, C#" — one line per site and level. */
+export function overrideLines(overrides: LearningTrustOverrideDto[]): string[] {
+  const lines: string[] = [];
+  const classes = new Map<string, string[]>();
+  for (const entry of overrides) {
+    if (entry.scope === 'source') lines.push(`This source set to ${LEVEL_WORD[entry.level].toLowerCase()} for this course`);
+    else if (entry.scope === 'site') lines.push(`${entry.registrableDomain} treated as ${STANDING_WORD[entry.standing].toLowerCase()} everywhere`);
+    else {
+      const key = `${entry.registrableDomain}\n${entry.level}`;
+      classes.set(key, [...(classes.get(key) ?? []), entry.class.label]);
+    }
+  }
+  for (const [key, labels] of classes) {
+    const [domain, level] = key.split('\n') as [string, LearningTrustLevel];
+    lines.push(`Trust ${domain} as ${LEVEL_WORD[level].toLowerCase()} for: ${labels.join(', ')}`);
+  }
+  return lines;
+}
+
+/** What an override change sends back to be re-decided (§19). */
+export function impactLine(impact: LearningTrustImpactDto, target: 'source' | 'site'): string {
+  const subject = target === 'source' ? 'this source' : 'this site';
+  if (impact.claims === 0) return `No claim waiting for review cites ${subject}; later checks use the new level.`;
+  return `${plural(impact.claims, 'claim')} waiting for review in ${plural(impact.lessons, 'lesson')} ${impact.claims === 1 ? 'cites' : 'cite'} ${subject}; ${impact.claims === 1 ? 'it' : 'they'} will be re-decided.`;
+}
+
+/** The lowest level accepted alone for a kind now, in words. */
+export function barLine(bar: LearningKindBarDto): string {
+  const moved = bar.levels.some((level) => level.basis !== 'static');
+  const calibrated = moved ? ' (moved by your verdicts)' : '';
+  if (!bar.lowestAccepted) return `No single source is enough for ${KIND_PHRASE[bar.claimKind] ?? 'this kind of claim'} now; it needs independent sources that agree${calibrated}`;
+  const accepted = TRUST_LEVELS.filter((level) => levelRank(level) >= levelRank(bar.lowestAccepted!));
+  const words = accepted.map((level) => LEVEL_WORD[level].toLowerCase());
+  const list = words.length > 1 ? `${words.slice(0, -1).join(', ')} or ${words[words.length - 1]}` : words[0];
+  return `Accepted alone: a ${list} source${calibrated}`;
+}
+
+/** The best support level among a claim's supports, if any were levelled. */
+export function bestLevel(trust: LearningClaimTrustDto): LearningTrustLevel | null {
+  return trust.supports.reduce<LearningTrustLevel | null>(
+    (best, support) => (best === null || levelRank(support.trust.level) > levelRank(best) ? support.trust.level : best),
+    null,
+  );
+}
+
+/** Whether any support is accepted alone under the bar in force. */
+export function meetsBarAlone(trust: LearningClaimTrustDto): boolean {
+  const accepted = new Set(trust.bar?.levels.filter((level) => level.acceptedAlone).map((level) => level.level) ?? []);
+  return trust.supports.some((support) => accepted.has(support.trust.level));
+}
+
+/**
+ * The claim card's sufficiency line (§19): "Specification claim about OpenAI
+ * API · supported only by an established source · accepted alone: …".
+ */
+export function sufficiencyHeadline(trust: LearningClaimTrustDto): string | null {
+  const profile = trust.profile;
+  if (!profile) return null;
+  const subject = profile.subject ? ` about ${profile.subject.name}` : '';
+  const best = bestLevel(trust);
+  return [
+    `${kindWord(profile.claimKind)} claim${subject}`,
+    best ? `supported only by ${LEVEL_PHRASE[best].replace(/ \(.*\)$/, '')}` : 'no support that can be counted',
+    trust.bar ? barLine(trust.bar).replace(/^Accepted/, 'accepted') : null,
+  ].filter(Boolean).join(' · ');
+}
+
+/**
+ * Why the support was not enough, in plain words: "An established source (an
+ * identified author, such as a blog) isn't enough for how an API, standard or
+ * rule is defined; looking for the owner's documentation."
+ */
+export function insufficiencyExplanation(trust: LearningClaimTrustDto, waitingFor: 'machine' | 'you'): string | null {
+  const profile = trust.profile;
+  const best = bestLevel(trust);
+  if (!profile || !best || meetsBarAlone(trust)) return null;
+  const kind = KIND_PHRASE[profile.claimKind] ?? 'this kind of claim';
+  const next = waitingFor === 'machine'
+    ? LOOKING_FOR[profile.claimKind] ?? 'looking for a stronger source'
+    : 'waiting for you: accept this source for this claim, add evidence, edit the claim or remove it';
+  return `${capitalised(LEVEL_PHRASE[best])} isn’t enough for ${kind}; ${next}.`;
+}
+
+/** How a claim accepted below primary is shown (§6.1 "Label"). */
+const LABEL_PHRASE: Record<string, string> = {
+  practice: 'shown as a practice, per its source',
+  attributed: 'shown as attributed to its source',
+  community_consensus: 'shown as community consensus',
+  reported_by: 'shown as reported by whoever measured it',
+  secondary: 'per a secondary source, not the owner’s documentation',
+  mirror: 'from a verified copy of the official text',
+};
+
+/** A published claim's kind, subject and the label it is shown with. */
+export function sufficiencyNote(sufficiency: LearningSufficiencyDto): string {
+  return [
+    `${kindWord(sufficiency.claimKind)} claim${sufficiency.subject ? ` about ${sufficiency.subject}` : ''}`,
+    sufficiency.label ? LABEL_PHRASE[sufficiency.label] ?? sufficiency.label.replace(/_/g, ' ') : null,
+  ].filter(Boolean).join(' · ');
+}
+
+const AGAINST: Record<LearningTrustLevel, string> = {
+  primary: 'primary sources',
+  authoritative: 'authoritative sources',
+  established: 'established sources',
+  community: 'community sources',
+  unknown: 'sources of unknown standing',
+  distrusted: 'distrusted sources',
+};
+
+/**
+ * Verified claims by the best level of their supporting passages (§18.9):
+ * "12 claims verified against primary sources · 7 against established
+ * sources". Claims whose support was not weighed are counted apart.
+ */
+export function verifiedByLevel(claims: LearningClaimEvidenceDto[]): string[] {
+  const counts = new Map<LearningTrustLevel, number>();
+  let unweighed = 0;
+  for (const claim of claims.filter((item) => item.resolution === 'verified')) {
+    const levels = claim.passages.flatMap((passage) => (passage.trust ? [passage.trust.level] : []));
+    if (!levels.length) {
+      unweighed += 1;
+      continue;
+    }
+    const best = levels.reduce((top, level) => (levelRank(level) > levelRank(top) ? level : top));
+    counts.set(best, (counts.get(best) ?? 0) + 1);
+  }
+  if (counts.size === 0) return [];
+  const parts = TRUST_LEVELS.filter((level) => counts.has(level)).map((level, index) => {
+    const count = counts.get(level)!;
+    return index === 0 ? `${plural(count, 'claim')} verified against ${AGAINST[level]}` : `${count} against ${AGAINST[level]}`;
+  });
+  if (unweighed) parts.push(`${unweighed} against sources not weighed for standing`);
+  return parts;
+}
