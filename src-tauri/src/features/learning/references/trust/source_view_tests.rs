@@ -19,6 +19,15 @@ use serde_json::json;
 
 const MODEL: &str = "test-model";
 
+/// The saved source's trust: the course's own seeded source is listed too,
+/// and first.
+fn of_source(course: &Course, saved: &Saved) -> GetLearningSourceTrustRequestDto {
+    GetLearningSourceTrustRequestDto {
+        source_ids: vec![saved.source_id.clone()],
+        ..request(course, None)
+    }
+}
+
 fn request(
     course: &Course,
     claim: Option<LearningTrustClaimRequestDto>,
@@ -78,7 +87,7 @@ async fn judge_institutional(course: &Course, saved: &Saved) -> Result<()> {
 async fn an_unjudged_publisher_reads_as_unknown_and_says_why() -> Result<()> {
     let course = course().await?;
     let saved = page(&course, "https://docs.example.org/a").await?;
-    let trust = view(&course.store, &request(&course, None)).await?;
+    let trust = view(&course.store, &of_source(&course, &saved)).await?;
     let entry = &trust.sources[0];
     assert_eq!(entry.source_id, saved.source_id);
     assert_eq!(entry.trust.level, LearningTrustLevel::Unknown);
@@ -94,7 +103,7 @@ async fn a_judged_publisher_is_levelled_with_its_reasons() -> Result<()> {
     let course = course().await?;
     let saved = page(&course, "https://docs.example.org/a").await?;
     judge_institutional(&course, &saved).await?;
-    let trust = view(&course.store, &request(&course, None)).await?;
+    let trust = view(&course.store, &of_source(&course, &saved)).await?;
     let entry = &trust.sources[0];
     assert_eq!(entry.trust.level, LearningTrustLevel::Authoritative);
     assert_eq!(entry.trust.subject, None);
@@ -123,7 +132,7 @@ async fn a_source_override_fixes_the_level_and_names_its_scope() -> Result<()> {
             set_at: 1,
         })
         .await?;
-    let trust = view(&course.store, &request(&course, None)).await?;
+    let trust = view(&course.store, &of_source(&course, &saved)).await?;
     let entry = &trust.sources[0];
     assert_eq!(entry.trust.level, LearningTrustLevel::Primary);
     assert_eq!(
