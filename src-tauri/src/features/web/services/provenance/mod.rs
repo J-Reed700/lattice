@@ -3,15 +3,14 @@
 //!
 //! Signals come from the page's markup and its URL, parsed once when the
 //! page is read: `metadata` (head tags, OpenGraph, Dublin Core, microdata),
-//! `json_ld` (schema.org), `dates` and `links` (the reference text's own
-//! links with byte offsets). The origin, archive unwrapping and the
-//! officiality tokens are core's rules (`domain::provenance`), applied here
+//! `json_ld` (schema.org) and `dates`. The origin, archive unwrapping, the
+//! reference text's links (with byte offsets) and the officiality tokens
+//! are core's rules (`domain::provenance`), applied here
 //! to what the page declared. No request is made for any of it (§15), and no
 //! value is ever read as an instruction (§14).
 
 mod dates;
 mod json_ld;
-mod links;
 mod metadata;
 
 #[cfg(test)]
@@ -22,7 +21,7 @@ mod tests;
 use lattice_core::application::contracts::web::{
     DateBasis, HttpFacts, Origin, PageSignals, ProvenanceSignals, SourceDates, PAGE_SIGNALS_VERSION,
 };
-use lattice_core::domain::provenance::{self_description, CanonicalLink};
+use lattice_core::domain::provenance::{markdown_links, self_description, CanonicalLink};
 use tracing::debug;
 
 pub(crate) use dates::parse_http_date;
@@ -116,7 +115,7 @@ fn page_signals(
     }
     let dates = source_dates(&metadata, &origin, &http, fetched_at);
     let links = match form {
-        TextForm::Markdown => links::markdown_links(text),
+        TextForm::Markdown => markdown_links(text),
         TextForm::Plain => Vec::new(),
     };
     let self_description = self_description(
