@@ -154,11 +154,11 @@ async fn prepare(
     ordinal: usize,
     located_claim: (usize, Claim),
     sharing: usize,
-    cited: &[EvidencePassage],
+    citations: &Citations,
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
     let evidence = evidence_selection::select(
-        llm, &claim, unit, references, sources, executions, retained, sharing, cited,
+        llm, &claim, unit, references, sources, executions, retained, sharing, citations,
     )
     .await?;
     let key = ClaimChecks::key(unit, &claim, &evidence);
@@ -454,7 +454,7 @@ pub(super) async fn check(
         inventory,
         executions,
         retained,
-        &Citations::new(),
+        &Citations::default(),
     )
     .await
 }
@@ -512,7 +512,7 @@ pub(super) async fn check_with_citations(
                     ordinal,
                     (unit, claim),
                     sharing,
-                    citations.get(&unit).map_or(&[][..], Vec::as_slice),
+                    citations,
                 )
             })
             .buffered(BATCH_SIZE)
@@ -619,7 +619,7 @@ async fn deepen(
             // Cited passages of the section that did not fit an earlier page
             // lead this one; retrieved passages not yet shown fill the rest.
             let mut page: Vec<EvidencePassage> = Vec::new();
-            for passage in citations.get(&walk.unit).into_iter().flatten() {
+            for passage in citations.of(walk.unit) {
                 if walk
                     .shown
                     .iter()
@@ -635,11 +635,16 @@ async fn deepen(
             }
             let cited_left = !page.is_empty();
             let shown: Vec<_> = walk.shown.iter().chain(&page).cloned().collect();
-            let (retrieved, _) = references
-                .verification_page(&walk.claim.statement, &shown, |passages| {
-                    within_share(llm, share, page.iter().chain(passages))
-                })
-                .await?;
+            let retrieved = lesson_sources_first(
+                llm,
+                references,
+                &walk.claim.statement,
+                share,
+                &page,
+                &shown,
+                citations,
+            )
+            .await?;
             page.extend(retrieved);
             // A page that only shares the subject's common words, or only
             // vector neighbours, ends the walk; the section's own citations

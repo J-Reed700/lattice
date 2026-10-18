@@ -9,6 +9,9 @@ use super::*;
 pub(super) const RESEARCHED: &str = "researched";
 
 const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
+/// How a claim's first page is ranked: the lesson's own sources first. A
+/// selection saved under another ranking is retrieved anew.
+const RANKING: &str = "lesson-sources-first";
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page
@@ -206,11 +209,12 @@ pub(super) async fn select(
     executions: &[execution::Observation],
     retained: &ClaimChecks,
     sharing: usize,
-    cited: &[EvidencePassage],
+    citations: &Citations,
 ) -> Result<Vec<EvidencePassage>> {
     let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
         "unit":unit, "statement":claim.statement, "retrieval":references.mode(), "embedding":references.embedding_model(),
+        "ranking":RANKING,
     }).to_string()));
     let memory = retained
         .selections
@@ -347,7 +351,7 @@ pub(super) async fn select(
                 references,
                 executions,
                 sharing,
-                cited,
+                citations,
             )
             .await?
             .into_iter()

@@ -301,7 +301,7 @@ async fn a_claim_whose_section_cites_its_support_is_settled_on_page_one() -> Res
     // Retrieval alone ranks the support past page 1.
     let retrieved = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
     assert!(retrieved.iter().all(|p| !p.text.contains(MARKER)));
-    let citations = Citations::from([(0, references.cited_passages(&[MARKER])?)]);
+    let citations = Citations::new(HashMap::from([(0, references.cited_passages(&[MARKER])?)]));
 
     let results = evidence_checks::check_with_citations(
         &model,
@@ -329,7 +329,7 @@ async fn another_sections_citations_are_not_added() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
     // Section 1 cites the support; the claim belongs to section 0.
-    let citations = Citations::from([(1, references.cited_passages(&[MARKER])?)]);
+    let citations = Citations::new(HashMap::from([(1, references.cited_passages(&[MARKER])?)]));
     evidence_checks::check_with_citations(
         &model,
         &references,
@@ -362,7 +362,8 @@ async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
         "the fixture must overflow"
     );
 
-    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &cited).await?;
+    let citations = Citations::new(HashMap::from([(0, cited.clone())]));
+    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
 
     assert!(within_share(&model, share, page.iter()));
     let taken: Vec<_> = page.iter().filter(|p| p.retrieval_kind == CITED).collect();
@@ -496,5 +497,44 @@ async fn research_found_for_a_claim_leads_its_full_first_page_and_is_rechecked()
         "what research found comes first"
     );
     assert!(within_share(&model, share, second[0].2.evidence.iter()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_sees_the_lesson_sources_before_the_rest_of_the_course() -> Result<()> {
+    let mut sources: Vec<_> = (0..12).map(related).collect();
+    let archive = "Archive index entry. ".repeat(80);
+    sources.push(reference(
+        "lesson-source".into(),
+        format!("{archive} Mineral alpha pressure readings were archived. {archive}"),
+    ));
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let from_lesson = |page: &[EvidencePassage]| {
+        page.iter()
+            .position(|passage| passage.source_id == "lesson-source")
+    };
+    let course_wide = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    assert_eq!(
+        from_lesson(&course_wide),
+        None,
+        "course-wide ranking puts the lesson's source past page 1"
+    );
+    // Another section of the lesson cites that source.
+    let citations = Citations::new(HashMap::from([(
+        1,
+        references.cited_passages(&["Archive index entry. Archive index entry."])?,
+    )]));
+    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    assert!(
+        from_lesson(&page).is_some(),
+        "the lesson's source is retrieved before the course's"
+    );
+    assert!(page.len() > 1, "the course fills the room left");
+    assert!(within_share(
+        &model,
+        claim_share(&model, CLAIM, 1),
+        page.iter()
+    ));
     Ok(())
 }

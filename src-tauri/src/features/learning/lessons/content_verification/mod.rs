@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 mod challenge;
 mod citations;
-use citations::{overlaps, section_citations, take_cited, Citations, CITED};
+use citations::{lesson_sources_first, overlaps, section_citations, take_cited, Citations, CITED};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
@@ -417,13 +417,23 @@ async fn evidence_for(
     observations: &[execution::Observation],
     sharing: usize,
 ) -> Result<Vec<EvidencePassage>> {
-    first_page(llm, claim, unit, references, observations, sharing, &[]).await
+    first_page(
+        llm,
+        claim,
+        unit,
+        references,
+        observations,
+        sharing,
+        &Citations::default(),
+    )
+    .await
 }
 
 /// [`evidence_for`] with the passages the claim's section cites placed first,
 /// in citation order while they fit its share; the rest of the share is
-/// filled with retrieved passages that overlap none of them. Cited passages
-/// that do not fit lead the claim's next page.
+/// filled with retrieved passages that overlap none of them, those of the
+/// sources the lesson cites first. Cited passages that do not fit lead the
+/// claim's next page.
 async fn first_page(
     llm: &dyn LLMPort,
     claim: &str,
@@ -431,7 +441,7 @@ async fn first_page(
     references: &ReferenceCollection<'_>,
     observations: &[execution::Observation],
     sharing: usize,
-    cited: &[EvidencePassage],
+    citations: &Citations,
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = Vec::new();
     for observation in observations
@@ -452,12 +462,9 @@ async fn first_page(
     // Execution output must not erase retrieved references when it is lengthy.
     // The checker batches by its actual context budget, not a character count.
     let share = claim_share(llm, claim, sharing);
-    let shown = take_cited(llm, share, &mut evidence, cited);
-    let (page, _) = references
-        .verification_page(claim, &shown, |passages| {
-            within_share(llm, share, evidence.iter().chain(passages))
-        })
-        .await?;
+    let shown = take_cited(llm, share, &mut evidence, citations.of(unit));
+    let page =
+        lesson_sources_first(llm, references, claim, share, &evidence, &shown, citations).await?;
     evidence.extend(page);
     canonicalize_evidence(&mut evidence);
     Ok(evidence)
