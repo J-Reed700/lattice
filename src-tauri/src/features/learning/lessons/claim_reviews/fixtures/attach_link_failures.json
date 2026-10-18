@@ -1,0 +1,206 @@
+{
+  "article": {
+    "url": "https://news.example.com/2026/10/water-at-altitude",
+    "title": "Why water boils sooner on a mountain",
+    "content": "Why water boils sooner on a mountain. At sea level, pure water boils at 100 °C because the vapour pressure of water reaches the surrounding air pressure at that temperature. At sea level, pure water boils at 100 °C because the vapour pressure of water reaches the surrounding air pressure at that temperature. At sea level, pure water boils at 100 °C because the vapour pressure of water reaches the surrounding air pressure at that temperature. Higher up, the air pressure is lower, so water reaches it at a lower temperature: at 3,000 metres water boils at about 90 °C. Higher up, the air pressure is lower, so water reaches it at a lower temperature: at 3,000 metres water boils at about 90 °C. Already a subscriber? Sign in to save this article. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. Cooking times grow at altitude for the same reason. "
+  },
+  "cases": [
+    {
+      "name": "forbidden",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "network",
+        "message": "HTTP 403 Forbidden: Forbidden"
+      },
+      "expect": {
+        "kind": "refused",
+        "message": "news.example.com refused the request (HTTP 403).",
+        "nextSteps": [
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "refused earlier, served from the refusal cache",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "network",
+        "message": "HTTP 403 Forbidden (this site refused earlier; not retried)"
+      },
+      "expect": {
+        "kind": "refused",
+        "message": "news.example.com refused the request (HTTP 403).",
+        "nextSteps": [
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "login required",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "network",
+        "message": "HTTP 401 Unauthorized: Unauthorized"
+      },
+      "expect": {
+        "kind": "refused",
+        "message": "news.example.com refused the request (HTTP 401).",
+        "nextSteps": [
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rate limited",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "network",
+        "message": "HTTP 429 Too Many Requests: Too Many Requests"
+      },
+      "expect": {
+        "kind": "refused",
+        "message": "news.example.com refused the request (HTTP 429).",
+        "nextSteps": [
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "thin page",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "invalid_input",
+        "message": "This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text."
+      },
+      "expect": {
+        "kind": "thin",
+        "message": "This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text.",
+        "nextSteps": [
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "paywall",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "page": {
+          "title": "Why water boils sooner on a mountain",
+          "content": "Why water boils sooner on a mountain. By our science desk. October 2026. Subscribe to continue reading. Already a subscriber? Sign in to read the full article. Our journalism is paid for by readers like you: a subscription gives you unlimited access to every story, every newsletter and every podcast we publish, on the web and in the app, and supports the reporting that keeps this site independent. Cancel any time. Offers for students and teachers are available on the subscription page."
+        }
+      },
+      "expect": {
+        "kind": "paywall",
+        "message": "The page needs a login or subscription; only 82 words of text could be read.",
+        "nextSteps": [
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "private address",
+      "url": "http://10.0.0.7/notes",
+      "fetch": {
+        "error": "invalid_url",
+        "message": "Access to private/reserved IP blocked: 10.0.0.7"
+      },
+      "expect": {
+        "kind": "blocked",
+        "message": "That address is private or local and cannot be fetched.",
+        "nextSteps": [
+          {
+            "step": "add_file"
+          },
+          {
+            "step": "paste_text",
+            "origin": "http://10.0.0.7/notes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no browser to render",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "service_not_available",
+        "message": "no browser is available to read pages"
+      },
+      "expect": {
+        "kind": "browser_unavailable",
+        "message": "The page needs a browser to render and the in-app browser is not available right now.",
+        "nextSteps": [
+          {
+            "step": "retry"
+          },
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "not found",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "network",
+        "message": "HTTP 404 Not Found: Not Found"
+      },
+      "expect": {
+        "kind": "unreachable",
+        "message": "news.example.com answered HTTP 404; the page could not be read.",
+        "nextSteps": [
+          {
+            "step": "retry"
+          },
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    }
+  ]
+}

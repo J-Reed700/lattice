@@ -2,11 +2,14 @@
 use super::*;
 
 impl LearningSourceLibraryRepository {
-    pub async fn add(
+    /// Captures a new source and its first version, recording who added it
+    /// (`added_by`, claim review §5.4).
+    pub async fn add_by(
         &self,
         source: NewLearningSource<'_>,
         captured: CapturedLearningSource,
         payload_hash: String,
+        added_by: SourceAddedBy,
     ) -> Result<()> {
         let NewLearningSource {
             operation_id,
@@ -99,8 +102,8 @@ impl LearningSourceLibraryRepository {
         }
         let (text, truncated) = (full_text, captured.truncated);
         let text_digest = hash_text(&text);
-        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,NULL,0,?,?)")
-            .bind(source_id).bind(program_id).bind(source_kind).bind(origin).bind(requested_url).bind(policy(&freshness)).bind(version_id).bind(acquired).bind(acquired).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,?,NULL,0,?,?,?)")
+            .bind(source_id).bind(program_id).bind(source_kind).bind(origin).bind(requested_url).bind(policy(&freshness)).bind(version_id).bind(acquired).bind(acquired).bind(added_by.as_str()).execute(&mut *tx).await.map_err(db)?;
         insert_version(
             &mut tx,
             SourceVersionInsert {

@@ -8,6 +8,7 @@ use crate::features::learning::{
     persistence::{db, hash, hash_text, now},
 };
 use futures::TryStreamExt;
+use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
@@ -15,8 +16,12 @@ use std::collections::HashMap;
 mod capture;
 mod lifecycle;
 mod reads;
+mod user_evidence;
+pub use user_evidence::SavedSource;
 
 const MAX_EXCERPT_CHARS: usize = 2_400;
+/// The extraction a pasted text is recorded with: the text as written.
+pub const PASTED_TEXT_EXTRACTION: &str = "pasted_text_v1";
 const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
 const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
 
@@ -68,6 +73,10 @@ fn parse_kind(value: &str) -> Result<LearningSourceKind> {
         "pasted" => Ok(LearningSourceKind::Pasted),
         _ => Err(AppError::Database("Invalid source kind".into())),
     }
+}
+fn parse_added_by(value: &str) -> Result<SourceAddedBy> {
+    SourceAddedBy::from_column(value)
+        .ok_or_else(|| AppError::Database("Invalid source provenance".into()))
 }
 fn parse_check(value: &str) -> Result<LearningSourceCheckStatus> {
     match value {
@@ -131,6 +140,18 @@ impl LearningSourceLibraryRepository {
     }
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// Captures a source research found (`added_by = research`); a source the
+    /// user adds goes through [`Self::add_by`].
+    pub async fn add(
+        &self,
+        source: NewLearningSource<'_>,
+        captured: CapturedLearningSource,
+        payload_hash: String,
+    ) -> Result<()> {
+        self.add_by(source, captured, payload_hash, SourceAddedBy::Research)
+            .await
     }
     fn validate_program_id(id: &str) -> Result<()> {
         uuid(id, "program")
@@ -218,6 +239,7 @@ fn summary(r: &sqlx::sqlite::SqliteRow) -> LearningSourceVersionSummaryDto {
         truncated: r.get::<i64, _>("truncated") != 0,
         extraction_version: r.get("extraction_version"),
         acquired_at: r.get("acquired_at"),
+        snapshot_hash: r.get("snapshot_hash"),
     }
 }
 fn find_case_insensitive(text: &str, query: &str) -> Option<usize> {

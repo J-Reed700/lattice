@@ -309,6 +309,7 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
             truncated: false,
             extraction_version: "test".into(),
             acquired_at: 1,
+            snapshot_hash: None,
         },
         full_text: "The café passage supports this.".into(),
         usage: vec![],

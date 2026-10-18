@@ -280,7 +280,7 @@ impl LearningPracticeRepository {
     ) -> Result<Vec<LearningSourceVersionDto>> {
         let mut out = Vec::new();
         for id in ids.iter().take(32) {
-            let row=sqlx::query("SELECT source_id,id,version_number,title,publisher,resolved_url,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,full_text FROM learning_source_versions WHERE program_id=? AND id=?")
+            let row=sqlx::query("SELECT source_id,id,version_number,title,publisher,resolved_url,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash,full_text FROM learning_source_versions WHERE program_id=? AND id=?")
                 .bind(program_id).bind(id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
             out.push(LearningSourceVersionDto {
                 source_id: row.get("source_id"),
@@ -296,6 +296,7 @@ impl LearningPracticeRepository {
                     truncated: row.get::<i64, _>("truncated") != 0,
                     extraction_version: row.get("extraction_version"),
                     acquired_at: row.get("acquired_at"),
+                    snapshot_hash: row.get("snapshot_hash"),
                 },
                 full_text: row.get("full_text"),
                 usage: vec![],

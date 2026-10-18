@@ -5,6 +5,7 @@
 //! port is `lattice_core::application::ports::claim_review`.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §7.
 
+pub mod attach;
 pub mod checker_examples;
 pub mod dto;
 #[cfg(test)]

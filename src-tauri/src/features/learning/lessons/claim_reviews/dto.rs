@@ -306,6 +306,18 @@ impl From<SourceAddedBy> for SourceAddedByDto {
     }
 }
 
+impl From<SourceAddedByDto> for SourceAddedBy {
+    fn from(added_by: SourceAddedByDto) -> Self {
+        match added_by {
+            SourceAddedByDto::User => Self::User,
+            SourceAddedByDto::Research => Self::Research,
+            SourceAddedByDto::Outline => Self::Outline,
+            SourceAddedByDto::Import => Self::Import,
+            SourceAddedByDto::Verifier => Self::Verifier,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceRefDto {

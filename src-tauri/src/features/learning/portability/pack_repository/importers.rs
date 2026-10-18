@@ -451,8 +451,13 @@ pub(super) async fn insert_source_workspace(
             crate::features::learning::dto::LearningSourcePolicy::Manual => "manual",
             crate::features::learning::dto::LearningSourcePolicy::BeforeUse => "before_use",
         };
-        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,deleted_at,deletion_reason,created_at,updated_at) VALUES(?,?,?,?,?,?,NULL,NULL,?,?,?,?,?)")
-            .bind(&source_id).bind(program_id).bind(kind).bind(&source.origin).bind(&source.requested_url).bind(policy).bind(source.revision).bind(source.deleted_at).bind(&source.deletion_reason).bind(source.created_at).bind(source.updated_at).execute(&mut *tx).await.map_err(db)?;
+        // Who added a source is the pack author's record and travels with it
+        // (claim review §5.2, §5.4).
+        let added_by =
+            lattice_core::domain::learning::claim_review::SourceAddedBy::from(source.added_by)
+                .as_str();
+        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,deleted_at,deletion_reason,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,NULL,NULL,?,?,?,?,?,?)")
+            .bind(&source_id).bind(program_id).bind(kind).bind(&source.origin).bind(&source.requested_url).bind(policy).bind(source.revision).bind(source.deleted_at).bind(&source.deletion_reason).bind(source.created_at).bind(source.updated_at).bind(added_by).execute(&mut *tx).await.map_err(db)?;
         let mut restored_digests = HashSet::new();
         for version in &source.versions {
             validate_source_id(&version.id)?;
@@ -485,8 +490,8 @@ pub(super) async fn insert_source_workspace(
                 "pack_excerpt".into()
             };
             let truncated = body.is_none() || version.truncated;
-            sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(&version_id).bind(program_id).bind(&source_id).bind(version.version_number).bind(&version.title).bind(&version.publisher).bind(&source.requested_url).bind(&version.resolved_url).bind(&full_text).bind(&version.excerpt).bind(if body.is_some(){version.content_sha256.clone()}else{content_digest}).bind(restored_word_count).bind(truncated as i64).bind(extraction).bind(version.acquired_at).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(&version_id).bind(program_id).bind(&source_id).bind(version.version_number).bind(&version.title).bind(&version.publisher).bind(&source.requested_url).bind(&version.resolved_url).bind(&full_text).bind(&version.excerpt).bind(if body.is_some(){version.content_sha256.clone()}else{content_digest}).bind(restored_word_count).bind(truncated as i64).bind(extraction).bind(version.acquired_at).bind(&version.snapshot_hash).execute(&mut *tx).await.map_err(db)?;
         }
         let active = source.active_version_id.as_deref().map(|id| remap(map, id));
         let pending = source

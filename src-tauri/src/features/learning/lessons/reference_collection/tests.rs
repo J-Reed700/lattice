@@ -449,3 +449,36 @@ async fn keyword_ranking_is_the_same_on_every_build_and_call() -> Result<()> {
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn retrieve_from_reads_one_source_version_only() -> Result<()> {
+    let source = |id: &str, text: &str| LearningSourceDto {
+        id: id.into(),
+        title: id.into(),
+        url: None,
+        excerpt: text.into(),
+        acquired_at: 1,
+    };
+    let collection = ReferenceCollection::lexical(&[
+        source(
+            "course-notes",
+            "Water boils at 100 degrees Celsius at sea level, the notes say.",
+        ),
+        source(
+            "added-by-you",
+            "At sea level pure water boils at 100 degrees Celsius; on a mountain it boils lower.",
+        ),
+    ])?;
+    let passages = collection
+        .retrieve_from("added-by-you", "water boils at sea level", |_| true)
+        .await?;
+    assert!(!passages.is_empty());
+    assert!(passages
+        .iter()
+        .all(|passage| passage.source_id == "added-by-you"));
+    assert!(collection
+        .retrieve_from("not-in-the-course", "water boils", |_| true)
+        .await?
+        .is_empty());
+    Ok(())
+}
