@@ -103,8 +103,10 @@ pub(super) enum PageRead {
     /// A page read for a conversation: article extraction, the browser
     /// fallback for script-built pages, and the shared page cache.
     Chat,
-    /// A reference capture: full-document extraction, never served from or
-    /// written to the chat cache, and no browser fallback.
+    /// A reference capture: full-document markdown extraction with the
+    /// page's provenance signals, never served from or written to the chat
+    /// cache. Its browser fallback reads the rendered document, so the same
+    /// extraction runs on it.
     Reference,
 }
 /// Maximum decoded bytes accepted from a page before HTML parsing.
@@ -191,6 +193,9 @@ pub struct WebService {
 pub struct ReadPage {
     pub output: FetchUrlContentOutput,
     pub fetched_at: DateTime<Utc>,
+    /// What the page's markup and HTTP exchange said about where it came
+    /// from (source provenance §4), or why this read could not say.
+    pub signals: ProvenanceSignals,
 }
 
 impl WebService {
@@ -424,11 +429,19 @@ impl WebServiceTrait for WebService {
     }
 
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.fetch_reference_page(url).await.map(|page| page.output)
+    }
+
+    async fn fetch_reference_page(&self, url: &str) -> Result<ReferencePage> {
         let page = self.read_page_as(url, PageRead::Reference).await?;
         if page.output.content.trim().len() < THIN_PAGE_CHARS {
             return Err(AppError::InvalidInput("This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text.".into()));
         }
-        Ok(page.output)
+        Ok(ReferencePage {
+            output: page.output,
+            signals: page.signals,
+            fetched_at: page.fetched_at.timestamp(),
+        })
     }
 
     /// The synchronous check the tool executors run before a request on their
