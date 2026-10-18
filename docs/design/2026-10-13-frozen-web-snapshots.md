@@ -19,7 +19,7 @@ The answer: at citation time the app captures the page into **one self-contained
 | Saved web articles (imports) | `features/web/services/archive/` (`~/.lattice/web-archive/<domain>/<slug>-<uuid>/{article.md,…}`), `HTMLViewer.tsx` (srcdoc iframe with `allow-same-origin`) | A *different* feature: imported articles as library documents |
 | Durable jobs | `shared/runtime/jobs` (`JobRuntime`, `JobHandler`, `JobKindConfig`, `NewJob`) | Persisted background work with retry/backoff, used by explorer indexing and learning |
 | Backups | `features/backup/archive` packs `files/**`, `vault/**`, `web-archive/**` and the DB | Encrypted archive |
-| App CSP | `src-tauri/tauri.conf.json` `app.security.csp` | No `frame-src`, so `default-src 'self'` governs frames today |
+| App CSP | `crates/lattice-desktop/tauri.conf.json` `app.security.csp` | No `frame-src`, so `default-src 'self'` governs frames today |
 
 The Reader view's passage marks are good and stay. The new work adds a second way of looking at the same citation, the **Page** view, and the capture behind it.
 
@@ -74,12 +74,12 @@ Modules (new unless marked):
 
 | Module | Owner | Role |
 | --- | --- | --- |
-| `src-tauri/src/features/web/services/snapshot/` (`mod.rs`, `capture.rs`, `sanitize.rs`, `css.rs`, `resources.rs`, `clutter.rs`, `tests.rs`) | Agent A | Pure capture engine: URL in, `CapturedPage` out |
-| `src-tauri/src/features/web/traits/page_snapshot.rs` | A (trait), B (consumer) | `PageCapturePort` |
-| `src-tauri/src/features/web/snapshots/` (`mod.rs`, `store.rs`, `repository.rs`, `job.rs`, `protocol.rs`, `gc.rs`, `dto.rs`, `commands.rs`) | Agent B | Storage, DB, job, protocol handler, commands, GC, backup |
-| `src-tauri/migrations/20261013200000_web_page_snapshots.sql` | B | Table |
-| `src-tauri/src/main.rs` (edit) | B | `register_asynchronous_uri_scheme_protocol("lattice-snapshot", …)` |
-| `src-tauri/tauri.conf.json` (edit) | C | `frame-src lattice-snapshot: http://lattice-snapshot.localhost` |
+| `crates/lattice-desktop/src/features/web/services/snapshot/` (`mod.rs`, `capture.rs`, `sanitize.rs`, `css.rs`, `resources.rs`, `clutter.rs`, `tests.rs`) | Agent A | Pure capture engine: URL in, `CapturedPage` out |
+| `crates/lattice-desktop/src/features/web/traits/page_snapshot.rs` | A (trait), B (consumer) | `PageCapturePort` |
+| `crates/lattice-desktop/src/features/web/snapshots/` (`mod.rs`, `store.rs`, `repository.rs`, `job.rs`, `protocol.rs`, `gc.rs`, `dto.rs`, `commands.rs`) | Agent B | Storage, DB, job, protocol handler, commands, GC, backup |
+| `crates/lattice-desktop/migrations/20261013200000_web_page_snapshots.sql` | B | Table |
+| `crates/lattice-desktop/src/main.rs` (edit) | B | `register_asynchronous_uri_scheme_protocol("lattice-snapshot", …)` |
+| `crates/lattice-desktop/tauri.conf.json` (edit) | C | `frame-src lattice-snapshot: http://lattice-snapshot.localhost` |
 | `src/features/reading/snapshot/` (`WebPageSnapshotView.tsx`, `SnapshotToolbar.tsx`, `LinkBar.tsx`, `useWebPageSnapshot.ts`, `snapshotFrameUrl.ts`, `webPageSnapshotStore.ts`, tests) | Agent C | Viewer |
 | `src/features/reading/components/SourceReaderBody.tsx` (edit) | C | Reader/Page toggle, mounts the viewer |
 | `features/web/services/browser_reader.rs` (extend) + `snapshot/browser_capture.rs` | Wave 2 | Rendered-DOM capture |
@@ -444,7 +444,7 @@ Live (Josh): a real `tauri dev` run confirms the `frame-src` line, the custom sc
 
 ## 13. Delivery plan
 
-Branch `web/frozen-snapshots` in `/Users/josh/Code/lattice-snapshot` (worktree from `origin/main` at c35fd387). Shared `CARGO_TARGET_DIR=/Users/josh/Code/lattice-temp/src-tauri/target`; `.cargo/config.toml` caps jobs at 2. `node_modules` is a symlink to `lattice-temp`'s.
+Branch `web/frozen-snapshots` in `/Users/josh/Code/lattice-snapshot` (worktree from `origin/main` at c35fd387). Shared `CARGO_TARGET_DIR=/Users/josh/Code/lattice-temp/target`; `.cargo/config.toml` caps jobs at 2. `node_modules` is a symlink to `lattice-temp`'s.
 
 Wave 1, three Opus agents at once, disjoint files:
 

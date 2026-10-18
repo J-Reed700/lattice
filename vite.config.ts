@@ -73,7 +73,7 @@ export default defineConfig({
     strictPort: true,
     host: true,
     watch: {
-      ignored: ['**/e2e-results/**', '**/src-tauri/target/**'],
+      ignored: ['**/e2e-results/**', '**/target/**'],
     },
     hmr: {
       protocol: 'ws',

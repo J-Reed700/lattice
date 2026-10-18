@@ -32,7 +32,7 @@ Details and evidence are under [Results](#results) and
 
 ### What runs
 
-`src-tauri/examples/shipped_path_eval` builds the app headlessly:
+`crates/lattice-desktop/examples/shipped_path_eval` builds the app headlessly:
 
 1. It writes `settings.json` from `SettingsDto::default()` plus the recipe's
    overrides, then builds `Container::new` on a fresh SQLite database.
@@ -355,14 +355,14 @@ Start the one server, run the answers, then grade them (judge included) while
 the server is still up. Stop the server when grading is done.
 
 ```sh
-src-tauri/binaries/llama-server-aarch64-apple-darwin \
+crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin \
   -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf \
   --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 16384 -np 1 --jinja &
 
-cd src-tauri
+cd crates/lattice-desktop
 cargo run --example shipped_path_eval -- \
-  ../evals/retrieval/shipped-path-recipe-9b-local.json \
-  ../evals/retrieval/results/chat/qwen3.5-9b-local/DATE-shipped-path-desktop-path-v1.jsonl
+  ../../evals/retrieval/shipped-path-recipe-9b-local.json \
+  ../../evals/retrieval/results/chat/qwen3.5-9b-local/DATE-shipped-path-desktop-path-v1.jsonl
 cd ..
 python3 scripts/shipped_path_eval.py score evals/retrieval/desktop-path-v1.json \
   evals/retrieval/results/chat/qwen3.5-9b-local/DATE-shipped-path-desktop-path-v1.jsonl \

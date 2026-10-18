@@ -96,7 +96,7 @@ $ScriptDir = $PSScriptRoot
 $ProjectRoot = (Resolve-Path (Join-Path $ScriptDir "../..")).Path
 $BackendDir = Join-Path (Split-Path -Parent $ProjectRoot) 'backend'
 $PythonSidecarDir = Join-Path $ProjectRoot 'python_backend'
-$TauriDir = Join-Path $ProjectRoot 'src-tauri'
+$TauriDir = Join-Path $ProjectRoot 'crates/lattice-desktop'
 $LogDir = Join-Path $ProjectRoot 'build-logs'
 $DistDir = Join-Path $ProjectRoot 'dist'
 
@@ -299,7 +299,7 @@ function Invoke-CleanAll {
     $pathsToClean = @()
 
     if ($BuildComponents.tauri) {
-        $pathsToClean += (Join-Path $TauriDir 'target')
+        $pathsToClean += (Join-Path $ProjectRoot 'target')
     }
     if ($BuildComponents.frontend -or $BuildComponents.tauri) {
         $pathsToClean += $DistDir
@@ -463,7 +463,7 @@ function Build-PythonSidecar {
 function Build-CopySidecarFiles {
     Write-Log "Copying Python sidecar files to Tauri resources..." -Level Info
 
-    $resourcesDir = "src-tauri\resources\python_backend"
+    $resourcesDir = "crates\lattice-desktop\resources\python_backend"
     New-Item -ItemType Directory -Force -Path $resourcesDir | Out-Null
 
     # Copy Python files
@@ -551,7 +551,7 @@ function New-Checksums {
     Write-Log "Generating Checksums" -Level Header
 
     $bundleSubdir = if ($Mode -eq 'dev') { 'debug' } else { 'release' }
-    $bundleDir = Join-Path $TauriDir "target\$bundleSubdir\bundle"
+    $bundleDir = Join-Path $ProjectRoot "target\$bundleSubdir\bundle"
 
     if (-not (Test-Path $bundleDir)) {
         Write-Log "Bundle directory not found, skipping checksums" -Level Warning
@@ -591,7 +591,7 @@ function Show-Summary {
 
     # Show output locations
     if ($BuildComponents.tauri) {
-        $targetDir = Join-Path $TauriDir "target\$(if($Mode -eq 'dev'){'debug'}else{'release'})"
+        $targetDir = Join-Path $ProjectRoot "target\$(if($Mode -eq 'dev'){'debug'}else{'release'})"
         if (Test-Path $targetDir) {
             Write-Host "`nBuild artifacts:" -ForegroundColor White
             Write-Host "  Location: $targetDir" -ForegroundColor Cyan

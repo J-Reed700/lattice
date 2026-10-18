@@ -337,7 +337,7 @@ class BuildSystem {
     this.header('Cleaning Build Artifacts');
 
     const pathsToClean = [
-      'src-tauri/target',
+      'target',
       'dist',
       'build-logs',
       '.build-cache',
@@ -367,7 +367,7 @@ class BuildSystem {
 
     // Check Rust dependencies
     this.info('Checking Rust dependencies...');
-    const cargoResult = this.exec('cargo fetch', { cwd: 'src-tauri' });
+    const cargoResult = this.exec('cargo fetch', { cwd: 'crates/lattice-desktop' });
     if (cargoResult.success) {
       this.success('Rust dependencies ready');
     }
@@ -392,7 +392,7 @@ class BuildSystem {
 
     // Backend tests
     this.info('Running backend tests...');
-    const backendTest = this.exec('cargo test', { cwd: 'src-tauri' });
+    const backendTest = this.exec('cargo test', { cwd: 'crates/lattice-desktop' });
     if (backendTest.success) {
       this.success('Backend tests passed');
     } else {
@@ -427,7 +427,7 @@ class BuildSystem {
     const command = `cargo build ${mode} ${featuresFlag} ${target}`.trim();
     
     this.info(`Building backend: ${command}`);
-    const result = this.exec(command, { cwd: 'src-tauri', verbose: true });
+    const result = this.exec(command, { cwd: 'crates/lattice-desktop', verbose: true });
 
     if (!result.success) {
       throw new Error('Backend build failed');
@@ -462,7 +462,7 @@ class BuildSystem {
 
     this.header('Generating Checksums');
 
-    const bundleDir = path.join(projectRoot, 'src-tauri', 'target', 'release', 'bundle');
+    const bundleDir = path.join(projectRoot, 'target', 'release', 'bundle');
     
     if (!fs.existsSync(bundleDir)) {
       this.warn('Bundle directory not found, skipping checksums');
@@ -616,7 +616,7 @@ class BuildSystem {
       this.success(`Total time: ${duration}s`);
       
       // Show output location
-      const outputDir = path.join(projectRoot, 'src-tauri', 'target',
+      const outputDir = path.join(projectRoot, 'target',
         this.args.mode === 'dev' ? 'debug' : 'release', 'bundle');
       if (fs.existsSync(outputDir)) {
         this.info(`Build artifacts: ${outputDir}`);

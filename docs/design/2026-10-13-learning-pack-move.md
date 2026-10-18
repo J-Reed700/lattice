@@ -1,7 +1,7 @@
 # Move a generated course to another computer and resume
 
 Date: 2026-10-13. Status: build brief v2 (reviewed against the code) for branch
-`learning/pack-move`. Two builders: backend (`src-tauri/`) and frontend (`src/`),
+`learning/pack-move`. Two builders: backend (`crates/lattice-desktop/`) and frontend (`src/`),
 working from the Contract section alone. Integrate backend first: the frontend's
 type-check only passes once the regenerated bindings land.
 
@@ -17,12 +17,12 @@ export every course at once into a folder as a backup.
 ## What exists (do not rebuild)
 
 `.lattice-learning` packs: zstd tar with `manifest.json`, per-entry SHA-256, root
-checksum, format version 3 (`src-tauri/src/features/learning/portability/pack.rs`).
+checksum, format version 3 (`crates/lattice-desktop/src/features/learning/portability/pack.rs`).
 Decode never extracts to disk (entries live in a `BTreeMap`), `validate_pack_path`
 rejects absolute/`..`/`\`/`:` paths (pack.rs:112-137), non-regular tar entries are
 refused (pack.rs:484-486), and every size is bounded: compressed, decompressed,
 per entry, manifest (2 MiB), entry count. Commands in
-`src-tauri/src/features/learning/plugin/portability.rs`:
+`crates/lattice-desktop/src/features/learning/plugin/portability.rs`:
 `get_learning_portability_workspace`, `export_learning_pack`,
 `preview_learning_pack_import`, `apply_learning_pack_import`,
 `cancel_learning_pack_import_preview`. Repository in
@@ -282,7 +282,7 @@ Evidence on, practical artifacts on, source bodies off (licensing self-attestati
 stays an explicit tick), with a one-line hint that without full text the other
 computer gets excerpts only and web references can be refreshed there.
 
-## Backend work (`src-tauri/`)
+## Backend work (`crates/lattice-desktop/`)
 
 New modules (pack_repository.rs only gets wiring; nothing else grows past 800 lines):
 

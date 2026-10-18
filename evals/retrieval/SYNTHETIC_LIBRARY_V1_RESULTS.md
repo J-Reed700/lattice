@@ -44,13 +44,13 @@ performance on a user's actual library.
 ## Reproduce
 
 ```sh
-cd src-tauri
+cd crates/lattice-desktop
 SQLX_OFFLINE=true cargo build --release --example retrieval_eval
 
-LATTICE_FORCE_CPU=1 ./target/release/examples/retrieval_eval \
-  /path/to/embedding-model ../../../evals/retrieval/synthetic-library-v1.json \
+LATTICE_FORCE_CPU=1 ../../target/release/examples/retrieval_eval \
+  /path/to/embedding-model ../../evals/retrieval/synthetic-library-v1.json \
   /path/to/reranker-model \
-  > ../../../evals/retrieval/results/my-run.jsonl
+  > ../../evals/retrieval/results/my-run.jsonl
 
 cd ../../..
 python3 scripts/rag_eval.py evals/retrieval/synthetic-library-v1.json \

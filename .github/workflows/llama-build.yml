@@ -2,9 +2,9 @@ name: Build llama-server sidecar binaries
 
 # Compiles llama.cpp's `llama-server` for every platform Lattice ships and,
 # on a `llama/*` tag, publishes the binaries as an immutable GitHub Release.
-# The app build downloads them with src-tauri/scripts/fetch-llama-binaries.sh.
+# The app build downloads them with crates/lattice-desktop/scripts/fetch-llama-binaries.sh.
 #
-# Everything is driven by src-tauri/scripts/llama-server.lock:
+# Everything is driven by crates/lattice-desktop/scripts/llama-server.lock:
 #   llama_cpp_tag  upstream tag to compile
 #   release        release tag to publish (must equal the pushed tag)
 #   macos_min      deployment target for the macOS binary, and the floor that
@@ -28,7 +28,7 @@ name: Build llama-server sidecar binaries
 #   * releases are never overwritten, so a published tag always means the same
 #     bytes, and the lock pins those bytes by SHA-256.
 #
-# Bump procedure: src-tauri/binaries/README.md.
+# Bump procedure: crates/lattice-desktop/binaries/README.md.
 
 on:
   # Build and verify without publishing (use this to try a new llama.cpp tag).
@@ -37,8 +37,8 @@ on:
   pull_request:
     paths:
       - .github/workflows/llama-build.yml
-      - src-tauri/scripts/llama-server.lock
-      - src-tauri/scripts/verify_llama_binaries.py
+      - crates/lattice-desktop/scripts/llama-server.lock
+      - crates/lattice-desktop/scripts/verify_llama_binaries.py
   # Build, verify and publish.
   push:
     tags:
@@ -52,8 +52,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  LOCK: src-tauri/scripts/llama-server.lock
-  VERIFY: src-tauri/scripts/verify_llama_binaries.py
+  LOCK: crates/lattice-desktop/scripts/llama-server.lock
+  VERIFY: crates/lattice-desktop/scripts/verify_llama_binaries.py
   VULKAN_SDK_VERSION: 1.4.363.0
 
 jobs:
@@ -301,7 +301,7 @@ jobs:
             python "$VERIFY" --print-targets markdown
             echo
             echo "Each file is self-contained and was verified by \`verify_llama_binaries.py\`."
-            echo "Pin these checksums with \`bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock\`."
+            echo "Pin these checksums with \`bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --update-lock\`."
           } > notes.md
           # `gh release create` fails if the release exists, so a tag can never
           # be republished with different bytes.

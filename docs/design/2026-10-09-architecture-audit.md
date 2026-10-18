@@ -1,8 +1,8 @@
 # Architecture audit, 2026-10-09
 
 Scope: the whole tree at `codex/repair-ci-checks` (e2617393 plus a 15-file
-uncommitted diff): `src-tauri/src` (≈379k lines, one crate), `src/` (≈125k
-lines), CI, and `api-rust/`. Four read-only reviewers covered Rust structure,
+uncommitted diff): `crates/lattice-desktop/src` (≈379k lines, one crate), `src/` (≈125k
+lines), CI, and `crates/lattice-sync/`. Four read-only reviewers covered Rust structure,
 the AI pipeline, Learning Studio plus the data model, and the renderer. Each
 claim marked [verified] was read in the code by a reviewer. The six claims
 this document leans on most were re-checked by hand (see §7). Counts come
@@ -389,7 +389,7 @@ derived JSON-vector data but is not in `EXCLUDED_TABLES`
 who owns each store or whether it is backed up. The web archive
 (`~/.lattice/web-archive`) appears to be absent from backups [inferred].
 
-**`api-rust`** (2.3k lines) has no caller. It costs a CI job with a
+**`lattice-sync`** (2.3k lines) has no caller. It costs a CI job with a
 Postgres service, an audit step, a lockfile and a 440 MB `target/`.
 
 ## 4. Keep
@@ -459,7 +459,7 @@ remaining phases need.
    - the view→client rule applies to all `components/**`
    - `import/no-cycle` for `src/features`
 4. **Correct the doc drift in §6.**
-5. **Run `api-rust` CI only on a path filter or by hand.**
+5. **Run `lattice-sync` CI only on a path filter or by hand.**
 
 ### Tier 1: shared runtimes (M each; 1 gates retrieval work, 2 and 3 are independent)
 
