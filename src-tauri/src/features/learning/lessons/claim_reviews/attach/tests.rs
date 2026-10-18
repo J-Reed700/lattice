@@ -42,8 +42,13 @@ use crate::features::learning::{repository::LearningRepository, tests};
 
 const LESSON: &str = "lesson-1";
 const WATER: &str = "Water boils at 100 °C at sea level.";
-const MERCURY: &str = "Mercury freezes at -38.83 °C.";
-const FIELD: &str = "Heat it. Water boils at 100 °C at sea level. Mercury freezes at -38.83 °C.";
+// The mercury claim shares no term with the water sources: under the subject
+// rule a passage "mentions" a claim through any distinctive shared term, the
+// unit "°C" included, and these tests need a source that is about another
+// subject entirely.
+const MERCURY: &str = "Mercury freezes at -38.83 degrees Celsius.";
+const FIELD: &str =
+    "Heat it. Water boils at 100 °C at sea level. Mercury freezes at -38.83 degrees Celsius.";
 const NOTES: &str = "My boiling notes";
 const PASTED: &str = "Measured in the kitchen at sea level: water boils at 100 °C, and the pot only gets hotter once it has boiled dry.";
 
