@@ -17,10 +17,14 @@ use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionRe
 
 pub(in crate::features::learning) const CAPTURE: &str =
     "Random assignment reduces confounding in comparisons between treatment groups.";
-pub(in crate::features::learning) struct ResearchWeb(MockWebService);
+pub(in crate::features::learning) struct ResearchWeb(
+    MockWebService,
+    Arc<Mutex<Vec<WebSearchInput>>>,
+);
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
     async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
+        self.1.lock().unwrap().push(input.clone());
         self.0.search_web(input).await
     }
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
@@ -31,6 +35,11 @@ impl WebServiceTrait for ResearchWeb {
     }
     fn validate_url(&self, url: &str) -> Result<()> {
         self.0.validate_url(url)
+    }
+}
+impl ResearchWeb {
+    pub(in crate::features::learning) fn recorded_inputs(&self) -> Vec<WebSearchInput> {
+        self.1.lock().unwrap().clone()
     }
 }
 pub(in crate::features::learning) fn web(truncated: bool) -> Arc<ResearchWeb> {
@@ -59,7 +68,7 @@ fn web_capture(truncated: bool, url: &str, content: &str) -> Arc<ResearchWeb> {
             read_via: Default::default(),
         },
     );
-    Arc::new(ResearchWeb(web))
+    Arc::new(ResearchWeb(web, Arc::new(Mutex::new(Vec::new()))))
 }
 fn gap() -> Finding {
     Finding {
@@ -643,4 +652,140 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             .any(|passage| passage.text.contains(&finding.statement)));
     }
     Ok(())
+}
+
+fn spec_finding(statement: &str, subject: &str, owner_hint: &str) -> Finding {
+    use crate::features::learning::lessons::content_verification::provenance_gate::FindingTrust;
+    use lattice_core::domain::provenance::*;
+    Finding {
+        unit: 0,
+        quote: statement.into(),
+        statement: statement.into(),
+        verdict: ClaimVerdict::Supported,
+        reason: "Supported".into(),
+        evidence: vec![],
+        supporting_quote: None,
+        resolution: None,
+        trust: Some(Box::new(FindingTrust {
+            profile: ClaimProfile {
+                kind: ClaimKind::Specification,
+                subject: Some(ClaimSubject {
+                    name: subject.into(),
+                    kind: SubjectKind::Product,
+                    aliases: vec![],
+                    classes: vec![],
+                    key: SubjectKey::of(subject),
+                }),
+                temporal: TemporalScope::Current,
+                measurement_origin: None,
+                attributed_to: None,
+                reasons: vec![],
+                policy: "test".into(),
+                model: "test".into(),
+            },
+            supports: vec![],
+            contrary: vec![],
+            decision: Decision::Insufficient {
+                bar: Bar::Primary,
+                have: vec![],
+                missing: Missing::NoPrimaryForSubject,
+                next: vec![NextStep::SearchOwner {
+                    origin_hints: vec![owner_hint.into()],
+                }],
+                reasons: vec![],
+            },
+        })),
+    }
+}
+
+#[tokio::test]
+async fn specification_gap_with_known_owner_issues_official_docs_search_need() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let target_url = "https://learn.microsoft.com/en-us/dotnet/api/system.threading.asynclocal-1";
+    let second_url = "https://learn.microsoft.com/en-us/dotnet/fundamentals/runtime-libraries/system-threading-asynclocal";
+    let capture = "AsyncLocal<T> represents ambient data local to an asynchronous flow.";
+    let web = web_capture(false, target_url, capture);
+    web.0.set_search_results(vec![
+        WebSearchResult {
+            title: "AsyncLocal<T> Class".into(),
+            url: target_url.into(),
+            snippet: "SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE".into(),
+            published_date: None,
+            source: Some("site_discovery".into()),
+        },
+        WebSearchResult {
+            title: "AsyncLocal<T> Fundamentals".into(),
+            url: second_url.into(),
+            snippet: "SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE".into(),
+            published_date: None,
+            source: Some("site_discovery".into()),
+        },
+    ]);
+    web.0.set_url_content(
+        second_url,
+        FetchUrlContentOutput {
+            url: second_url.into(),
+            title: Some("AsyncLocal<T> Fundamentals".into()),
+            content: format!("\r\n{capture}\r\n"),
+            content_truncated: false,
+            word_count: 12,
+            fetch_time_ms: 1.,
+            content_type: None,
+            from_cache: false,
+            read_via: Default::default(),
+        },
+    );
+    let finding = spec_finding("AsyncLocal in .NET", ".NET", "learn.microsoft.com");
+
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                json!({"queries":["AsyncLocal value flow across await"]}).to_string(),
+                selection(&[0]),
+                json!({"needs":[{"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
+                selection(&[0]),
+                json!({"needs":[]}).to_string(),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+
+    run(
+        pool,
+        program.summary.id,
+        program.summary.goal,
+        Some(web.clone()),
+        async {
+            let expanded = expand(&llm, &references, &[finding], &[], &ClaimChecks::default())
+                .await?
+                .saved()
+                .expect("saved capture");
+            assert_eq!(expanded.sources.len(), sources.len() + 1);
+
+            let recorded = web.recorded_inputs();
+            assert!(!recorded.is_empty(), "At least one search should be issued");
+            let input = &recorded[0];
+            assert_eq!(input.query, "AsyncLocal value flow across await");
+            assert_eq!(input.kind.as_deref(), Some("official_docs"));
+            assert_eq!(input.subject.as_deref(), Some(".NET"));
+            assert_eq!(input.site.as_deref(), Some("learn.microsoft.com"));
+
+            // Structured needs and empty needs both execute cleanly
+            let exp2 = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
+            assert!(exp2.saved().is_some());
+            let exhausted =
+                expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
+            assert!(matches!(exhausted, Expansion::Exhausted(_)));
+            Ok(())
+        },
+    )
+    .await
 }

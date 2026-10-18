@@ -74,7 +74,9 @@ pub(super) fn runs_alongside_others(tool: &str) -> bool {
     matches!(
         tool,
         "web_search"
+            | "find_sources"
             | "fetch_url_content"
+            | "follow_links"
             | "wiki_search"
             | "wiki_summary"
             | "semantic_search"

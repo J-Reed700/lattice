@@ -65,6 +65,26 @@ pub trait WebServiceTrait: Send + Sync {
         })
     }
 
+    /// Fetch and extract content from a URL, or from the archived copy nearest
+    /// `as_of` when given (design §3.8, §3.11).
+    async fn fetch_url_content_as_of(
+        &self,
+        url: &str,
+        _as_of: Option<chrono::NaiveDate>,
+    ) -> Result<FetchUrlContentOutput> {
+        self.fetch_url_content(url).await
+    }
+
+    /// Extract outbound citation links from a page, optionally ordered around
+    /// `near_text` (design §3.11 `follow_links`).
+    async fn follow_links(
+        &self,
+        _url: &str,
+        _near_text: Option<&str>,
+    ) -> Result<Vec<crate::domain::sourcing::Lead>> {
+        Ok(Vec::new())
+    }
+
     /// Validate URL for security (SSRF prevention)
     ///
     /// Blocks:

@@ -142,11 +142,15 @@ fn finish_pictures(step: StepGuard<'_>, arguments: &serde_json::Value, output: &
 /// pipeline records, so a query reads as a query wherever it was issued.
 pub(super) fn tool_detail(tool: &str, arguments: &serde_json::Value) -> Option<String> {
     match tool {
-        "web_search" => arguments
+        "web_search" | "find_sources" => arguments
             .get("query")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
         "fetch_url_content" => fetch_memory::fetch_target(arguments).map(str::to_owned),
+        "follow_links" => arguments
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
         "find_image" => arguments
             .get("query")
             .and_then(serde_json::Value::as_str)
@@ -158,7 +162,7 @@ pub(super) fn tool_detail(tool: &str, arguments: &serde_json::Value) -> Option<S
 /// A page read knows its address before it starts.
 pub(super) fn links_for_call(tool: &str, arguments: &serde_json::Value) -> Vec<TurnStepLinkDto> {
     match tool {
-        "fetch_url_content" => fetch_memory::fetch_target(arguments)
+        "fetch_url_content" | "follow_links" => fetch_memory::fetch_target(arguments)
             .map(|url| vec![TurnStepLinkDto::new(url, None)])
             .unwrap_or_default(),
         "find_image" => picture_page(arguments)
@@ -178,7 +182,7 @@ pub(super) fn finish_tool_step(
     data: Option<&serde_json::Value>,
 ) {
     match (tool, data) {
-        ("web_search", Some(data)) => {
+        ("web_search" | "find_sources", Some(data)) => {
             match serde_json::from_value::<WebSearchOutput>(data.clone()) {
                 Ok(output) => finish_search(step, recorder, &output),
                 Err(_) => step.done(None),
@@ -361,5 +365,30 @@ mod tests {
         let steps = recorder.steps();
         assert!(steps[0].links.is_empty());
         assert_eq!(steps[0].result, None);
+    }
+
+    #[test]
+    fn find_sources_and_follow_links_details_and_links() {
+        let find_args = serde_json::json!({ "kind": "official_docs", "query": "tokio" });
+        assert_eq!(
+            tool_detail("find_sources", &find_args).as_deref(),
+            Some("tokio")
+        );
+
+        let follow_args = serde_json::json!({ "url": "https://example.com/page" });
+        assert_eq!(
+            tool_detail("follow_links", &follow_args).as_deref(),
+            Some("https://example.com/page")
+        );
+        let links = links_for_call("follow_links", &follow_args);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "https://example.com/page");
+
+        let recorder = TurnRecorder::silent("c", "r");
+        let step = recorder.begin_guarded(TurnStepKind::WebSearch, "Finding sources", None);
+        let data = serde_json::to_value(search_output(&[])).unwrap();
+        finish_tool_step(step, &recorder, "find_sources", &find_args, Some(&data));
+        assert_eq!(recorder.steps().len(), 1);
+        assert_eq!(recorder.steps()[0].result.as_deref(), Some("2 results"));
     }
 }

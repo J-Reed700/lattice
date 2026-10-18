@@ -46,8 +46,8 @@ pub(super) fn tool_step_kind(tool: &str) -> TurnStepKind {
     match tool {
         "semantic_search" => TurnStepKind::SearchDocuments,
         "get_document" | "list_documents" | "list_attachments" => TurnStepKind::OpenDocument,
-        "web_search" => TurnStepKind::WebSearch,
-        "fetch_url_content" => TurnStepKind::ReadPage,
+        "web_search" | "find_sources" => TurnStepKind::WebSearch,
+        "fetch_url_content" | "follow_links" => TurnStepKind::ReadPage,
         "wiki_search" | "wiki_summary" => TurnStepKind::Wiki,
         "find_image" => TurnStepKind::FindImage,
         _ => TurnStepKind::Tool,
@@ -156,6 +156,14 @@ pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> 
             Some(host) => format!("Reading {host}"),
             None => "Reading a web page".to_string(),
         },
+        "follow_links" => match fetch_memory::fetch_target(arguments)
+            .and_then(|url| url::Url::parse(url).ok())
+            .and_then(|url| url.host_str().map(|host| host.to_string()))
+        {
+            Some(host) => format!("Following links on {host}"),
+            None => "Following links on a page".to_string(),
+        },
+        "find_sources" => "Finding primary sources".to_string(),
         "web_search" => "Searching the web".to_string(),
         "find_image" => match arguments
             .get("query")
@@ -246,5 +254,29 @@ mod tests {
         );
         assert!(notice.contains("offset=8000"), "{notice}");
         assert!(!notice.contains("whole page"), "{notice}");
+    }
+
+    #[test]
+    fn tool_step_kind_and_activity_for_find_sources_and_follow_links() {
+        assert_eq!(tool_step_kind("find_sources"), TurnStepKind::WebSearch);
+        assert_eq!(tool_step_kind("follow_links"), TurnStepKind::ReadPage);
+
+        let find_args = serde_json::json!({ "query": "tokio" });
+        assert_eq!(
+            tool_activity_label("find_sources", &find_args),
+            "Finding primary sources"
+        );
+
+        let follow_args = serde_json::json!({ "url": "https://example.com/doc" });
+        assert_eq!(
+            tool_activity_label("follow_links", &follow_args),
+            "Following links on example.com"
+        );
+
+        let follow_no_host = serde_json::json!({ "url": "not-a-valid-url" });
+        assert_eq!(
+            tool_activity_label("follow_links", &follow_no_host),
+            "Following links on a page"
+        );
     }
 }

@@ -144,11 +144,18 @@ impl WebService {
             contact: settings.contact().map(str::to_owned),
         };
         let wayback = Wayback::new(http.clone(), settings.clone());
-        let sourcing = Arc::new(SourcingService::new(
-            finders::keyless_registry(&http),
-            settings,
-            BTreeSet::new(),
-        ));
+        let owner_resolver = Arc::new(
+            crate::features::web::services::sourcing::OwnerResolver::with_system_clock(
+                Arc::new(finders::wikidata::Wikidata::new(http.clone())),
+                Arc::new(finders::wikipedia::Wikipedia::new(http.clone())),
+                None,
+                lattice_core::domain::sourcing::SourcingPolicy::default(),
+            ),
+        );
+        let sourcing = Arc::new(
+            SourcingService::new(finders::keyless_registry(&http), settings, BTreeSet::new())
+                .with_owner_and_http(owner_resolver, http),
+        );
         Ok(Self {
             client,
             pacer,
@@ -239,6 +246,37 @@ impl WebServiceTrait for WebService {
 
     async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
         self.read_page(url).await.map(|read| read.output)
+    }
+
+    async fn fetch_url_content_as_of(
+        &self,
+        url: &str,
+        as_of: Option<chrono::NaiveDate>,
+    ) -> Result<FetchUrlContentOutput> {
+        match as_of {
+            Some(day) => self.read_page_as_of(url, day).await.map(|read| read.output),
+            None => self.read_page(url).await.map(|read| read.output),
+        }
+    }
+
+    async fn follow_links(
+        &self,
+        url: &str,
+        near_text: Option<&str>,
+    ) -> Result<Vec<lattice_core::domain::sourcing::Lead>> {
+        let parsed = parse_fetchable_url(url)?;
+        let near = near_text
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(|q| lattice_core::domain::sourcing::Near::Quote(q.to_owned()));
+        let ceiling = lattice_core::domain::sourcing::SourcingPolicy::default().breaker_ceiling;
+        let now = std::time::Instant::now();
+        let budget = lattice_core::application::ports::Budget {
+            deadline: now.checked_add(ceiling).unwrap_or(now),
+            stop: tokio_util::sync::CancellationToken::new(),
+            requests: None,
+        };
+        self.sourcing.leads_from_page(&parsed, near, budget).await
     }
 
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {

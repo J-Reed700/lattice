@@ -61,6 +61,8 @@ const TOOL_GET_DOCUMENT: &str = "get_document";
 const TOOL_LIST_DOCUMENTS: &str = "list_documents";
 const TOOL_WEB_SEARCH: &str = "web_search";
 const TOOL_FETCH_URL_CONTENT: &str = "fetch_url_content";
+const TOOL_FIND_SOURCES: &str = "find_sources";
+const TOOL_FOLLOW_LINKS: &str = "follow_links";
 /// Runs only inside a chat turn (it stores pictures against the turn's
 /// request); registered here for listing and schema validation.
 const TOOL_FIND_IMAGE: &str = "find_image";
@@ -214,6 +216,8 @@ impl FunctionExecutorTrait for FunctionExecutor {
             TOOL_LIST_DOCUMENTS => self.handle_list_documents(&normalized_arguments).await,
             TOOL_WEB_SEARCH => self.handle_web_search(&normalized_arguments).await,
             TOOL_FETCH_URL_CONTENT => self.handle_fetch_url(&normalized_arguments).await,
+            TOOL_FIND_SOURCES => self.handle_find_sources(&normalized_arguments).await,
+            TOOL_FOLLOW_LINKS => self.handle_follow_links(&normalized_arguments).await,
             TOOL_WIKI_SEARCH => self.handle_wiki_search(&normalized_arguments).await,
             TOOL_WIKI_SUMMARY => self.handle_wiki_summary(&normalized_arguments).await,
             TOOL_FIND_IMAGE => Ok(FunctionResult::error(
@@ -263,6 +267,8 @@ impl FunctionExecutorTrait for FunctionExecutor {
                         | "list_attachments"
                         | TOOL_WEB_SEARCH
                         | TOOL_FETCH_URL_CONTENT
+                        | TOOL_FIND_SOURCES
+                        | TOOL_FOLLOW_LINKS
                         | TOOL_FIND_IMAGE
                         | TOOL_WIKI_SEARCH
                         | TOOL_WIKI_SUMMARY

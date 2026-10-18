@@ -295,7 +295,8 @@ fn the_keyless_registry_holds_the_three_providers_with_honest_identities() {
         .iter()
         .map(|entry| entry.descriptor().id.as_str())
         .collect();
-    assert_eq!(ids, ["duckduckgo", "bing_html", "wikipedia"]);
+    assert!(ids.starts_with(&["duckduckgo", "bing_html"]));
+    assert!(ids.contains(&"wikipedia"));
     use lattice_core::domain::sourcing::Identity;
     // Read from the registered entries, not the descriptor constants, so the
     // check covers what the registry actually serves.

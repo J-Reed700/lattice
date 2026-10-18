@@ -148,8 +148,11 @@ impl FunctionRegistryTrait for FunctionRegistry {
 /// - semantic_search
 /// - get_document
 /// - list_documents
+/// - list_attachments
 /// - web_search
 /// - fetch_url_content
+/// - find_sources
+/// - follow_links
 /// - find_image
 /// - wiki_search
 /// - wiki_summary
@@ -334,6 +337,19 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "type": "string",
                     "description": "Web search query"
                 },
+                "site": {
+                    "type": "string",
+                    "description": "Optional host or host/path to search within, e.g. learn.microsoft.com or docs.python.org/3"
+                },
+                "after": {
+                    "type": "string",
+                    "description": "Optional ISO date (YYYY-MM-DD): only pages published after this date"
+                },
+                "alternatives": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Up to three rewordings tried only if the first query is thin"
+                },
                 "max_results": {
                     "type": "integer",
                     "description": "Maximum number of web results to return for this page (1-50)",
@@ -404,6 +420,71 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "type": "integer",
                     "description": "Character to start reading from. A page longer than one result names the offset its next part starts at; pass it to read on.",
                     "minimum": 0
+                },
+                "as_of": {
+                    "type": "string",
+                    "description": "Read the archived copy nearest this ISO date (YYYY-MM-DD) instead of the live page"
+                }
+            },
+            "required": ["url"]
+        })
+    )?)?;
+
+    registry.register(ToolDefinition::new(
+        "find_sources",
+        "Find primary sources for a subject: the owner's official docs, a package's registry record and repo, a paper by title or DOI, a standard (RFC, W3C, ECMA), a law, or a Q&A thread. Routes to the right registries and bodies, then the web. Returns leads with the owner's domain marked.",
+        json!({
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["official_docs", "package", "paper", "standard", "law", "community", "encyclopedia"]
+                },
+                "query": {
+                    "type": "string",
+                    "description": "What to find, e.g. 'AsyncLocal<T> flow', 'tokio', 'Attention is all you need', 'RFC 9110 Retry-After'"
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "The entity that owns the answer when known: a product, organisation, package or standards body"
+                },
+                "identifier": {
+                    "type": "string",
+                    "description": "Optional exact id: DOI, arXiv id, 'npm:react', 'crates:tokio', 'pypi:requests', 'rfc:9110', 'celex:32016R0679'"
+                },
+                "site": {
+                    "type": "string",
+                    "description": "Optional host or host/path to search within"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 50
+                },
+                "page": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1
+                }
+            },
+            "required": ["kind", "query"]
+        })
+    )?)?;
+
+    registry.register(ToolDefinition::new(
+        "follow_links",
+        "List the links a page you have read makes, with the sentence each sits in, so you can open the page it cites instead of trusting the page that cites it. Give near_text to get only the links around a passage.",
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL of the page whose outbound links to list"
+                },
+                "near_text": {
+                    "type": "string",
+                    "description": "A short quote from the page; links in and around its paragraph are returned first"
                 }
             },
             "required": ["url"]
@@ -571,7 +652,7 @@ mod tests {
         let registry = init_function_registry().unwrap();
         let tools = registry.list_tools();
 
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 11);
 
         assert!(registry.get_tool("semantic_search").is_some());
         assert!(registry.get_tool("get_document").is_some());
@@ -579,6 +660,8 @@ mod tests {
         assert!(registry.get_tool("list_attachments").is_some());
         assert!(registry.get_tool("web_search").is_some());
         assert!(registry.get_tool("fetch_url_content").is_some());
+        assert!(registry.get_tool("find_sources").is_some());
+        assert!(registry.get_tool("follow_links").is_some());
         assert!(registry.get_tool("find_image").is_some());
         assert!(registry.get_tool("wiki_search").is_some());
         assert!(registry.get_tool("wiki_summary").is_some());

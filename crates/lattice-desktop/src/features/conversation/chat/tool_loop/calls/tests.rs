@@ -29,6 +29,8 @@ fn every_registered_tool_is_classified() {
         [
             "fetch_url_content",
             "find_image",
+            "find_sources",
+            "follow_links",
             "get_document",
             "list_attachments",
             "list_documents",

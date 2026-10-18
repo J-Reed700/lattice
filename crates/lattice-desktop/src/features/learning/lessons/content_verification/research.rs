@@ -50,9 +50,15 @@ pub(in crate::features::learning) async fn select_references(
         .iter()
         .enumerate()
         .map(|(i, r)| {
-            json!({"id":format!("result-{i}"),"title":r.title,"url":r.url,"snippet":r.snippet,
-                "published":r.published_date.map(|date| date.format("%Y-%m-%d").to_string()),
-                "origin":origin_facts(&r.url, &owner_hints)})
+            json!({
+                "id": format!("result-{i}"),
+                "title": r.title,
+                "url": r.url,
+                "snippet": r.snippet,
+                "published": r.published_date.map(|date| date.format("%Y-%m-%d").to_string()),
+                "origin": origin_facts(&r.url, &owner_hints),
+                "foundBy": r.source,
+            })
         })
         .collect();
     let ids: Vec<_> = candidates.iter().map(|r| r["id"].clone()).collect();
@@ -345,7 +351,7 @@ async fn research<'a>(
         .iter()
         .cloned()
         .collect();
-    let planned = web_research::plan_queries(
+    let planned = web_research::plan_needs(
         llm,
         &context.topic,
         gaps,
@@ -353,16 +359,19 @@ async fn research<'a>(
         &already_searched,
     )
     .await?;
-    let mut queries: Vec<String> = hints.to_vec();
-    for query in planned {
-        if !queries.contains(&query) {
-            queries.push(query);
+    let mut needs: Vec<web_research::PlannedNeed> = hints
+        .iter()
+        .map(|hint| web_research::PlannedNeed::inferred_from_gaps(hint.clone(), gaps))
+        .collect();
+    for need in planned {
+        if !needs.iter().any(|existing| existing.query == need.query) {
+            needs.push(need);
         }
     }
     // An empty plan is the planner's answer that public search cannot help
     // these gaps, not a failure: topics stay uncovered, and claims go on to
     // the repair that follows research, or to the user.
-    if queries.is_empty() && follow.is_empty() {
+    if needs.is_empty() && follow.is_empty() {
         let exhausted = Exhausted {
             claims: gaps.len(),
             searched: already_searched.len(),
@@ -419,23 +428,23 @@ async fn research<'a>(
             added += 1;
         }
     }
-    for query in queries {
+    for need in needs {
         if !context
             .searched
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(query.clone())
+            .insert(need.query.clone())
         {
             continue;
         }
-        searched.queries.push(query.clone());
+        searched.queries.push(need.query.clone());
         crate::features::learning::lesson_progress::stage(
             "Searching the web for missing lesson evidence",
         );
-        let results = match web_research::search(context.web.as_ref(), &query).await {
+        let results = match web_research::search_need(context.web.as_ref(), &need).await {
             Ok(results) => results,
             Err(error) => {
-                tracing::warn!(%error,"Lesson reference search unavailable");
+                tracing::warn!(%error, "Lesson reference search unavailable");
                 continue;
             }
         };
@@ -444,7 +453,8 @@ async fn research<'a>(
             .into_iter()
             .filter(|result| !urls.contains(&result.url))
             .collect();
-        let selected = select_references(llm, &context.topic, &query, gaps, candidates).await?;
+        let selected =
+            select_references(llm, &context.topic, &need.query, gaps, candidates).await?;
         for result in selected {
             if !urls.insert(result.url.clone()) {
                 continue;
@@ -452,16 +462,16 @@ async fn research<'a>(
             crate::features::learning::lesson_progress::stage(
                 "Saving an additional reference for lesson verification",
             );
-            let captured = match web_research::capture(context.web.as_ref(), &result, &query).await
-            {
-                Ok(Some(captured)) => captured,
-                Ok(None) => continue,
-                Err(error) => {
-                    tracing::warn!(%error,"Lesson research page unavailable");
-                    capture_failed = true;
-                    continue;
-                }
-            };
+            let captured =
+                match web_research::capture(context.web.as_ref(), &result, &need.query).await {
+                    Ok(Some(captured)) => captured,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        tracing::warn!(%error, "Lesson research page unavailable");
+                        capture_failed = true;
+                        continue;
+                    }
+                };
             if let Some(version_id) = saving
                 .save(&mut sources, &mut urls, &result.url, captured)
                 .await?
@@ -473,7 +483,7 @@ async fn research<'a>(
         // Never checkpoint an in-flight search or a transient fetch failure as
         // completed. Captured references are already durable and deduplicated.
         if !capture_failed {
-            completed_queries.insert(query);
+            completed_queries.insert(need.query);
             crate::features::learning::lesson_drafts::record_checkpoint(
                 &search_key,
                 serde_json::to_value(&completed_queries)?,

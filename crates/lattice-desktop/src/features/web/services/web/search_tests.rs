@@ -33,6 +33,11 @@ fn web_service(finders: &[(&Arc<ScriptedFinder>, usize)]) -> WebService {
 fn input(query: &str, max_results: usize, page: usize) -> WebSearchInput {
     WebSearchInput {
         query: query.to_string(),
+        kind: None,
+        subject: None,
+        identifier: None,
+        site: None,
+        after: None,
         max_results,
         page,
         offset: 0,
@@ -41,6 +46,7 @@ fn input(query: &str, max_results: usize, page: usize) -> WebSearchInput {
         depth: 1,
         branch_queries: 1,
         followup_queries: Vec::new(),
+        alternatives: Vec::new(),
     }
 }
 

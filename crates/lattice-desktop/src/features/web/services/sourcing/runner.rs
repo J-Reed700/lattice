@@ -31,7 +31,7 @@ use lattice_core::application::ports::Budget;
 use lattice_core::application::services::sourcing::{cache_policy, Plan, StepScope};
 use lattice_core::domain::sourcing::{
     canonical, classify, Admission, FailureCause, FailureClass, FinderId, FinderOutcome,
-    FinderResult, Lead, SkipReason, SourceNeed, SourcingPolicy,
+    FinderResult, Lead, Origin, SkipReason, SourceNeed, SourcingPolicy,
 };
 use tracing::info;
 
@@ -84,6 +84,9 @@ pub(super) struct RunReport {
     pub alternatives_run: Vec<String>,
     /// Every planned wave ran and no step may hold more.
     pub exhausted: bool,
+    /// The subject owner's origin, resolved before wave 1 or asserted by a
+    /// registry/standards finder in an earlier wave.
+    pub owner: Option<Origin>,
 }
 
 /// One page's result, and whether the finder is held by an open window that
@@ -110,6 +113,7 @@ pub(super) struct Runner<'a> {
     policy: SourcingPolicy,
     need: &'a SourceNeed,
     budget: &'a Budget,
+    owner: Option<Origin>,
     /// Provider requests left under the caller's allowance, if it has one.
     requests: parking_lot::Mutex<Option<u32>>,
     /// Finders that refused this call, with the refusal.
@@ -117,6 +121,7 @@ pub(super) struct Runner<'a> {
 }
 
 impl<'a> Runner<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         registry: &'a [FinderEntry],
         health: &'a HealthBook,
@@ -125,6 +130,7 @@ impl<'a> Runner<'a> {
         policy: SourcingPolicy,
         need: &'a SourceNeed,
         budget: &'a Budget,
+        owner: Option<Origin>,
     ) -> Self {
         Self {
             registry,
@@ -134,6 +140,7 @@ impl<'a> Runner<'a> {
             policy,
             need,
             budget,
+            owner,
             requests: parking_lot::Mutex::new(budget.requests),
             refused: parking_lot::Mutex::new(HashMap::new()),
         }
@@ -141,7 +148,10 @@ impl<'a> Runner<'a> {
 
     pub(super) async fn run(&self, plan: &Plan) -> RunReport {
         let want = self.need.want.max(1);
-        let mut report = RunReport::default();
+        let mut report = RunReport {
+            owner: self.owner.clone(),
+            ..RunReport::default()
+        };
         let mut fused = 0;
         let mut last_wave_new = 0;
         let mut ran_every_wave = true;
@@ -186,7 +196,7 @@ impl<'a> Runner<'a> {
                     let Some(entry) = self.entry(&step.finder) else {
                         continue;
                     };
-                    match self.step_need(step.scope, &query) {
+                    match self.step_need(step.scope, &query, report.owner.as_ref()) {
                         Some(need) => report.steps.push(StepRun {
                             entry: entry.clone(),
                             wave: index,
@@ -212,6 +222,13 @@ impl<'a> Runner<'a> {
                     .await;
                 self.deepen(&mut report, range, want, &mut fused).await;
             }
+            if report.owner.is_none() {
+                report.owner = report
+                    .steps
+                    .iter()
+                    .flat_map(|step| &step.leads)
+                    .find_map(|lead| lead.owner.clone());
+            }
             last_wave_new = fused.saturating_sub(before);
         }
         report.exhausted = ran_every_wave && !report.steps.iter().any(|step| step.more);
@@ -224,14 +241,25 @@ impl<'a> Runner<'a> {
             .find(|entry| &entry.descriptor().id == id)
     }
 
-    /// The need as a step runs it. An owner-scoped step needs an owner; in
-    /// Wave 0 that is the need's own scope (owner resolution is F1's).
-    fn step_need(&self, scope: StepScope, query: &str) -> Option<SourceNeed> {
+    /// The need as a step runs it. An owner-scoped step uses the need's own
+    /// scope, the owner resolved before wave 1, or the owner asserted by an
+    /// earlier wave's leads (a registry homepage or standards body).
+    fn step_need(
+        &self,
+        scope: StepScope,
+        query: &str,
+        owner: Option<&Origin>,
+    ) -> Option<SourceNeed> {
         let mut need = self.need.clone();
         need.query = query.to_string();
         match scope {
             StepScope::AsAsked => Some(need),
-            StepScope::Owner => need.scope.is_some().then_some(need),
+            StepScope::Owner => {
+                if need.scope.is_none() {
+                    need.scope = owner.cloned();
+                }
+                need.scope.is_some().then_some(need)
+            }
         }
     }
 

@@ -308,6 +308,8 @@ mod tests {
             [
                 "fetch_url_content",
                 "find_image",
+                "find_sources",
+                "follow_links",
                 "get_document",
                 "list_attachments",
                 "list_documents",
@@ -333,7 +335,9 @@ mod tests {
         }
         for name in [
             "web_search",
+            "find_sources",
             "fetch_url_content",
+            "follow_links",
             "find_image",
             "wiki_search",
             "wiki_summary",

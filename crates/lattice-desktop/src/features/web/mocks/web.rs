@@ -243,6 +243,7 @@ impl WebServiceTrait for MockWebService {
                 .read()
                 .expect("Mock lock poisoned")
                 .clone(),
+            owner: None,
         })
     }
 
