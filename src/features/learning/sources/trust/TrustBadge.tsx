@@ -53,7 +53,7 @@ export function TrustBadge({
           className={`${CHIP} min-h-6 hover:border-accent/50 hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent`}
         >
           <Icon size={12} aria-hidden="true" className="shrink-0" />
-          <span className="truncate">{badgeText(trust)}</span>
+          <span className="truncate">{badgeText(trust)}</span>{' '}
           <span className="text-text-muted">· Why?</span>
         </button>
       </PopoverTrigger>
