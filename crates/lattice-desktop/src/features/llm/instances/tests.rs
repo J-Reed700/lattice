@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::llm::engine::sidecar_manager::weights_fixture::sparse_file;
 use crate::features::llm::engine::sidecar_manager::Footprint;
 use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::application::ports::llm_port::{
@@ -85,10 +86,7 @@ impl GpuBudget for FakeBudget {
 /// A downloaded model whose file holds `bytes` bytes of weights.
 fn local_model(dir: &tempfile::TempDir, name: &str, bytes: u64) -> LocalModel {
     let path = dir.path().join(format!("{name}.gguf"));
-    std::fs::File::create(&path)
-        .unwrap()
-        .set_len(bytes)
-        .unwrap();
+    sparse_file(&path, bytes);
     LocalModel {
         name: name.to_owned(),
         path,

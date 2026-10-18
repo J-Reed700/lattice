@@ -1714,10 +1714,7 @@ fn a_missing_model_file_falls_back_to_the_flat_default() {
 /// costs nothing and every price below is its weights.
 fn weights_file(dir: &tempfile::TempDir, name: &str, bytes: u64) -> PathBuf {
     let path = dir.path().join(name);
-    std::fs::File::create(&path)
-        .unwrap()
-        .set_len(bytes)
-        .unwrap();
+    weights_fixture::sparse_file(&path, bytes);
     path
 }
 
