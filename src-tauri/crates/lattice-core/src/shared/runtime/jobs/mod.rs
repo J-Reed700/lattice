@@ -310,4 +310,6 @@ impl From<&JobRecord> for JobDto {
 }
 
 #[cfg(test)]
+mod continue_tests;
+#[cfg(test)]
 mod tests;

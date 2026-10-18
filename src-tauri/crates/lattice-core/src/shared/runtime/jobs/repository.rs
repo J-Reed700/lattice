@@ -43,6 +43,40 @@ fn reused_operation() -> AppError {
     AppError::InvalidInput("Operation ID was reused with different job data.".into())
 }
 
+/// What a new attempt of a job continues from (`retry_in`, `continue_in`).
+enum Attempt<'a> {
+    /// A failed, interrupted or cancelled job, rerun as it was requested.
+    Retry,
+    /// A completed job, for the work it left: `requested`, of `total` steps.
+    Continue {
+        requested: &'a serde_json::Value,
+        total: u32,
+    },
+}
+
+impl Attempt<'_> {
+    fn admits(&self, status: JobStatus) -> Result<()> {
+        let (admitted, refusal) = match self {
+            Self::Retry => (
+                matches!(
+                    status,
+                    JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled
+                ),
+                "Only failed, interrupted, or cancelled jobs can be retried.",
+            ),
+            Self::Continue { .. } => (
+                status == JobStatus::Completed,
+                "Only a completed job can continue; retry a failed or stopped one.",
+            ),
+        };
+        if admitted {
+            Ok(())
+        } else {
+            Err(AppError::InvalidState(refusal.into()))
+        }
+    }
+}
+
 fn count(row: &SqliteRow, column: &str) -> u32 {
     u32::try_from(row.get::<i64, _>(column)).unwrap_or(u32::MAX)
 }
@@ -335,6 +369,41 @@ impl JobStore {
         operation_id: &str,
         message: &str,
     ) -> Result<Admitted> {
+        Self::attempt_in(connection, id, operation_id, message, Attempt::Retry).await
+    }
+
+    /// A new attempt of a completed job whose result handed part of its work
+    /// back to the user, for the work still left once the user has acted (a
+    /// lesson that waits for review, then is resumed). Like a retry it
+    /// inherits the staged result, activity and checkpoints, with at most one
+    /// live attempt per job; unlike one it runs `requested`, of `total` steps,
+    /// instead of the original request. Whether a completed job may continue
+    /// is the caller's rule; failed or stopped jobs are retried instead.
+    pub async fn continue_in(
+        connection: &mut SqliteConnection,
+        id: &str,
+        operation_id: &str,
+        message: &str,
+        requested: &serde_json::Value,
+        total: u32,
+    ) -> Result<Admitted> {
+        Self::attempt_in(
+            connection,
+            id,
+            operation_id,
+            message,
+            Attempt::Continue { requested, total },
+        )
+        .await
+    }
+
+    async fn attempt_in(
+        connection: &mut SqliteConnection,
+        id: &str,
+        operation_id: &str,
+        message: &str,
+        attempt: Attempt<'_>,
+    ) -> Result<Admitted> {
         if let Some(row) = sqlx::query("SELECT id,retry_of_job_id FROM jobs WHERE operation_id=?")
             .bind(operation_id)
             .fetch_optional(&mut *connection)
@@ -352,14 +421,7 @@ impl JobStore {
         let old = Self::find_in(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
-        if !matches!(
-            old.status,
-            JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled
-        ) {
-            return Err(AppError::InvalidState(
-                "Only failed, interrupted, or cancelled jobs can be retried.".into(),
-            ));
-        }
+        attempt.admits(old.status)?;
         if let Some(child) = sqlx::query("SELECT id,status FROM jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(id)
             .fetch_optional(&mut *connection)
@@ -382,9 +444,15 @@ impl JobStore {
         }
         let retry = uuid::Uuid::new_v4().to_string();
         let stamp = now();
-        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,activity_json,staged_result_json,retry_of_job_id,created_at,heartbeat_at) SELECT ?,kind,subject_id,?,payload_hash,'pending',requested_json,0,progress_total,?,activity_json,staged_result_json,id,?,? FROM jobs WHERE id=?")
+        let (requested, total) = match attempt {
+            Attempt::Retry => (None, None),
+            Attempt::Continue { requested, total } => (Some(encode(requested)?), Some(total)),
+        };
+        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,activity_json,staged_result_json,retry_of_job_id,created_at,heartbeat_at) SELECT ?,kind,subject_id,?,payload_hash,'pending',coalesce(?,requested_json),0,coalesce(?,progress_total),?,activity_json,staged_result_json,id,?,? FROM jobs WHERE id=?")
             .bind(&retry)
             .bind(operation_id)
+            .bind(requested)
+            .bind(total)
             .bind(message)
             .bind(stamp)
             .bind(stamp)
