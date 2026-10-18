@@ -16,7 +16,7 @@ export function HeldLessonsReview({ job, lessonIds, programId, revision }: {
         <ClipboardCheck size={18} className="shrink-0 text-accent" aria-hidden="true" />
         Lesson preparation is waiting for you
       </h3>
-      <p className="mt-2 text-sm leading-6 text-text-secondary">{job.progressMessage ? `${job.progressMessage}. ` : ''}Every check that could run has run; the draft and all completed checks are saved.</p>
+      <p className="mt-2 text-sm leading-6 text-text-secondary">Every check that could run has run; the draft and all completed checks are saved. What holds {lessonIds.length === 1 ? 'the lesson' : 'each lesson'} is shown below.</p>
       {lessonIds.map((lessonId) => (
         <LessonClaimReviewPanel key={lessonId} programId={programId} lessonId={lessonId} courseRevision={revision} stoppedAt={job.finishedAt} />
       ))}

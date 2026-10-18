@@ -13,6 +13,7 @@ import {
   heldLessonIds,
   initialFilter,
   jobHoldingLesson,
+  reviewHold,
   unitLabel,
   verdictLabel,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
@@ -100,5 +101,13 @@ describe('claim review presentation', () => {
   it('summarises the counts without hiding confirmations', () => {
     expect(countsLine(review([claimItem()], { counts: { verified: 12, confirmed: 3, generalKnowledge: 2, queued: 1, open: 0, removed: 0 } })))
       .toBe('12 verified · 3 confirmed by you · 2 general knowledge · 1 waiting for you');
+  });
+
+  it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 claims"', () => {
+    const auditStop = { code: 'verifier_turned_off', message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
+    expect(reviewHold(review([claimItem()]), 1, false)).toBe('claims');
+    expect(reviewHold(review([], { stopReason: auditStop }), 0, false)).toBe('audit_stop');
+    expect(reviewHold(review([]), 0, false)).toBe('audit');
+    expect(reviewHold(review([]), 0, true)).toBe('resolved');
   });
 });

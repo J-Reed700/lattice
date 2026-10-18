@@ -6,7 +6,7 @@ import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueri
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
-import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { changedSince, currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
@@ -69,8 +69,20 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   const reviewState = review.data?.state ?? (holdingJob ? 'needs_review' : null);
   const waiting = review.data?.claims.filter(isWaitingForYou).length ?? null;
   const needsReview = reviewState === 'needs_review' || reviewState === 'stopped';
-  const statusLabel = reviewState === 'needs_review' ? `Needs your review${waiting != null ? ` · ${waiting} ${waiting === 1 ? 'claim' : 'claims'}` : ''}`
+  // Never "0 claims": a lesson with none waiting is held by the audit or ready to resume.
+  const hold = review.data && waiting != null ? reviewHold(review.data, waiting, changedSince(review.data, holdingJob?.finishedAt ?? null)) : 'claims';
+  const holdLabel: Record<ReviewHold, string> = {
+    claims: `Needs your review${waiting ? ` · ${waiting} ${waiting === 1 ? 'claim' : 'claims'}` : ''}`,
+    audit_stop: 'Waiting for the Verifier audit', audit: 'Waiting for the Verifier audit', resolved: 'Ready to resume',
+  };
+  const statusLabel = reviewState === 'needs_review' ? holdLabel[hold]
     : reviewState === 'stopped' ? 'Stopped · see why' : lesson.preparation === 'ready' ? 'Ready' : 'Outline';
+  const holdHint: Record<ReviewHold, string> = {
+    claims: 'Some claims could not be verified. Open the lesson to see each one with what was compared, and resolve it.',
+    audit_stop: 'No claim needs you; the Verifier audit could not finish. Open the lesson to see why and resume.',
+    audit: 'No claim needs you; the Verifier audit has not finished. Open the lesson to resume it.',
+    resolved: 'Every claim is resolved. Open the lesson and choose Resume verification.',
+  };
   const showReview = needsReview || (Boolean(review.data) && lesson.preparation === 'outline' && Boolean(activeJob));
   const reviewPanel = showReview && <LessonClaimReviewPanel programId={program.summary.id} lessonId={lesson.id} courseRevision={program.summary.revision}
     stoppedAt={holdingJob?.finishedAt ?? null} jobActive={Boolean(activeJob)} lessonAnchor={lesson.preparation === 'ready' ? `lesson-${lesson.id}-section-` : null} />;
@@ -88,7 +100,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
               <span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span>
             </StudyTangentSelection>
           </span>
-          {needsReview && !expanded && <span className="mt-2 block text-xs leading-5 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. Open the lesson to see it and retry.' : 'Some claims could not be verified. Open the lesson to see each one with what was compared, and resolve it.'}</span>}
+          {needsReview && !expanded && <span className="mt-2 block text-xs leading-5 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. Open the lesson to see it and retry.' : holdHint[hold]}</span>}
           <span className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"><span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 ${needsReview ? 'border border-accent/50 font-semibold text-text-primary' : 'bg-background'}`}>{needsReview && <ClipboardCheck size={12} aria-hidden="true" />}{statusLabel}</span><span className="shrink-0 whitespace-nowrap">{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></span>
         </span>
         <span className="mt-2 shrink-0 text-xs text-text-muted">{expanded ? 'Close' : 'Open'}</span>
