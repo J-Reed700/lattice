@@ -1,6 +1,7 @@
 //! Adapts desktop composition to the explicit chat workflow contracts.
 use crate::features::conversation::chat::ports::*;
 use crate::features::conversation::repository::ConversationRepository;
+use crate::features::explorer::prompt::ExplorerTurn as FolderTurn;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::interfaces::di::Container;
 use async_trait::async_trait;
@@ -117,13 +118,14 @@ impl ChatStorage for Container {
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
     ) -> Option<ExplorerTurn> {
-        ExplorerTurn::resolve(
+        FolderTurn::resolve(
             self.db_pool(),
             self.folder_index().map(Arc::as_ref),
             conversation_id,
             focus,
         )
         .await
+        .map(|turn| Arc::new(turn) as ExplorerTurn)
     }
 }
 
@@ -180,6 +182,14 @@ impl ChatRetrieval for Container {
     }
     fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
         Arc::clone(self.ai.planner_health())
+    }
+
+    fn query_interpreter(
+        &self,
+        llm: Arc<dyn LLMPort>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Arc<dyn lattice_core::application::ports::query_interpreter::QueryInterpreter> {
+        Arc::new(crate::features::search::hyde::HyDEService::new(llm).with_cancellation(cancel))
     }
 }
 

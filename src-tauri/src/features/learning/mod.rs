@@ -83,3 +83,5 @@ mod tests;
 mod consistency_tests;
 #[cfg(test)]
 mod content_caps_tests;
+#[cfg(test)]
+mod module_test_tests;

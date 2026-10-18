@@ -38,8 +38,8 @@ use crate::features::conversation::chat::{
     source_snapshots, web_steps, ChatEventSink, ChatStreamEventDto, RetrievalTraceDto,
 };
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::explorer::tools::is_explorer_tool;
 use futures::{FutureExt, StreamExt};
+use lattice_core::application::contracts::tools::explorer::is_explorer_tool;
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;

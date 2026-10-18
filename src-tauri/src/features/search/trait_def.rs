@@ -9,9 +9,6 @@ use lattice_core::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
     SearchResultDto,
 };
-// Temporary: chat's test runtime still names the trait at this path.
-#[cfg(test)]
-pub(crate) use lattice_core::application::ports::library_search::LibrarySearchTrait;
 use lattice_core::shared::error::Result;
 
 #[async_trait]

@@ -96,8 +96,8 @@ pub(super) async fn insert_program(
             .iter()
             .filter(|r| r.selected_index == r.correct_index)
             .count() as i64;
-        sqlx::query("INSERT INTO learning_attempts(id,program_id,module_id,lesson_id,kind,correct,total,answers_json,results_json,submitted_at,payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&attempt.id).bind(&summary.id).bind(&attempt.module_id).bind(&attempt.lesson_id).bind(crate::features::learning::repository::assessment(attempt.kind.clone())).bind(correct).bind(result_rows.len() as i64).bind(json_string(&answers)?).bind(json_string(&result_rows)?).bind(attempt.submitted_at).bind("imported").execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_attempts(id,program_id,module_id,lesson_id,kind,correct,total,answers_json,results_json,submitted_at,payload_hash,covered_lessons,module_lessons) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(&attempt.id).bind(&summary.id).bind(&attempt.module_id).bind(&attempt.lesson_id).bind(crate::features::learning::repository::assessment(attempt.kind.clone())).bind(correct).bind(result_rows.len() as i64).bind(json_string(&answers)?).bind(json_string(&result_rows)?).bind(attempt.submitted_at).bind("imported").bind(attempt.coverage.map(|c| c.covered_lessons)).bind(attempt.coverage.map(|c| c.module_lessons)).execute(&mut *tx).await.map_err(db)?;
     }
     Ok(())
 }

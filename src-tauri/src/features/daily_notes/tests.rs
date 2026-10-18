@@ -13,11 +13,12 @@ use sqlx::SqlitePool;
 use super::capture_store::capture_reference;
 use super::commands::{
     append_sources_and_remap_citations, appended_capture, capture_snippet, hydrate_workspace_note,
-    row_to_dto, WorkspaceNoteDto,
+    row_to_dto,
 };
 use super::ports::{ArchivedWebPage, LinkedConversationArchive};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository;
+use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::application::contracts::notes::{VaultNoteUpsert, WorkspaceNoteRecord};
 use lattice_core::application::contracts::sources::{
     SourceChunkExcerptDto, SourceDto, WebSnapshotDto,

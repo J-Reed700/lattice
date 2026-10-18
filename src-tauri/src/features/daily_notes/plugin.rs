@@ -10,9 +10,10 @@ use crate::features::daily_notes::commands::{
     CaptureReferenceResultDto, CreateWorkspaceNoteRequestDto, DailyNoteCompatDto,
     DailyNoteCursorRequestDto, DailyNotesRangeRequestDto, DeleteWorkspaceNoteRequestDto,
     ListWorkspaceNotesRequestDto, ListWorkspaceNotesResponseDto, QuickCaptureResultDto,
-    UpdateDailyNoteContentRequestDto, WorkspaceNoteDto,
+    UpdateDailyNoteContentRequestDto,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{

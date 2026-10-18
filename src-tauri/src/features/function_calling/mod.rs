@@ -30,11 +30,3 @@ pub use trait_def::{FunctionExecutorTrait, FunctionRegistryTrait};
 
 #[cfg(test)]
 pub mod mocks;
-
-/// Temporary: chat's test runtime still names the tool vocabulary at this path.
-#[cfg(test)]
-pub(crate) mod domain {
-    pub(crate) use lattice_core::application::contracts::tools::{
-        FunctionCall, FunctionResult, ToolDefinition,
-    };
-}
