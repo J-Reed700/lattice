@@ -728,3 +728,39 @@ The browser fallback for reference reads used to return flat paragraph text stam
 - **Archive unwrapping is core's** (`Origin::of_url`); web has no archive module. `dates.archived_at` comes from `origin.archived`.
 
 **Precedence (first that parses wins; each present-but-unparsable field is a `DateBasis::Malformed { field }`).** Published: JSON-LD `datePublished` → `article:published_time` → meta (`datePublished` itemprop, `date`, `dc.date`, `dc.date.issued`, `dcterms.date|issued|created`, `citation_publication_date`, `citation_date`, `pubdate`, `publishdate`) → `time[itemprop~=datePublished]`, `time[pubdate]`, `article time[datetime]`. Modified: JSON-LD `dateModified` → `article:modified_time`, `og:updated_time` → meta (`dateModified`, `dc.date.modified`, `dcterms.modified`, `http-equiv=last-modified`) → `time[itemprop~=dateModified]`. Publisher: JSON-LD `publisher` (content nodes first, untyped `@id` references resolved to the typed node on the page) → `dc.publisher`/`dcterms.publisher`/`citation_publisher` → microdata `itemprop=publisher` → the first JSON-LD organisation node. Author: JSON-LD `author`/`creator` → `author`/`dc.creator`/`dcterms.creator`/`citation_author` → `article:author` → microdata → `rel=author`. Values are cleaned (control characters removed, whitespace collapsed) and otherwise kept as declared: no caps, since oversized metadata is core's `OversizedMetadata` flag.
+
+## As-built notes: P3 learning store + capture (2026-10-18)
+
+Branch `feat/provenance-store` (P1 contracts and rules, P2 web, the evidence-fix merge, then P1 `4e694074`). Migration `20261018120000_source_provenance_and_trust.sql`, after L0's `20261017150000` and main's `20261017130000`.
+
+**Where it is.** `learning/references/trust/{mod, rows, repository, capture, overrides, pack}.rs` with `{repository, capture, overrides, migration}_tests.rs` and `test_support.rs`; DTOs in `learning/dto/trust.rs` (types only, for P6); the pack round trip in `portability/pack_tests/source_trust.rs`. `SqliteSourceTrustStore::new(pool)` implements the core port; no DI module changes.
+
+**The hook.** `trust::capture::record(tx, &CapturedVersion { program_id, source_id, version_id, kind, title, resolved_url, text, acquired_at_ms }, &signals)` writes the provenance row and the version's relations in the caller's transaction. `CapturedLearningSource` carries a required `signals` field, so no capture can omit them. Called from every place a version row is inserted:
+
+| Insert site | Capture paths behind it | Signals |
+|---|---|---|
+| `source_library/capture.rs` `add` | user link (`source_workflows.rs`), user document and pasted text (`plugin/sources.rs`), lesson research (`content_verification/research.rs` via `web_research::capture`) | page signals from `fetch_reference_page`; `document_signals`; `pasted_signals` (the typed publisher is the declared origin) |
+| `source_library/capture.rs` `refresh` | refresh command, before-use refresh (`sources.rs`) | page signals |
+| `repository.rs` `insert_source` | course creation and outline drafts with initial references (`sources.rs` documents and URLs, outline references) | the reference's signals; a seed without a capture records `NotExtracted { SEED_WITHOUT_CAPTURE }` |
+| `source_library/lifecycle.rs` `reimport_source` | restoring a removed source | the restored version's signals, carried forward (else `NotExtracted { NO_PRIOR_PROVENANCE }`); sketch and links of the new text |
+
+Capture paths now fetch with `fetch_reference_page` (the test fakes keep `fetch_reference_content`; the default returns `NotExtracted`). `publisher` = the declared publisher, else the site name, skipping a name over the column's 180 characters (the signals keep it whole); documents have none; pasted text keeps what the user typed. `grep "publisher: None"` in learning now matches only test fixtures and a DTO literal in a test.
+
+**Relations at capture.** `page_relations` against the active versions of the course's other sources (`CopyOf`/`ContainsCopyOf`); `ArchiveOf` when the origin unwrapped an archive; `CanonicalOf` from `PageSignals.canonical_elsewhere` (P1 `4e694074`; P2's reader now sets it, so no P7 TODO remains). Archive and canonical targets resolve to a captured version of another source when one has that URL, else stay URLs.
+
+**Deviations from §16 (code beats doc).**
+
+- Versions are keyed by `(program_id, id)`, so every reference to one is a composite foreign key; `source_provenance` is keyed `(source_version_id, program_id)`.
+- `source_provenance` gains `site` (`Origin::site()`: what site overrides are keyed by, and how an override finds the versions it covers) and `origin_json` (the whole `Origin`, so the row round-trips); `sketch` is checked to be 512 bytes.
+- `source_subject_authority` gains `input_sha256` and the token columns; `claim_profiles` is keyed by `input_sha256`, not `statement_sha256`, because P1's `claim_profile_key` hashes the statement with the offered subject classes, and gains the token columns. Without them `StoredJudgement` would not round-trip.
+- `source_relations`: exactly one of `to_version_id`/`to_url`; the edge index includes `program_id`.
+- `source_trust_overrides` follows Josh's three scopes, not §16's two: `source` (course + source, any level), `site` (registrable domain, a **standing** in its own column, never a level), `site_subject` (domain + class key + class JSON, any level). A per-scope CHECK fixes which columns each scope fills, and a second CHECK states the rule: `primary` only for `source` or `site_subject`. One override per scope key via partial unique indexes; a source override goes with its source.
+- `source_trust_outcomes.right` is `decision_right` (`RIGHT` is an SQL keyword); vocabularies are CHECKed against the core enums (a test compares each list with `ALL`).
+- Trust-table times are unix seconds (the domain's clock); `extracted_at` is the version's `acquired_at` converted from the library's milliseconds.
+- The row's `links` are read from the saved `full_text` with core's `markdown_links`, so their offsets index the stored text exactly; web signals keep the reader's own links.
+- The pack is a new section `sources/trust.json` (`PackSection::SourceTrust`, `SOURCE_TRUST_ENTRY`): provenance rows, relations with their detection time, source overrides. This touched `pack/sections.rs`, `pack_repository/{entries.rs, source_entries.rs}` beyond `export.rs`/`importers.rs`, because the codec reserves paths per section. A copy remaps version, source and claim ids, and a pasted origin follows its version's new id.
+- `LibraryDocumentText` gains `mime_type` (core port and the search use case), since `DocumentSignals.mime_type` has no other honest source; `page_count` stays `None`.
+
+**Overrides reopening.** `trust::overrides::{set, clear, preview}` answer with the versions an override covers (a source's versions; a site's versions in every course, for both site scopes). The reopen itself (`ReopenCause::TrustChanged`) is P5's ledger work; P6's menu counts the same versions.
+
+**Not done here.** `lessons/claim_profiles.rs` (the per-unit profile runner) is not written: it runs P1's `claim_profile` service, which is not committed on `feat/source-provenance` yet; the store side (`claim_profile`, `save_claim_profiles`) is ready for it.
