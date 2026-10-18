@@ -2,7 +2,8 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Check, CheckBasis, CheckResult, Checker, ClaimState, ReopenCause, VerdictKind, MACHINE_ATTEMPTS,
+    Check, CheckBasis, CheckResult, Checker, ClaimState, GateVerdict, ReopenCause, TrustAssessment,
+    TrustCause, VerdictKind, MACHINE_ATTEMPTS,
 };
 
 /// The replayed position after an event: the state, plus what the rules
@@ -17,6 +18,9 @@ pub(super) struct Cursor {
     pub(super) researched: bool,
     /// The latest failing verdict from either checker; cleared by Supported.
     pub(super) latest_failure: Option<VerdictKind>,
+    /// What the provenance gate weighed for the latest local check, when
+    /// the gate decided it; cleared by every other local check.
+    pub(super) trust: Option<TrustAssessment>,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {
@@ -44,13 +48,14 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
 /// budget for the kinds a rewrite or research can address.
 fn first_failure(kind: VerdictKind, reason: String) -> ClaimState {
     match kind {
-        VerdictKind::Unsupported | VerdictKind::Contradicted | VerdictKind::NoSource => {
-            ClaimState::Open {
-                kind,
-                reason,
-                machine_attempts_left: MACHINE_ATTEMPTS,
-            }
-        }
+        VerdictKind::Unsupported
+        | VerdictKind::Contradicted
+        | VerdictKind::NoSource
+        | VerdictKind::InsufficientStanding { .. } => ClaimState::Open {
+            kind,
+            reason,
+            machine_attempts_left: MACHINE_ATTEMPTS,
+        },
         VerdictKind::CouldNotJudge
         | VerdictKind::GeneralKnowledgeProposed
         | VerdictKind::Disputed { .. } => queued(kind, reason),
@@ -94,16 +99,12 @@ fn after_machine_failure(
         return first_failure(kind, reason);
     }
     match kind {
-        VerdictKind::Unsupported | VerdictKind::Contradicted if charged => {
-            charge(kind, reason, machine_attempts_left)
-        }
-        VerdictKind::Unsupported | VerdictKind::Contradicted if machine_attempts_left > 0 => {
-            ClaimState::Open {
-                kind,
-                reason,
-                machine_attempts_left,
-            }
-        }
+        kind if kind.is_repairable() && charged => charge(kind, reason, machine_attempts_left),
+        kind if kind.is_repairable() && machine_attempts_left > 0 => ClaimState::Open {
+            kind,
+            reason,
+            machine_attempts_left,
+        },
         VerdictKind::NoSource if !cursor.researched => ClaimState::Open {
             kind,
             reason,
@@ -129,6 +130,8 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
         }
         Checker::Local { model } => model.clone(),
     };
+    // The gate's assessment, if it decided this check, follows it.
+    cursor.trust = None;
     let charged = std::mem::take(&mut cursor.repair_pending);
     let new_evidence = !charged
         && cursor
@@ -205,5 +208,60 @@ fn apply_verifier(state: &mut ClaimState, result: &CheckResult, reason: &str) {
             reason.to_string(),
         ),
         closed => reopened(ReopenCause::VerifierDispute, closed.clone()),
+    };
+}
+
+/// The gate's re-decision after a trust change (source provenance §18.7):
+/// an insufficient claim the change made sufficient is verified; a verified
+/// one it made insufficient is reopened for the user; a claim reopened by an
+/// earlier trust change goes back to what it was once its support suffices
+/// again. A failing claim keeps its owner and its attempts, with the new
+/// failure and reason. The ledger allows the event only on a claim whose
+/// state is the gate's ([`super::ClaimLedgerEntry::redecidable`]).
+pub(super) fn redecided(
+    cursor: &mut Cursor,
+    trust: &TrustAssessment,
+    reason: &str,
+    cause: &TrustCause,
+) {
+    let verdict = trust.verdict();
+    cursor.latest_failure = match &verdict {
+        GateVerdict::Sufficient => None,
+        GateVerdict::Fails(kind) => Some(kind.clone()),
+    };
+    cursor.trust = Some(trust.clone());
+    let verified = || ClaimState::ResolvedByEvidence {
+        source_version_id: trust.supported.source_version_id.clone(),
+        supporting_quote: trust.supported.supporting_quote.clone(),
+    };
+    let state = std::mem::replace(&mut cursor.state, ClaimState::Unchecked);
+    cursor.state = match (state, verdict) {
+        (ClaimState::Open { .. } | ClaimState::Queued { .. }, GateVerdict::Sufficient) => {
+            verified()
+        }
+        (
+            ClaimState::Open {
+                machine_attempts_left,
+                ..
+            },
+            GateVerdict::Fails(kind),
+        ) => ClaimState::Open {
+            kind,
+            reason: reason.to_owned(),
+            machine_attempts_left,
+        },
+        (ClaimState::Queued { .. }, GateVerdict::Fails(kind)) => queued(kind, reason.to_owned()),
+        (
+            ClaimState::Reopened {
+                cause: ReopenCause::TrustChanged(_),
+                previous,
+            },
+            GateVerdict::Sufficient,
+        ) => *previous,
+        (state @ ClaimState::ResolvedByEvidence { .. }, GateVerdict::Fails(_))
+        | (state @ ClaimState::Reopened { .. }, GateVerdict::Fails(_)) => {
+            reopened(ReopenCause::TrustChanged(cause.clone()), state)
+        }
+        (state, _) => state,
     };
 }
