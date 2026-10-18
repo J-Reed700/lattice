@@ -63,14 +63,13 @@ pub async fn reassess_source(
         .await
 }
 
-/// Profiles one claim of a lesson review again, under the subject classes
+/// Profiles one claim of a course's lesson review again, under the subject classes
 /// the user's overrides name now (§12.3), and saves it over the cached one.
 /// Answers with the new profile.
 pub async fn reprofile_claim(
     store: &SqliteSourceTrustStore,
     llm: &dyn LLMPort,
     program_id: &str,
-    lesson_id: &str,
     claim_id: &str,
 ) -> Result<LearningClaimProfileDto> {
     let row = sqlx::query(
@@ -79,15 +78,16 @@ pub async fn reprofile_claim(
          JOIN learning_lesson_reviews r ON r.lesson_id = c.lesson_id \
          JOIN learning_lessons l ON l.id = c.lesson_id AND l.program_id = r.program_id \
          JOIN learning_programs p ON p.id = r.program_id \
-         WHERE c.claim_id=? AND c.lesson_id=? AND r.program_id=?",
+         WHERE c.claim_id=? AND r.program_id=?",
     )
     .bind(claim_id)
-    .bind(lesson_id)
     .bind(program_id)
     .fetch_optional(store.pool())
     .await
     .map_err(db)?
-    .ok_or_else(|| AppError::NotFound("This claim is not in the lesson's review.".into()))?;
+    .ok_or_else(|| {
+        AppError::NotFound("This claim is not in any of the course's lesson reviews.".into())
+    })?;
     let statement: String = row.try_get("statement").map_err(db)?;
     let unit_index: i64 = row.try_get("unit_index").map_err(db)?;
     let lesson_title: String = row.try_get("lesson_title").map_err(db)?;

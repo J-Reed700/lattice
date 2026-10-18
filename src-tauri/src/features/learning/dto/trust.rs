@@ -436,7 +436,7 @@ pub struct ReassessLearningSourceTrustRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct ReprofileLearningClaimRequestDto {
     pub program_id: String,
-    pub lesson_id: String,
+    /// A claim of one of the course's lesson reviews.
     pub claim_id: String,
 }
 

@@ -133,7 +133,6 @@ pub async fn reprofile_learning_claim(
         &store(&container),
         pin.llm.as_ref(),
         &request.program_id,
-        &request.lesson_id,
         &request.claim_id,
     )
     .await?)
