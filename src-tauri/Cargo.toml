@@ -175,6 +175,9 @@ infer = "0.15"
 # Header-only width/height of a fetched chat picture (no decoding), for the
 # decode-bomb bound in features/web/images.
 imagesize = "0.13"
+# Decode, orient, fit and re-encode a chat picture a model will see
+# (features/web/images/prepare.rs); decoders for the stored formats only.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"

@@ -286,8 +286,7 @@ async fn the_chat_stop_cancels_a_running_research_job() {
         None,
         Some(true),
         attempt.request.request_id.clone(),
-        None,
-        None,
+        turn::MessageAttachments::default(),
         None,
         silent(),
     )

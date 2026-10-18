@@ -17,7 +17,7 @@ use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
 use lattice_core::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
-use lattice_core::domain::conversation::ConversationMessage;
+use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -44,13 +44,23 @@ fn transcript_passages(messages: &[ConversationMessage]) -> Vec<EvidencePassage>
         .map(|message| EvidencePassage {
             id: message.id.clone(),
             label: format!("{}:", message.role.to_string().to_uppercase()),
-            // A picture reaches the summary as its caption.
-            text: lattice_core::shared::markdown_media::images_to_captions(&message.content)
-                .trim()
-                .to_string(),
+            // A picture reaches the summary as its caption, and a question's
+            // attached pictures as caption lines.
+            text: replayed_text(message),
             rank: 1.0,
         })
         .collect()
+}
+
+/// A message as the summary model reads it: pictures as captions.
+fn replayed_text(message: &ConversationMessage) -> String {
+    let text = lattice_core::shared::markdown_media::images_to_captions(&message.content);
+    let pictures = if message.role == MessageRole::User {
+        lattice_core::shared::markdown_media::attached_picture_names(message.metadata.as_deref())
+    } else {
+        Vec::new()
+    };
+    lattice_core::shared::markdown_media::with_picture_captions(text.trim(), &pictures)
 }
 
 /// The transcript in parts that each fit `room` tokens, in order, at message
@@ -596,6 +606,28 @@ mod tests {
         assert_eq!(
             pictured[0].text,
             "It flew in 1969.\n\n[Picture: Saturn V lifting off]"
+        );
+    }
+
+    #[test]
+    fn a_question_reaches_the_summary_with_its_attached_pictures_named() {
+        use lattice_core::shared::types::ConversationId;
+        let question = ConversationMessage {
+            id: "asked".into(),
+            conversation_id: ConversationId::new(),
+            role: MessageRole::User,
+            content: "Which bird is this?".into(),
+            tokens: 0,
+            created_at: chrono::Utc::now(),
+            metadata: Some(
+                r#"{"images":[{"caption":"bird.jpg","originalName":"IMG_2041.jpg"}]}"#.into(),
+            ),
+            status: "completed".into(),
+        };
+        let passages = transcript_passages(&[question]);
+        assert_eq!(
+            passages[0].text,
+            "Which bird is this?\n[Picture attached: IMG_2041.jpg]"
         );
     }
 

@@ -144,6 +144,7 @@ pub async fn chat_with_conversation(
         request_id,
         attachment_names,
         attachment_document_ids,
+        None,
         window,
     )
     .await

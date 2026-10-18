@@ -24,6 +24,7 @@ fn message(sequence: i64, role: SourceRole, content: &str) -> SourceMessage {
         content: content.to_string(),
         content_digest: compute_digest(content),
         status: "completed".into(),
+        pictures: Vec::new(),
     }
 }
 

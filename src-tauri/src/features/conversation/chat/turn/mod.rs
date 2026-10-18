@@ -30,6 +30,7 @@ mod classify;
 mod finalize;
 mod generate;
 mod message;
+mod pictures;
 mod prepare;
 mod research;
 mod retrieve;
@@ -41,6 +42,15 @@ mod pin_tests;
 #[cfg(test)]
 mod tests;
 
+/// What the reader attached to a message: the files by name, the library
+/// documents they became, and the pictures staged for the model to see.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MessageAttachments {
+    pub names: Vec<String>,
+    pub document_ids: Vec<String>,
+    pub image_ids: Vec<String>,
+}
+
 /// What the caller asked of a turn.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +61,10 @@ pub(super) struct TurnRequest {
     pub(super) request_id: Option<String>,
     pub(super) attachment_names: Vec<String>,
     pub(super) attachment_document_ids: Vec<String>,
+    /// Pictures the reader attached, by `chat_images` id. Their pixels ride
+    /// in this turn's request only.
+    #[serde(default)]
+    pub(super) attachment_image_ids: Vec<String>,
     /// A model for this request only, over the chat's own choice. Never
     /// persisted on the chat; a research turn carries it in its job so a
     /// resumed turn answers with the same model.
@@ -80,8 +94,7 @@ pub(super) async fn run_turn(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
-    attachment_names: Option<Vec<String>>,
-    attachment_document_ids: Option<Vec<String>>,
+    attachments: MessageAttachments,
     model: Option<ModelRef>,
     emit: ChatEventSink,
 ) -> Result<ChatResponse> {
@@ -120,8 +133,9 @@ pub(super) async fn run_turn(
         message,
         tool_preferences,
         request_id,
-        attachment_names: attachment_names.unwrap_or_default(),
-        attachment_document_ids: attachment_document_ids.unwrap_or_default(),
+        attachment_names: attachments.names,
+        attachment_document_ids: attachments.document_ids,
+        attachment_image_ids: attachments.image_ids,
         model,
     };
     if SearchFlags::from_preferences(request.tool_preferences.as_ref()).deep_research_mode {
@@ -168,6 +182,7 @@ pub(super) async fn run_stages(
         &request.message,
         request.request_id.clone(),
         request.model.as_ref(),
+        &request.attachment_image_ids,
         preferences,
         parent.as_ref(),
         emit,
@@ -210,7 +225,7 @@ pub(super) async fn run_stages(
     );
     let Some(journal) = journal else {
         let persist_start = Instant::now();
-        let (user_message_id, message_tokens) = persist_question(&turn, &prompt).await?;
+        let (user_message_id, message_tokens) = persist_question(container, &turn, &prompt).await?;
         metrics.persist_user_message_ms = elapsed_ms(persist_start);
         // From here a failure leaves the saved question retryable rather than
         // pending forever, so every error goes through the same cleanup.
@@ -261,7 +276,7 @@ pub(super) async fn run_stages(
     )
     .await?;
     let persist_start = Instant::now();
-    let (user_message_id, message_tokens) = persist_question(&turn, &prompt).await?;
+    let (user_message_id, message_tokens) = persist_question(container, &turn, &prompt).await?;
     metrics.persist_user_message_ms = elapsed_ms(persist_start);
     let assembled = AssembledTurn {
         user_message_id: user_message_id.clone(),
@@ -412,16 +427,22 @@ async fn resume_stages(
 
 /// The question saved pending on the thread, and what it costs in tokens.
 async fn persist_question(
+    container: &dyn ChatRuntime,
     turn: &prepare::PreparedTurn,
     prompt: &assemble::RenderedPrompt,
 ) -> Result<(String, usize)> {
     persist_user_message_pending(
+        container,
         &turn.conv_service,
         &turn.conv_id,
         &turn.turn_id,
         &turn.message,
-        &prompt.attachment_names,
-        &prompt.attachment_ids,
+        super::persistence::QuestionAttachments {
+            names: &prompt.attachment_names,
+            document_ids: &prompt.attachment_ids,
+            image_ids: &turn.picture_ids(),
+            pictures_seen: prompt.pictures.seen,
+        },
         &turn.llm,
     )
     .await

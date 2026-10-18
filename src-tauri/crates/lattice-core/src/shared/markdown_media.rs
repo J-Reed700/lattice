@@ -1,11 +1,17 @@
-//! Pictures and fenced blocks in assistant markdown.
+//! Pictures and fenced blocks in assistant markdown, and the pictures a
+//! reader attached to their own message.
 //!
 //! An answer shows a stored picture as `![caption](img-N)`, where `img-N` is
 //! the ref `find_image` returned. Persistence keeps the refs the answer
 //! actually wrote, memory and handoff read a caption in the picture's place,
 //! and the grounding check reads the answer without code fences (diagrams)
 //! or pictures. Text inside a fenced block is code, never a picture.
-//! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.2, §7.11.
+//!
+//! A user message's attached pictures live in its `metadata.images`; every
+//! later reader (history, memory, handoff) reads one caption line per
+//! picture, never the pixels, which ride only in the turn they were sent in.
+//! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.2, §7.11;
+//! docs/design/2026-10-17-chat-vision.md §11.
 
 /// The `img-N` targets of `![…](img-N)` outside code fences, in the order
 /// the answer first writes them, each once.
@@ -58,6 +64,72 @@ pub fn strip_fences_and_images(markdown: &str) -> String {
         replace_images(line, &mut out, |_| String::new());
     });
     out
+}
+
+/// One `[Picture attached: name]` line per picture, for a reader that sees
+/// the message's text but not its pictures. Empty when there are none.
+pub fn picture_captions(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|name| format!("[Picture attached: {}]", one_line(name)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The names of the pictures a message's `metadata` JSON lists under
+/// `images`: each one's `originalName` (the attached file), else its
+/// `caption`. Empty for no metadata, unreadable metadata or no pictures.
+pub fn attached_picture_names(metadata: Option<&str>) -> Vec<String> {
+    let Some(value) = metadata.and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(images) = value.get("images").and_then(|images| images.as_array()) else {
+        return Vec::new();
+    };
+    images
+        .iter()
+        .filter_map(|image| {
+            let named = |key: &str| {
+                image
+                    .get(key)
+                    .and_then(|name| name.as_str())
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+            };
+            named("originalName")
+                .or_else(|| named("caption"))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// A user message as a reader that cannot see its pictures reads it: the
+/// text, then one caption line per attached picture.
+pub fn with_picture_captions(text: &str, pictures: &[String]) -> String {
+    if pictures.is_empty() {
+        return text.to_string();
+    }
+    let captions = picture_captions(pictures);
+    if text.trim().is_empty() {
+        captions
+    } else {
+        format!("{}\n{captions}", text.trim_end())
+    }
+}
+
+/// `text` with line breaks and brackets that would end a caption line
+/// replaced.
+fn one_line(text: &str) -> String {
+    text.trim()
+        .chars()
+        .map(|c| match c {
+            '\n' | '\r' => ' ',
+            '[' => '(',
+            ']' => ')',
+            c => c,
+        })
+        .collect()
 }
 
 /// `img-` followed by one or more ASCII digits, nothing else.
@@ -222,6 +294,44 @@ fn replace_images(line: &str, out: &mut String, replacement: impl Fn(&str) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picture_captions_writes_one_line_per_picture() {
+        assert_eq!(picture_captions(&[]), "");
+        assert_eq!(
+            picture_captions(&["chart.png".to_string(), "a [draft]\nscan".to_string()]),
+            "[Picture attached: chart.png]\n[Picture attached: a (draft) scan]"
+        );
+    }
+
+    #[test]
+    fn attached_picture_names_prefers_the_file_name_over_the_caption() {
+        let metadata = r#"{"attachments":["notes.pdf"],"images":[
+            {"id":"a","caption":"chart.png","originalName":"Q3 chart.png"},
+            {"id":"b","caption":"A heron"},
+            {"id":"c","caption":"  "}]}"#;
+        assert_eq!(
+            attached_picture_names(Some(metadata)),
+            vec!["Q3 chart.png".to_string(), "A heron".to_string()]
+        );
+        assert!(attached_picture_names(Some("{}")).is_empty());
+        assert!(attached_picture_names(Some("not json")).is_empty());
+        assert!(attached_picture_names(None).is_empty());
+    }
+
+    #[test]
+    fn with_picture_captions_appends_after_the_text() {
+        let pictures = vec!["plot.png".to_string()];
+        assert_eq!(
+            with_picture_captions("What does this show?\n", &pictures),
+            "What does this show?\n[Picture attached: plot.png]"
+        );
+        assert_eq!(
+            with_picture_captions("", &pictures),
+            "[Picture attached: plot.png]"
+        );
+        assert_eq!(with_picture_captions("Hi", &[]), "Hi");
+    }
 
     #[test]
     fn image_refs_lists_each_ref_once_in_order() {

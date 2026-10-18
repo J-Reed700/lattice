@@ -30,6 +30,8 @@ pub(super) struct RenderedPrompt {
     pub(super) has_grounded_context: bool,
     pub(super) attachment_names: Vec<String>,
     pub(super) attachment_ids: Vec<String>,
+    /// The attached pictures, ready for the request's final user message.
+    pub(super) pictures: super::pictures::CarriedPictures,
 }
 
 impl RenderedPrompt {
@@ -52,6 +54,7 @@ impl RenderedPrompt {
             has_grounded_context: false,
             attachment_names: Vec::new(),
             attachment_ids: Vec::new(),
+            pictures: super::pictures::CarriedPictures::default(),
         }
     }
 
@@ -92,6 +95,7 @@ pub(super) fn render_prompt(
     let prompt_build_start = Instant::now();
     let CarriedMaterial {
         attachments,
+        pictures,
         explorer_context,
         attachment_names,
         attachment_ids,
@@ -286,6 +290,7 @@ pub(super) fn render_prompt(
         has_grounded_context,
         attachment_names,
         attachment_ids,
+        pictures,
     }
 }
 
@@ -406,6 +411,7 @@ pub(super) async fn plan_request(
     } else {
         turn.llm.count_tokens(&tool_loop::tool_schema_text(&tools))
     };
+    let picture_tokens = prompt.pictures.tokens;
     // Read once, so a compaction retry and every tool round carry the same day.
     let today = chrono::Local::now().date_naive();
     // The message without its evidence is what the plan charges as fixed;
@@ -436,7 +442,10 @@ pub(super) async fn plan_request(
                     system_policy: &system_policy,
                     current_input,
                     inline_evidence,
-                    tool_schema_tokens,
+                    // The attached pictures ride with every round as the
+                    // tool schemas do, and like them are not in the plan's
+                    // text, so both are charged as fixed tokens.
+                    tool_schema_tokens: tool_schema_tokens + picture_tokens,
                     document_evidence: Vec::new(),
                 },
                 turn.settings.llm.bounded_conversation_memory,
@@ -490,7 +499,7 @@ pub(super) async fn plan_request(
         prompt.keep_evidence(kept);
     }
 
-    Ok(match memory_turn {
+    let mut planned = match memory_turn {
         Some(memory_turn) => PlannedRequest {
             memory_usage: Some(serde_json::json!({
                 "items": memory_turn.plan.used_memory_ids,
@@ -521,7 +530,11 @@ pub(super) async fn plan_request(
             memory_usage: None,
             summary_refold: None,
         },
-    })
+    };
+    // Both paths end in the question as the final user message, and the
+    // pictures go with it: images ahead of the text, captions after it.
+    prompt.pictures.apply(&mut planned.input);
+    Ok(planned)
 }
 
 /// What the tool schemas a turn sends cost once its prompt carries evidence:

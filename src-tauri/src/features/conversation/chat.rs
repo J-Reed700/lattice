@@ -188,6 +188,7 @@ use prompt_settings::*;
 use routing::*;
 use tools::*;
 use turn::run_turn;
+pub use turn::MessageAttachments;
 
 /// Runs a turn no window watches, such as a part of a journal synthesis: its
 /// stream goes nowhere and only its answer is used.
@@ -204,8 +205,7 @@ pub(crate) async fn run_unwatched_turn(
         Some(tool_preferences),
         None,
         None,
-        None,
-        None,
+        MessageAttachments::default(),
         None,
         Arc::new(|_| Ok(())),
     )
@@ -293,6 +293,6 @@ fn generate_title(message: &str) -> String {
 }
 
 #[cfg(test)]
-mod test_runtime;
+pub(in crate::features::conversation) mod test_runtime;
 #[cfg(test)]
 mod tests;

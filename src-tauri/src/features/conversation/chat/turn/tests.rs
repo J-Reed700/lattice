@@ -44,6 +44,7 @@ fn prompt() -> RenderedPrompt {
         has_grounded_context: false,
         attachment_names: Vec::new(),
         attachment_ids: Vec::new(),
+        pictures: Default::default(),
     }
 }
 

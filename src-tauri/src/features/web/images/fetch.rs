@@ -9,10 +9,13 @@ use std::time::Instant;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 
-use super::{extension_for_mime, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS};
+use super::{extension_for_mime, MAX_IMAGE_PIXELS};
 use crate::features::web::services::stealth;
 use crate::features::web::services::web::{BoundedBody, BoundedFetchError, WebService};
 use crate::features::web::snapshots::store::sha256_hex;
+// The byte bound lives in lattice-core, so the conversation feature bounds
+// the files the reader attaches with the same number.
+use lattice_core::application::contracts::images::MAX_IMAGE_BYTES;
 
 /// Identifies the app to Wikimedia, whose API policy asks clients for an
 /// identifying agent. The Wikipedia tool sends the same value.
@@ -91,6 +94,12 @@ pub enum ImageRejected {
         width: u32,
         height: u32,
     },
+    /// The bytes passed the header checks but would not decode or encode.
+    Corrupt,
+    /// Even the model's smallest rendering costs more than `max_tokens`.
+    OverBudget {
+        max_tokens: u32,
+    },
 }
 
 impl std::fmt::Display for ImageRejected {
@@ -107,6 +116,10 @@ impl std::fmt::Display for ImageRejected {
             Self::Unreadable => f.write_str("the picture's size could not be read"),
             Self::TooManyPixels { width, height } => {
                 write!(f, "{width}×{height} is too many pixels to show safely")
+            }
+            Self::Corrupt => f.write_str("the picture could not be decoded"),
+            Self::OverBudget { max_tokens } => {
+                write!(f, "the picture cannot be shown within {max_tokens} tokens")
             }
         }
     }

@@ -13,11 +13,13 @@ use reqwest::header::HeaderMap;
 use sqlx::SqlitePool;
 
 use lattice_core::application::contracts::images::{
-    ChatImageDto, FindImageInput, FindImageOutput, FoundImage, ImageOrigin, NO_PICTURE_NOTE,
+    ChatImageDto, FindImageInput, FindImageOutput, FoundImage, ImageOrigin, PreparedImageDto,
+    NO_PICTURE_NOTE,
 };
 use lattice_core::application::ports::chat_images::{
     ChatImagesPort, CopiedMessage, ImageTurnScope,
 };
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
@@ -30,6 +32,8 @@ use super::gc::{ChatImageGc, ImageSweepReport};
 use super::repository::{ImageRepository, ImageRow, NewImageRow};
 use super::store::{new_id, ImageStore};
 use crate::features::web::services::web::{BoundedFetchError, MAX_PAGE_BODY_BYTES};
+
+mod attached;
 
 const PAGE_ACCEPT: &str = "text/html,application/xhtml+xml";
 
@@ -152,8 +156,11 @@ impl ChatImageService {
         match candidate.origin {
             ImageOrigin::WikimediaCommons => commons_headers(IMAGE_ACCEPT),
             // The page is the referrer a browser would send; sites that
-            // refuse hotlinks look for it.
-            ImageOrigin::Page => browser_headers(Some(&candidate.source_url), Some(IMAGE_ACCEPT)),
+            // refuse hotlinks look for it. A candidate is never an
+            // attachment, which is read from the reader's own disk.
+            ImageOrigin::Page | ImageOrigin::Attachment => {
+                browser_headers(Some(&candidate.source_url), Some(IMAGE_ACCEPT))
+            }
         }
     }
 
@@ -185,12 +192,13 @@ impl ChatImageService {
             width: image.width,
             height: image.height,
             caption,
-            source_url: candidate.source_url.clone(),
+            source_url: Some(candidate.source_url.clone()),
             source_title: candidate.source_title.clone(),
-            image_url: candidate.image_url.clone(),
+            image_url: Some(candidate.image_url.clone()),
             origin: candidate.origin,
             license: candidate.license.clone(),
             attribution: candidate.attribution.clone(),
+            original_name: None,
         };
         self.repository.insert(&row).await?;
         if let Err(error) = self.store.write(&id, image.ext, image.bytes).await {
@@ -234,7 +242,7 @@ fn found(row: &ImageRow) -> FoundImage {
         r#ref: row.image_ref.clone(),
         caption: row.caption.clone(),
         source_title: row.source_title.clone(),
-        source_url: row.source_url.clone(),
+        source_url: row.source_url.clone().unwrap_or_default(),
         license: row.license.clone(),
         width: u32::try_from(row.width).unwrap_or(0),
         height: u32::try_from(row.height).unwrap_or(0),
@@ -320,7 +328,10 @@ impl ChatImagesPort for ChatImageService {
             if rows.len() >= limit {
                 break;
             }
-            if let Some(row) = held.iter().find(|row| row.image_url == candidate.image_url) {
+            if let Some(row) = held
+                .iter()
+                .find(|row| row.image_url.as_deref() == Some(candidate.image_url.as_str()))
+            {
                 if !rows.iter().any(|kept| kept.id == row.id) {
                     rows.push(row.clone());
                 }
@@ -454,5 +465,62 @@ impl ChatImagesPort for ChatImageService {
     async fn list_for_message(&self, message_id: &str) -> Result<Vec<ChatImageDto>> {
         let rows = self.repository.for_message(message_id).await?;
         Ok(rows.iter().map(ImageRow::to_dto).collect())
+    }
+
+    async fn store_attachment(
+        &self,
+        scope: &ImageTurnScope,
+        file_name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ChatImageDto> {
+        let row = self.store_attached(scope, file_name, bytes).await?;
+        Ok(row.to_dto())
+    }
+
+    async fn prepared(
+        &self,
+        image_id: &str,
+        geometry: VisionGeometry,
+        max_tokens: Option<u32>,
+    ) -> Result<Option<PreparedImageDto>> {
+        self.prepare_cached(image_id, geometry, max_tokens).await
+    }
+
+    async fn rows_for_ids(
+        &self,
+        conversation_id: &str,
+        image_ids: &[String],
+    ) -> Result<Vec<ChatImageDto>> {
+        let rows = self
+            .repository
+            .in_conversation(conversation_id, image_ids)
+            .await?;
+        Ok(rows.iter().map(ImageRow::to_dto).collect())
+    }
+
+    async fn attach_ids_to_message(
+        &self,
+        conversation_id: &str,
+        image_ids: &[String],
+        message_id: &str,
+        request_id: &str,
+    ) -> Result<Vec<ChatImageDto>> {
+        let rows = self
+            .repository
+            .claim(conversation_id, image_ids, message_id, request_id)
+            .await?;
+        Ok(rows.iter().map(ImageRow::to_dto).collect())
+    }
+
+    async fn release_images(&self, conversation_id: &str, image_ids: &[String]) -> Result<()> {
+        let rows = self
+            .repository
+            .unclaimed_drafts(conversation_id, image_ids)
+            .await?;
+        self.release_rows(rows).await
+    }
+
+    async fn restage(&self, conversation_id: &str, image_id: &str) -> Result<ChatImageDto> {
+        Ok(self.restage_row(conversation_id, image_id).await?.to_dto())
     }
 }

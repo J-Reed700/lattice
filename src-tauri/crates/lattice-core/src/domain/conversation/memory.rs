@@ -586,6 +586,11 @@ pub struct SourceMessage {
     pub content_digest: String,
     /// `pending`, `completed` or `failed`, from the message row.
     pub status: String,
+    /// The names of the pictures the reader attached to this message, which
+    /// a replay names in caption lines; never part of `content` or its
+    /// digest. Empty for an answer.
+    #[serde(default)]
+    pub pictures: Vec<String>,
 }
 
 impl SourceMessage {

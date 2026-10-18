@@ -150,12 +150,18 @@ impl ContextWindowBuilder {
         for msg in messages.iter().rev().filter(|m| m.is_completed()) {
             // An answer's pictures replay as their captions: an `img-N` ref
             // belongs to the turn that stored it, and a later answer that
-            // copied one would show another turn's picture, or none.
+            // copied one would show another turn's picture, or none. A
+            // question's attached pictures replay as caption lines too: the
+            // pixels rode only in the turn they were sent in.
             let content = match msg.role {
                 MessageRole::Assistant => {
                     crate::shared::markdown_media::images_to_captions(&msg.content)
                 }
-                _ => msg.content.clone(),
+                MessageRole::User => crate::shared::markdown_media::with_picture_captions(
+                    &msg.content,
+                    &crate::shared::markdown_media::attached_picture_names(msg.metadata.as_deref()),
+                ),
+                MessageRole::System => msg.content.clone(),
             };
             let formatted = format!(
                 "{}: {}",
@@ -271,6 +277,36 @@ mod tests {
                 "User: Show me ![it](img-1)",
                 "Assistant: It flew.\n\n[Picture: Saturn V lifting off]",
             ]
+        );
+    }
+
+    /// A question's attached pictures replay as caption lines after its
+    /// text: the pixels rode only in the turn they were sent in.
+    #[test]
+    fn a_replayed_question_names_its_attached_pictures() {
+        use crate::domain::conversation::{ConversationAggregate, MessageRole};
+
+        let mut aggregate = ConversationAggregate::new("Chat".into(), None).unwrap();
+        aggregate
+            .add_message(MessageRole::User, "What is in this chart?".into(), 5)
+            .unwrap();
+        let mut messages = aggregate.messages().to_vec();
+        messages[0].metadata =
+            Some(r#"{"images":[{"caption":"q3.png","originalName":"Q3 revenue.png"}]}"#.into());
+        let aggregate = ConversationAggregate::from_persistence(
+            aggregate.conversation().clone(),
+            messages,
+            Vec::new(),
+            None,
+        );
+        let builder = ContextWindowBuilder::new(
+            Arc::new(EmptyConversationHistory),
+            100_000,
+            Arc::new(|text: &str| estimate_tokens(text)),
+        );
+        assert_eq!(
+            builder.build_from_aggregate(&aggregate),
+            ["User: What is in this chart?\n[Picture attached: Q3 revenue.png]"]
         );
     }
 }
