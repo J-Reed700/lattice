@@ -69,7 +69,7 @@ describe('RoleButton', () => {
     });
 
     it('is the fourth role, offered to chat models and not to embedding models', () => {
-      expect(ROLES.map((role) => role.id)).toEqual(['chat', 'utility', 'embedding', 'learning']);
+      expect(ROLES.map((role) => role.id)).toEqual(['chat', 'utility', 'embedding', 'learning', 'verifier']);
       const { unmount } = render(<RoleButton model={chatModel()} role={learningRole} />);
       expect(screen.getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'false');
       unmount();
@@ -97,6 +97,49 @@ describe('RoleButton', () => {
       context.llmSettings = undefined;
       render(<RoleButton model={chatModel()} role={learningRole} />);
       expect(screen.getByRole('button', { name: 'Learning' })).toBeDisabled();
+    });
+  });
+
+  describe('Verifier', () => {
+    const verifierRole = ROLES.find((role) => role.id === 'verifier')!;
+    const chatModel = (overrides: Partial<DownloadedModel> = {}): DownloadedModel => ({
+      ...embeddingModel(false), model_name: 'Qwen3.5-27B', model_id: 'qwen3.5-27b', model_type: 'chat', ...overrides,
+    });
+
+    beforeEach(() => {
+      context.llmSettings = makeAppSettings().llm;
+    });
+
+    it('is the fifth role, allows cloud models, and is offered to chat models only', () => {
+      expect(verifierRole.allowedTypes).toEqual(['language_model', 'chat', 'cloud']);
+      const { unmount } = render(<RoleButton model={chatModel()} role={verifierRole} />);
+      expect(screen.getByRole('button', { name: 'Verifier' })).toHaveAttribute('aria-pressed', 'false');
+      unmount();
+      render(<RoleButton model={embeddingModel(false)} role={verifierRole} />);
+      expect(screen.queryByRole('button', { name: 'Verifier' })).toBeNull();
+    });
+
+    it('reads its own model reference, not the Learning one', async () => {
+      context.llmSettings!.learningModel = { kind: 'local', model_id: 'qwen3.5-27b' };
+      context.llmSettings!.verifierModel = { kind: 'cloud', provider: 'anthropic', model: 'claude-x' };
+      render(<RoleButton model={chatModel()} role={verifierRole} />);
+      const button = screen.getByRole('button', { name: 'Verifier' });
+      expect(button).toHaveAttribute('aria-pressed', 'false');
+      await userEvent.click(button);
+      expect(assignRole).toHaveBeenCalledWith('qwen3.5-27b', 'verifier');
+    });
+
+    it('gives the role up from the row that holds it', async () => {
+      context.llmSettings!.verifierModel = { kind: 'local', model_id: 'qwen3.5-27b' };
+      render(<RoleButton model={chatModel()} role={verifierRole} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Verifier' }));
+      expect(assignRole).toHaveBeenCalledWith(null, 'verifier');
+    });
+
+    it('waits for Settings before it can be set', () => {
+      context.llmSettings = undefined;
+      render(<RoleButton model={chatModel()} role={verifierRole} />);
+      expect(screen.getByRole('button', { name: 'Verifier' })).toBeDisabled();
     });
   });
 });
