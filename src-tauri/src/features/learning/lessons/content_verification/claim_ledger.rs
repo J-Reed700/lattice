@@ -34,6 +34,8 @@ pub(in crate::features::learning) use observe::field_text;
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
 const PENDING_KEY: &str = "claim-ledger-v1:pending";
+/// The prefix of a job's result reference when lessons wait for review.
+const NEEDS_REVIEW_REF: &str = "needs_review:";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A repair sent for a claim, awaiting the pass that shows what became of
@@ -527,6 +529,18 @@ pub(in crate::features::learning) fn needs_review(claims: usize) -> AppError {
     ))
 }
 
+/// The lessons a job's result reference names as waiting for review: the
+/// inverse of [`review_outcome`].
+pub(in crate::features::learning) fn held_lessons(result_ref: &str) -> Option<Vec<String>> {
+    let ids = result_ref.strip_prefix(NEEDS_REVIEW_REF)?;
+    Some(
+        ids.split(',')
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
 /// A lesson of a preparation job that waits for the user's review.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::features::learning) struct HeldForReview {
@@ -574,7 +588,7 @@ pub(in crate::features::learning) fn review_outcome(held: &[HeldForReview]) -> (
             plural(held.len(), "lesson")
         )
     };
-    (format!("needs_review:{}", ids.join(",")), message)
+    (format!("{NEEDS_REVIEW_REF}{}", ids.join(",")), message)
 }
 
 #[cfg(test)]

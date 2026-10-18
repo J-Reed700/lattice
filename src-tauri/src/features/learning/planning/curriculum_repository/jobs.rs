@@ -248,7 +248,7 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, false).await
+        self.job_action(request, JobAction::Cancel).await
     }
 
     /// Saves a new attempt that inherits the job's saved work. The caller
@@ -257,13 +257,25 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, true).await
+        self.job_action(request, JobAction::Retry).await
+    }
+
+    /// Saves a new attempt of a completed job whose lessons wait for the
+    /// user's review (§6.2 Resume): it prepares the held lessons still in
+    /// outline from their saved drafts and checkpoints. Whether anything
+    /// changed since the job stopped is the caller's rule. The caller
+    /// dispatches it.
+    pub async fn continue_review_job(
+        &self,
+        request: &LearningGenerationJobActionRequestDto,
+    ) -> Result<LearningGenerationJob> {
+        self.job_action(request, JobAction::ContinueReview).await
     }
 
     async fn job_action(
         &self,
         request: &LearningGenerationJobActionRequestDto,
-        retry: bool,
+        action: JobAction,
     ) -> Result<LearningGenerationJob> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
@@ -271,7 +283,7 @@ impl LearningCurriculumRepository {
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,
-            if retry { "retry_job" } else { "cancel_job" },
+            action.operation_kind(),
             &payload,
             "Operation ID was reused with different job action data.",
         );
@@ -298,35 +310,58 @@ impl LearningCurriculumRepository {
         let old = JobStore::find_in(&mut tx, &request.job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        let result_id = if retry {
-            if !matches!(
-                old.status,
-                JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled
-            ) {
-                return Err(AppError::InvalidState(
-                    "Only failed, interrupted, or cancelled jobs can be retried.".into(),
-                ));
+        let result_id = match action {
+            JobAction::Cancel => {
+                JobStore::cancel_in(&mut tx, &request.job_id).await?;
+                request.job_id.clone()
             }
-            if scope.content_revision != Some(program.get::<i64, _>("content_revision")) {
-                return Err(AppError::InvalidState(
-                    "Course content changed after this job was created. Start preparation again for the updated course.".into(),
-                ));
+            JobAction::Retry | JobAction::ContinueReview => {
+                let lessons = if action == JobAction::Retry {
+                    if !matches!(
+                        old.status,
+                        JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled
+                    ) {
+                        return Err(AppError::InvalidState(
+                            "Only failed, interrupted, or cancelled jobs can be retried.".into(),
+                        ));
+                    }
+                    None
+                } else {
+                    Some(held_outlines(&mut tx, &request.program_id, &old).await?)
+                };
+                if scope.content_revision != Some(program.get::<i64, _>("content_revision")) {
+                    return Err(AppError::InvalidState(
+                        "Course content changed after this job was created. Start preparation again for the updated course.".into(),
+                    ));
+                }
+                let admitted = match lessons {
+                    None => {
+                        JobStore::retry_in(
+                            &mut tx,
+                            &request.job_id,
+                            &request.operation_id,
+                            "Retry queued",
+                        )
+                        .await?
+                    }
+                    Some(lessons) => {
+                        JobStore::continue_in(
+                            &mut tx,
+                            &request.job_id,
+                            &request.operation_id,
+                            "Resuming verification",
+                            &serde_json::json!({ "lessonIds": lessons }),
+                            u32::try_from(lessons.len()).unwrap_or(u32::MAX),
+                        )
+                        .await?
+                    }
+                };
+                if admitted.created {
+                    sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
+                        .bind(&admitted.id).bind(&request.job_id).execute(&mut *tx).await.map_err(db)?;
+                }
+                admitted.id
             }
-            let admitted = JobStore::retry_in(
-                &mut tx,
-                &request.job_id,
-                &request.operation_id,
-                "Retry queued",
-            )
-            .await?;
-            if admitted.created {
-                sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
-                    .bind(&admitted.id).bind(&request.job_id).execute(&mut *tx).await.map_err(db)?;
-            }
-            admitted.id
-        } else {
-            JobStore::cancel_in(&mut tx, &request.job_id).await?;
-            request.job_id.clone()
         };
         operation.record(&mut *tx, &result_id).await?;
         tx.commit().await.map_err(db)?;
@@ -356,6 +391,61 @@ impl LearningCurriculumRepository {
     pub(super) fn jobs_store(&self) -> JobStore {
         JobStore::new(self.pool.clone())
     }
+}
+
+/// What a job action does: the user's cancel, retry or resume (§6.2).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobAction {
+    Cancel,
+    Retry,
+    ContinueReview,
+}
+
+impl JobAction {
+    fn operation_kind(self) -> &'static str {
+        match self {
+            Self::Cancel => "cancel_job",
+            Self::Retry => "retry_job",
+            Self::ContinueReview => "continue_review_job",
+        }
+    }
+}
+
+/// The lessons a completed job left waiting for the user's review that are
+/// still outlines: what its continuation prepares (§6.2).
+async fn held_outlines(
+    connection: &mut sqlx::SqliteConnection,
+    program_id: &str,
+    job: &JobRecord,
+) -> Result<Vec<String>> {
+    let held = job
+        .result_ref
+        .as_deref()
+        .and_then(crate::features::learning::content_verification::held_lessons)
+        .filter(|_| job.status == JobStatus::Completed)
+        .ok_or_else(|| {
+            AppError::InvalidState("No lesson of this job waits for your review.".into())
+        })?;
+    let mut lessons = Vec::new();
+    for lesson_id in held {
+        let outline: Option<bool> = sqlx::query_scalar(
+            "SELECT preparation='outline' FROM learning_lessons WHERE id=? AND program_id=?",
+        )
+        .bind(&lesson_id)
+        .bind(program_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?;
+        if outline == Some(true) {
+            lessons.push(lesson_id);
+        }
+    }
+    if lessons.is_empty() {
+        return Err(AppError::InvalidState(
+            "Every lesson this job held for review was prepared since.".into(),
+        ));
+    }
+    Ok(lessons)
 }
 
 fn job_scope_row(row: &sqlx::sqlite::SqliteRow) -> JobScope {

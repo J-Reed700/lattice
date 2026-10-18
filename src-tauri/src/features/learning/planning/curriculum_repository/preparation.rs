@@ -267,6 +267,15 @@ impl LearningCurriculumRepository {
         let (result_ref, message) = if held.is_empty() {
             (program_id.clone(), "Published prepared lessons".to_owned())
         } else {
+            // Publishing these lessons changed the course's content. The held
+            // lessons continue from this job (§6.2), and its own publication
+            // is no change made under it.
+            sqlx::query("UPDATE learning_jobs SET content_revision=(SELECT content_revision FROM learning_programs WHERE id=?) WHERE job_id=?")
+                .bind(&program_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
             crate::features::learning::content_verification::review_outcome(held)
         };
         JobStore::complete_in(&mut tx, id, &result_ref, &message).await?;

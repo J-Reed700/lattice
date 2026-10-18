@@ -20,13 +20,19 @@ use sqlx::SqlitePool;
 use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
 use super::repository::ClaimReviewRepository;
+use crate::features::learning::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::persistence::now;
+use crate::features::learning::plan_dto::LearningGenerationJobActionRequestDto;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// §6.2: Resume reruns nothing that has not changed.
+pub const NOTHING_CHANGED: &str =
+    "Nothing changed since the last pass. Resolve a claim or add evidence first.";
 
 #[derive(Clone)]
 pub struct ClaimReviewService {
+    pool: SqlitePool,
     store: ClaimReviewRepository,
     examples: CheckerExamples,
     drafts: LearningCurriculumRepository,
@@ -43,8 +49,59 @@ impl ClaimReviewService {
         Self {
             store: ClaimReviewRepository::new(pool.clone()),
             examples: CheckerExamples::new(pool.clone()),
-            drafts: LearningCurriculumRepository::new(pool),
+            drafts: LearningCurriculumRepository::new(pool.clone()),
+            pool,
         }
+    }
+
+    pub(super) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub(super) fn store(&self) -> &ClaimReviewRepository {
+        &self.store
+    }
+
+    pub(super) fn drafts(&self) -> &LearningCurriculumRepository {
+        &self.drafts
+    }
+
+    /// Resume verification (§6.2): a new attempt of the lesson's job that
+    /// carries the user's actions into the draft and checks what changed.
+    /// A lesson waiting for review continues its completed job, and is
+    /// refused while nothing changed since it stopped; a lesson whose job
+    /// failed or stopped retries it. `expected_revision` is the course's.
+    pub async fn resume(
+        &self,
+        program_id: &str,
+        lesson_id: &str,
+        expected_revision: i64,
+        operation_id: String,
+    ) -> Result<LearningGenerationJob> {
+        let ledger = self.store.load(lesson_id).await?;
+        let review = ledger
+            .review
+            .as_ref()
+            .filter(|review| review.program_id == program_id)
+            .ok_or_else(|| {
+                AppError::NotFound("This lesson has no claim review to resume.".into())
+            })?;
+        let job = self.drafts.job(&review.job_id).await?;
+        let request = LearningGenerationJobActionRequestDto {
+            operation_id,
+            program_id: program_id.into(),
+            job_id: job.id.clone(),
+            expected_revision,
+        };
+        let waiting = review.state == LessonReviewState::NeedsReview
+            && job.status == LearningGenerationJobStatus::Completed;
+        if !waiting {
+            return self.drafts.retry_job(&request).await;
+        }
+        if !self.changed_since_stop(lesson_id).await? {
+            return Err(AppError::InvalidState(NOTHING_CHANGED.into()));
+        }
+        self.drafts.continue_review_job(&request).await
     }
 
     /// Applies the user's `action` to `claim_id` (to every general-knowledge
