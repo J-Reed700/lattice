@@ -4779,6 +4779,12 @@
           "markdownDescription": "Enables the apply_learning_pack_import command without any pre-configured scope."
         },
         {
+          "description": "Enables the audit_learning_lesson_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-audit-learning-lesson-now",
+          "markdownDescription": "Enables the audit_learning_lesson_now command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_learning_generation_job command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-cancel-learning-generation-job",
@@ -4983,6 +4989,12 @@
           "markdownDescription": "Enables the get_learning_generation_job command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_learning_lesson_audit command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-lesson-audit",
+          "markdownDescription": "Enables the get_learning_lesson_audit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_learning_lesson_claim_review command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-get-learning-lesson-claim-review",
@@ -5047,6 +5059,12 @@
           "type": "string",
           "const": "learning:allow-get-learning-program",
           "markdownDescription": "Enables the get_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_program_verifier_audit command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-program-verifier-audit",
+          "markdownDescription": "Enables the get_learning_program_verifier_audit command without any pre-configured scope."
         },
         {
           "description": "Enables the get_learning_recall_workspace command without any pre-configured scope.",
@@ -5283,6 +5301,12 @@
           "markdownDescription": "Enables the send_learning_simulation_turn command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_learning_program_verifier_audit command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-set-learning-program-verifier-audit",
+          "markdownDescription": "Enables the set_learning_program_verifier_audit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the skip_learning_diagnostic command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-skip-learning-diagnostic",
@@ -5419,6 +5443,12 @@
           "type": "string",
           "const": "learning:deny-apply-learning-pack-import",
           "markdownDescription": "Denies the apply_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the audit_learning_lesson_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-audit-learning-lesson-now",
+          "markdownDescription": "Denies the audit_learning_lesson_now command without any pre-configured scope."
         },
         {
           "description": "Denies the cancel_learning_generation_job command without any pre-configured scope.",
@@ -5625,6 +5655,12 @@
           "markdownDescription": "Denies the get_learning_generation_job command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_learning_lesson_audit command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-lesson-audit",
+          "markdownDescription": "Denies the get_learning_lesson_audit command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_learning_lesson_claim_review command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-get-learning-lesson-claim-review",
@@ -5689,6 +5725,12 @@
           "type": "string",
           "const": "learning:deny-get-learning-program",
           "markdownDescription": "Denies the get_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_program_verifier_audit command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-program-verifier-audit",
+          "markdownDescription": "Denies the get_learning_program_verifier_audit command without any pre-configured scope."
         },
         {
           "description": "Denies the get_learning_recall_workspace command without any pre-configured scope.",
@@ -5923,6 +5965,12 @@
           "type": "string",
           "const": "learning:deny-send-learning-simulation-turn",
           "markdownDescription": "Denies the send_learning_simulation_turn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_learning_program_verifier_audit command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-set-learning-program-verifier-audit",
+          "markdownDescription": "Denies the set_learning_program_verifier_audit command without any pre-configured scope."
         },
         {
           "description": "Denies the skip_learning_diagnostic command without any pre-configured scope.",

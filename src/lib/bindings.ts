@@ -4943,6 +4943,24 @@ verifierLabelled: number;
 falsePassRate: number | null; retrievalMisses: number }
 export type CheckerDto = { role: CheckerRoleDto; model: string }
 export type CheckerRoleDto = "local" | "verifier"
+/**
+ * One checker's latest verdict on a claim.
+ */
+export type CheckerVerdictDto = { checker: CheckerDto;
+/**
+ * `supported` with the passage and quote it rests on, or `failed`
+ * with its kind.
+ */
+result: CheckResultDto; reason: string;
+/**
+ * The source a `supported` result quotes: for the Verifier, possibly a
+ * page it fetched during the audit (`addedBy: verifier`).
+ */
+quotedSource: SourceRefDto | null;
+/**
+ * The passages the checker compared.
+ */
+passages: ClaimEvidencePassageDto[]; at: number }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
@@ -5003,7 +5021,17 @@ verdictKind: VerdictKindDto | null; reason: string | null;
 /**
  * What was compared.
  */
-evidence: ClaimEvidencePassageDto[]; supportingQuote: string | null; research: ResearchAttemptDto[]; repairs: RepairAttemptDto[]; executions: ExecutionDto[]; human: HumanVerdictDto | null; availableActions: ClaimActionKindDto[]; history: ClaimEventDto[] }
+evidence: ClaimEvidencePassageDto[]; supportingQuote: string | null; research: ResearchAttemptDto[]; repairs: RepairAttemptDto[]; executions: ExecutionDto[]; human: HumanVerdictDto | null; availableActions: ClaimActionKindDto[]; history: ClaimEventDto[];
+/**
+ * The local checker's latest verdict: the card's "Local checker said"
+ * column (§14.5). Null before the claim's first check.
+ */
+localCheck: CheckerVerdictDto | null;
+/**
+ * The Verifier audit's latest verdict: the "Verifier said" column. Null
+ * until the audit has checked the claim.
+ */
+verifierCheck: CheckerVerdictDto | null }
 /**
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
