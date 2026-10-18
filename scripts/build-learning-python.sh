@@ -9,7 +9,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
-RESOURCES="$ROOT/src-tauri/resources/learning-python"
+RESOURCES="$ROOT/crates/lattice-desktop/resources/learning-python"
 BUILD="$(mktemp -d "$ROOT/.learning-python-build.XXXXXX")"
 trap 'rm -rf "$BUILD"' EXIT
 

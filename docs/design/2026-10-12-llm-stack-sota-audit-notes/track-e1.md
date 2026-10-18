@@ -18,8 +18,8 @@ Headless runner for the desktop's own chat turn, a 34-item rubric set, a pass^3 
 
 ## Files
 
-- **Library surface.** `src-tauri/src/features/conversation/chat/headless.rs`, a `pub` wrapper over `run_turn` with its `pub mod` line in `chat.rs`. No other visibility changes.
-- **Runner.** `src-tauri/examples/shipped_path_eval/{main,app,proxy,recipe,record}.rs`. The proxy records each model request and the server's cached vs evaluated tokens without touching `features/llm`.
+- **Library surface.** `crates/lattice-desktop/src/features/conversation/chat/headless.rs`, a `pub` wrapper over `run_turn` with its `pub mod` line in `chat.rs`. No other visibility changes.
+- **Runner.** `crates/lattice-desktop/examples/shipped_path_eval/{main,app,proxy,recipe,record}.rs`. The proxy records each model request and the server's cached vs evaluated tokens without touching `features/llm`.
 - **Scorer.** `scripts/shipped_path_eval.py` and `scripts/test_shipped_path_rag_eval.py`. `validate_rag_evals.py` now checks desktop-path sets.
 - **Evals.** `evals/retrieval/desktop-path-v1.json` (34 items, 44 turns, 9 multi-turn), four `shipped-path-recipe-9b-local*.json` recipes, `2026-10-12-SHIPPED-PATH-BASELINE.md`, and the 2026-10-13 runs in `results/chat/qwen3.5-9b-local/` (call logs gzipped). `README.md` and `EVALUATION_PROTOCOL.md` link to them.
 

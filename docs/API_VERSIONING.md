@@ -6,7 +6,7 @@ Lattice currently has two programmatic surfaces with different compatibility
 boundaries:
 
 1. the desktop application's Tauri IPC contract, which ships with its renderer;
-2. the optional Rust sync-service scaffold in `api-rust/`, which exposes HTTP
+2. the optional Rust sync-service scaffold in `crates/lattice-sync/`, which exposes HTTP
    routes under `/v1/sync` but is not connected to the desktop application.
 
 Neither surface is a supported third-party plugin API.
@@ -43,7 +43,7 @@ uses the IPC implementation bundled with that release.
 
 ## Sync HTTP scaffold
 
-[`api-rust/`](../api-rust/README.md) contains an implemented Axum service
+[`crates/lattice-sync/`](../crates/lattice-sync/README.md) contains an implemented Axum service
 scaffold. The desktop application does not call it yet. Its current routes are:
 
 - `GET /healthz`
@@ -55,13 +55,13 @@ scaffold. The desktop application does not call it yet. Its current routes are:
 - `GET /v1/sync/status/{device_id}`
 
 The route registration is the source of truth:
-[`api-rust/src/http/mod.rs`](../api-rust/src/http/mod.rs) and
-[`api-rust/src/http/routes/sync.rs`](../api-rust/src/http/routes/sync.rs).
+[`crates/lattice-sync/src/http/mod.rs`](../crates/lattice-sync/src/http/mod.rs) and
+[`crates/lattice-sync/src/http/routes/sync.rs`](../crates/lattice-sync/src/http/routes/sync.rs).
 
 `v1` is the current route namespace, not a production stability or support
 promise. While the service remains a disconnected scaffold, request and response
 shapes may change without a deprecation window. Any such change must update the
-route types, service and persistence tests, and `api-rust/README.md` together.
+route types, service and persistence tests, and `crates/lattice-sync/README.md` together.
 
 Once the desktop app or an external client depends on the service, incompatible
 changes require a new major route namespace. Removing or renaming routes,
@@ -88,7 +88,7 @@ npm run contracts:commands
 Sync service checks run from its crate:
 
 ```bash
-cd api-rust
+cd crates/lattice-sync
 cargo test --lib
 ```
 
@@ -96,6 +96,6 @@ PostgreSQL persistence contracts are opt-in because they require a disposable
 database:
 
 ```bash
-cd api-rust
+cd crates/lattice-sync
 cargo test --test sync_persistence -- --ignored
 ```

@@ -59,8 +59,8 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            src-tauri/target/
-          key: cargo-${{ matrix.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+            target/
+          key: cargo-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-${{ matrix.os }}-
 
@@ -71,16 +71,16 @@ jobs:
         run: |
           mkdir -p dist
           case "${{ runner.os }}" in
-            Linux) touch src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu \
-                         src-tauri/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
+            Linux) touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                         crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
             macOS) triple="$(rustc -vV | awk '/^host:/ {print $2}')"
-                   touch "src-tauri/binaries/llama-server-$triple" ;;
-            Windows) touch src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe \
-                           src-tauri/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
+                   touch "crates/lattice-desktop/binaries/llama-server-$triple" ;;
+            Windows) touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
+                           crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
           esac
 
       - name: cargo check
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         run: cargo check --workspace --all-targets
 
       # Prove the manifest is actually in the executables rather than inferring
@@ -89,7 +89,7 @@ jobs:
       # would have looked the same as a working one.
       - name: Windows manifest is embedded in the test executables
         if: matrix.os == 'windows-latest'
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         shell: pwsh
         run: |
           $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
@@ -132,18 +132,18 @@ jobs:
           }
 
       - name: All desktop Rust unit, command and integration tests
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
 
       - name: Execute C#, Rust, React and Python container exercises
         if: matrix.os == 'ubuntu-latest'
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         timeout-minutes: 20
         run: cargo test --features bindings-export --lib features::learning::runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
 
       - name: Verify container staging and containment
         if: matrix.os == 'ubuntu-latest'
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         timeout-minutes: 5
         shell: bash
         run: |
@@ -155,15 +155,15 @@ jobs:
       # The workspace defines additional safety lints in Cargo.toml. Existing
       # warnings are not promoted to errors yet.
       - name: cargo clippy
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         run: cargo clippy --workspace --all-targets
 
       - name: generated bindings are current
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         run: cargo run --features bindings-export --bin export_bindings -- --check
 
       - name: cargo fmt --check
-        working-directory: src-tauri
+        working-directory: crates/lattice-desktop
         run: cargo fmt --all -- --check
 
       # A test failure should not discard a completed native compilation and
@@ -176,7 +176,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            src-tauri/target/
+            target/
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # The pinned llama-server release must exist, match the lock's checksums, be
@@ -196,7 +196,7 @@ jobs:
           python-version: '3.12'
 
       - name: Verifier unit tests
-        run: python -m unittest src-tauri/scripts/test_verify_llama_binaries.py
+        run: python -m unittest crates/lattice-desktop/scripts/test_verify_llama_binaries.py
 
       # Users' GPU drivers provide the Vulkan loader system-wide; install it so
       # the Vulkan builds are run rather than skipped.
@@ -219,7 +219,7 @@ jobs:
 
       - name: Fetch, verify and run the pinned binaries
         shell: bash
-        run: bash src-tauri/scripts/fetch-llama-binaries.sh --strict
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
@@ -266,16 +266,16 @@ jobs:
         run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: ". -> target"
           key: desktop-compatibility-${{ matrix.name }}
           cache-on-failure: true
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
         shell: bash
-        run: bash src-tauri/scripts/fetch-llama-binaries.sh --strict
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
       - name: Build and execute Intel sidecar candidate
         if: matrix.intel
-        run: bash src-tauri/scripts/build-intel-macos-sidecar.sh
+        run: bash crates/lattice-desktop/scripts/build-intel-macos-sidecar.sh
       - name: Pin verified Intel candidate for this CI bundle only
         if: matrix.intel
         shell: bash
@@ -283,7 +283,7 @@ jobs:
           python3 - <<'PYCODE'
           import hashlib
           from pathlib import Path
-          root = Path('src-tauri')
+          root = Path('crates/lattice-desktop')
           binary = root / 'binaries/llama-server-x86_64-apple-darwin'
           lock = root / 'scripts/llama-server.lock'
           lines = [line for line in lock.read_text().splitlines()
@@ -307,7 +307,7 @@ jobs:
             https://huggingface.co/ggml-org/models-moved/resolve/main/tinyllamas/stories260K.gguf \
             -o "$RUNNER_TEMP/stories260K.gguf"
           binary="$(node --input-type=module -e "import fs from 'node:fs'; const m=JSON.parse(fs.readFileSync('e2e-results/desktop/manifest.json')); console.log(m.sidecar)")"
-          python3 src-tauri/scripts/smoke_llama_cpu.py "$binary" "$RUNNER_TEMP/stories260K.gguf" | tee e2e-results/desktop/reports/cpu-generation.json
+          python3 crates/lattice-desktop/scripts/smoke_llama_cpu.py "$binary" "$RUNNER_TEMP/stories260K.gguf" | tee e2e-results/desktop/reports/cpu-generation.json
       - name: Upload results, screenshots and native logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -343,8 +343,8 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Desktop advisories
-        working-directory: src-tauri
-        run: cargo audit --deny yanked
+        working-directory: crates/lattice-desktop
+        run: cargo audit --deny yanked --file ../../Cargo.lock
 
   frontend:
     name: frontend (type-check, lint, test)

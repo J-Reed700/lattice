@@ -1,6 +1,6 @@
 # SOTA local inference and model selection for Lattice (Apple Silicon, October 2026)
 
-Researched 2026-10-12. Lattice's sidecar currently passes only `-m --port --host --no-webui -ngl --ctx-size --jinja` ([readiness.rs](file:///Users/josh/Code/lattice-temp/src-tauri/src/features/llm/engine/sidecar_manager/readiness.rs)). It pins `llama_cpp_tag v0.6.0`, which is not an upstream `bNNNN` tag ([llama-server.lock](file:///Users/josh/Code/lattice-temp/src-tauri/scripts/llama-server.lock)). Upstream was at b11577 on 12 Oct ([releases](https://github.com/ggml-org/llama.cpp/releases)).
+Researched 2026-10-12. Lattice's sidecar currently passes only `-m --port --host --no-webui -ngl --ctx-size --jinja` ([readiness.rs](file:///Users/josh/Code/lattice-temp/crates/lattice-desktop/src/features/llm/engine/sidecar_manager/readiness.rs)). It pins `llama_cpp_tag v0.6.0`, which is not an upstream `bNNNN` tag ([llama-server.lock](file:///Users/josh/Code/lattice-temp/crates/lattice-desktop/scripts/llama-server.lock)). Upstream was at b11577 on 12 Oct ([releases](https://github.com/ggml-org/llama.cpp/releases)).
 
 ## llama.cpp server features and flags (October 2026)
 

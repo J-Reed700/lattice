@@ -48,15 +48,15 @@ I have comprehensive coverage across all seven topics. Delivering the report now
 
 These are grounded in the repo, not the web, and several change the plan.
 
-**The existing sync API has no authentication and trusts a client-supplied header.** `api-rust/src/http/routes/sync.rs:87` reads `x-user-id`, parses it as `i64`, and uses it as the tenant key. Any client can set it to any integer and read any user's data. It's clearly placeholder code, but it's the exact seam where auth must land and it must not ship.
+**The existing sync API has no authentication and trusts a client-supplied header.** `crates/lattice-sync/src/http/routes/sync.rs:87` reads `x-user-id`, parses it as `i64`, and uses it as the tenant key. Any client can set it to any integer and read any user's data. It's clearly placeholder code, but it's the exact seam where auth must land and it must not ship.
 
-**The sync schema stores plaintext notes.** `api-rust/migrations/0001_sync_init.sql` defines `document_heads` and `document_ops` with `title TEXT`, `content TEXT`, `path TEXT`. There are **no crypto dependencies anywhere** in either `Cargo.toml`. The current design is a plaintext server-side note store — the opposite of the E2EE posture the privacy positioning implies.
+**The sync schema stores plaintext notes.** `crates/lattice-sync/migrations/0001_sync_init.sql` defines `document_heads` and `document_ops` with `title TEXT`, `content TEXT`, `path TEXT`. There are **no crypto dependencies anywhere** in either `Cargo.toml`. The current design is a plaintext server-side note store — the opposite of the E2EE posture the privacy positioning implies.
 
 **E2EE vs. the current conflict model is a real design tension.** The schema has `conflicts.resolution_content TEXT`, implying server-side merge. That's incompatible with E2EE, where the server sees only opaque ciphertext. **Decide on E2EE before you freeze the wire format**, because it changes the API shape, kills server-side merge, and determines the recovery UX.
 
 **There is already a home-rolled auth system — in Python.** `src/api/src/auth/` (FastAPI) has JWT, bcrypt, MFA rate limiting, and a token blacklist. `jwt.py` signs with a **shared secret** (`settings.jwt_secret_key`, separate access/refresh secrets) — i.e. HS256, no JWKS, no asymmetric keys. The Rust rewrite hasn't carried any of it over. So the real decision is: **port home-rolled auth to Rust, or adopt an IdP during the rewrite.** Adopting an IdP means moving from HS256 shared-secret to RS256/ES256 + JWKS.
 
-**JWKS crate compatibility.** Your `api-rust` is on **axum 0.8**. The most-cited crate, `jwt-authorizer` 0.15.0, depends on **axum ^0.7** and was last published **2024-08-27** **[V]** — it will not work. Use **`axum-jwt-auth` 0.7.0** (published 2026-05-19, axum ^0.8, jsonwebtoken ^10, remote JWKS with automatic caching and hourly background refresh) **[V]**, or `axum-jwks` 0.12.0 (2025-06-06, axum ^0.8) **[V]**.
+**JWKS crate compatibility.** Your `lattice-sync` is on **axum 0.8**. The most-cited crate, `jwt-authorizer` 0.15.0, depends on **axum ^0.7** and was last published **2024-08-27** **[V]** — it will not work. Use **`axum-jwt-auth` 0.7.0** (published 2026-05-19, axum ^0.8, jsonwebtoken ^10, remote JWKS with automatic caching and hourly background refresh) **[V]**, or `axum-jwks` 0.12.0 (2025-06-06, axum ^0.8) **[V]**.
 
 **macOS signing is ad-hoc.** `tauri.conf.json` has `"signingIdentity": "-"` and `"entitlements": null`. Ad-hoc signing means the macOS Keychain designated requirement changes between builds, which triggers the "app wants to access keychain" prompt — and blocks notarization entirely. You need a real Developer ID identity before shipping keyring-stored refresh tokens.
 
@@ -321,13 +321,13 @@ Two sibling tracks are still running despite wrap-up requests. I have independen
 
 Before the market research, four facts from `/Users/josh/Code/lattice-temp` that change what you're actually deciding:
 
-1. **The sync server already exists and has no authentication.** `/Users/josh/Code/lattice-temp/api-rust/` is axum 0.8 + sqlx 0.8 + Postgres with `/devices/register`, `/push`, `/pull`, `/ack`, `/conflicts/resolve`. Identity comes from `user_id_from_headers`, which reads a plaintext `x-user-id` header and parses it as an `i64`. Any client can be any user by setting one header. This is the exact seam where auth goes, and it must not ship as-is.
+1. **The sync server already exists and has no authentication.** `/Users/josh/Code/lattice-temp/crates/lattice-sync/` is axum 0.8 + sqlx 0.8 + Postgres with `/devices/register`, `/push`, `/pull`, `/ack`, `/conflicts/resolve`. Identity comes from `user_id_from_headers`, which reads a plaintext `x-user-id` header and parses it as an `i64`. Any client can be any user by setting one header. This is the exact seam where auth goes, and it must not ship as-is.
 
-2. **The current schema is the opposite of end-to-end encrypted.** `/Users/josh/Code/lattice-temp/api-rust/migrations/0001_sync_init.sql` stores `path TEXT`, `title TEXT`, `content TEXT` in plaintext, and `conflicts.resolution_content TEXT` implies **server-side** conflict resolution. There are no crypto crates in either `Cargo.toml`. **The E2EE decision must be made before you freeze this schema and wire format** — E2EE makes server-side content merge impossible, which directly contradicts the design already in the migration.
+2. **The current schema is the opposite of end-to-end encrypted.** `/Users/josh/Code/lattice-temp/crates/lattice-sync/migrations/0001_sync_init.sql` stores `path TEXT`, `title TEXT`, `content TEXT` in plaintext, and `conflicts.resolution_content TEXT` implies **server-side** conflict resolution. There are no crypto crates in either `Cargo.toml`. **The E2EE decision must be made before you freeze this schema and wire format** — E2EE makes server-side content merge impossible, which directly contradicts the design already in the migration.
 
 3. **You already rolled your own auth once, in Python.** `/Users/josh/Code/lattice-temp/src/api/src/auth/` is a FastAPI JWT system (bcrypt, MFA rate limiter, token blacklist, separate access/refresh secrets). `jwt.py` signs with `settings.jwt_secret_key` — a **shared secret (HS256-style), not asymmetric**, so there is no JWKS. Any move to a hosted IdP (or to a sane self-issued scheme) means switching to RS256/ES256 + JWKS.
 
-4. **macOS signing is ad-hoc.** `src-tauri/tauri.conf.json` has `"signingIdentity": "-"`, `"entitlements": null`, identifier `tech.lattice.app`, and only the `shell` plugin registered. Ad-hoc signing means the macOS Keychain designated requirement changes between builds → **keychain re-prompts on every rebuild**, and no notarized distribution. You need a real Developer ID ($99/yr) before storing refresh tokens in the keyring is pleasant.
+4. **macOS signing is ad-hoc.** `crates/lattice-desktop/tauri.conf.json` has `"signingIdentity": "-"`, `"entitlements": null`, identifier `tech.lattice.app`, and only the `shell` plugin registered. Ad-hoc signing means the macOS Keychain designated requirement changes between builds → **keychain re-prompts on every rebuild**, and no notarized distribution. You need a real Developer ID ($99/yr) before storing refresh tokens in the keyring is pleasant.
 
 Good news: `tauri-plugin-shell` resolves to **2.3.4** in `Cargo.lock`, past the 2.2.1 fix for CVE-2025-31477, so you are **not** exposed to that. `keyring` resolves to **3.6.3** (current is 4.2.0); `tauri` is pinned at `=2.9.5`.
 
@@ -697,8 +697,8 @@ Both remaining agents are still running despite wrap-up requests. I have indepen
 
 Before any vendor decision, note what is already in the repo:
 
-- `api-rust/src/http/routes/sync.rs` derives identity from a **plaintext `x-user-id` header**. `user_id_from_headers` parses an integer and trusts it. Any client can impersonate any user by setting a header. This is the exact seam where auth goes, and it must not ship.
-- `api-rust/migrations/0001_sync_init.sql` stores `title`, `content`, and `path` as **plaintext `TEXT`**. There are **no crypto crates** in either `Cargo.toml`. The current prototype is a plaintext server-side note store — the opposite of the privacy posture the product markets.
+- `crates/lattice-sync/src/http/routes/sync.rs` derives identity from a **plaintext `x-user-id` header**. `user_id_from_headers` parses an integer and trusts it. Any client can impersonate any user by setting a header. This is the exact seam where auth goes, and it must not ship.
+- `crates/lattice-sync/migrations/0001_sync_init.sql` stores `title`, `content`, and `path` as **plaintext `TEXT`**. There are **no crypto crates** in either `Cargo.toml`. The current prototype is a plaintext server-side note store — the opposite of the privacy posture the product markets.
 - `conflicts.resolution_content TEXT` implies **server-side conflict resolution on note content**, which is fundamentally incompatible with E2EE.
 
 **The E2EE decision must be made before you freeze the sync wire format**, because it changes the schema, deletes server-side merge, and determines the entire account-recovery UX. Retrofitting E2EE after launch means a migration of every user's data plus a breaking protocol change.
@@ -752,7 +752,7 @@ Self-hosted / other:
 
 ### 1.2 Rust / JWKS verification story
 
-This is where Lattice's existing stack constrains you. `api-rust` is on **axum 0.8**.
+This is where Lattice's existing stack constrains you. `lattice-sync` is on **axum 0.8**.
 
 | Crate | Version | Published | axum | Verdict |
 |---|---|---|---|---|
@@ -886,7 +886,7 @@ Lattice is on `keyring` **3.6.3**; latest is **4.2.0** (2026-08-29) `[V]`. The c
 
 ### The Cloudflare Workers verdict
 
-`workers-rs` does support axum via its `http` feature `[V]`. But the README states plainly: *"You've got to leave your threaded async runtimes at home; meaning no Tokio or async_std support"*, and *"All crates in your Worker project must compile to wasm32-unknown-unknown."* Lattice's `api-rust` is built on **tokio + sqlx with `runtime-tokio-rustls`** `[V]`. That does not port. You would rewrite the entire data layer against D1 or Hyperdrive, and the README itself warns to *"expect a few rough edges."* Combined with the 128MB isolate memory limit and the Free plan's 10ms CPU ceiling, **this is a rewrite, not a deployment target.** Rule it out.
+`workers-rs` does support axum via its `http` feature `[V]`. But the README states plainly: *"You've got to leave your threaded async runtimes at home; meaning no Tokio or async_std support"*, and *"All crates in your Worker project must compile to wasm32-unknown-unknown."* Lattice's `lattice-sync` is built on **tokio + sqlx with `runtime-tokio-rustls`** `[V]`. That does not port. You would rewrite the entire data layer against D1 or Hyperdrive, and the README itself warns to *"expect a few rough edges."* Combined with the 128MB isolate memory limit and the Free plan's 10ms CPU ceiling, **this is a rewrite, not a deployment target.** Rule it out.
 
 ### Object storage for encrypted blobs
 
@@ -1067,9 +1067,9 @@ The compliance agent is still running; I have enough independent coverage to del
 
 ### The finding that should reframe the whole project
 
-Before any vendor decision, look at what's already in the repo. `api-rust/` is a working axum 0.8 + sqlx 0.8 + Postgres sync service with device registration, push/pull, checkpoints and conflict resolution. Two things about it are load-bearing:
+Before any vendor decision, look at what's already in the repo. `crates/lattice-sync/` is a working axum 0.8 + sqlx 0.8 + Postgres sync service with device registration, push/pull, checkpoints and conflict resolution. Two things about it are load-bearing:
 
-**1. There is no authentication at all.** `api-rust/src/http/routes/sync.rs:87` derives user identity like this:
+**1. There is no authentication at all.** `crates/lattice-sync/src/http/routes/sync.rs:87` derives user identity like this:
 
 ```
 fn user_id_from_headers(headers: &HeaderMap) -> AppResult<i64> {
@@ -1078,7 +1078,7 @@ fn user_id_from_headers(headers: &HeaderMap) -> AppResult<i64> {
 
 Any client can become any user by setting an integer header. That is fine as a prototype seam and catastrophic as a shipped artifact. It is also exactly where a JWT-verifying middleware layer drops in.
 
-**2. The schema is the opposite of end-to-end encrypted.** `api-rust/migrations/0001_sync_init.sql` stores `path TEXT`, `title TEXT`, `content TEXT` in `document_heads` and `document_ops`, plus `conflicts.resolution_content TEXT`. There are no crypto crates in either `Cargo.toml`. The server currently reads users' notes in plaintext and performs server-side conflict resolution on content.
+**2. The schema is the opposite of end-to-end encrypted.** `crates/lattice-sync/migrations/0001_sync_init.sql` stores `path TEXT`, `title TEXT`, `content TEXT` in `document_heads` and `document_ops`, plus `conflicts.resolution_content TEXT`. There are no crypto crates in either `Cargo.toml`. The server currently reads users' notes in plaintext and performs server-side conflict resolution on content.
 
 **The E2EE decision must be made before you freeze this schema and wire format**, because `conflicts.resolution_content` implies server-side merge, and server-side merge is incompatible with E2EE. This is the single highest-leverage architectural choice in the whole brief, and it cascades into compliance exposure (§8), recovery UX (§8.4), and whether BYOS (§9) is even a meaningful alternative.
 
@@ -1161,7 +1161,7 @@ The Rust ecosystem is in good shape:
 | `axum-jwks` | 0.12.0 | 2025-06-06 `[V]` | axum ^0.8, jsonwebtoken ^9 |
 | ⚠️ `jwt-authorizer` | 0.15.0 | **2024-08-27** `[V]` | **axum ^0.7 — incompatible with your axum 0.8** |
 
-**Concrete trap:** `jwt-authorizer` is the most-cited JWKS crate and still gets ~500k recent downloads, but it pins **axum ^0.7** and hasn't shipped since August 2024 `[V]`. `api-rust` is on axum 0.8. Use **`axum-jwt-auth` 0.7.0** instead.
+**Concrete trap:** `jwt-authorizer` is the most-cited JWKS crate and still gets ~500k recent downloads, but it pins **axum ^0.7** and hasn't shipped since August 2024 `[V]`. `lattice-sync` is on axum 0.8. Use **`axum-jwt-auth` 0.7.0** instead.
 
 **What rolling your own actually costs.** For an E2EE backup service the account is genuinely thin: email → device token → paid-tier flag. You don't need orgs, roles, MFA or social. But you own rate limiting, token entropy, user enumeration, replay, and — the underrated one — **email deliverability** (SPF/DKIM/DMARC, bounce handling, reputation). Magic links are only as good as your mail. Resend: 3,000/mo free, then $20/mo for 50,000 `[V]`; AWS SES ~$0.10/1,000 but you own IP warmup and complaint feedback loops `[S]`.
 

@@ -140,7 +140,7 @@ A follow-up needs a larger held-out set, not a second look at this one.
 ## 3. Vector compression
 
 **Does the exact scan read the compressed vectors?** For a vault-wide query, yes, for
-candidate selection. Paths below are under `src-tauri/src/features/search/engine/vector_search/`.
+candidate selection. Paths below are under `crates/lattice-desktop/src/features/search/engine/vector_search/`.
 Below `EXACT_SEARCH_MAX_VECTORS` (20,000; `usearch_index.rs:62`), `nearest` calls
 `self.index.exact_search(query, count)` (`usearch_index/search.rs:87`) with the query
 already projected into the stored space (`usearch_index/ports.rs:98`), so it scans the
@@ -252,13 +252,13 @@ for f in model.safetensors tokenizer.json config.json; do
     https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/$f
 done
 
-cd src-tauri
+cd crates/lattice-desktop
 CARGO_PROFILE_EVALOPT_INHERITS=dev CARGO_PROFILE_EVALOPT_OPT_LEVEL=3 \
 CARGO_PROFILE_EVALOPT_DEBUG=false CARGO_PROFILE_EVALOPT_DEBUG_ASSERTIONS=false \
 CARGO_PROFILE_EVALOPT_OVERFLOW_CHECKS=false SQLX_OFFLINE=true \
   cargo build --profile evalopt --example retrieval_eval
 BIN=$CARGO_TARGET_DIR/evalopt/examples/retrieval_eval   # or target/evalopt/…
-V=../evals/retrieval/synthetic-library-v3.json
+V=../../evals/retrieval/synthetic-library-v3.json
 E=~/.cache/lattice/models/qwen3-embedding-0.6b
 export RETRIEVAL_EVAL_EMBED_CACHE=/some/cache/dir
 F="--mode production --top-k 10 --compression none --sparse off"

@@ -60,24 +60,24 @@ These findings were checked during preparation. Re-read the named symbols before
 
 | Existing component | Current behavior | Required change |
 |---|---|---|
-| `src-tauri/src/features/conversation/plugin_impl.rs::compact_conversation_impl` | Utility-model prose summary; retains at least two recent messages; reuses prior summary | Move compaction orchestration into a focused use case; generate and validate structured memory deltas and summary |
-| `src-tauri/src/domain/conversation/aggregate.rs::CompactionRecord` | Summary text, boundary, counts, ratio | Keep display/accounting record; associate it with an atomic memory revision |
+| `crates/lattice-desktop/src/features/conversation/plugin_impl.rs::compact_conversation_impl` | Utility-model prose summary; retains at least two recent messages; reuses prior summary | Move compaction orchestration into a focused use case; generate and validate structured memory deltas and summary |
+| `crates/lattice-desktop/src/domain/conversation/aggregate.rs::CompactionRecord` | Summary text, boundary, counts, ratio | Keep display/accounting record; associate it with an atomic memory revision |
 | `ConversationAggregate::context_preamble` | Wraps summary in a string | Stop using it as the production authority for instruction memory |
 | `ConversationAggregate::to_llm_messages` | Emits summary as a system message plus suffix | Use shared typed assembly; generated text is not a system policy |
-| `src-tauri/src/application/services/context_window_builder.rs` | Charges summary first, scans newest completed messages, silently stops at budget | Delegate to bounded context assembly; dropping unprocessed originals requires compaction first |
-| `src-tauri/src/application/services/conversation_context.rs` | Combines history and system prompt; linked web context is separately built | Accept current query and explicit budget reservations; provide the shared typed plan |
-| `src-tauri/src/application/services/completion_input.rs::from_context` | Parses `Vec<String>` prefixes, trims content, promotes unmatched strings to supplemental instructions | Introduce a typed path for memory-bearing context and preserve content exactly |
-| `src-tauri/src/infrastructure/services/context_manager.rs::build_context_for_llm` | Conversational QA uses raw aggregate messages and a different truncation strategy | Use the same memory selection and budgeting contract |
-| `src-tauri/src/features/conversation/chat/retrieval/conversation_helpers.rs::build_hyde_context_window_for_conversation` | Concatenates completed raw history | Use an explicitly bounded projection; do not replay the archive |
-| `src-tauri/src/features/conversation/chat/tool_loop.rs` | Builds typed native requests from string context; tool results grow the prompt | Maintain the assembled memory and shared remaining budget through every tool iteration/retry |
-| `src-tauri/src/features/conversation/repository/conversations.rs` | Loads aggregate and upserts a single summary row | Add transactional memory snapshot read/commit |
-| `src-tauri/src/features/conversation/repository/messages.rs::get_messages` | Orders by `created_at` | Introduce stable sequence ordering; timestamps alone are insufficient |
-| `src-tauri/src/features/conversation/repository/fork.rs` | Copies messages with new IDs; intentionally omits summaries and vectors | Rebuild memory in the fork; never reuse parent source IDs |
-| `src-tauri/src/features/conversation/repository/pruning.rs` | Transactional deletion/truncation | Invalidate derived memory and summaries on transcript rewrites |
+| `crates/lattice-desktop/src/application/services/context_window_builder.rs` | Charges summary first, scans newest completed messages, silently stops at budget | Delegate to bounded context assembly; dropping unprocessed originals requires compaction first |
+| `crates/lattice-desktop/src/application/services/conversation_context.rs` | Combines history and system prompt; linked web context is separately built | Accept current query and explicit budget reservations; provide the shared typed plan |
+| `crates/lattice-desktop/src/application/services/completion_input.rs::from_context` | Parses `Vec<String>` prefixes, trims content, promotes unmatched strings to supplemental instructions | Introduce a typed path for memory-bearing context and preserve content exactly |
+| `crates/lattice-desktop/src/infrastructure/services/context_manager.rs::build_context_for_llm` | Conversational QA uses raw aggregate messages and a different truncation strategy | Use the same memory selection and budgeting contract |
+| `crates/lattice-desktop/src/features/conversation/chat/retrieval/conversation_helpers.rs::build_hyde_context_window_for_conversation` | Concatenates completed raw history | Use an explicitly bounded projection; do not replay the archive |
+| `crates/lattice-desktop/src/features/conversation/chat/tool_loop.rs` | Builds typed native requests from string context; tool results grow the prompt | Maintain the assembled memory and shared remaining budget through every tool iteration/retry |
+| `crates/lattice-desktop/src/features/conversation/repository/conversations.rs` | Loads aggregate and upserts a single summary row | Add transactional memory snapshot read/commit |
+| `crates/lattice-desktop/src/features/conversation/repository/messages.rs::get_messages` | Orders by `created_at` | Introduce stable sequence ordering; timestamps alone are insufficient |
+| `crates/lattice-desktop/src/features/conversation/repository/fork.rs` | Copies messages with new IDs; intentionally omits summaries and vectors | Rebuild memory in the fork; never reuse parent source IDs |
+| `crates/lattice-desktop/src/features/conversation/repository/pruning.rs` | Transactional deletion/truncation | Invalidate derived memory and summaries on transcript rewrites |
 | `conversation_search_fts` in the init schema | Existing FTS5 index over titles, messages, bookmarks | Reuse only message rows for history retrieval, with strict conversation ownership |
 | `conversation_memory_vectors` and `chat/persistence.rs` | Message embeddings are written asynchronously | Potential optional retrieval source, not a validated factual-memory ledger |
-| `src-tauri/src/features/conversation/chat/fetch_memory.rs` | Bounded per-turn web-fetch state | Keep separate; this is not conversational instruction memory |
-| `src-tauri/src/features/backup/archive/snapshot.rs` | Backups exclude conversation vectors but retain ordinary conversation data | Include memory state/items/evidence; vector absence must not affect constraints |
+| `crates/lattice-desktop/src/features/conversation/chat/fetch_memory.rs` | Bounded per-turn web-fetch state | Keep separate; this is not conversational instruction memory |
+| `crates/lattice-desktop/src/features/backup/archive/snapshot.rs` | Backups exclude conversation vectors but retain ordinary conversation data | Include memory state/items/evidence; vector absence must not affect constraints |
 
 Current tests cover aggregate summary boundaries and summary persistence, but are not evidence for real-model memory extraction or repeated semantic preservation.
 
@@ -89,7 +89,7 @@ Follow `CONTRIBUTING.md` and `docs/RUST_ARCHITECTURE.md`:
 - Avoid further growth of large façade files; create directory modules for the new workflow.
 - Rust DTOs exported over IPC must generate their TypeScript definitions.
 - Backend-owned state belongs in React Query, not a second client-side memory store.
-- The documented schema policy is one pre-release squashed migration: `src-tauri/migrations/20260916000000_init_schema.sql`. Update that file if this policy still applies; do not invent a migration chain contrary to repository conventions.
+- The documented schema policy is one pre-release squashed migration: `crates/lattice-desktop/migrations/20260916000000_init_schema.sql`. Update that file if this policy still applies; do not invent a migration chain contrary to repository conventions.
 - Use isolated temporary databases for tests. This design does not authorize deleting a user's local database. If schema policy has changed by implementation time, use the repository's then-current migration procedure and document the deviation.
 
 ## 4. Invariants
@@ -764,7 +764,7 @@ This is part of the implementation deliverable, not a future optional idea. Runn
 
 ### 17.1 Harness
 
-Add an integration target such as `src-tauri/tests/conversation_memory_evals.rs` with ignored tests carrying a reason string. Use existing provider adapters and production extraction, validation, compaction, repository, context assembly, and continuation code. Do not duplicate the algorithm in the test harness.
+Add an integration target such as `crates/lattice-desktop/tests/conversation_memory_evals.rs` with ignored tests carrying a reason string. Use existing provider adapters and production extraction, validation, compaction, repository, context assembly, and continuation code. Do not duplicate the algorithm in the test harness.
 
 Configuration should identify the continuation model, utility model, endpoint/runtime, context capacity, and output limits. Read credentials from the existing provider configuration or explicit environment variables; never commit credentials. Support a local llama.cpp/Ollama instance. Do not assume that a particular Qwen variant or endpoint is available; record the exact model artifact/version used.
 
@@ -917,9 +917,9 @@ Exit: handoff contains tested implementation, clear model-specific evaluation re
 Use existing scripts where applicable. Re-check package scripts and feature flags at implementation time.
 
 ```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+cargo fmt --manifest-path crates/lattice-desktop/Cargo.toml --all -- --check
+cargo test --manifest-path crates/lattice-desktop/Cargo.toml --lib
+cargo clippy --manifest-path crates/lattice-desktop/Cargo.toml --all-targets
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 python3 scripts/check-sql-contracts.py
@@ -942,7 +942,7 @@ LATTICE_EVAL_CONTINUATION_MODEL=qwen3:8b \
 LATTICE_EVAL_PROVIDER=ollama \
 LATTICE_EVAL_ENDPOINT=http://127.0.0.1:11434 \
 LATTICE_EVAL_RUNS=3 \
-  cargo test --manifest-path src-tauri/Cargo.toml \
+  cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
     --test conversation_memory_evals -- --ignored --nocapture
 ```
 
@@ -974,14 +974,14 @@ LATTICE_EVAL_PROVIDER_ATTEMPTS=3 \
 LATTICE_EVAL_RETRY_BASE_DELAY_MS=1000 \
 LATTICE_EVAL_RUNS=3 \
 LATTICE_EVAL_CONCURRENCY=4 \
-  cargo test --manifest-path src-tauri/Cargo.toml \
+  cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
     --test conversation_memory_evals \
     release_baseline_covers_every_family_baseline_and_ablation -- \
     --ignored --nocapture --test-threads=1
 ```
 
 The full environment table is in the module doc comment at the top of
-`src-tauri/tests/conversation_memory_evals.rs`. Blank completions and transient
+`crates/lattice-desktop/tests/conversation_memory_evals.rs`. Blank completions and transient
 provider errors are retried with bounded exponential backoff; every logical
 call records its attempt count and retry reasons, and an exhausted retry budget
 fails the release baseline. Traces containing conversation text go to the

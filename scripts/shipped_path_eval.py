@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Score answers from the shipped desktop chat path.
 
-`src-tauri/examples/shipped_path_eval` asks each question of the desktop's own
+`crates/lattice-desktop/examples/shipped_path_eval` asks each question of the desktop's own
 orchestrator and writes one row per item. This script grades those rows two
 ways and reports both, so each can be checked against the other:
 

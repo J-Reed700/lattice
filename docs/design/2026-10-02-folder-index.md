@@ -202,7 +202,7 @@ Event `explorer-index://status`, payload `FolderIndexStatusDto`.
 The start screen's Recent list (localStorage, capped at 8) and the
 manager's eviction past 8 indexes were replaced by one managed list.
 
-- **Table.** `src-tauri/migrations/20261002110000_explorer_folders.sql`:
+- **Table.** `crates/lattice-desktop/migrations/20261002110000_explorer_folders.sql`:
   `explorer_folders(root TEXT PK, name, pinned 0/1, added_at, last_opened_at)`,
   times RFC 3339 UTC to the millisecond so they sort as text.
   `20261003100000_explorer_folder_settings.sql` adds `instructions` (the

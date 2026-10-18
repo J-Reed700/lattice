@@ -92,11 +92,11 @@ Labels: 40 supported, 36 unsupported, 25 contradicted, over 37 passages
 ```text
 # Lattice's checker, lexical pass only (no server)
 cargo run --example claim_checker_eval -- --lexical-only \
-    ../evals/grounding/claim-pairs-v1.jsonl ../evals/grounding/results/2026-10-12-lattice-lexical.jsonl
+    ../../evals/grounding/claim-pairs-v1.jsonl ../../evals/grounding/results/2026-10-12-lattice-lexical.jsonl
 
 # Lattice's checker with the judge, against a llama-server on :8092
 cargo run --example claim_checker_eval -- --judge-url http://127.0.0.1:8092 \
-    ../evals/grounding/claim-pairs-v1.jsonl ../evals/grounding/results/2026-10-12-lattice-checker.jsonl
+    ../../evals/grounding/claim-pairs-v1.jsonl ../../evals/grounding/results/2026-10-12-lattice-checker.jsonl
 
 # One external checker per process (torch + transformers + the checker's package)
 "$EVAL_PYTHON" scripts/claim_checker_bakeoff.py --checker minicheck-roberta-large

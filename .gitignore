@@ -14,7 +14,7 @@ eggs/
 lib/
 lib64/
 !src/lib/
-!src-tauri/resources/learning-python/lib/
+!crates/lattice-desktop/resources/learning-python/lib/
 parts/
 sdist/
 var/
@@ -61,7 +61,7 @@ Thumbs.db
 
 # Test and coverage output
 coverage/
-!src-tauri/src/features/learning/lessons/content_verification/coverage/
+!crates/lattice-desktop/src/features/learning/lessons/content_verification/coverage/
 htmlcov/
 .coverage
 *.coverage
@@ -74,8 +74,7 @@ coverage-final.json
 target/
 node_modules/
 models/
-!/src-tauri/src/domain/models/
-!/src-tauri/crates/lattice-core/src/domain/models/
+!/crates/lattice-core/src/domain/models/
 .cache/
 .fastembed_cache/
 .turbo/
@@ -95,26 +94,22 @@ models/
 /e2e-results/
 /playwright-report/
 /blob-report/
-/src-tauri/docs/audit/
 
 # Compiled test binaries
 test_context_manager
 mock_http
-src-tauri/test_web_archive_security
+crates/lattice-desktop/test_web_archive_security
 
 # Database files
 *.db
 *.db-shm
 *.db-wal
 
-# Rust temporary schema artifacts
-src-tauri/src/crates/recall/infrastructure/persistence/database/schema.rs.tmp*
-
 # Runtime artifacts
-src-tauri/crashes/
-src-tauri/test_output.txt
-src-tauri/build_output.txt
-src-tauri/build_error.txt
+crates/lattice-desktop/crashes/
+crates/lattice-desktop/test_output.txt
+crates/lattice-desktop/build_output.txt
+crates/lattice-desktop/build_error.txt
 /build_output.txt
 /CHAT_QA_TEST_REPORT.md
 /SEARCH_E2E_TEST_REPORT.md

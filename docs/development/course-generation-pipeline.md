@@ -7,7 +7,7 @@ This is the reference for how Lattice builds a course from a topic request: the 
 - Design records (history of decisions, not current behaviour): [2026-10-14-outline-evidence-rebuild.md](../design/2026-10-14-outline-evidence-rebuild.md) (§12 and §14 are binding amendments), [2026-10-04-learning-content-verification.md](../design/2026-10-04-learning-content-verification.md).
 - Release evidence for the wider Learning Studio: [learning-studio-verification.md](learning-studio-verification.md).
 
-Paths are under `src-tauri/src/features/learning/` unless they start with `src/` (frontend), `crates/` or `migrations/`. Code is named by path and function, not line number.
+Paths are under `crates/lattice-desktop/src/features/learning/` unless they start with `src/` (frontend), `crates/` or `migrations/`. Code is named by path and function, not line number.
 
 ## 1. Principles
 
@@ -371,7 +371,7 @@ Why: a sample of 40 claims the failed final2-1 lesson left unsupported, judged a
 
 ## 6. Budgets
 
-**Principle.** "I don't want any arbitrary caps in this code... like this shit that is just chipping off the first 2400 characters" (Josh). No fixed limit may discard content that a model call needs. Sizes derive from the model's context window. What does not fit is split across calls or paged. Fixed numbers are allowed only for the shape of model output, for termination, for batch sizes that split work without dropping any, and for display. `src-tauri/src/features/learning/content_caps_tests.rs` holds the regression tests ("Content reaching a model is bounded by its window, never by a fixed count or a character prefix").
+**Principle.** "I don't want any arbitrary caps in this code... like this shit that is just chipping off the first 2400 characters" (Josh). No fixed limit may discard content that a model call needs. Sizes derive from the model's context window. What does not fit is split across calls or paged. Fixed numbers are allowed only for the shape of model output, for termination, for batch sizes that split work without dropping any, and for display. `crates/lattice-desktop/src/features/learning/content_caps_tests.rs` holds the regression tests ("Content reaching a model is bounded by its window, never by a fixed count or a character prefix").
 
 **How the window is divided.** `model_call::fits(llm, request)` asks the grounded-generation service whether the system text, prompt and output reservation fit the model's window (`LLMPort::max_context_tokens`, counted with `count_tokens`). `model_call::source_room(llm, request, ceiling)` returns the room left for evidence once the prompt skeleton and the output reservation are paid for; every pipeline caller passes `usize::MAX`, so the window alone bounds it. A request that does not fit is never sent; `model_call::send` maps it to the caller's error text.
 
