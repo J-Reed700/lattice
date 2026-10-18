@@ -241,11 +241,17 @@ impl ClaimReviewService {
                 let candidate: Value = serde_json::from_str(&draft.candidate)
                     .map_err(|error| AppError::Serialization(error.to_string()))?;
                 let titles = |field: &str, key: &str| -> Vec<String> {
-                    candidate[field]
-                        .as_array()
+                    candidate
+                        .get(field)
+                        .and_then(Value::as_array)
                         .into_iter()
                         .flatten()
-                        .map(|unit| unit[key].as_str().unwrap_or_default().to_owned())
+                        .map(|unit| {
+                            unit.get(key)
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned()
+                        })
                         .collect()
                 };
                 let mut units = titles("blocks", "title");
