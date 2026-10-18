@@ -89,7 +89,9 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         }
         let mut report =
             verify_with_references(llm, runtimes, &candidate, active, &mut checks).await?;
-        loop {
+        // The last research round's finding that public search cannot help,
+        // so a stop names the true reason the claims stayed unresolved.
+        let research_exhausted = loop {
             let gaps = report
                 .findings
                 .iter()
@@ -101,11 +103,13 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 })
                 .count();
             let active = expanded.as_ref().unwrap_or(references);
-            let Some(additional) = research::expand(llm, active, &report.findings, &checks)
+            let additional = match research::expand(llm, active, &report.findings, &checks)
                 .boxed()
                 .await?
-            else {
-                break;
+            {
+                research::Expansion::Saved(additional) => *additional,
+                research::Expansion::Exhausted(exhausted) => break Some(exhausted),
+                research::Expansion::Unchanged => break None,
             };
             expanded = Some(additional);
             let active = expanded
@@ -144,16 +148,18 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     .iter()
                     .any(|finding| finding.verdict == ClaimVerdict::Contradicted)
             {
-                break;
+                break None;
             }
-        }
+        };
         if report.issues.is_empty() {
             return Ok((raw, report));
         }
         if let Some(error) = unchecked_claims(&report.findings) {
             return Err(error);
         }
-        progress.record(&raw, &report.issues).await?;
+        progress
+            .record(&raw, &report.issues, research_exhausted)
+            .await?;
         let issue_fingerprint = repair_issue_fingerprint(&report.issues);
         let repeated_defects =
             progress.escalated || previous_issue_fingerprint.as_ref() == Some(&issue_fingerprint);
@@ -227,20 +233,30 @@ impl RepairProgress {
     /// beats the best becomes it and clears the escalation; one that does not
     /// escalates the next repair, and after an escalated round it stops: the
     /// best candidate is saved as the lesson draft and an error explains why.
-    pub(super) async fn record(&mut self, raw: &str, issues: &[String]) -> Result<()> {
+    /// `exhausted` is research's finding that no public search can help the
+    /// remaining claims; a stop states it as the reason they remain.
+    pub(super) async fn record(
+        &mut self,
+        raw: &str,
+        issues: &[String],
+        exhausted: Option<research::Exhausted>,
+    ) -> Result<()> {
         match &self.best {
             Some(best) if issues.len() >= best.issues.len() => {
                 if self.escalated {
                     crate::features::learning::lesson_drafts::save(&best.candidate).await?;
                     return Err(AppError::InvalidInput(format!(
-                        "Repairs stopped reducing the lesson's problems: {} remain ({}). The best draft is saved; retry to continue.",
+                        "Repairs stopped reducing the lesson's problems: {} remain ({}).{} The best draft is saved; retry to continue.",
                         best.issues.len(),
                         best.issues
                             .iter()
                             .take(3)
                             .map(String::as_str)
                             .collect::<Vec<_>>()
-                            .join("; ")
+                            .join("; "),
+                        exhausted
+                            .map(|exhausted| format!(" {exhausted}."))
+                            .unwrap_or_default()
                     )));
                 }
                 self.escalated = true;
