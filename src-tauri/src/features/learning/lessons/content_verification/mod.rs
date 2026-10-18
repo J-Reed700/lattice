@@ -246,6 +246,7 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
             &json!({
                 "policy": POLICY, "model": llm.model_name(),
                 "context": llm.max_context_tokens(), "comparison": comparison,
+                "challenge": challenge::POLICY,
             })
             .to_string()
         )

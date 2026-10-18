@@ -602,3 +602,58 @@ fn only_a_known_source_index_is_labelled() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_verdict_saved_under_an_earlier_challenge_policy_is_checked_again() -> Result<()> {
+    use crate::features::learning::lesson_drafts;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000);
+    let citations = Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
+    let claims = inventory(&[CLAIM.into()]);
+    let evidence = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    // The same comparison, keyed as before the challenge's policy was part
+    // of the key, where the old challenge had overturned its approval.
+    let comparison = ClaimChecks::key(0, &claims.units[0].claims[0], &evidence);
+    let earlier = format!(
+        "claim-v1:{}",
+        digest(
+            &json!({"policy": POLICY, "model": model.model_name(),
+                "context": model.max_context_tokens(), "comparison": comparison})
+            .to_string()
+        )
+    );
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        lesson_drafts::record_checkpoint(
+            &earlier,
+            serde_json::to_value(ClaimReceipt {
+                verdict: ClaimVerdict::Unsupported,
+                reason: "Independent review raised unresolved evidence questions.".into(),
+                supporting_quote: None,
+                interpretation_policy: Some(
+                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                        .into(),
+                ),
+            })?,
+        )
+        .await?;
+        let results = evidence_checks::check_with_citations(
+            &model,
+            &references,
+            &claims,
+            &[],
+            &ClaimChecks::default(),
+            &citations,
+        )
+        .await?;
+        assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
+        assert_eq!(model.checks.lock().unwrap().len(), 1, "checked again");
+        Ok(())
+    })
+    .await
+}

@@ -18,41 +18,74 @@ fn decision(verdict: ClaimVerdict) -> ClaimJudgment {
     })
 }
 
-#[tokio::test]
-async fn questions_block_publication_without_claiming_a_proven_contradiction() {
-    let llm = model(
-        r#"{"queries":[{"query":"process outcome necessary conditions","rationale":"Does the source establish all necessary conditions for the claimed outcome?"}]}"#,
-    );
-    let result = guard(
-        &llm,
-        "One controlled input guarantees the overall outcome.",
-        &["fixture evidence".into()],
+const PASSAGE: &str = "List all enum values explicitly: it prevents the model from inventing invalid values. Strict mode applies only to nested objects.";
+
+fn objection(ground: &str, quote: &str) -> String {
+    json!({"objections":[{"ground":ground,"quote":quote,"rationale":"The fixture's reason."}]})
+        .to_string()
+}
+
+async fn reviewed(reply: &str) -> ClaimJudgment {
+    guard(
+        &model(reply),
+        "Listing all enum values prevents invalid values.",
+        &[PASSAGE.into()],
         decision(ClaimVerdict::Supported),
     )
-    .await;
-    assert!(
-        matches!(result, ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Unsupported && outcome.quote.is_none() && outcome.reason.as_deref().unwrap().contains("not established contradictions"))
-    );
+    .await
 }
 
 #[tokio::test]
-async fn no_questions_retains_the_original_evidence_decision() {
-    let llm = model(r#"{"queries":[]}"#);
-    let result = guard(
-        &llm,
-        "A scoped statement.",
-        &["fixture evidence".into()],
-        decision(ClaimVerdict::Supported),
-    )
-    .await;
-    assert!(
-        matches!(result, ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported && outcome.quote.as_deref() == Some("fixture evidence"))
-    );
+async fn a_source_that_agrees_with_the_claim_never_overturns_it() {
+    for reply in [
+        json!({"objections":[]}).to_string(),
+        // Doubt the passages do not show: no quote of theirs.
+        objection(
+            "contradiction",
+            "Enums cannot guarantee valid calls in every API.",
+        ),
+    ] {
+        assert!(
+            matches!(reviewed(&reply).await, ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported && outcome.quote.as_deref() == Some("fixture evidence")),
+            "{reply}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_quoted_contradicting_passage_overturns_the_approval() {
+    let ClaimJudgment::Judged(outcome) = reviewed(&objection(
+        "contradiction",
+        "strict mode  applies only to nested objects",
+    ))
+    .await
+    else {
+        panic!("a judged outcome");
+    };
+    assert_eq!(outcome.verdict, ClaimVerdict::Contradicted);
+    assert!(outcome
+        .reason
+        .unwrap()
+        .contains("contradicts the claim: \"strict mode  applies only to nested objects\""));
+}
+
+#[tokio::test]
+async fn a_quoted_unreliable_source_leaves_the_claim_unsupported() {
+    let ClaimJudgment::Judged(outcome) = reviewed(&objection(
+        "unreliable_source",
+        "List all enum values explicitly",
+    ))
+    .await
+    else {
+        panic!("a judged outcome");
+    };
+    assert_eq!(outcome.verdict, ClaimVerdict::Unsupported);
+    assert!(outcome.reason.unwrap().contains("not reliable"));
 }
 
 #[tokio::test]
 async fn challenge_cannot_approve_or_relabel_a_negative_evidence_check() {
-    let llm = model(r#"{"queries":[]}"#);
+    let llm = model(r#"{"objections":[]}"#);
     for verdict in [
         ClaimVerdict::Unsupported,
         ClaimVerdict::Contradicted,
@@ -69,10 +102,10 @@ async fn challenge_cannot_approve_or_relabel_a_negative_evidence_check() {
 async fn malformed_or_failed_challenge_never_inherits_provisional_approval() {
     for raw in [
         "not json",
-        r#"{"queries":[],"approved":true}"#,
-        r#"{"queries":[{"query":"","rationale":"Missing query"}]}"#,
-        r#"{"queries":[{"query":"query one","rationale":""}]}"#,
-        r#"{"queries":[{"query":"query one","rationale":"A concern"},{"query":"QUERY ONE","rationale":"Repeated concern"}]}"#,
+        r#"{"objections":[],"approved":true}"#,
+        r#"{"objections":[{"ground":"contradiction","quote":" ","rationale":"A reason"}]}"#,
+        r#"{"objections":[{"ground":"contradiction","quote":"fixture evidence","rationale":""}]}"#,
+        r#"{"objections":[{"ground":"doubt","quote":"fixture evidence","rationale":"A reason"}]}"#,
     ] {
         // Left unchecked, with the failure as its cause; never approved.
         let llm = model(raw);
@@ -92,19 +125,7 @@ async fn malformed_or_failed_challenge_never_inherits_provisional_approval() {
     ));
 }
 
-#[test]
-fn the_challenge_may_raise_as_many_distinct_questions_as_its_concerns_need() {
-    let questions: Questions = serde_json::from_value(serde_json::json!({"queries":(0..5)
-        .map(|i| serde_json::json!({"query":format!("distinct concern search {i}"),"rationale":"A specific omitted condition."}))
-        .collect::<Vec<_>>()}))
-    .unwrap();
-    assert!(
-        validate_questions(&questions).is_ok(),
-        "not the former three"
-    );
-}
-
-/// A small window that answers every challenge with no questions and records
+/// A small window that answers every challenge with no objections and records
 /// what each challenge request carried.
 struct SmallWindow {
     window: usize,
@@ -121,7 +142,7 @@ impl LLMPort for SmallWindow {
         self.prompts.lock().unwrap().push(user.to_owned());
         Ok(
             lattice_core::application::ports::llm_port::CompletionResponse::from_text(
-                r#"{"queries":[]}"#,
+                r#"{"objections":[]}"#,
             ),
         )
     }
