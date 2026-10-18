@@ -42,6 +42,7 @@ struct SourceMessageRow {
     content: String,
     content_digest: String,
     status: String,
+    metadata: Option<String>,
 }
 
 impl SourceMessageRow {
@@ -60,14 +61,21 @@ impl SourceMessageRow {
         } else {
             self.content_digest
         };
+        let role = SourceRole::from_str(&self.role)?;
+        let pictures = if role == SourceRole::User {
+            lattice_core::shared::markdown_media::attached_picture_names(self.metadata.as_deref())
+        } else {
+            Vec::new()
+        };
         Ok(SourceMessage {
             id: self.id,
             conversation_id: self.conversation_id,
             sequence: self.sequence,
-            role: SourceRole::from_str(&self.role)?,
+            role,
             content: self.content,
             content_digest: digest,
             status: self.status,
+            pictures,
         })
     }
 }
@@ -219,7 +227,8 @@ fn assemble_items(
         .collect()
 }
 
-const SOURCE_COLUMNS: &str = "id, conversation_id, sequence, role, content, content_digest, status";
+const SOURCE_COLUMNS: &str =
+    "id, conversation_id, sequence, role, content, content_digest, status, metadata";
 
 impl ConversationRepository {
     /// One consistent read of everything the memory layer needs.

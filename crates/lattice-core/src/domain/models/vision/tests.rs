@@ -1,5 +1,10 @@
 //! Fit and cost arithmetic for each geometry kind. The TypeScript port in
-//! `src/utils/visionGeometry.ts` copies these rows, so the two must agree.
+//! `src/utils/visionGeometry.ts` must agree: both suites run every row of
+//! `plan_cases.json`, whose expected values are this module's results.
+
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
 
 use super::*;
 use crate::domain::models::model_ref::CloudProvider;
@@ -174,5 +179,78 @@ fn a_geometry_serializes_with_its_kind_tag() {
     assert_eq!(
         json,
         serde_json::json!({ "kind": "fixed", "side": 896, "tokens": 256 })
+    );
+}
+
+#[derive(Deserialize)]
+struct PlanCases {
+    geometries: BTreeMap<String, VisionGeometry>,
+    cases: Vec<PlanCase>,
+}
+
+#[derive(Deserialize)]
+struct PlanCase {
+    covers: String,
+    geometry: String,
+    width: u32,
+    height: u32,
+    fitted: Fitted,
+}
+
+#[derive(Deserialize)]
+struct Fitted {
+    width: u32,
+    height: u32,
+    tokens: u32,
+}
+
+#[test]
+fn every_shared_plan_case_holds() {
+    let file: PlanCases = serde_json::from_str(include_str!("plan_cases.json")).unwrap();
+
+    // The file's named geometries are the code's, so a preset edit shows up here.
+    for preset in VisionPreset::ALL {
+        let name = serde_json::to_value(preset).unwrap();
+        let name = name.as_str().unwrap();
+        assert_eq!(
+            file.geometries.get(name),
+            Some(&preset.geometry()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        file.geometries.get("conservative_default"),
+        Some(&VisionGeometry::CONSERVATIVE_DEFAULT)
+    );
+
+    // Every wrong row at once, with what this module gives, so the file can be
+    // corrected in one pass.
+    let wrong: Vec<String> = file
+        .cases
+        .iter()
+        .filter_map(|case| {
+            let geometry = file.geometries[&case.geometry];
+            let got = geometry.plan(case.width, case.height);
+            let want = fitted(case.fitted.width, case.fitted.height, case.fitted.tokens);
+            (got != want).then(|| {
+                format!(
+                    "{} {}x{} ({}): got {}x{} {} tokens",
+                    case.geometry,
+                    case.width,
+                    case.height,
+                    case.covers,
+                    got.width,
+                    got.height,
+                    got.tokens
+                )
+            })
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "{} of {} rows differ:\n{}",
+        wrong.len(),
+        file.cases.len(),
+        wrong.join("\n")
     );
 }

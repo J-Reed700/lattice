@@ -14,7 +14,8 @@ export interface ChatFigure {
   caption: string;
   width: number;
   height: number;
-  sourceUrl: string;
+  /** The page it came from; `null` for a picture the reader attached. */
+  sourceUrl: string | null;
   sourceTitle: string | null;
   license: string | null;
   attribution: string | null;
@@ -164,7 +165,7 @@ class ChatImageView implements NodeView {
       chip.tabIndex = 0;
       chip.setAttribute('aria-label', `Citation ${figure.citationNumber}`);
       caption.append(' ', chip);
-    } else {
+    } else if (figure.sourceUrl) {
       const link = element('a', 'chat-figure-source', figure.sourceTitle ?? hostOf(figure.sourceUrl));
       link.href = figure.sourceUrl;
       link.target = '_blank';

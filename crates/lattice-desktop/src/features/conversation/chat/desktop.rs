@@ -24,8 +24,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
-    attachment_names: Option<Vec<String>>,
-    attachment_document_ids: Option<Vec<String>>,
+    attachments: super::MessageAttachments,
     model: Option<ModelRef>,
     window: tauri::Window<R>,
 ) -> Result<ChatResponse> {
@@ -41,8 +40,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         tool_preferences,
         cancel_only,
         request_id,
-        attachment_names,
-        attachment_document_ids,
+        attachments,
         model,
         emit,
     )

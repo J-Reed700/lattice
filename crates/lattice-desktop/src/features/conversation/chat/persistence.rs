@@ -13,13 +13,24 @@ struct MemoryToIndex {
     content: String,
 }
 
+/// What the reader attached to the question being saved.
+pub(super) struct QuestionAttachments<'a> {
+    pub(super) names: &'a [String],
+    pub(super) document_ids: &'a [String],
+    /// Staged pictures, claimed by the saved message.
+    pub(super) image_ids: &'a [String],
+    /// Whether the model is shown them; `false` puts a "Not shown" note on
+    /// the message's pictures.
+    pub(super) pictures_seen: bool,
+}
+
 pub(super) async fn persist_user_message_pending(
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     request_id: &str,
     user_message: &str,
-    attachment_names: &[String],
-    attachment_document_ids: &[String],
+    attachments: QuestionAttachments<'_>,
     llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
 ) -> Result<(String, usize)> {
     let message_tokens = llm.count_tokens(user_message);
@@ -29,16 +40,16 @@ pub(super) async fn persist_user_message_pending(
     // files the first one did.
     let mut payload = serde_json::Map::new();
     payload.insert("requestId".to_string(), serde_json::json!(request_id));
-    if !attachment_names.is_empty() {
+    if !attachments.names.is_empty() {
         payload.insert(
             "attachments".to_string(),
-            serde_json::json!(attachment_names),
+            serde_json::json!(attachments.names),
         );
     }
-    if !attachment_document_ids.is_empty() {
+    if !attachments.document_ids.is_empty() {
         payload.insert(
             "attachmentDocumentIds".to_string(),
-            serde_json::json!(attachment_document_ids),
+            serde_json::json!(attachments.document_ids),
         );
     }
     let metadata = Some(serde_json::Value::Object(payload).to_string());
@@ -52,8 +63,65 @@ pub(super) async fn persist_user_message_pending(
             metadata,
         )
         .await?;
+    if !attachments.image_ids.is_empty() {
+        claim_question_pictures(
+            container,
+            conv_service,
+            conversation_id,
+            request_id,
+            &user_msg.id,
+            &attachments,
+        )
+        .await;
+    }
 
     Ok((user_msg.id, message_tokens))
+}
+
+/// Give the saved question its staged pictures and record them in
+/// `metadata.images`, with `metadata.picturesSeen`. A failure is logged, not
+/// returned: the question is saved, and the unclaimed drafts are swept at the
+/// next start.
+async fn claim_question_pictures(
+    container: &dyn ChatRuntime,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    request_id: &str,
+    message_id: &str,
+    attachments: &QuestionAttachments<'_>,
+) {
+    let claimed = match container
+        .chat_images()
+        .attach_ids_to_message(
+            conversation_id,
+            attachments.image_ids,
+            message_id,
+            request_id,
+        )
+        .await
+    {
+        Ok(claimed) if !claimed.is_empty() => claimed,
+        Ok(_) => return,
+        Err(error) => {
+            warn!(%error, request_id, "Could not attach the question's pictures");
+            return;
+        }
+    };
+    if let Err(error) = conv_service
+        .set_message_metadata_fields(
+            message_id,
+            vec![
+                ("images".to_string(), serde_json::json!(claimed)),
+                (
+                    "picturesSeen".to_string(),
+                    serde_json::json!(attachments.pictures_seen),
+                ),
+            ],
+        )
+        .await
+    {
+        warn!(%error, request_id, "Could not record the question's pictures");
+    }
 }
 
 /// The answer as it is saved: its text, the sources it cites, and what the

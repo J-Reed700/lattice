@@ -264,7 +264,9 @@ fn image_source_line(image: &ExportImageRow) -> String {
         line.push_str(title);
         line.push_str(" — ");
     }
-    line.push_str(&image.source_url);
+    if let Some(url) = image.source_url.as_deref() {
+        line.push_str(url);
+    }
     if let Some(license) = image.license.as_deref().filter(|l| !l.is_empty()) {
         line.push_str(&format!(" ({license})"));
     }
@@ -274,8 +276,31 @@ fn image_source_line(image: &ExportImageRow) -> String {
 
 /// The answer with each `![c](img-N)` pointing at the copied file
 /// (`../images/<id>.<ext>`, relative to `conversations/`) and the picture's
-/// source line under the line that shows it.
+/// source line under the line that shows it. A question's attached pictures
+/// (`att-N`, never written in its text) follow the text, one line each.
 fn with_exported_images(content: &str, images: &[ExportImageRow]) -> String {
+    let mut out = with_found_images(content, images);
+    for image in images
+        .iter()
+        .filter(|image| image.image_ref.starts_with("att-"))
+    {
+        let name = image
+            .original_name
+            .as_deref()
+            .unwrap_or(&image.image_ref)
+            .replace(['[', ']'], "");
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "\n![{name}](../{IMAGES_DIR}/{}.{})\n",
+            image.id, image.ext
+        ));
+    }
+    out
+}
+
+fn with_found_images(content: &str, images: &[ExportImageRow]) -> String {
     let mut out = String::with_capacity(content.len());
     for line in content.split_inclusive('\n') {
         let mut rewritten = line.to_string();
@@ -485,7 +510,7 @@ mod tests {
             "CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, model_choice TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
             "CREATE TABLE conversation_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', metadata TEXT)",
             "CREATE TABLE daily_notes_workspace (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-            "CREATE TABLE chat_images (id TEXT PRIMARY KEY, message_id TEXT, ref TEXT NOT NULL, ext TEXT NOT NULL, source_url TEXT NOT NULL, source_title TEXT, license TEXT)",
+            "CREATE TABLE chat_images (id TEXT PRIMARY KEY, message_id TEXT, ref TEXT NOT NULL, ext TEXT NOT NULL, source_url TEXT, source_title TEXT, license TEXT, original_name TEXT)",
         ] {
             sqlx::query(statement)
                 .execute(&pool)

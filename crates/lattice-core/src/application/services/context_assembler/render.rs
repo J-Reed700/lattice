@@ -234,12 +234,23 @@ pub fn render_evidence(blocks: &[String]) -> Option<String> {
 ///
 /// No trimming. `completion_input::from_context` trims, and a trimmed user
 /// message is a different message; this path exists so the production memory
-/// path never goes through that. The one rewrite is an answer's pictures,
-/// which replay as their captions (see `replayed`).
+/// path never goes through that. The two rewrites are an answer's pictures,
+/// which replay as their captions (see `replayed`), and a question's attached
+/// pictures, which replay as one caption line each after its text: their
+/// pixels rode only in the turn they were sent in.
 pub fn render_recent(message: &SourceMessage) -> CompletionInput {
+    let content = replayed(message.role, &message.content);
+    let content = if message.pictures.is_empty() {
+        content.into_owned()
+    } else {
+        format!(
+            "{content}\n{}",
+            crate::shared::markdown_media::picture_captions(&message.pictures)
+        )
+    };
     CompletionInput::Message {
         role: role_label(message.role).to_string(),
-        content: replayed(message.role, &message.content).into_owned(),
+        content,
     }
 }
 
@@ -465,6 +476,7 @@ mod tests {
             content: "  indented\n\tcode\n  ".into(),
             content_digest: compute_digest("  indented\n\tcode\n  "),
             status: "completed".into(),
+            pictures: Vec::new(),
         };
         match render_recent(&message) {
             CompletionInput::Message { role, content } => {
@@ -487,6 +499,7 @@ mod tests {
             content: content.into(),
             content_digest: compute_digest(content),
             status: "completed".into(),
+            pictures: Vec::new(),
         };
         let answer = "It flew.\n\n![Saturn V lifting off](img-1)\n";
         match render_recent(&message(SourceRole::Assistant, answer)) {
@@ -497,6 +510,32 @@ mod tests {
         }
         match render_recent(&message(SourceRole::User, answer)) {
             CompletionInput::Message { content, .. } => assert_eq!(content, answer),
+            other => panic!("unexpected input {other:?}"),
+        }
+    }
+
+    /// A question's attached pictures replay as caption lines after its
+    /// text, which is kept byte for byte.
+    #[test]
+    fn a_recent_question_names_its_attached_pictures() {
+        let message = SourceMessage {
+            id: "m4".into(),
+            conversation_id: "c1".into(),
+            sequence: 4,
+            role: SourceRole::User,
+            content: "What is this?  ".into(),
+            content_digest: compute_digest("What is this?  "),
+            status: "completed".into(),
+            pictures: vec!["leaf.jpg".into(), "bark.jpg".into()],
+        };
+        match render_recent(&message) {
+            CompletionInput::Message { role, content } => {
+                assert_eq!(role, "user");
+                assert_eq!(
+                    content,
+                    "What is this?  \n[Picture attached: leaf.jpg]\n[Picture attached: bark.jpg]"
+                );
+            }
             other => panic!("unexpected input {other:?}"),
         }
     }

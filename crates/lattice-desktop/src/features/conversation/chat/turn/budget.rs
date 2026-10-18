@@ -20,6 +20,10 @@ pub(super) struct TurnBudget {
     pub(super) output_tokens: usize,
     /// What the whole request may occupy, tool rounds included.
     pub(super) input_budget: usize,
+    /// What the reader's pictures may cost: the request's room once the
+    /// system prompt, the tools, the message and any history sent whole are
+    /// paid. Pictures over it are shrunk, then dropped (chat-vision §8).
+    pub(super) picture_room: usize,
 }
 
 impl TurnBudget {
@@ -38,6 +42,12 @@ impl TurnBudget {
     /// those pools. With it off, the string history is sent whole and charged
     /// whole.
     ///
+    /// `picture_tokens` is what the reader's attached pictures cost at the
+    /// size the model's geometry takes them: their own material, paid with
+    /// the message before evidence, and never more than the room left for
+    /// them, since pictures over it are shrunk or dropped before the request
+    /// is built.
+    ///
     /// A question the window cannot hold is not refused here: the request is
     /// checked whole when it is assembled, after the user's message is saved,
     /// so the refusal leaves a retryable message. Until then the turn simply
@@ -49,6 +59,7 @@ impl TurnBudget {
         context: &[String],
         bounded_memory: bool,
         tool_schema_tokens: usize,
+        picture_tokens: usize,
         today: chrono::NaiveDate,
     ) -> Self {
         let (system_entries, history_entries): (Vec<&String>, Vec<&String>) = context
@@ -58,7 +69,7 @@ impl TurnBudget {
             .iter()
             .map(|entry| llm.count_tokens(entry))
             .sum();
-        let request = if bounded_memory {
+        let mut request = if bounded_memory {
             let counter: TokenCounter = {
                 let llm = Arc::clone(llm);
                 Arc::new(move |text: &str| llm.count_tokens(text))
@@ -80,11 +91,27 @@ impl TurnBudget {
             .with_history(HistoryCharge::Carried(history))
         };
         let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens());
+        // History sent whole is as fixed as the message; history the memory
+        // plan selects gives way to the pictures instead.
+        let carried_history = match request.history {
+            HistoryCharge::Carried(tokens) => tokens,
+            HistoryCharge::Reserved | HistoryCharge::Measured(_) => 0,
+        };
+        let text_fixed = request.system + request.tools + request.current_input + carried_history;
+        let picture_room = |input_budget: usize| input_budget.saturating_sub(text_fixed);
+        if picture_tokens > 0 {
+            let room = match BudgetAllocation::plan(&capacity, &BudgetRequest::default()) {
+                Ok(allocation) => picture_room(allocation.input_budget),
+                Err(_) => 0,
+            };
+            request.current_input += picture_tokens.min(room);
+        }
         match BudgetAllocation::plan(&capacity, &request) {
             Ok(allocation) => Self {
                 evidence: allocation.evidence_budget(),
                 output_tokens: allocation.output_reserved,
                 input_budget: allocation.input_budget,
+                picture_room: picture_room(allocation.input_budget),
             },
             Err(error) => {
                 warn!(%error, "No room for evidence this turn");
@@ -93,6 +120,7 @@ impl TurnBudget {
                         evidence: EvidenceBudget::default(),
                         output_tokens: allocation.output_reserved,
                         input_budget: allocation.input_budget,
+                        picture_room: picture_room(allocation.input_budget),
                     },
                     // A model too small to plan for: the assembled request
                     // reports it, and nothing here caps the provider.
@@ -100,6 +128,7 @@ impl TurnBudget {
                         evidence: EvidenceBudget::default(),
                         output_tokens: 0,
                         input_budget: llm.max_context_tokens(),
+                        picture_room: 0,
                     },
                 }
             }
@@ -163,6 +192,7 @@ mod tests {
             context,
             bounded,
             tools,
+            0,
             today(),
         )
     }
@@ -209,7 +239,7 @@ mod tests {
     #[test]
     fn a_question_larger_than_the_window_leaves_no_evidence_but_keeps_the_reservation() {
         let llm = mock();
-        let budget = TurnBudget::plan(&llm, "", &"word ".repeat(50_000), &[], true, 0, today());
+        let budget = TurnBudget::plan(&llm, "", &"word ".repeat(50_000), &[], true, 0, 0, today());
         assert_eq!(budget.evidence.total(), 0);
         assert!(budget.output_tokens > 0);
         assert!(budget.input_budget < llm.max_context_tokens());
@@ -223,8 +253,8 @@ mod tests {
         let llm: Arc<dyn LLMPort> = Arc::new(Window(8_192));
         let system = "You answer from the user's documents. ".repeat(40);
         let tools = 1_400;
-        let budget = TurnBudget::plan(&llm, &system, "question", &[], true, tools, today());
-        let unreserved = TurnBudget::plan(&llm, &system, "question", &[], true, 0, today());
+        let budget = TurnBudget::plan(&llm, &system, "question", &[], true, tools, 0, today());
+        let unreserved = TurnBudget::plan(&llm, &system, "question", &[], true, 0, 0, today());
 
         // The tool schemas come out of the evidence, token for token.
         assert_eq!(unreserved.evidence.total() - budget.evidence.total(), tools);
@@ -252,5 +282,33 @@ mod tests {
         let without = plan(&llm, &[], false, 0);
         let with = plan(&llm, &[], false, 1_000);
         assert_eq!(without.evidence.total() - with.evidence.total(), 1_000);
+    }
+
+    /// Attached pictures are paid with the message, before evidence, and
+    /// never more than the room the fixed parts leave them.
+    #[test]
+    fn pictures_are_paid_before_evidence_and_bounded_by_their_room() {
+        let llm: Arc<dyn LLMPort> = Arc::new(Window(8_192));
+        let plain = TurnBudget::plan(&llm, "", "question", &[], true, 0, 0, today());
+        let pictured = TurnBudget::plan(&llm, "", "question", &[], true, 0, 1_000, today());
+        assert_eq!(plain.evidence.total() - pictured.evidence.total(), 1_000);
+        assert_eq!(plain.picture_room, pictured.picture_room);
+
+        let flooded = TurnBudget::plan(&llm, "", "question", &[], true, 0, 1_000_000, today());
+        assert_eq!(flooded.evidence.total(), 0);
+        assert_eq!(flooded.picture_room, plain.picture_room);
+        assert!(plain.picture_room > 0 && plain.picture_room < plain.input_budget);
+
+        // History sent whole is fixed; history the memory plan selects gives
+        // way to the pictures.
+        let history = vec!["User: ".to_string() + &"word ".repeat(500)];
+        let without = TurnBudget::plan(&llm, "", "question", &[], false, 0, 0, today());
+        let carried = TurnBudget::plan(&llm, "", "question", &history, false, 0, 0, today());
+        assert_eq!(
+            without.picture_room - carried.picture_room,
+            llm.count_tokens(&history[0])
+        );
+        let selected = TurnBudget::plan(&llm, "", "question", &history, true, 0, 0, today());
+        assert_eq!(selected.picture_room, plain.picture_room);
     }
 }

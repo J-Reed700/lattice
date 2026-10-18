@@ -19,7 +19,9 @@ use super::repository::NewImageRow;
 use super::store::{new_id, ImageStore, Verified};
 use super::*;
 use crate::features::web::services::web::{BoundedBody, BoundedFetchError, WebService};
-use lattice_core::application::contracts::images::{FindImageInput, ImageOrigin, NO_PICTURE_NOTE};
+use lattice_core::application::contracts::images::{
+    FindImageInput, ImageOrigin, MAX_IMAGE_BYTES, NO_PICTURE_NOTE,
+};
 use lattice_core::application::ports::chat_images::{
     ChatImagesPort, CopiedMessage, ImageTurnScope,
 };
@@ -533,7 +535,7 @@ async fn from_page_url_takes_the_pages_own_picture() {
     assert_eq!(images.len(), 1);
     assert_eq!(images[0].origin, ImageOrigin::Page);
     assert_eq!(images[0].caption, "Herons return");
-    assert_eq!(images[0].source_url, page);
+    assert_eq!(images[0].source_url.as_deref(), Some(page));
     assert_eq!(images[0].license, None);
 }
 
@@ -611,12 +613,13 @@ fn new_row(id: &str) -> NewImageRow {
         width: 2,
         height: 2,
         caption: "c".into(),
-        source_url: "https://example.org".into(),
+        source_url: Some("https://example.org".into()),
         source_title: None,
-        image_url: format!("https://example.org/{id}.png"),
+        image_url: Some(format!("https://example.org/{id}.png")),
         origin: ImageOrigin::Page,
         license: None,
         attribution: None,
+        original_name: None,
     }
 }
 

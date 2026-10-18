@@ -747,6 +747,12 @@
           "markdownDescription": "Enables the archive_journal command without any pre-configured scope."
         },
         {
+          "description": "Enables the attach_message_images command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-attach-message-images",
+          "markdownDescription": "Enables the attach_message_images command without any pre-configured scope."
+        },
+        {
           "description": "Enables the bookmark_conversation_message command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-bookmark-conversation-message",
@@ -969,6 +975,12 @@
           "markdownDescription": "Enables the regenerate_response command without any pre-configured scope."
         },
         {
+          "description": "Enables the release_message_images command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-release-message-images",
+          "markdownDescription": "Enables the release_message_images command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_conversation_from_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-remove-conversation-from-journal",
@@ -997,6 +1009,12 @@
           "type": "string",
           "const": "conversation:allow-rename-conversation",
           "markdownDescription": "Enables the rename_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restage_message_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-restage-message-image",
+          "markdownDescription": "Enables the restage_message_image command without any pre-configured scope."
         },
         {
           "description": "Enables the retry_journal_synthesis command without any pre-configured scope.",
@@ -1117,6 +1135,12 @@
           "type": "string",
           "const": "conversation:deny-archive-journal",
           "markdownDescription": "Denies the archive_journal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the attach_message_images command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-attach-message-images",
+          "markdownDescription": "Denies the attach_message_images command without any pre-configured scope."
         },
         {
           "description": "Denies the bookmark_conversation_message command without any pre-configured scope.",
@@ -1341,6 +1365,12 @@
           "markdownDescription": "Denies the regenerate_response command without any pre-configured scope."
         },
         {
+          "description": "Denies the release_message_images command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-release-message-images",
+          "markdownDescription": "Denies the release_message_images command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_conversation_from_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-remove-conversation-from-journal",
@@ -1369,6 +1399,12 @@
           "type": "string",
           "const": "conversation:deny-rename-conversation",
           "markdownDescription": "Denies the rename_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restage_message_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-restage-message-image",
+          "markdownDescription": "Denies the restage_message_image command without any pre-configured scope."
         },
         {
           "description": "Denies the retry_journal_synthesis command without any pre-configured scope.",

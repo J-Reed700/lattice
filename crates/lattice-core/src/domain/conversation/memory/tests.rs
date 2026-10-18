@@ -14,6 +14,7 @@ fn message(id: &str, sequence: i64, role: SourceRole, content: &str) -> SourceMe
         content: content.to_string(),
         content_digest: compute_digest(content),
         status: "completed".into(),
+        pictures: Vec::new(),
     }
 }
 

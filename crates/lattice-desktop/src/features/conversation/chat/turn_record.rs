@@ -148,6 +148,9 @@ pub struct TurnModelDto {
     /// Why the model ran degraded (on CPU), when it did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub degraded: Option<String>,
+    /// Whether the model was declared able to see pictures: a picture the
+    /// reader attached rode in this turn's request, or was named in text.
+    pub sees_images: bool,
 }
 
 impl TurnModelDto {
@@ -162,6 +165,7 @@ impl TurnModelDto {
             provider: Some(llm.provider_name().to_string()),
             context_tokens: Some(u32::try_from(llm.max_context_tokens()).unwrap_or(u32::MAX)),
             degraded: pinned.degraded.clone(),
+            sees_images: llm.vision().is_some(),
         }
     }
 }

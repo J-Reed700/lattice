@@ -1,8 +1,12 @@
 import { useMemo } from 'react';
 
+import { messageImages } from '@/features/chat/controller/messageMetadata';
 import type { DisplayMessage } from '@/types/conversation';
 
-/** What a message's metadata records: the files it brought in, and the chat it continues. */
+/**
+ * What a message's metadata records: the files and pictures it brought in,
+ * whether the model was shown those pictures, and the chat it continues.
+ */
 export function useMessageMetadata(message: DisplayMessage, isUser: boolean) {
 
   // The files this message brought into the conversation, stamped on it when
@@ -34,5 +38,21 @@ export function useMessageMetadata(message: DisplayMessage, isUser: boolean) {
     }
   }, [isUser, message]);
 
-  return { attachmentNames, continuedFrom };
+  // The pictures a user message carried. A pending bubble holds them itself;
+  // a saved one has them in its metadata.
+  const pictures = useMemo(() => (isUser ? messageImages(message) : []), [isUser, message]);
+
+  // `false` only when the turn told the model the pictures were there instead
+  // of showing them; unknown (older messages, a pending bubble) is `null`.
+  const picturesSeen = useMemo(() => {
+    if (!isUser || !('metadata' in message) || !message.metadata) return null;
+    try {
+      const seen = (JSON.parse(message.metadata) as { picturesSeen?: unknown })?.picturesSeen;
+      return typeof seen === 'boolean' ? seen : null;
+    } catch {
+      return null;
+    }
+  }, [isUser, message]);
+
+  return { attachmentNames, pictures, picturesSeen, continuedFrom };
 }

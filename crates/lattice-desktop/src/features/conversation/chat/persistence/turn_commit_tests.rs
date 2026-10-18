@@ -46,13 +46,19 @@ async fn failed_question_retains_request_identity_and_attachments() {
     let (service, pool, id, _) = service_with_pending_question().await;
     let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
         Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+    let runtime = crate::features::conversation::chat::test_runtime::FakeRuntime::default();
     let (user_id, _) = persist_user_message_pending(
+        &runtime,
         &service,
         &id,
         "request-one",
         "same question",
-        &["notes.pdf".into()],
-        &["document-one".into()],
+        QuestionAttachments {
+            names: &["notes.pdf".into()],
+            document_ids: &["document-one".into()],
+            image_ids: &[],
+            pictures_seen: true,
+        },
         &llm,
     )
     .await
@@ -196,4 +202,53 @@ async fn the_pictures_an_answer_shows_are_attached_and_recorded() {
     assert_eq!(returned["images"][0]["ref"], "img-1");
     // The content is kept as the model wrote it.
     assert!(answer.content.ends_with("![Saturn V lifting off](img-1)"));
+}
+
+/// A question's staged pictures are claimed by the saved message and written
+/// to `metadata.images`, with whether the model was shown them.
+#[tokio::test]
+async fn a_question_claims_its_staged_pictures() {
+    use crate::features::conversation::chat::test_runtime::{
+        test_attachment, FakeChatImages, FakeRuntime,
+    };
+
+    let (service, pool, id, _) = service_with_pending_question().await;
+    let images = FakeChatImages::staged(vec![test_attachment(1, 800, 600)]);
+    let runtime = FakeRuntime {
+        images: images.clone(),
+        ..FakeRuntime::default()
+    };
+    let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
+        Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+    let picture = test_attachment(1, 800, 600);
+    let (user_id, _) = persist_user_message_pending(
+        &runtime,
+        &service,
+        &id,
+        "request-seen",
+        "what is this?",
+        QuestionAttachments {
+            names: &[],
+            document_ids: &[],
+            image_ids: std::slice::from_ref(&picture.id),
+            pictures_seen: false,
+        },
+        &llm,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        images.calls(),
+        vec![format!("claim {} {user_id} request-seen", picture.id)]
+    );
+    let raw: String = sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(metadata["images"][0]["id"], picture.id.as_str());
+    assert_eq!(metadata["images"][0]["originalName"], "shot-1.png");
+    assert_eq!(metadata["picturesSeen"], false);
 }

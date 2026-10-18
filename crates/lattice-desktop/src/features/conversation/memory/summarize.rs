@@ -285,8 +285,12 @@ fn plan_fold(passages: &[SourceMessage], room_chars: usize) -> Vec<Vec<FoldPiece
     let mut current: Vec<FoldPiece<'_>> = Vec::new();
     let mut used = 0usize;
     for message in passages {
-        // The summary model cannot see pictures: it reads each as its caption.
-        let content = lattice_core::shared::markdown_media::images_to_captions(&message.content);
+        // The summary model cannot see pictures: it reads each as its caption,
+        // and a question's attached pictures as caption lines.
+        let content = lattice_core::shared::markdown_media::with_picture_captions(
+            &lattice_core::shared::markdown_media::images_to_captions(&message.content),
+            &message.pictures,
+        );
         for text in split_message(&content, room - framing) {
             let size = text.chars().count() + framing;
             if !current.is_empty() && used.saturating_add(size) > room {
@@ -337,7 +341,22 @@ mod tests {
             content: content.to_string(),
             content_digest: String::new(),
             status: "completed".to_string(),
+            pictures: Vec::new(),
         }
+    }
+
+    /// The summary model reads a question's attached pictures as caption
+    /// lines after its text.
+    #[test]
+    fn a_question_is_folded_with_its_attached_pictures_named() {
+        let mut asked = message(1, "Which bird?");
+        asked.pictures = vec!["heron.jpg".to_string()];
+        let passages = [asked];
+        let steps = plan_fold(&passages, 2_000);
+        assert_eq!(
+            steps[0][0].text,
+            "Which bird?\n[Picture attached: heron.jpg]"
+        );
     }
 
     /// A long message used to reach the summariser as its first 4,000

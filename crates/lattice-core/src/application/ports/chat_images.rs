@@ -1,14 +1,24 @@
-//! Pictures an assistant answer shows inline.
+//! Pictures in a chat: the ones an assistant answer shows inline and the
+//! ones the reader attaches to a message.
 //!
-//! The conversation feature finds, attaches and releases pictures through
-//! this port; `features::web::images` implements it and the `Container`
-//! exposes it, so the chat loop never reaches into the web feature.
-//! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.2, §7.6.
+//! The conversation feature finds, stages, prepares, attaches and releases
+//! pictures through this port; `features::web::images` implements it and the
+//! `Container` exposes it, so the chat loop never reaches into the web
+//! feature.
+//! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.2, §7.6;
+//! docs/design/2026-10-17-chat-vision.md §10.3.
 
 use async_trait::async_trait;
 
-use crate::application::contracts::images::{ChatImageDto, FindImageInput, FindImageOutput};
+use crate::application::contracts::images::{
+    ChatImageDto, FindImageInput, FindImageOutput, PreparedImageDto,
+};
+use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::Result;
+
+/// The `request_id` prefix of a picture the composer staged and no message
+/// has claimed yet. Each staging call gets its own `draft:<ulid>`.
+pub const DRAFT_REQUEST_PREFIX: &str = "draft:";
 
 /// The turn a `find_image` call belongs to. Rows stored for it are leased
 /// by `request_id` until the answer persists.
@@ -74,4 +84,52 @@ pub trait ChatImagesPort: Send + Sync {
         conversation_id: &str,
         copies: &[CopiedMessage],
     ) -> Result<Vec<(String, Vec<ChatImageDto>)>>;
+
+    /// Store a picture the reader attached, from bytes already validated.
+    /// The row is leased to `scope.request_id` (a draft) until a message
+    /// claims it; refs run `att-1…` within the draft.
+    async fn store_attachment(
+        &self,
+        scope: &ImageTurnScope,
+        file_name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ChatImageDto>;
+
+    /// The picture fitted to `geometry` (within `max_tokens` when given),
+    /// from the prepared cache or prepared now. `None` when the row is gone.
+    async fn prepared(
+        &self,
+        image_id: &str,
+        geometry: VisionGeometry,
+        max_tokens: Option<u32>,
+    ) -> Result<Option<PreparedImageDto>>;
+
+    /// Rows the conversation holds for these ids, in the order given; ids of
+    /// other conversations are dropped, not errors.
+    async fn rows_for_ids(
+        &self,
+        conversation_id: &str,
+        image_ids: &[String],
+    ) -> Result<Vec<ChatImageDto>>;
+
+    /// Claim rows for a persisted user message (`message_id` set,
+    /// `request_id` rewritten to the turn's, refs renumbered `att-1…` in the
+    /// order given). Rows another message already holds are left alone.
+    /// Idempotent: claiming the same ids for the same message again returns
+    /// the same list.
+    async fn attach_ids_to_message(
+        &self,
+        conversation_id: &str,
+        image_ids: &[String],
+        message_id: &str,
+        request_id: &str,
+    ) -> Result<Vec<ChatImageDto>>;
+
+    /// Release draft rows the composer discarded, with their files. Ignores
+    /// rows a message already holds.
+    async fn release_images(&self, conversation_id: &str, image_ids: &[String]) -> Result<()>;
+
+    /// A new draft row with its own copy of the file, for "show to the model
+    /// again" and for a regenerate that must keep its question's pictures.
+    async fn restage(&self, conversation_id: &str, image_id: &str) -> Result<ChatImageDto>;
 }

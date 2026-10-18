@@ -44,13 +44,17 @@ pub struct ExportNoteRow {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ExportImageRow {
     pub message_id: String,
-    /// The `ref` column: `img-N` as the answer wrote it.
+    /// The `ref` column: `img-N` as the answer wrote it, or `att-N` for a
+    /// picture the reader attached to their message.
     pub image_ref: String,
     pub id: String,
     pub ext: String,
-    pub source_url: String,
+    /// `None` for an attached picture.
+    pub source_url: Option<String>,
     pub source_title: Option<String>,
     pub license: Option<String>,
+    /// The attached file's name; `None` for a found picture.
+    pub original_name: Option<String>,
 }
 
 pub struct ExportRepository {
@@ -97,7 +101,8 @@ impl ExportRepository {
     pub async fn list_chat_images(&self) -> Result<Vec<ExportImageRow>, AppError> {
         sqlx::query_as::<_, ExportImageRow>(
             r#"
-            SELECT message_id, ref AS image_ref, id, ext, source_url, source_title, license
+            SELECT message_id, ref AS image_ref, id, ext, source_url, source_title, license,
+                   original_name
               FROM chat_images
              WHERE message_id IS NOT NULL
             "#,

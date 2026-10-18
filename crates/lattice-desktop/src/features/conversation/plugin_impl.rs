@@ -1,7 +1,8 @@
 //! Conversation command facade. Persistence and workflows live in focused modules.
 
 use crate::features::conversation::chat::{
-    chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
+    chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse,
+    MessageAttachments, ToolPreferences,
 };
 use crate::features::conversation::commands as conversation;
 use crate::features::conversation::dto::{
@@ -184,6 +185,7 @@ pub async fn chat_with_conversation_wrapper_impl(
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
     attachment_document_ids: Option<Vec<String>>,
+    attachment_image_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     let convo_id_for_log = conversation_id.clone().unwrap_or_else(|| "NEW".to_string());
@@ -201,8 +203,11 @@ pub async fn chat_with_conversation_wrapper_impl(
         tool_preferences,
         cancel_only,
         request_id,
-        attachment_names,
-        attachment_document_ids,
+        MessageAttachments {
+            names: attachment_names.unwrap_or_default(),
+            document_ids: attachment_document_ids.unwrap_or_default(),
+            image_ids: attachment_image_ids.unwrap_or_default(),
+        },
         None,
         window,
     );
@@ -235,6 +240,7 @@ pub async fn chat_with_conversation_impl(
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
     attachment_document_ids: Option<Vec<String>>,
+    attachment_image_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     chat_with_conversation_wrapper_impl(
@@ -246,6 +252,7 @@ pub async fn chat_with_conversation_impl(
         request_id,
         attachment_names,
         attachment_document_ids,
+        attachment_image_ids,
         window,
     )
     .await

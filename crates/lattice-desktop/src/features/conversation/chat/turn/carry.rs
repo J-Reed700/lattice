@@ -4,9 +4,11 @@ use super::*;
 use lattice_core::application::ports::llm_port::{chars_within_tokens, DEFAULT_CHARS_PER_TOKEN};
 use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
-/// Attachments and the Explorer folder block, already charged to the budget.
+/// Attachments, the attached pictures and the Explorer folder block, already
+/// charged to the budget.
 pub(super) struct CarriedMaterial {
     pub(super) attachments: TurnAttachments,
+    pub(super) pictures: super::pictures::CarriedPictures,
     pub(super) explorer_context: Option<String>,
     pub(super) attachment_names: Vec<String>,
     pub(super) attachment_ids: Vec<String>,
@@ -94,8 +96,13 @@ pub(super) async fn carry_material(
         );
     }
 
+    // The reader's pictures are part of the question itself, so even a
+    // closed-book turn carries them; the budget already paid for them.
+    let pictures = super::pictures::carry_pictures(container, turn).await;
+
     CarriedMaterial {
         attachments,
+        pictures,
         explorer_context,
         attachment_names,
         attachment_ids,

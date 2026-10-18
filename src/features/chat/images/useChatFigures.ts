@@ -45,7 +45,7 @@ export function useChatFigures(
       sourceTitle: image.sourceTitle,
       license: image.license,
       attribution: image.attribution,
-      citationNumber: numberByPage.get(comparable(image.sourceUrl)) ?? null,
+      citationNumber: image.sourceUrl ? numberByPage.get(comparable(image.sourceUrl)) ?? null : null,
     }));
   }, [images, citationMap]);
 }

@@ -34,6 +34,7 @@ use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
 mod delete;
+pub mod images;
 mod messages;
 mod rename;
 mod space;

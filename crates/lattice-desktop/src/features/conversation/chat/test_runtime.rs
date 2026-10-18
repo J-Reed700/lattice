@@ -43,7 +43,7 @@ pub(super) fn default_model() -> ModelRef {
 }
 
 #[derive(Clone)]
-pub(super) struct FakeRuntime {
+pub(in crate::features::conversation) struct FakeRuntime {
     /// The Settings default chat model, named [`default_model`].
     pub(super) llm: Option<Arc<dyn LLMPort>>,
     /// The other models a chat, a request or the Learning role may name.
@@ -79,7 +79,7 @@ pub(super) struct FakeRuntime {
     pub(super) records: Option<Arc<dyn ChatRecords>>,
     /// One picture store per test, so what a turn stored, attached and
     /// released can be read back.
-    pub(super) images: Arc<FakeChatImages>,
+    pub(in crate::features::conversation) images: Arc<FakeChatImages>,
 }
 
 impl Default for FakeRuntime {
@@ -121,25 +121,55 @@ pub(super) fn test_picture(r#ref: &str) -> ChatImageDto {
         height: 1600,
         byte_size: 2048,
         caption: "Saturn V lifting off".to_string(),
-        source_url: TEST_PICTURE_PAGE.to_string(),
+        source_url: Some(TEST_PICTURE_PAGE.to_string()),
         source_title: Some("File:Apollo 11 Launch.jpg".to_string()),
         origin: lattice_core::application::contracts::images::ImageOrigin::WikimediaCommons,
         license: Some("Public domain".to_string()),
         attribution: None,
+        original_name: None,
+    }
+}
+
+/// A picture the reader attached, `width`×`height`, staged as `att-<n>`.
+pub(in crate::features::conversation) fn test_attachment(
+    n: usize,
+    width: u32,
+    height: u32,
+) -> ChatImageDto {
+    ChatImageDto {
+        id: format!("{n:a>32}"),
+        r#ref: format!("att-{n}"),
+        file_name: format!("{n:a>32}.png"),
+        mime: "image/png".to_string(),
+        width,
+        height,
+        byte_size: 4096,
+        caption: format!("shot-{n}.png"),
+        source_url: None,
+        source_title: None,
+        origin: lattice_core::application::contracts::images::ImageOrigin::Attachment,
+        license: None,
+        attribution: None,
+        original_name: Some(format!("shot-{n}.png")),
     }
 }
 
 /// A picture store that stores what the test gave it and keeps every call,
 /// so a test can see what the turn asked for, attached and released.
 #[derive(Default)]
-pub(super) struct FakeChatImages {
+pub(in crate::features::conversation) struct FakeChatImages {
     /// What the next `find_image` call stores, refs as given.
     pub(super) canned: Mutex<Vec<ChatImageDto>>,
+    /// Pictures the composer staged, by id: what `rows_for_ids` and
+    /// `prepared` read, and what `attach_ids_to_message` claims.
+    pub(super) staged: Mutex<Vec<ChatImageDto>>,
     /// Stored and not yet released, by request.
     stored: Mutex<Vec<(String, ChatImageDto)>>,
     /// Each call in order: `find <query>`, `attach <request> <message> <refs>`,
     /// `release_request <id>`, `release_message <id>`, `release_conversation <id>`,
-    /// `remove_unclaimed_files`.
+    /// `remove_unclaimed_files`, `prepared <id> <max tokens or ->`,
+    /// `claim <ids> <message> <request>`, `release_images <ids>`,
+    /// `restage <id>`, `store_attachment <name>`.
     pub(super) calls: Mutex<Vec<String>>,
 }
 
@@ -151,7 +181,15 @@ impl FakeChatImages {
         })
     }
 
-    pub(super) fn calls(&self) -> Vec<String> {
+    /// A store holding `pictures` as staged attachments.
+    pub(in crate::features::conversation) fn staged(pictures: Vec<ChatImageDto>) -> Arc<Self> {
+        Arc::new(Self {
+            staged: Mutex::new(pictures),
+            ..Self::default()
+        })
+    }
+
+    pub(in crate::features::conversation) fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
     }
 
@@ -181,7 +219,7 @@ impl ChatImagesPort for FakeChatImages {
                 r#ref: image.r#ref.clone(),
                 caption: image.caption.clone(),
                 source_title: image.source_title.clone(),
-                source_url: image.source_url.clone(),
+                source_url: image.source_url.clone().unwrap_or_default(),
                 license: image.license.clone(),
                 width: image.width,
                 height: image.height,
@@ -246,6 +284,101 @@ impl ChatImagesPort for FakeChatImages {
     async fn remove_unclaimed_files(&self) -> Result<u64> {
         self.record("remove_unclaimed_files".to_string());
         Ok(0)
+    }
+    async fn store_attachment(
+        &self,
+        scope: &ImageTurnScope,
+        file_name: &str,
+        _bytes: Vec<u8>,
+    ) -> Result<ChatImageDto> {
+        self.record(format!("store_attachment {file_name}"));
+        let mut staged = self.staged.lock().unwrap();
+        let n = staged.len() + 1;
+        let mut picture = test_attachment(n, 640, 480);
+        picture.original_name = Some(file_name.to_string());
+        picture.caption = format!("{} {}", file_name, scope.request_id);
+        staged.push(picture.clone());
+        Ok(picture)
+    }
+    async fn prepared(
+        &self,
+        image_id: &str,
+        geometry: lattice_core::domain::models::vision::VisionGeometry,
+        max_tokens: Option<u32>,
+    ) -> Result<Option<lattice_core::application::contracts::images::PreparedImageDto>> {
+        self.record(format!(
+            "prepared {image_id} {}",
+            max_tokens.map_or_else(|| "-".to_string(), |max| max.to_string())
+        ));
+        let staged = self.staged.lock().unwrap();
+        let Some(picture) = staged.iter().find(|picture| picture.id == image_id) else {
+            return Ok(None);
+        };
+        let fitted = match max_tokens {
+            Some(max) => geometry.fit_within(picture.width, picture.height, max),
+            None => Some(geometry.plan(picture.width, picture.height)),
+        }
+        .ok_or_else(|| AppError::InvalidInput("no fit".to_string()))?;
+        Ok(Some(
+            lattice_core::application::contracts::images::PreparedImageDto {
+                mime: "image/jpeg".to_string(),
+                data_base64: "QUJD".to_string(),
+                width: fitted.width,
+                height: fitted.height,
+                tokens: fitted.tokens,
+            },
+        ))
+    }
+    async fn rows_for_ids(
+        &self,
+        _conversation_id: &str,
+        image_ids: &[String],
+    ) -> Result<Vec<ChatImageDto>> {
+        let staged = self.staged.lock().unwrap();
+        Ok(image_ids
+            .iter()
+            .filter_map(|id| staged.iter().find(|picture| &picture.id == id).cloned())
+            .collect())
+    }
+    async fn attach_ids_to_message(
+        &self,
+        _conversation_id: &str,
+        image_ids: &[String],
+        message_id: &str,
+        request_id: &str,
+    ) -> Result<Vec<ChatImageDto>> {
+        self.record(format!(
+            "claim {} {message_id} {request_id}",
+            image_ids.join(",")
+        ));
+        let staged = self.staged.lock().unwrap();
+        Ok(image_ids
+            .iter()
+            .filter_map(|id| staged.iter().find(|picture| &picture.id == id).cloned())
+            .collect())
+    }
+    async fn release_images(&self, _conversation_id: &str, image_ids: &[String]) -> Result<()> {
+        self.record(format!("release_images {}", image_ids.join(",")));
+        self.staged
+            .lock()
+            .unwrap()
+            .retain(|picture| !image_ids.contains(&picture.id));
+        Ok(())
+    }
+    async fn restage(&self, _conversation_id: &str, image_id: &str) -> Result<ChatImageDto> {
+        self.record(format!("restage {image_id}"));
+        let mut staged = self.staged.lock().unwrap();
+        let source = staged
+            .iter()
+            .find(|picture| picture.id == image_id)
+            .cloned()
+            .ok_or_else(|| AppError::NotFound(image_id.to_string()))?;
+        let copy = ChatImageDto {
+            id: format!("{:b>32}", staged.len() + 1),
+            ..source
+        };
+        staged.push(copy.clone());
+        Ok(copy)
     }
 }
 

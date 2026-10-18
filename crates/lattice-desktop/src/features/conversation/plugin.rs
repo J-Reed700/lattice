@@ -133,6 +133,7 @@ pub async fn chat_with_conversation(
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
     attachment_document_ids: Option<Vec<String>>,
+    attachment_image_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_impl(
@@ -144,6 +145,7 @@ pub async fn chat_with_conversation(
         request_id,
         attachment_names,
         attachment_document_ids,
+        attachment_image_ids,
         window,
     )
     .await

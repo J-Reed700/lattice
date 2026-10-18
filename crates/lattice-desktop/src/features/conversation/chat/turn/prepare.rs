@@ -3,6 +3,7 @@ use super::budget::TurnBudget;
 use super::*;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
+use lattice_core::application::contracts::images::ChatImageDto;
 use lattice_core::application::ports::llm_port::{ModelRequirements, PinnedModel, ToolSupport};
 use lattice_core::application::ports::{LLMPort, ToolDefinition};
 use lattice_core::domain::conversation::DocumentReference;
@@ -36,6 +37,9 @@ pub(super) struct PreparedTurn {
     /// Conversation prompt, else the space's, else the global one.
     pub(super) system_prompt: String,
     pub(super) budget: TurnBudget,
+    /// The pictures the reader attached, as stored: what the budget charged
+    /// and what [`super::pictures`] prepares for the request.
+    pub(super) pictures: Vec<ChatImageDto>,
     /// Messages of history the turn was planned with.
     pub(super) history_len: usize,
     /// Held for the whole turn: a model chosen in the meantime never reaches
@@ -58,6 +62,14 @@ impl PreparedTurn {
             focus: &self.focus,
             recorder: &self.recorder,
         }
+    }
+
+    /// The ids of the attached pictures this conversation holds.
+    pub(super) fn picture_ids(&self) -> Vec<String> {
+        self.pictures
+            .iter()
+            .map(|picture| picture.id.clone())
+            .collect()
     }
 
     pub(super) fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
@@ -86,6 +98,7 @@ pub(super) async fn prepare_turn(
     message: &str,
     request_id: Option<String>,
     request_override: Option<&ModelRef>,
+    image_ids: &[String],
     tool_preferences: Option<&ToolPreferences>,
     parent: Option<&CancellationToken>,
     emit: &ChatEventSink,
@@ -253,6 +266,9 @@ pub(super) async fn prepare_turn(
         search_flags,
         tool_preferences,
     );
+    // The reader's pictures are read before the budget is planned, so what
+    // they cost is paid with the message, before any evidence is sized.
+    let pictures = super::pictures::attached_rows(container, &conv_id, image_ids).await;
     let budget = TurnBudget::plan(
         &llm,
         &system_prompt,
@@ -263,6 +279,7 @@ pub(super) async fn prepare_turn(
         &context,
         settings.llm.bounded_conversation_memory,
         tool_schema_tokens,
+        super::pictures::planned_tokens(llm.as_ref(), &pictures),
         chrono::Local::now().date_naive(),
     );
 
@@ -286,6 +303,7 @@ pub(super) async fn prepare_turn(
         linked_web_sources_context,
         system_prompt,
         budget,
+        pictures,
         history_len,
         _pin: pin,
         _guard: guard,
@@ -384,6 +402,7 @@ pub(super) async fn resume_turn(
         &[],
         settings.llm.bounded_conversation_memory,
         0,
+        0,
         chrono::Local::now().date_naive(),
     );
     Ok(PreparedTurn {
@@ -405,6 +424,8 @@ pub(super) async fn resume_turn(
         linked_web_sources_context: None,
         system_prompt: String::new(),
         budget,
+        // The saved request already carries the pictures, as captions.
+        pictures: Vec::new(),
         history_len: saved.assembled.history_len,
         _pin: pin,
         _guard: guard,
@@ -479,6 +500,7 @@ impl PreparedTurn {
                 &[],
                 true,
                 0,
+                0,
                 chrono::Local::now().date_naive(),
             ),
             turn_id: turn_id.to_string(),
@@ -498,6 +520,7 @@ impl PreparedTurn {
             document_context: Vec::new(),
             linked_web_sources_context: None,
             system_prompt: String::new(),
+            pictures: Vec::new(),
             history_len: 0,
             _pin: pin,
             _guard: TurnCancellationGuard::start(cancellation, turn_id.to_string(), conv_id, None)?,

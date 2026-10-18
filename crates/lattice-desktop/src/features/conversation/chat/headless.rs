@@ -37,8 +37,7 @@ pub async fn run_headless_turn(
         Some(tool_preferences),
         None,
         None,
-        None,
-        None,
+        super::MessageAttachments::default(),
         None,
         events,
     )

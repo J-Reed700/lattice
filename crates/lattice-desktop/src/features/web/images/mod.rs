@@ -13,6 +13,7 @@
 pub mod commons;
 pub mod fetch;
 pub mod gc;
+pub mod prepare;
 pub mod protocol;
 pub mod repository;
 pub mod service;
@@ -24,12 +25,6 @@ mod tests;
 pub use fetch::ImageNetwork;
 pub use gc::{ChatImageGc, ImageSweepReport};
 pub use service::ChatImageService;
-
-/// The most bytes one picture may download. A security bound on hostile
-/// input, not a content cap: the webview decodes whatever is served, and a
-/// 20 MiB JPEG can expand to gigabytes of pixels. A Commons thumbnail at
-/// [`COMMONS_THUMB_WIDTH`] is well under 1 MiB.
-pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
 /// The most pixels one picture may declare in its header. A security bound
 /// against decode bombs — a few hundred bytes of PNG can declare a
