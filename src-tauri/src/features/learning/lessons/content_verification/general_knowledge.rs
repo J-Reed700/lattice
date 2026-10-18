@@ -162,14 +162,18 @@ mod tests {
         .proposes_general_knowledge());
     }
 
+    /// D1: the machine only proposes general knowledge; publication accepts
+    /// it once the user has, and never an unsupported figure left unresolved.
     #[test]
     fn publication_accepts_general_knowledge_but_not_an_unsupported_figure() {
         use crate::features::learning::dto::{
             LearningBlockDto, LearningBlockKind, PreparedLearningLesson,
         };
-        for (body, publishable) in [
-            ("Small handlers are easier to test.", true),
-            ("Small handlers cut defects by 40%.", false),
+        let accepted = Some(Resolution::GeneralKnowledge { at: 1 });
+        for (body, resolution, publishable) in [
+            ("Small handlers are easier to test.", accepted.clone(), true),
+            ("Small handlers are easier to test.", None, false),
+            ("Small handlers cut defects by 40%.", None, false),
         ] {
             let lesson = PreparedLearningLesson {
                 blocks: vec![LearningBlockDto {
@@ -186,10 +190,11 @@ mod tests {
             let mut report =
                 crate::features::learning::content_verification::tests::attest("lesson", &lesson);
             report.findings[0].verdict = ClaimVerdict::Unsupported;
+            report.findings[0].resolution = resolution.clone();
             assert_eq!(
                 report.validate("lesson", &lesson).is_ok(),
                 publishable,
-                "{body}"
+                "{body} ({resolution:?})"
             );
         }
     }
