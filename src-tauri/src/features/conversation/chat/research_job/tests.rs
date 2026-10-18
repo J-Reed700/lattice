@@ -257,6 +257,130 @@ async fn a_research_turn_stopped_by_a_restart_resumes_from_its_last_round() {
     jobs.drain().await;
 }
 
+/// The bytes a test picture carries; never in anything a job saves.
+const PICTURE_BYTES: &str = "UElDVFVSRS1CWVRFUw==";
+
+fn with_picture(text: &str) -> CompletionInput {
+    use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
+    CompletionInput::Multimodal {
+        role: "user".into(),
+        parts: vec![
+            ContentPart::Image(ImagePart {
+                mime: "image/jpeg".into(),
+                data_base64: PICTURE_BYTES.into(),
+                width: 896,
+                height: 672,
+                tokens: 770,
+                alt: "cell-teardown.jpg".into(),
+            }),
+            ContentPart::Text { text: text.into() },
+        ],
+    }
+}
+
+/// Saves through the job's own journal, as a running turn does, reads back
+/// what landed in the store, then waits for the app to close.
+struct SavesThroughJournal {
+    assembled: AssembledTurn,
+    round: ResearchRound,
+    saved: Arc<Notify>,
+    stored: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl JobHandler for SavesThroughJournal {
+    async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let journal = JobJournal { context };
+        journal.assembled(&self.assembled).await?;
+        journal.round(&self.round).await?;
+        for key in [ASSEMBLED, ROUND] {
+            let value = context.checkpoint(key).await?.expect("saved");
+            self.stored.lock().unwrap().push(value.to_string());
+        }
+        self.saved.notify_one();
+        context.cancellation().cancelled().await;
+        Ok(JobOutcome::Stopped)
+    }
+}
+
+/// A research turn whose question carried a picture saves its request and
+/// rounds with the picture's caption in its place, never its bytes, and
+/// resumes from that text after a restart.
+#[tokio::test]
+async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
+    let pool = pool().await;
+    let llm = Scripted::new([CompletionResponse::from_text(
+        "The teardown shows the cathode being shredded.",
+    )]);
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(llm.clone()),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let mut attempt = first_attempt(&runtime).await;
+    attempt.assembled.input = vec![with_picture(QUESTION)];
+    attempt
+        .round
+        .transcript
+        .push(with_picture("A second picture, seen in a round."));
+
+    let before = JobRuntime::new(pool.clone());
+    let saved = Arc::new(Notify::new());
+    let stored: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    before
+        .register(
+            DEEP_RESEARCH,
+            Arc::new(SavesThroughJournal {
+                assembled: attempt.assembled.clone(),
+                round: attempt.round.clone(),
+                saved: saved.clone(),
+                stored: stored.clone(),
+            }),
+            job_config(),
+        )
+        .await
+        .unwrap();
+    let job = before
+        .submit(&research_job(&attempt.request).unwrap())
+        .await
+        .unwrap();
+    tokio::time::timeout(WAIT, saved.notified()).await.unwrap();
+    before.close();
+    before.drain().await;
+
+    let stored = stored.lock().unwrap().clone();
+    assert_eq!(stored.len(), 2);
+    for checkpoint in &stored {
+        assert!(!checkpoint.contains(PICTURE_BYTES), "{checkpoint}");
+        assert!(!checkpoint.contains("data_base64"), "{checkpoint}");
+        assert!(checkpoint.contains("[Picture: cell-teardown.jpg (896×672)]"));
+    }
+
+    // The app opens again and the job resumes from what it saved.
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(DeepResearchJob::new(runtime.share(), silent())),
+        job_config(),
+    )
+    .await
+    .unwrap();
+    let job = finished(&jobs, &job.id).await;
+
+    assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 1, "the saved round is not searched again");
+    assert!(!requests[0].has_images(), "a resumed turn replays captions");
+    assert!(matches!(
+        requests[0].input.first(),
+        Some(CompletionInput::Message { content, .. })
+            if content.starts_with(QUESTION)
+                && content.ends_with("[Picture: cell-teardown.jpg (896×672)]")
+    ));
+    jobs.close();
+    jobs.drain().await;
+}
+
 #[tokio::test]
 async fn the_chat_stop_cancels_a_running_research_job() {
     let pool = pool().await;

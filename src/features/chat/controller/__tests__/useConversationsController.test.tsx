@@ -246,6 +246,26 @@ describe('useConversationsController optimistic cleanup', () => {
     expect(result.current.optimisticMessages.size).toBe(0);
   });
 
+  it('sends the staged pictures by id and shows them on the question at once', async () => {
+    const picture = {
+      id: '0123456789abcdef0123456789abcdef', ref: 'att-1', fileName: '0123456789abcdef0123456789abcdef.jpg',
+      mime: 'image/jpeg', width: 800, height: 600, byteSize: 1000, caption: 'pad.jpg', sourceUrl: null,
+      sourceTitle: null, origin: 'attachment' as const, license: null, attribution: null, originalName: 'pad.jpg',
+    };
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+
+    act(() => { void result.current.sendMessage('What is this?', 'conversation-1', undefined, undefined, undefined, [picture]); });
+
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+    expect(api.chatWithConversation.mock.calls[0][6]).toEqual([picture.id]);
+    const question = [...result.current.optimisticMessages.values()].find(message => message.role === 'user');
+    expect(question?.images).toEqual([picture]);
+    expect(question?.retryContext?.attachmentImages).toEqual([picture]);
+    await act(async () => { resolveChat?.({ ok: false, error: 'stop' }); });
+  });
+
   /**
    * A retry used to arrive as text and overwrite the answer bubble, so a turn
    * that recovered showed "Model response failed. Retrying..." where its answer
@@ -581,7 +601,7 @@ describe('useConversationsController optimistic cleanup', () => {
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     await act(async () => result.current.sendMessage('Read these', 'conversation-1', undefined, ['a.pdf'], ['doc-1']));
     expect(api.chatWithConversation).toHaveBeenCalledWith(
-      'conversation-1', 'Read these', undefined, expect.any(String), ['a.pdf'], ['doc-1']
+      'conversation-1', 'Read these', undefined, expect.any(String), ['a.pdf'], ['doc-1'], undefined
     );
   });
 
@@ -605,7 +625,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
     expect(api.chatWithConversation).toHaveBeenCalledWith(
       'conversation-1', 'Use the selected manual', preferences, expect.any(String),
-      ['Manual.pdf'], ['doc-manual']
+      ['Manual.pdf'], ['doc-manual'], undefined
     );
   });
 

@@ -424,4 +424,7 @@ async fn the_startup_sweep_keeps_drafts_staged_since_this_start_only() {
         .await
         .unwrap()
         .is_none());
+    // The quit composer's picture goes with its row; the open one's stays.
+    assert!(!fx.root().join(&stale.file_name).exists());
+    assert!(fx.root().join(&fresh.file_name).is_file());
 }

@@ -114,13 +114,14 @@ export const SourceWithMetadataSchema = z.object({
 export const SourcesArraySchema = z.array(SourceWithMetadataSchema);
 
 /**
- * A picture the answer shows, mirroring `ChatImageDto`. The answer's Markdown
- * names it by `ref` (`![caption](img-1)`); the file is served from the
- * `lattice-image` scheme under `fileName`, never from the web.
+ * A picture an answer shows or a reader attached, mirroring `ChatImageDto`.
+ * The answer's Markdown names a found picture by `ref` (`![caption](img-1)`);
+ * an attached one is `att-1…`. The file is served from the `lattice-image`
+ * scheme under `fileName`, never from the web.
  */
 export const ChatImageSchema = z.object({
   id: z.string().regex(/^[0-9a-f]{32}$/),
-  ref: z.string().regex(/^img-\d+$/),
+  ref: z.string().regex(/^(?:img|att)-\d+$/),
   fileName: z.string().regex(/^[0-9a-f]{32}\.(?:jpg|png|gif|webp)$/),
   mime: z.string().min(1),
   width: z.number().int().positive(),
@@ -128,11 +129,14 @@ export const ChatImageSchema = z.object({
   byteSize: z.number().int().min(0),
   caption: z.string(),
   // Becomes a link's href: a scheme other than http(s) would run on click.
-  sourceUrl: z.string().regex(/^https?:\/\//i),
+  // An attached picture has no source page.
+  sourceUrl: z.string().regex(/^https?:\/\//i).nullable(),
   sourceTitle: z.string().nullable(),
-  origin: z.enum(['wikimedia_commons', 'page']),
+  origin: z.enum(['wikimedia_commons', 'page', 'attachment']),
   license: z.string().nullable(),
   attribution: z.string().nullable(),
+  /** The file name the reader attached; absent for a found picture. */
+  originalName: z.string().nullable().optional(),
 });
 
 export type ChatImage = z.infer<typeof ChatImageSchema>;
@@ -401,6 +405,7 @@ export interface OptimisticMessage {
     toolPreferences?: ToolPreferences;
     attachmentNames?: string[];
     attachmentDocumentIds?: string[];
+    attachmentImages?: ChatImage[];
   };
 }
 
@@ -565,6 +570,8 @@ export const TurnModelSchema = z.object({
   provider: z.string().max(64).nullable().optional(),
   contextTokens: z.number().int().min(0).nullable().optional(),
   degraded: z.string().max(4000).nullable().optional(),
+  /** Whether the model was shown the turn's pictures; absent on older records. */
+  seesImages: z.boolean().optional(),
 }).strict();
 
 export type TurnModel = z.infer<typeof TurnModelSchema>;
