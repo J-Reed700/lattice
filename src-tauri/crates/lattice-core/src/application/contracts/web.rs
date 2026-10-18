@@ -5,6 +5,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::provenance::{
+    ArchivedFrom, DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts, NamedEntity, Origin,
+    OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals, RegistryKind,
+    SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
+};
+
 /// The version stamped on every reference text the web reader extracts for a
 /// learning collection. Bump it when extraction changes what a stored
 /// reference would contain.
@@ -144,6 +150,17 @@ pub struct WebSearchOutput {
     /// results were actually results *for*.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub followup_queries: Vec<String>,
+}
+
+/// A page read for a learning reference, with what capture recorded about
+/// who publishes it (source provenance §4, §17). A fetcher that cannot
+/// extract provenance says so with `ProvenanceSignals::NotExtracted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferencePage {
+    pub output: FetchUrlContentOutput,
+    pub signals: ProvenanceSignals,
+    /// Unix seconds.
+    pub fetched_at: i64,
 }
 
 /// Output from fetch_url_content function.
