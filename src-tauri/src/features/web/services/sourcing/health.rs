@@ -1,6 +1,7 @@
 //! Per-finder health (design §3.6): the core `Breaker` plus the counters the
 //! health panel and the metrics snapshot read. The pacer stays per host; the
-//! breaker is per finder. Owned by the sourcing service, never global.
+//! breaker is per finder. Owned by the sourcing service (and, for the archive
+//! endpoints, by the Wayback client), never global.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
@@ -12,7 +13,7 @@ use lattice_core::domain::sourcing::{
     FinderOutcome, FinderResult, HealthState, KeyService, SkipReason, SourcingPolicy,
 };
 
-pub(super) struct HealthBook {
+pub(crate) struct HealthBook {
     policy: SourcingPolicy,
     entries: parking_lot::Mutex<HashMap<FinderId, Entry>>,
 }
@@ -33,7 +34,7 @@ struct Entry {
 }
 
 impl HealthBook {
-    pub(super) fn new(policy: SourcingPolicy) -> Self {
+    pub(crate) fn new(policy: SourcingPolicy) -> Self {
         Self {
             policy,
             entries: parking_lot::Mutex::new(HashMap::new()),
@@ -42,7 +43,7 @@ impl HealthBook {
 
     /// Asks the finder's breaker whether a call may go now (an admitted call
     /// counts against a documented allowance).
-    pub(super) fn admit(&self, descriptor: &FinderDescriptor, now: DateTime<Utc>) -> Admission {
+    pub(crate) fn admit(&self, descriptor: &FinderDescriptor, now: DateTime<Utc>) -> Admission {
         self.entries
             .lock()
             .entry(descriptor.id.clone())
@@ -52,7 +53,7 @@ impl HealthBook {
     }
 
     /// Records a call's outcome in the breaker and the counters.
-    pub(super) fn record(
+    pub(crate) fn record(
         &self,
         descriptor: &FinderDescriptor,
         outcome: &FinderOutcome,
@@ -89,7 +90,7 @@ impl HealthBook {
     }
 
     /// Counts a finder that was not called.
-    pub(super) fn record_skip(&self, id: &FinderId) {
+    pub(crate) fn record_skip(&self, id: &FinderId) {
         self.entries.lock().entry(id.clone()).or_default().skipped += 1;
     }
 
@@ -110,7 +111,7 @@ impl HealthBook {
     }
 
     /// When the finder's open window ends, while it is open.
-    pub(super) fn next_allowed_at(&self, id: &FinderId) -> Option<DateTime<Utc>> {
+    pub(crate) fn next_allowed_at(&self, id: &FinderId) -> Option<DateTime<Utc>> {
         self.entries
             .lock()
             .get(id)

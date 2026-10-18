@@ -325,10 +325,13 @@ async fn a_chat_read_keeps_a_long_page_whole_and_caches_all_of_it() {
     let page = service
         .keep_page(
             url,
-            url.into(),
-            Some("Long article".into()),
-            text.clone(),
-            Some("text/html".into()),
+            super::page::PageText {
+                final_url: url.into(),
+                title: Some("Long article".into()),
+                content: text.clone(),
+                content_type: Some("text/html".into()),
+                via: Default::default(),
+            },
             (Instant::now(), PageRead::Chat),
         )
         .await;
@@ -358,10 +361,13 @@ async fn reference_capture_retains_large_page_tail_without_using_chat_cache() {
     let page = service
         .keep_page(
             url,
-            url.into(),
-            title,
-            extracted,
-            Some("text/html".into()),
+            super::page::PageText {
+                final_url: url.into(),
+                title: title,
+                content: extracted,
+                content_type: Some("text/html".into()),
+                via: Default::default(),
+            },
             (Instant::now(), PageRead::Reference),
         )
         .await;

@@ -9,4 +9,5 @@ pub(crate) mod page_cache;
 mod reference_text;
 pub mod snapshot;
 pub(crate) mod sourcing;
+pub(crate) mod wayback;
 pub mod web;

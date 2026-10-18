@@ -17,6 +17,13 @@
 //! timeout, a dropped connection, a 429 or a 5xx are the site having a moment,
 //! and those must stay retryable.
 //!
+//! The Internet Archive's answers live here too (design §3.7, §3.8): a lookup
+//! (the capture nearest a day, or that there is none) for the archive-lookup
+//! TTL, and an archived copy under its own key, the original and the capture
+//! time, with no TTL because a capture never changes; the bounds evict it.
+//! A refusal is remembered only when the archive had nothing either, so a URL
+//! the archive rescued is never remembered as refused.
+//!
 //! Every failure in here is a miss. A broken cache directory, a half-written
 //! file, a disk that is full — none of them may stop a fetch, so they are
 //! logged and stepped over.
@@ -24,12 +31,19 @@
 //! [`FetchMemory`]: crate::features::conversation::chat
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
+use lattice_core::application::contracts::web::ReadVia;
+use lattice_core::application::services::sourcing::cache_policy;
+use lattice_core::domain::sourcing::{canonical, SourcingPolicy};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{debug, warn};
+use url::Url;
+
+use super::wayback::Capture;
 
 /// How long a page that was read stays good. Long enough that a session's
 /// worth of follow-ups and regenerates all read it once; short enough that a
@@ -65,7 +79,7 @@ const BOUNDS: Bounds = Bounds {
 /// same way if we ask again straight away. Everything else — timeouts,
 /// connection errors, 429, 5xx — is the site having a moment and stays
 /// retryable.
-fn refusal_is_settled(status: StatusCode) -> bool {
+pub(in crate::features::web) fn refusal_is_settled(status: StatusCode) -> bool {
     matches!(
         status,
         StatusCode::UNAUTHORIZED
@@ -89,6 +103,27 @@ pub(in crate::features::web) struct CachedPage {
     /// When the text was read off the network, not when it was served from
     /// here. The reader shows this, so it has to be the real moment.
     pub(in crate::features::web) fetched_at: DateTime<Utc>,
+    /// How the text was read, so a page served from here keeps its label.
+    pub(in crate::features::web) read_via: ReadVia,
+}
+
+/// What the archive said about a URL the live site would not give up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::features::web) enum ArchiveAnswer {
+    /// The archive holds no readable copy.
+    NothingArchived,
+    /// The archive was not asked: the user turned the fallback off, or the
+    /// URL is an archived copy already.
+    NotAsked,
+    /// The archive failed, refused or is paused, so a copy may exist.
+    Unanswered,
+}
+
+/// What an earlier archive lookup found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::features::web) enum CachedLookup {
+    Found(Capture),
+    NothingArchived,
 }
 
 /// What a lookup found.
@@ -110,6 +145,14 @@ enum Entry {
         reason: String,
         failed_at: DateTime<Utc>,
     },
+    /// An archived copy, under its archive key.
+    Archived(CachedPage),
+    /// An archive lookup, under its lookup key; `found: None` is a settled
+    /// "nothing archived".
+    ArchiveLookup {
+        found: Option<Capture>,
+        looked_at: DateTime<Utc>,
+    },
 }
 
 /// What the cache reads the time from. Production passes `Utc::now`; the tests
@@ -119,21 +162,23 @@ type Clock = Box<dyn Fn() -> DateTime<Utc> + Send + Sync>;
 pub(in crate::features::web) struct PageCache {
     dir: PathBuf,
     now: Clock,
+    /// How long an archive lookup is trusted (`SourcingPolicy`).
+    archive_lookup_ttl: Duration,
 }
 
 impl PageCache {
     pub(in crate::features::web) fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            now: Box::new(Utc::now),
-        }
+        Self::with_clock(dir, Utc::now)
     }
 
-    #[cfg(test)]
-    fn with_clock(dir: PathBuf, now: impl Fn() -> DateTime<Utc> + Send + Sync + 'static) -> Self {
+    pub(in crate::features::web) fn with_clock(
+        dir: PathBuf,
+        now: impl Fn() -> DateTime<Utc> + Send + Sync + 'static,
+    ) -> Self {
         Self {
             dir,
             now: Box::new(now),
+            archive_lookup_ttl: SourcingPolicy::default().archive_lookup_ttl,
         }
     }
 
@@ -144,38 +189,85 @@ impl PageCache {
     /// against the bound.
     pub(in crate::features::web) async fn get(&self, url: &str) -> Option<CachedFetch> {
         let path = self.path_for(url);
-        let raw = match tokio::fs::read(&path).await {
-            Ok(raw) => raw,
-            // A miss is the normal case, so it is not worth a log line.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(error) => {
-                warn!(url, %error, "Could not read a page cache entry; fetching instead");
-                return None;
-            }
-        };
-        let entry = match serde_json::from_slice::<Entry>(&raw) {
-            Ok(entry) => entry,
-            Err(error) => {
-                // A truncated or older-shaped file. The next store overwrites it.
-                debug!(url, %error, "Discarding an unreadable page cache entry");
-                return None;
-            }
-        };
-
+        let entry = read_entry(&path, url).await?;
         let now = (self.now)();
         let (stamp, ttl) = match &entry {
             Entry::Page(page) => (page.fetched_at, PAGE_TTL_SECONDS),
             Entry::Refusal { failed_at, .. } => (*failed_at, REFUSAL_TTL_SECONDS),
+            Entry::Archived(_) | Entry::ArchiveLookup { .. } => {
+                debug!(url, "An archive entry under a page key; ignoring it");
+                return None;
+            }
         };
         if now.signed_duration_since(stamp).num_seconds() > ttl {
             remove_quietly(&path).await;
             return None;
         }
 
-        Some(match entry {
-            Entry::Page(page) => CachedFetch::Page(page),
-            Entry::Refusal { reason, .. } => CachedFetch::Refusal { reason },
-        })
+        match entry {
+            Entry::Page(page) => Some(CachedFetch::Page(page)),
+            Entry::Refusal { reason, .. } => Some(CachedFetch::Refusal { reason }),
+            Entry::Archived(_) | Entry::ArchiveLookup { .. } => None,
+        }
+    }
+
+    /// The archived copy of `original` taken at `capture`, if it was read
+    /// before. No TTL: a capture never changes.
+    pub(in crate::features::web) async fn archived(
+        &self,
+        original: &Url,
+        capture: &Capture,
+    ) -> Option<CachedPage> {
+        let key = archived_key(original, capture);
+        match read_entry(&self.path_for_key(&key), &key).await? {
+            Entry::Archived(page) => Some(page),
+            _ => None,
+        }
+    }
+
+    /// Keep an archived copy under its archive key.
+    pub(in crate::features::web) async fn remember_archived(
+        &self,
+        original: &Url,
+        capture: &Capture,
+        page: &CachedPage,
+    ) {
+        let key = archived_key(original, capture);
+        self.write_key(&key, &Entry::Archived(page.clone())).await;
+    }
+
+    /// What the archive said about `url` near `as_of` (the latest when
+    /// `None`), while that answer is inside the archive-lookup TTL.
+    pub(in crate::features::web) async fn archive_lookup(
+        &self,
+        url: &Url,
+        as_of: Option<NaiveDate>,
+    ) -> Option<CachedLookup> {
+        let key = lookup_key(url, as_of);
+        let path = self.path_for_key(&key);
+        let Entry::ArchiveLookup { found, looked_at } = read_entry(&path, &key).await? else {
+            return None;
+        };
+        if !cache_policy::is_fresh(looked_at, (self.now)(), self.archive_lookup_ttl) {
+            remove_quietly(&path).await;
+            return None;
+        }
+        Some(found.map_or(CachedLookup::NothingArchived, CachedLookup::Found))
+    }
+
+    /// Keep a settled lookup: the capture found, or `None` for "nothing
+    /// archived". An unanswered lookup is never kept.
+    pub(in crate::features::web) async fn remember_archive_lookup(
+        &self,
+        url: &Url,
+        as_of: Option<NaiveDate>,
+        found: Option<&Capture>,
+    ) {
+        let entry = Entry::ArchiveLookup {
+            found: found.cloned(),
+            looked_at: (self.now)(),
+        };
+        self.write_key(&lookup_key(url, as_of), &entry).await;
     }
 
     /// Keep `page`, filed under the URL that was asked for and, when a
@@ -194,14 +286,18 @@ impl PageCache {
     }
 
     /// Keep the fact that `url` was refused, if the status means it will be
-    /// refused again. Anything else is dropped on the floor.
+    /// refused again and the archive had nothing either (or was not asked).
+    /// An archive that could not answer leaves the refusal unsettled: the
+    /// next read asks again, and the archive's breaker decides whether it
+    /// is asked. Anything else is dropped on the floor.
     pub(in crate::features::web) async fn remember_refusal(
         &self,
         url: &str,
         status: StatusCode,
         reason: &str,
+        archive: ArchiveAnswer,
     ) {
-        if !refusal_is_settled(status) {
+        if !refusal_is_settled(status) || archive == ArchiveAnswer::Unanswered {
             return;
         }
         let entry = Entry::Refusal {
@@ -215,12 +311,24 @@ impl PageCache {
     /// file name: it carries slashes, query strings and characters no file
     /// system agrees on, and it can be longer than any of them allow.
     fn path_for(&self, url: &str) -> PathBuf {
-        let digest = Sha256::digest(normalize(url).as_bytes());
+        self.path_for_key(&normalize(url))
+    }
+
+    /// Where the entry for an already-normalised key lives.
+    fn path_for_key(&self, key: &str) -> PathBuf {
+        let digest = Sha256::digest(key.as_bytes());
         self.dir.join(format!("{digest:x}.json"))
     }
 
     async fn write(&self, url: &str, entry: &Entry) {
-        let path = self.path_for(url);
+        self.write_at(self.path_for(url), url, entry).await;
+    }
+
+    async fn write_key(&self, key: &str, entry: &Entry) {
+        self.write_at(self.path_for_key(key), key, entry).await;
+    }
+
+    async fn write_at(&self, path: PathBuf, url: &str, entry: &Entry) {
         let Ok(encoded) = serde_json::to_vec(entry) else {
             debug!(url, "Could not encode a page cache entry; not caching it");
             return;
@@ -311,338 +419,48 @@ async fn remove_quietly(path: &Path) {
     }
 }
 
+/// One cache file's entry; a missing, unreadable or older-shaped file is a
+/// miss, which the next store overwrites.
+async fn read_entry(path: &Path, label: &str) -> Option<Entry> {
+    let raw = match tokio::fs::read(path).await {
+        Ok(raw) => raw,
+        // A miss is the normal case, so it is not worth a log line.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            warn!(label, %error, "Could not read a page cache entry; fetching instead");
+            return None;
+        }
+    };
+    match serde_json::from_slice::<Entry>(&raw) {
+        Ok(entry) => Some(entry),
+        Err(error) => {
+            debug!(label, %error, "Discarding an unreadable page cache entry");
+            None
+        }
+    }
+}
+
+/// An archived copy's key: the original's canonical key and the capture
+/// time (design §3.7), so every link to the same page shares its copies.
+fn archived_key(original: &Url, capture: &Capture) -> String {
+    format!(
+        "archived|{}|{}",
+        canonical::key(original),
+        capture.timestamp
+    )
+}
+
+fn lookup_key(url: &Url, as_of: Option<NaiveDate>) -> String {
+    format!(
+        "archive-lookup|{}",
+        cache_policy::archive_lookup_key(url, as_of)
+    )
+}
+
 fn normalize(url: &str) -> String {
     lattice_core::shared::http::url_identity::identity(url)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::TimeZone;
-    use std::sync::{Arc, Mutex};
-    use tempfile::TempDir;
-
-    /// A clock the test moves by hand, so expiry costs no wall-clock time.
-    #[derive(Clone)]
-    struct TestClock(Arc<Mutex<DateTime<Utc>>>);
-
-    impl TestClock {
-        fn new() -> Self {
-            Self(Arc::new(Mutex::new(
-                Utc.with_ymd_and_hms(2026, 9, 19, 12, 0, 0).unwrap(),
-            )))
-        }
-
-        fn advance_hours(&self, hours: i64) {
-            let mut now = self.0.lock().expect("test clock poisoned");
-            *now += chrono::Duration::hours(hours);
-        }
-
-        fn reader(&self) -> impl Fn() -> DateTime<Utc> + Send + Sync + 'static {
-            let shared = Arc::clone(&self.0);
-            move || *shared.lock().expect("test clock poisoned")
-        }
-    }
-
-    fn cache(dir: &TempDir, clock: &TestClock) -> PageCache {
-        PageCache::with_clock(dir.path().join("web-cache"), clock.reader())
-    }
-
-    fn page(final_url: &str, clock: &TestClock) -> CachedPage {
-        CachedPage {
-            final_url: final_url.to_string(),
-            title: Some("Silo Season 2, Explained".to_string()),
-            content: "one two three four".to_string(),
-            content_truncated: false,
-            word_count: 4,
-            content_type: Some("text/html".to_string()),
-            fetched_at: (clock.reader())(),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_page_that_was_read_is_handed_back_without_a_fetch() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        let stored = page("https://example.test/recap", &clock);
-        cache
-            .remember_page("https://example.test/recap", &stored)
-            .await;
-
-        assert_eq!(
-            cache.get("https://example.test/recap").await,
-            Some(CachedFetch::Page(stored))
-        );
-    }
-
-    #[tokio::test]
-    async fn a_page_nobody_has_read_is_a_miss() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        assert_eq!(
-            cache(&dir, &clock).get("https://example.test/never").await,
-            None
-        );
-    }
-
-    /// Fragments and host case do not change the resource; path case and a
-    /// trailing slash can, so cache identity preserves both.
-    #[tokio::test]
-    async fn a_url_that_differs_only_cosmetically_is_the_same_entry() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        cache
-            .remember_page(
-                "https://Example.test/a/b",
-                &page("https://Example.test/a/b", &clock),
-            )
-            .await;
-
-        for variant in [
-            "https://example.test/a/b",
-            "https://EXAMPLE.test/a/b#section",
-            "  https://example.test/a/b  ",
-        ] {
-            assert!(
-                cache.get(variant).await.is_some(),
-                "{variant} should have hit the stored page"
-            );
-        }
-        for distinct in ["https://example.test/a/b/", "https://example.test/A/b"] {
-            assert!(
-                cache.get(distinct).await.is_none(),
-                "{distinct} is a distinct resource"
-            );
-        }
-        assert_eq!(cache.get("https://example.test/a/c").await, None);
-    }
-
-    /// A search result's URL and the page it redirects to are both cited, so a
-    /// hit on either must not cost a second fetch.
-    #[tokio::test]
-    async fn a_redirected_page_is_found_under_both_urls() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        cache
-            .remember_page(
-                "https://example.test/short",
-                &page("https://example.test/articles/full-story", &clock),
-            )
-            .await;
-
-        assert!(cache.get("https://example.test/short").await.is_some());
-        assert!(cache
-            .get("https://example.test/articles/full-story")
-            .await
-            .is_some());
-    }
-
-    #[tokio::test]
-    async fn a_page_older_than_a_day_is_read_again() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        cache
-            .remember_page(
-                "https://example.test/recap",
-                &page("https://example.test/recap", &clock),
-            )
-            .await;
-
-        clock.advance_hours(23);
-        assert!(cache.get("https://example.test/recap").await.is_some());
-
-        clock.advance_hours(2);
-        assert_eq!(cache.get("https://example.test/recap").await, None);
-    }
-
-    #[tokio::test]
-    async fn a_settled_refusal_is_remembered_and_says_so() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        cache
-            .remember_refusal(
-                "https://blocked.test/a",
-                StatusCode::FORBIDDEN,
-                "HTTP 403 Forbidden",
-            )
-            .await;
-
-        assert_eq!(
-            cache.get("https://blocked.test/a").await,
-            Some(CachedFetch::Refusal {
-                reason: "HTTP 403 Forbidden".to_string(),
-            })
-        );
-    }
-
-    /// A site having a moment must stay retryable. Only an answer that will be
-    /// the same answer a minute later is worth keeping.
-    #[tokio::test]
-    async fn only_a_refusal_that_will_not_change_is_kept() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        for status in [
-            StatusCode::UNAUTHORIZED,
-            StatusCode::FORBIDDEN,
-            StatusCode::NOT_FOUND,
-            StatusCode::GONE,
-            StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS,
-        ] {
-            let url = format!("https://kept.test/{}", status.as_u16());
-            cache.remember_refusal(&url, status, "refused").await;
-            assert!(
-                cache.get(&url).await.is_some(),
-                "HTTP {status} should have been remembered"
-            );
-        }
-
-        for status in [
-            StatusCode::TOO_MANY_REQUESTS,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::BAD_GATEWAY,
-            StatusCode::SERVICE_UNAVAILABLE,
-            StatusCode::GATEWAY_TIMEOUT,
-            StatusCode::REQUEST_TIMEOUT,
-            StatusCode::BAD_REQUEST,
-        ] {
-            let url = format!("https://retried.test/{}", status.as_u16());
-            cache.remember_refusal(&url, status, "refused").await;
-            assert_eq!(
-                cache.get(&url).await,
-                None,
-                "HTTP {status} should stay retryable"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn a_refusal_older_than_an_hour_is_tried_again() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        cache
-            .remember_refusal(
-                "https://blocked.test/a",
-                StatusCode::FORBIDDEN,
-                "HTTP 403 Forbidden",
-            )
-            .await;
-
-        clock.advance_hours(2);
-        assert_eq!(cache.get("https://blocked.test/a").await, None);
-    }
-
-    /// A half-written file must read as "we have not got it", never as a panic
-    /// and never as an empty page handed to the model.
-    #[tokio::test]
-    async fn a_corrupt_entry_is_a_miss() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        cache
-            .remember_page(
-                "https://example.test/recap",
-                &page("https://example.test/recap", &clock),
-            )
-            .await;
-        let path = cache.path_for("https://example.test/recap");
-        tokio::fs::write(&path, b"{\"outcome\":\"pa").await.unwrap();
-
-        assert_eq!(cache.get("https://example.test/recap").await, None);
-    }
-
-    /// A cache directory that cannot be read or written is a slow app, not a
-    /// broken one: every operation has to degrade to a miss.
-    #[tokio::test]
-    async fn an_unusable_directory_is_a_miss_rather_than_a_failure() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        // A file where the directory should be: nothing can be created inside it.
-        let blocked = dir.path().join("web-cache");
-        tokio::fs::write(&blocked, b"not a directory")
-            .await
-            .unwrap();
-        let cache = PageCache::with_clock(blocked, clock.reader());
-
-        cache
-            .remember_page(
-                "https://example.test/recap",
-                &page("https://example.test/recap", &clock),
-            )
-            .await;
-        assert_eq!(cache.get("https://example.test/recap").await, None);
-    }
-
-    /// A long research session must not fill the disk with pages nobody will
-    /// ask for again.
-    #[tokio::test]
-    async fn the_cache_stops_growing_at_the_bound() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-
-        for index in 0..(MAX_ENTRIES + 20) {
-            let url = format!("https://example.test/{index}");
-            cache.remember_page(&url, &page(&url, &clock)).await;
-        }
-
-        let mut count = 0usize;
-        let mut entries = tokio::fs::read_dir(cache.dir.clone()).await.unwrap();
-        while entries.next_entry().await.unwrap().is_some() {
-            count += 1;
-        }
-        assert!(count <= MAX_ENTRIES, "got {count} entries");
-
-        // The most recent write survived the prune it triggered.
-        let newest = format!("https://example.test/{}", MAX_ENTRIES + 19);
-        assert!(cache.get(&newest).await.is_some());
-    }
-
-    /// Pages are stored whole now, so a count alone let the cache hold
-    /// gigabytes. The oldest entries go until the bytes fit too.
-    #[tokio::test]
-    async fn the_cache_stops_growing_at_its_byte_bound() {
-        let dir = TempDir::new().unwrap();
-        let clock = TestClock::new();
-        let cache = cache(&dir, &clock);
-        let mut big = page("https://example.test/big", &clock);
-        big.content = "x".repeat(10_000);
-        for index in 0..10 {
-            let url = format!("https://example.test/{index}");
-            cache.remember_page(&url, &big).await;
-        }
-        let newest = cache.path_for("https://example.test/9");
-        sweep(
-            &cache.dir,
-            &newest,
-            Bounds {
-                entries: MAX_ENTRIES,
-                bytes: 35_000,
-            },
-        );
-        let mut count = 0usize;
-        let mut bytes = 0u64;
-        let mut entries = tokio::fs::read_dir(cache.dir.clone()).await.unwrap();
-        while let Some(entry) = entries.next_entry().await.unwrap() {
-            count += 1;
-            bytes += entry.metadata().await.unwrap().len();
-        }
-        assert!(bytes <= 35_000, "{bytes} bytes in {count} entries");
-        assert!(count >= 3, "only the oldest go: {count} left");
-        assert!(cache.get("https://example.test/9").await.is_some());
-    }
-}
+#[path = "page_cache_tests.rs"]
+mod tests;

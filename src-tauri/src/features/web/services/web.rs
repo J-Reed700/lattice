@@ -19,6 +19,7 @@ use crate::features::web::services::finders::{self, FinderHttp};
 use crate::features::web::services::identity;
 use crate::features::web::services::page_cache::PageCache;
 use crate::features::web::services::sourcing::SourcingService;
+use crate::features::web::services::wayback::Wayback;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::contracts::settings::SourcingSettingsDto;
@@ -47,7 +48,7 @@ use address_guard::{
 };
 pub use bounded::{BoundedBody, BoundedFetchError};
 pub(crate) use pacing::{SitePacer, MIN_SITE_REQUEST_INTERVAL};
-use page::parse_fetchable_url;
+use page::{parse_fetchable_url, Want};
 
 /// Extracted text shorter than this is a shell — a title, a menu, a cookie
 /// notice — and the page is worth reading in the browser. Matches the chat
@@ -100,6 +101,9 @@ pub struct WebService {
     /// Routed, fused source finding over the registered finders, with their
     /// health and the provider-page cache.
     sourcing: Arc<SourcingService>,
+    /// The Internet Archive: the last resort for a page nothing else reads,
+    /// and dated reads (design §3.8).
+    wayback: Wayback,
 }
 
 /// A page read for display, which is a fetch plus the one thing the tool
@@ -133,6 +137,7 @@ impl WebService {
             parsers: Arc::clone(&html_parsers),
             contact: settings.contact().map(str::to_owned),
         };
+        let wayback = Wayback::new(http.clone(), settings.clone());
         let sourcing = Arc::new(SourcingService::new(
             finders::keyless_registry(&http),
             settings,
@@ -145,6 +150,7 @@ impl WebService {
             html_parsers,
             browser: OnceLock::new(),
             sourcing,
+            wayback,
         })
     }
 
@@ -230,7 +236,9 @@ impl WebServiceTrait for WebService {
     }
 
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
-        let page = self.read_page_as(url, PageRead::Reference).await?;
+        let page = self
+            .read_page_as(url, PageRead::Reference, Want::Live)
+            .await?;
         if page.output.content.trim().len() < THIN_PAGE_CHARS {
             return Err(AppError::InvalidInput("This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text.".into()));
         }

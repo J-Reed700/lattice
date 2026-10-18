@@ -14,6 +14,7 @@ mod health;
 mod runner;
 mod service;
 
+pub(crate) use health::HealthBook;
 pub(crate) use service::{Search, SourcingService};
 
 #[cfg(test)]
