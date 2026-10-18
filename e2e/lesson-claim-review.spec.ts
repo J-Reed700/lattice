@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { installLearningStudioBackend } from './helpers/learningStudioBackend';
+import { openStudioSection } from './helpers/learningStudioNavigation';
 
 type LearningState = {
   program: { modules: Array<{ lessons: Array<{ id: string; title: string; preparation: string; blocks: unknown[]; questions: unknown[] }> }> };
@@ -36,11 +37,11 @@ async function holdLessonForReview(page: Page) {
           evidence: [{ passage, addedBy: 'outline' }], supportingQuote: null,
           research: [{ queries: ['does comparison prove causation'], sourcesAdded: [], passagesFound: 0, at: finishedAt - 10_000 }],
           repairs: [{ attempt: 1, escalated: false, before: 'A comparison always proves a cause.', after: null, outcome: { outcome: 'rejected', reason: 'The section came back with the wrong number of paragraphs.' }, at: finishedAt - 5_000 }],
-          executions: [], human: null, availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'], history: [] },
+          executions: [], human: null, availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'], history: [], localCheck: null, verifierCheck: null },
         { claimId: 'unsupported', location: location(1, 'Samples are always complete.'), statement: 'Samples are always complete.',
           state: { state: 'queued' }, verdictKind: { kind: 'unsupported' }, reason: 'No saved passage states that samples are complete.',
           evidence: [], supportingQuote: null, research: [], repairs: [], executions: [], human: null,
-          availableActions: ['confirm', 'edit', 'remove', 'general_knowledge', 'attach_evidence', 'research_with_hint'], history: [] },
+          availableActions: ['confirm', 'edit', 'remove', 'general_knowledge', 'attach_evidence', 'research_with_hint'], history: [], localCheck: null, verifierCheck: null },
       ],
     };
     return lesson.id;
@@ -123,4 +124,33 @@ test('A lesson held for review lists each claim with what was compared, takes th
 
   const unsupported = await page.evaluate(() => (window as unknown as { __LATTICE_LEARNING_STATE__: LearningState }).__LATTICE_LEARNING_STATE__.unsupportedCommands);
   expect(unsupported).toEqual([]);
+});
+
+test('Turning on the Verifier audit names the provider and what is sent, and needs the confirm button', async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await page.goto('/studio');
+  await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+  await openStudioSection(page, 'Plan');
+  const audit = page.getByRole('region', { name: 'Verifier audit' });
+  const toggle = audit.getByRole('switch');
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await expect(audit.getByText(/sent to Anthropic \(claude-fixture\) for a second check/)).toBeVisible();
+
+  await toggle.click();
+  const consent = page.getByRole('dialog', { name: 'Audit lessons with your Verifier model before publishing' });
+  await expect(consent.getByText(/every factual claim extracted from it, and the exact cited passages/)).toBeVisible();
+  await expect(consent.getByText('Anthropic (claude-fixture)')).toBeVisible();
+  await consent.getByRole('button', { name: 'Cancel' }).click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+  await toggle.click();
+  await consent.getByRole('checkbox', { name: 'Allow the Verifier to use web search for this course' }).check();
+  await consent.getByRole('button', { name: 'Turn on and send lesson text to Anthropic' }).click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await expect(audit.getByText(/The Verifier may search the web for this course/)).toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __LATTICE_LEARNING_STATE__: { verifierAudit: { on: boolean; webSearch: boolean; consentProvider: string | null } } }).__LATTICE_LEARNING_STATE__.verifierAudit);
+  expect(saved).toMatchObject({ on: true, webSearch: true, consentProvider: 'anthropic' });
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
 });

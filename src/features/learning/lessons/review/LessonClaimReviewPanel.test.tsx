@@ -7,9 +7,10 @@ import { claimItem, review, STOPPED_AT, unsupportedItem, userActionAt } from '@/
 import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import type { LessonClaimReviewDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), resume: vi.fn() }));
+const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resumeLearningLessonReview: api.resume,
+  getLearningLessonAudit: api.audit,
 } }));
 
 const ok = <T,>(data: T) => ({ ok: true, data });
@@ -30,7 +31,10 @@ function show(data: LessonClaimReviewDto | LessonClaimReviewDto[], props: Partia
 const many = () => Array.from({ length: 43 }, (_, index) => unsupportedItem(index, index % 9));
 
 describe('Lesson claim review panel', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    api.audit.mockResolvedValue(ok(null));
+  });
 
   it('shows one claim inline, without filters, with what was compared and tried', async () => {
     show(review([claimItem()]));
@@ -135,5 +139,25 @@ describe('Lesson claim review panel', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('This claim changed; reload and act again.');
     await waitFor(() => expect(api.review).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows a Verifier dispute in two columns with both reasons and the user’s earlier note', async () => {
+    const passage = claimItem().evidence[0];
+    show(review([claimItem({
+      verdictKind: { kind: 'disputed', verifier: { kind: 'contradicted' } },
+      reason: 'The Verifier quotes 99.97 °C.',
+      state: { state: 'reopened', cause: { cause: 'verifier_dispute' }, previous: { state: 'confirmed', at: STOPPED_AT } },
+      human: { at: STOPPED_AT, note: 'Rounded for beginners.', boundSources: [] },
+      localCheck: { checker: { role: 'local', model: 'qwen3.5-9b' }, result: { verdict: 'supported', sourceVersionId: 'v1', supportingQuote: 'boils at 100' }, reason: 'The passage entails the claim.', quotedSource: null, passages: [passage], at: 1 },
+      verifierCheck: { checker: { role: 'verifier', model: 'cloud:anthropic/claude-x' }, result: { verdict: 'failed', kind: { kind: 'contradicted' } }, reason: 'At one atmosphere the passage gives 99.97 °C.', quotedSource: null, passages: [passage], at: 2 },
+    })]));
+    const columns = await screen.findByRole('group', { name: 'Local checker and Verifier' });
+    expect(within(columns).getByText('Local checker said')).toBeVisible();
+    expect(within(columns).getByText('The passage entails the claim.')).toBeVisible();
+    expect(within(columns).getByText('Verifier said')).toBeVisible();
+    expect(within(columns).getByText('At one atmosphere the passage gives 99.97 °C.')).toBeVisible();
+    expect(screen.getByText(/Your earlier verdict · .* · “Rounded for beginners.”/)).toBeVisible();
+    expect(screen.getByText('Reopened: the Verifier disputes it')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Confirm anyway (note required)' })).toBeVisible();
   });
 });

@@ -21,7 +21,6 @@ import type {
   ClaimActionKindDto,
   ClaimActionRequestDto,
   ClaimAttachReportDto,
-  ClaimEvidencePassageDto,
   ClaimReviewItemDto,
   LearningEvidencePassageDto,
 } from '@/lib/bindings';
@@ -57,25 +56,26 @@ function Heading({ children }: { children: ReactNode }) {
   return <h5 className="text-[11px] font-semibold uppercase tracking-[.12em] text-text-muted">{children}</h5>;
 }
 
-function CheckerColumn({ title, side, shown, onOpenPassage }: {
-  title: string; side: CheckerSide | null; shown: Map<string, ClaimEvidencePassageDto>;
-  onOpenPassage: (passage: LearningEvidencePassageDto) => void;
+function CheckerColumn({ title, side, onOpenPassage }: {
+  title: string; side: CheckerSide | null; onOpenPassage: (passage: LearningEvidencePassageDto) => void;
 }) {
   return (
     <div className="min-w-0 rounded-lg border border-border bg-background p-3">
       <Heading>{title}</Heading>
       {!side ? <p className="mt-2 text-xs text-text-muted">No check recorded.</p> : <>
         <p className="mt-2 text-sm font-semibold text-text-primary">{side.verdict}</p>
-        <p className="text-[11px] text-text-muted">{side.model}</p>
+        <p className="break-all text-[11px] text-text-muted">{side.model}</p>
         {side.reason && <p className="mt-2 text-xs leading-5 text-text-secondary">{side.reason}</p>}
-        {side.supportingQuote && <blockquote className="mt-2 border-l-2 border-accent pl-3 text-xs leading-5 text-text-primary">{side.supportingQuote}</blockquote>}
-        {side.evidence.length > 0 && <ul className="mt-2 space-y-1 text-xs">
-          {side.evidence.map((seen) => {
-            const match = shown.get(passageKey(seen));
-            return <li key={passageKey(seen)}>{match
-              ? <button type="button" onClick={() => onOpenPassage(match.passage)} className="text-left text-accent underline">{match.passage.title} · bytes {seen.startByte}–{seen.endByte}</button>
-              : <span className="break-all text-text-muted">Saved version {seen.sourceVersionId} · bytes {seen.startByte}–{seen.endByte}</span>}</li>;
-          })}
+        {side.supportingQuote && <blockquote className="mt-2 border-l-2 border-accent pl-3 text-xs leading-5 text-text-primary">
+          {side.supportingQuote}
+          {side.quotedSource && <span className="mt-1 block text-[11px] text-text-muted">— {side.quotedSource.title}{addedByLabel(side.quotedSource.addedBy) ? ` · ${addedByLabel(side.quotedSource.addedBy)}` : ''}</span>}
+        </blockquote>}
+        {side.passages.length > 0 && <ul className="mt-2 space-y-1 text-xs">
+          {side.passages.map(({ passage }) => (
+            <li key={passageKey(passage)}>
+              <button type="button" onClick={() => onOpenPassage(passage)} className="text-left text-accent underline">{passage.title} · bytes {passage.startByte}–{passage.endByte}</button>
+            </li>
+          ))}
         </ul>}
       </>}
     </div>
@@ -116,7 +116,6 @@ export function ClaimReviewCard({
   const open = alwaysOpen || expanded;
   const needsNote = confirmNeedsNote(item);
   const columns = checkerColumns(item);
-  const shown = new Map(item.evidence.map((evidence) => [passageKey(evidence.passage), evidence]));
   const sources = [...new Map(item.evidence.map(({ passage }) => [passage.sourceVersionId, passage.title])).entries()];
   const actions = ACTION_ORDER.filter((action) => item.availableActions.includes(action));
 
@@ -199,8 +198,8 @@ export function ClaimReviewCard({
         </div>
 
         {columns && <div role="group" aria-label="Local checker and Verifier" className="grid gap-2 sm:grid-cols-2">
-          <CheckerColumn title="Local checker said" side={columns.local} shown={shown} onOpenPassage={onOpenPassage} />
-          <CheckerColumn title="Verifier said" side={columns.verifier} shown={shown} onOpenPassage={onOpenPassage} />
+          <CheckerColumn title="Local checker said" side={columns.local} onOpenPassage={onOpenPassage} />
+          <CheckerColumn title="Verifier said" side={columns.verifier} onOpenPassage={onOpenPassage} />
         </div>}
 
         <div>

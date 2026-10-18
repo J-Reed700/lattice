@@ -25,3 +25,6 @@ export const learningClaimReviewPrefix = (programId: string) =>
 export const learningClaimReviewKey = (programId: string, lessonId: string) =>
   [...learningClaimReviewPrefix(programId), lessonId] as const;
 export const LEARNING_CHECKER_ACCURACY_KEY = ['learning-checker-accuracy'] as const;
+export const learningVerifierAuditKey = (programId: string) => ['learning-verifier-audit', programId] as const;
+export const learningLessonAuditKey = (programId: string, lessonId: string) =>
+  ['learning-lesson-audit', programId, lessonId] as const;

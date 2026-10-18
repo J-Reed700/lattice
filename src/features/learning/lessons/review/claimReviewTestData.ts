@@ -24,6 +24,8 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
     human: null,
     availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'],
     history: [],
+    localCheck: null,
+    verifierCheck: null,
     ...overrides,
   };
 }

@@ -118,6 +118,33 @@ export const learningApi = {
   getLearningCheckerAccuracy: (): Promise<ApiResult<Wire.CheckerAccuracyDto[]>> =>
     learningCall('get_learning_checker_accuracy'),
 
+  getLearningProgramVerifierAudit: (
+    programId: string,
+  ): Promise<ApiResult<Wire.LearningVerifierAuditDto>> =>
+    learningCall('get_learning_program_verifier_audit', { programId }),
+
+  /** Refused for a cloud Verifier unless `consentConfirmed`; off clears the consent. */
+  setLearningProgramVerifierAudit: (
+    programId: string,
+    on: boolean,
+    webSearch: boolean,
+    consentConfirmed: boolean,
+  ): Promise<ApiResult<Wire.LearningVerifierAuditDto>> =>
+    learningCall('set_learning_program_verifier_audit', { programId, on, webSearch, consentConfirmed }),
+
+  getLearningLessonAudit: (
+    programId: string,
+    lessonId: string,
+  ): Promise<ApiResult<Wire.LearningLessonAuditDto | null>> =>
+    learningCall('get_learning_lesson_audit', { programId, lessonId }),
+
+  auditLearningLessonNow: (
+    programId: string,
+    lessonId: string,
+    operationId: string,
+  ): Promise<ApiResult<Wire.LearningLessonAuditResultDto>> =>
+    learningCall('audit_learning_lesson_now', { programId, lessonId, operationId }),
+
   /** Null when the user dismissed the save dialog. */
   exportLearningCheckerExamples: (
     request: Wire.ExportLearningCheckerExamplesRequestDto,

@@ -7,6 +7,7 @@ import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence'
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
@@ -105,6 +106,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           ) : (
             <>
               {reviewPanel}
+              <AuditLessonNow programId={program.summary.id} lessonId={lesson.id} />
               {showCitations && <LessonEvidencePanel key={lesson.id} programId={program.summary.id} lessonId={lesson.id} programRevision={program.summary.revision} report={evidenceReport} />}
               <nav aria-label={`Sections in ${lesson.title}`} className="mb-5 flex flex-wrap gap-2">
                 {lesson.blocks.map((block, index) => <a key={index} href={`#lesson-${lesson.id}-section-${index}`} className="rounded-full border border-border bg-surface px-3 py-2 text-xs text-text-secondary hover:border-accent">{index + 1}. {block.title}</a>)}

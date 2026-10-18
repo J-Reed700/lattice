@@ -1,7 +1,8 @@
 import type {
   ActorDto,
+  CheckerVerdictDto,
+  ClaimEvidencePassageDto,
   ClaimActionKindDto,
-  ClaimEventDto,
   ClaimEventPayloadDto,
   ClaimLocationDto,
   ClaimReviewItemDto,
@@ -11,6 +12,7 @@ import type {
   RepairOutcomeDto,
   ReopenCauseDto,
   SourceAddedByDto,
+  SourceRefDto,
   UserActionDto,
   VerdictKindDto,
 } from '@/lib/bindings';
@@ -226,30 +228,27 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
   }
 }
 
-export type CheckerSide = { model: string; verdict: string; reason: string; supportingQuote: string | null; evidence: Array<{ sourceVersionId: string; startByte: number; endByte: number }> };
+export type CheckerSide = {
+  model: string; verdict: string; reason: string; supportingQuote: string | null;
+  quotedSource: SourceRefDto | null; passages: ClaimEvidencePassageDto[];
+};
 
-function latestCheck(history: ClaimEventDto[], role: 'local' | 'verifier'): CheckerSide | null {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const payload = history[index].event;
-    const check = payload.kind === 'checked' ? payload.check
-      : payload.kind === 'evidence_attached' && payload.result.outcome === 'checked' ? payload.result.check : null;
-    if (!check || check.checker.role !== role) continue;
-    const result = check.result;
-    return {
-      model: check.checker.model,
-      verdict: result.verdict === 'supported' ? 'Supported' : verdictLabel(result.kind),
-      reason: check.reason,
-      supportingQuote: result.verdict === 'supported' ? result.supportingQuote : null,
-      evidence: check.evidence,
-    };
-  }
-  return null;
+function side(check: CheckerVerdictDto): CheckerSide {
+  const result = check.result;
+  return {
+    model: check.checker.model,
+    verdict: result.verdict === 'supported' ? 'Supported' : verdictLabel(result.kind),
+    reason: check.reason,
+    supportingQuote: result.verdict === 'supported' ? result.supportingQuote : null,
+    quotedSource: check.quotedSource,
+    passages: check.passages,
+  };
 }
 
-/** "Local checker said / Verifier said" (§14.5), when the Verifier has judged the claim. */
+/** "Local checker said / Verifier said" (§14.5), once the Verifier has judged the claim. */
 export function checkerColumns(item: ClaimReviewItemDto): { local: CheckerSide | null; verifier: CheckerSide } | null {
-  const verifier = latestCheck(item.history, 'verifier');
-  return verifier ? { local: latestCheck(item.history, 'local'), verifier } : null;
+  if (!item.verifierCheck) return null;
+  return { local: item.localCheck ? side(item.localCheck) : null, verifier: side(item.verifierCheck) };
 }
 
 /** Whether a user event came after the job stopped: Resume reruns nothing unchanged (§6.2). */

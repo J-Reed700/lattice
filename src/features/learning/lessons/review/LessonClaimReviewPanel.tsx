@@ -5,7 +5,9 @@ import { LoaderCircle } from 'lucide-react';
 
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
 
+import { CheckerAccuracy } from '@/features/learning/lessons/review/CheckerAccuracy';
 import { ClaimReviewCard, type ClaimActionHandler } from '@/features/learning/lessons/review/ClaimReviewCard';
+import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import {
   CLAIM_FILTERS,
   FILTER_LABELS,
@@ -102,7 +104,8 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
   const [message, setMessage] = useState('');
   const [undoable, setUndoable] = useState<string | null>(null);
   const [reader, setReader] = useState<ResolvedReaderTarget | null>(null);
-  const focusNext = useRef<string | null>(null);
+  // The card to focus once the list re-renders after an action (§10).
+  const [focusTarget, setFocusTarget] = useState<{ claimId: string | null } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const resumeHelp = useId();
 
@@ -117,12 +120,11 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
   const rovingId = ordered.some((claim) => claim.claimId === active) ? active : ordered[0]?.claimId ?? null;
 
   useEffect(() => {
-    const target = focusNext.current;
-    if (!target || !listRef.current) return;
-    focusNext.current = null;
+    if (!focusTarget || !listRef.current) return;
     const headers = [...listRef.current.querySelectorAll<HTMLButtonElement>('[data-claim-header]')];
-    (headers.find((header) => header.dataset.claimId === target) ?? headers[0])?.focus();
-  }, [review]);
+    (headers.find((header) => header.dataset.claimId === focusTarget.claimId) ?? headers[0])?.focus();
+    setFocusTarget(null);
+  }, [focusTarget, review]);
 
   const runAction: ClaimActionHandler = async (item, request, kind) => {
     if (!review) return null;
@@ -137,7 +139,7 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
       const lines = result.attach?.lines.join(' ');
       setMessage(lines ? `${lines} ${claimsNoun(remaining)} waiting for you.` : announcement(kind, remaining));
       setUndoable(kind === 'undo' || result.attach?.failure ? null : item.claimId);
-      if (kind !== 'attach_evidence' && kind !== 'research_with_hint') focusNext.current = next?.claimId ?? null;
+      if (kind !== 'attach_evidence' && kind !== 'research_with_hint') setFocusTarget({ claimId: next?.claimId ?? null });
       return result.attach;
     } catch (error) {
       setErrors((current) => ({ ...current, [item.claimId]: error instanceof Error ? error.message : 'The action could not be saved.' }));
@@ -194,6 +196,7 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
       <Header review={review} waiting={waiting} />
       <p className="mt-3 text-xs leading-5 text-text-muted"><span className="font-medium text-text-secondary">Pass {review.pass}</span> · {countsLine(review)}</p>
       <p className="mt-1 text-xs leading-5 text-text-muted">{PASS_BOUND}</p>
+      <LessonAuditLine programId={programId} lessonId={lessonId} />
 
       {resumable && <div className="mt-4 flex flex-wrap items-center gap-3">
         <button type="button" disabled={Boolean(resumeBlocked) || resume.isPending} aria-describedby={resumeBlocked ? resumeHelp : undefined}
@@ -207,7 +210,8 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
         {resume.error && <p role="alert" className="w-full text-xs text-rose-700">{resume.error.message}</p>}
       </div>}
 
-      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-background px-3 py-2 text-xs text-text-secondary" hidden={!message}>
+      {/* Always in the tree, so the first announcement is not lost. */}
+      <div className={message ? 'mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-background px-3 py-2 text-xs text-text-secondary' : 'sr-only'}>
         <p aria-live="polite" aria-atomic="true">{message}</p>
         {undoable && <button type="button" disabled={acting !== null} onClick={undoLast} className="min-h-8 rounded-full border border-border px-3 font-medium text-text-primary disabled:opacity-50">Undo</button>}
       </div>
@@ -260,6 +264,8 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, st
           </section>
         ))}
       </div>
+
+      <CheckerAccuracy programId={programId} />
 
       <FilePreviewModal isOpen={reader !== null} onClose={() => setReader(null)} source={reader?.source ?? null} initialLocator={reader?.locator ?? null} />
     </section>

@@ -10,6 +10,11 @@ import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 const mocks = vi.hoisted(() => ({ getPlan: vi.fn(), preview: vi.fn(), accept: vi.fn(), discard: vi.fn(), startDiagnostic: vi.fn(), submitDiagnostic: vi.fn(), skipDiagnostic: vi.fn(), cancelJob: vi.fn(), retryJob: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: mocks.getPlan,
+  // The Verifier audit switch sits on the Plan tab; off, with no Verifier set.
+  getLearningProgramVerifierAudit: async (programId: string) => ({ ok: true, data: {
+    programId, on: false, webSearch: false, consentAt: null, consentProvider: null, verifier: null,
+    destination: null, consentRequiredFor: null, blocked: null, usage: { audits: 0, inputTokens: 0, outputTokens: 0 },
+  } }),
   previewLearningCurriculumRevision: mocks.preview,
   acceptLearningCurriculumRevision: mocks.accept,
   discardLearningCurriculumRevision: mocks.discard,

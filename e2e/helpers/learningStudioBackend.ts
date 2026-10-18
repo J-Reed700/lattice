@@ -450,6 +450,11 @@ export async function installLearningStudioBackend(page: Page) {
       // Lesson claim reviews by lesson id; a lesson without one answers NOT_FOUND.
       claimReviews: {} as Record<string, ClaimReviewFixture>,
       claimActions: [] as Array<{ claimId: string; action: { action: string } & Record<string, unknown>; at: number }>,
+      verifierAudit: {
+        programId: program.summary.id, on: false, webSearch: false, consentAt: null as number | null, consentProvider: null as string | null,
+        verifier: null, destination: "Anthropic (claude-fixture)" as string | null, consentRequiredFor: "anthropic" as string | null,
+        blocked: null as string | null, usage: { audits: 0, inputTokens: 0, outputTokens: 0 },
+      },
       memory,
       canvasWorkspace,
       calls: ipc.calls,
@@ -1248,6 +1253,16 @@ export async function installLearningStudioBackend(page: Page) {
         state.planWorkspace.jobs.unshift(next);
         return next;
       },
+      // The Verifier audit is off unless a spec turns it on; no lesson has an audit.
+      get_learning_program_verifier_audit: () => structuredClone(state.verifierAudit),
+      set_learning_program_verifier_audit: (args: MockArgs) => {
+        const { on, webSearch, consentConfirmed } = args as { on: boolean; webSearch: boolean; consentConfirmed: boolean };
+        if (on && state.verifierAudit.consentRequiredFor && !consentConfirmed)
+          throw { code: "INVALID_INPUT", message: "Confirm what is sent before turning the audit on." };
+        Object.assign(state.verifierAudit, { on, webSearch: on && webSearch, consentAt: on && consentConfirmed ? Date.now() : null, consentProvider: on && consentConfirmed ? state.verifierAudit.consentRequiredFor : null });
+        return structuredClone(state.verifierAudit);
+      },
+      get_learning_lesson_audit: () => null,
       get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),

@@ -17,7 +17,7 @@ import {
   verdictLabel,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { claimItem, review, STOPPED_AT, unsupportedItem, userActionAt } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { ClaimEventDto, LearningGenerationJob } from '@/lib/bindings';
+import type { CheckerVerdictDto, ClaimEventDto, LearningGenerationJob } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 1,
@@ -83,17 +83,18 @@ describe('claim review presentation', () => {
     expect(changedSince(review([claimItem()]), null)).toBe(true);
   });
 
-  it('puts the local checker and the Verifier side by side from the history', () => {
-    const checked = (role: 'local' | 'verifier', verdict: 'supported' | 'contradicted', ordinal: number): ClaimEventDto => ({
-      ordinal, actor: 'machine', at: ordinal, jobId: null, appVersion: 'test', checkerModel: null,
-      event: { kind: 'checked', check: { checker: { role, model: role === 'local' ? 'qwen' : 'claude' }, windowTokens: 8192, fingerprint: 'f', evidence: [],
-        reason: role === 'local' ? 'Entailed.' : 'The passage says 99.97 °C.',
-        result: verdict === 'supported' ? { verdict, sourceVersionId: 'v1', supportingQuote: 'boils at 100' } : { verdict: 'failed', kind: { kind: 'contradicted' } } } },
+  it('puts the local checker and the Verifier side by side', () => {
+    const passage = claimItem().evidence[0];
+    const local: CheckerVerdictDto = { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported', sourceVersionId: 'v1', supportingQuote: 'boils at 100' }, reason: 'Entailed.', quotedSource: null, passages: [passage], at: 1 };
+    const verifier: CheckerVerdictDto = { checker: { role: 'verifier', model: 'claude' }, result: { verdict: 'failed', kind: { kind: 'contradicted' } }, reason: 'The passage says 99.97 °C.', quotedSource: null, passages: [passage], at: 2 };
+    expect(checkerColumns(claimItem({ localCheck: local, verifierCheck: verifier }))).toMatchObject({
+      local: { verdict: 'Supported', model: 'qwen', supportingQuote: 'boils at 100' },
+      verifier: { verdict: 'Contradicted', reason: 'The passage says 99.97 °C.', model: 'claude' },
     });
-    const item = claimItem({ history: [checked('local', 'supported', 1), checked('verifier', 'contradicted', 2)] });
-    expect(checkerColumns(item)).toMatchObject({ local: { verdict: 'Supported', model: 'qwen' }, verifier: { verdict: 'Contradicted', reason: 'The passage says 99.97 °C.' } });
-    expect(checkerColumns(claimItem({ history: [checked('local', 'supported', 1)] }))).toBeNull();
-    expect(describeEvent(item.history[1].event)).toBe('Verifier (claude): contradicted · The passage says 99.97 °C.');
+    expect(checkerColumns(claimItem({ localCheck: local }))).toBeNull();
+    const event: ClaimEventDto = { ordinal: 2, actor: 'machine', at: 2, jobId: null, appVersion: 'test', checkerModel: null,
+      event: { kind: 'checked', check: { checker: verifier.checker, result: verifier.result, reason: verifier.reason, fingerprint: 'f', evidence: [], windowTokens: 8192 } } };
+    expect(describeEvent(event.event)).toBe('Verifier (claude): contradicted · The passage says 99.97 °C.');
   });
 
   it('summarises the counts without hiding confirmations', () => {
