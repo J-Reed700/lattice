@@ -107,3 +107,42 @@ python3 scripts/claim_checker_bakeoff_score.py --library evals/retrieval/synthet
 ```
 
 The scorer's tests: `python3 -m unittest discover -s scripts -p 'test_claim_checker_bakeoff.py'`.
+
+## Pairs from your own lessons: `lesson-claims-<date>.jsonl`
+
+Every verdict a user gives on a claim the lesson checker flagged is a
+labelled example of that checker (design
+[`2026-10-16-lesson-claim-review.md`](../../docs/design/2026-10-16-lesson-claim-review.md)
+§15), kept in the app database's `learning_checker_examples`:
+
+| User action on a flagged claim | `label_source` | Exported `label` |
+| --- | --- | --- |
+| Confirm (the claim is true as written) | `user_confirm` | `supported` |
+| Remove, or Edit the sentence | `user_remove`, `user_edit` | the checker's verdict (`unsupported` or `contradicted`) |
+
+Accepting a general-knowledge proposal is not scored. Undoing a verdict
+deletes its example. Retrieval misses (`retrieval_miss`, recorded when added
+evidence verifies a claim the collection could not have supported before)
+and examples without passages are not exported: no passage was judged.
+
+`CheckerExamples::export` (in
+`src-tauri/src/features/learning/lessons/claim_reviews/checker_examples.rs`,
+behind the `export_learning_checker_examples` command) writes them in this
+file's format, one pair per example: `id`, `claim`, `passage` (the passages
+the checker compared, joined by a blank line), `label`, `difficulty` (the
+label source) and `checker_model`. Save the file here as
+`lesson-claims-<date>.jsonl` and score any checker on it with
+`live_claim_pairs_eval` (see
+[`course-generation-testing.md`](../../docs/development/course-generation-testing.md)):
+
+```bash
+cd src-tauri
+LATTICE_LLAMACPP_SETTINGS="$HOME/Library/Application Support/tech.lattice.app/settings.json" \
+LATTICE_CLAIM_PAIRS=$PWD/../evals/grounding/lesson-claims-<date>.jsonl \
+LATTICE_CLAIM_RESULTS=$PWD/../evals/grounding/results/<date>-lesson-claims-<checker>.jsonl \
+LATTICE_CLAIM_CHECKER=<checker> \
+  <binary> live_claim_pairs_eval --ignored --nocapture
+```
+
+These pairs are the user's own content: they are not synthetic and are not
+committed unless the user chooses to.
