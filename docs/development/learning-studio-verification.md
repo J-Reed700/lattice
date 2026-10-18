@@ -955,7 +955,7 @@ tests never contact this endpoint. Reproduce with a provider-compatible config:
 ```bash
 LATTICE_TEACHING_CONFIG_PATH=/path/to/opencode.json \
 LATTICE_TEACHING_EVAL_DIR=/path/to/new-evaluation-directory \
-SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml \
+SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
   --features bindings-export --test teaching_course_evals \
   -- --ignored --nocapture --test-threads=1 --skip live_retained_lesson_review
 ```
@@ -1182,11 +1182,11 @@ npm run contracts:check
 npm run contracts:commands
 npm run contracts:sql
 
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-SQLX_OFFLINE=true cargo check --manifest-path src-tauri/Cargo.toml --lib
-SQLX_OFFLINE=true cargo clippy --manifest-path src-tauri/Cargo.toml --lib -- -D warnings
-SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml --lib features::learning::
-SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml --test learning_studio_evals
+cargo fmt --manifest-path crates/lattice-desktop/Cargo.toml --all -- --check
+SQLX_OFFLINE=true cargo check --manifest-path crates/lattice-desktop/Cargo.toml --lib
+SQLX_OFFLINE=true cargo clippy --manifest-path crates/lattice-desktop/Cargo.toml --lib -- -D warnings
+SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml --lib features::learning::
+SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml --test learning_studio_evals
 
 npm run type-check
 npm run type-check:e2e
@@ -1250,7 +1250,7 @@ and run component interaction tests; a live visual preview is not implemented.
 Run the real Docker catalog checks after starting Docker:
 
 ```bash
-SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml \
+SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
   --features bindings-export --lib features::learning::runtime::runtime_catalog::tests::docker_ \
   -- --ignored --test-threads=1
 ```
@@ -1269,7 +1269,7 @@ pulls. The selected image must provide `/bin/sh` and `cat`.
 ```bash
 LATTICE_LAB_SMOKE_ENGINE=docker \
 LATTICE_LAB_SMOKE_IMAGE_ID=sha256:<64-lowercase-hex-digest> \
-SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml \
+SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
   --features bindings-export --lib \
   features::learning::runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks \
   -- --ignored --nocapture
@@ -1301,9 +1301,9 @@ to overwrite an existing database. It never opens the user's library.
 
 ```bash
 LATTICE_LLAMACPP_SETTINGS=/path/to/settings.json \
-LATTICE_LESSON_FIXTURE="$PWD/src-tauri/src/features/learning/lessons/live_fixtures/card_workflow.json" \
+LATTICE_LESSON_FIXTURE="$PWD/crates/lattice-desktop/src/features/learning/lessons/live_fixtures/card_workflow.json" \
 LATTICE_LESSON_CALLS=/path/to/new-test-directory \
-cargo test --manifest-path src-tauri/Cargo.toml --lib \
+cargo test --manifest-path crates/lattice-desktop/Cargo.toml --lib \
   live_small_lesson_reaches_ready --no-default-features \
   -- --ignored --nocapture
 ```
@@ -1448,7 +1448,7 @@ an Ollama-compatible local or private endpoint explicitly:
 LATTICE_LEARNING_EVAL_MODEL=qwen3:8b \
 LATTICE_LEARNING_EVAL_ENDPOINT=http://127.0.0.1:11434 \
 LATTICE_LEARNING_EVAL_LOG_DIR="$HOME/lattice-eval-results" \
-SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml \
+SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
   --test learning_studio_evals -- --ignored --nocapture
 ```
 

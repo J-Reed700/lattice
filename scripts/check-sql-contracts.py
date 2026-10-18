@@ -12,7 +12,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 # The app and the core crate; core holds the job store's SQL.
-SOURCE_ROOTS = ('src-tauri/src', 'src-tauri/crates/lattice-core/src')
+SOURCE_ROOTS = ('crates/lattice-desktop/src', 'crates/lattice-core/src')
 
 def prepare(connection, sql):
     try:
@@ -34,7 +34,7 @@ def main():
         ], cwd=ROOT, check=True, capture_output=True, text=True)
         rows.extend(json.loads(extracted.stdout))
     connection = sqlite3.connect(':memory:')
-    migrations = sorted((ROOT / 'src-tauri/migrations').glob('*.sql'))
+    migrations = sorted((ROOT / 'crates/lattice-desktop/migrations').glob('*.sql'))
     for migration in migrations:
         connection.executescript(migration.read_text())
     # sqlx creates its own bookkeeping table at runtime; the backup feature

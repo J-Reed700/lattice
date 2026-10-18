@@ -28,7 +28,7 @@
     "tauri_backend": {
       "enabled": true,
       "description": "Rust backend for Tauri app",
-      "path": "src-tauri",
+      "path": "crates/lattice-desktop",
       "language": "rust"
     }
   },
@@ -61,8 +61,8 @@
           "python scripts/bundle_python.py"
         ],
         "copy": [
-          "mkdir -p src-tauri/resources/python_backend",
-          "cp -r python_backend/* src-tauri/resources/python_backend/"
+          "mkdir -p crates/lattice-desktop/resources/python_backend",
+          "cp -r python_backend/* crates/lattice-desktop/resources/python_backend/"
         ]
       }
     },

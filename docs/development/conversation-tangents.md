@@ -24,7 +24,7 @@ The conversation detail response includes `tangentParentId`. Selecting a tangent
 
 ## Verification
 
-- Repository tests in `src-tauri/src/features/conversation/repository/tests/tangents.rs` cover ownership, snapshot isolation, hidden lists, invalid anchors, transaction rollback, promotion, deletion, nested tangents, and Explorer context.
+- Repository tests in `crates/lattice-desktop/src/features/conversation/repository/tests/tangents.rs` cover ownership, snapshot isolation, hidden lists, invalid anchors, transaction rollback, promotion, deletion, nested tangents, and Explorer context.
 - The selection and reply-action tests exercise discovery after highlighting, preserved focus, selection boundaries, keyboard behavior, and narrowing long replies. Controller tests cover cache isolation, composer recovery, and linked tangents.
 - The `chat tangents` journeys in `e2e/app-shell.spec.ts` use the production renderer in Chromium and WebKit at wide and narrow widths. They exercise all three entry points, sending, independent drafts, reopening saved tangents, deep links, promotion failure and retry, and the main transcript remaining intact.
 

@@ -1,6 +1,6 @@
 # Track B2: tool loop
 
-Uncommitted. Paths under `src-tauri/src/features/conversation/chat/` unless noted.
+Uncommitted. Paths under `crates/lattice-desktop/src/features/conversation/chat/` unless noted.
 
 ## Changed
 - `application/ports/llm_port.rs`: the `tool_choice` field and `ToolChoice` enum, byte-identical to the brief. The serde impls are hand-written; keep Track A's copy at integration.

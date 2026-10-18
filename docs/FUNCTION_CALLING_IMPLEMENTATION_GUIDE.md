@@ -27,12 +27,12 @@ tool loop (chat/tool_loop.rs)
 The same `FunctionExecutor` backs the `functions` Tauri plugin
 (`list_available_functions`, `execute_function`, `get_function_stats`), which
 the frontend reaches through `src/lib/api.ts`. Both the registry and the
-executor are built in `src-tauri/src/interfaces/di/container.rs`.
+executor are built in `crates/lattice-desktop/src/interfaces/di/container.rs`.
 
 ## Adding a built-in tool
 
 1. **Schema**: register a `ToolDefinition` in `init_function_registry`
-   (`src-tauri/src/features/function_calling/registry.rs`). Put every bound in
+   (`crates/lattice-desktop/src/features/function_calling/registry.rs`). Put every bound in
    the JSON schema (`minimum`, `maximum`, `enum`, `required`): the executor
    validates arguments against it before your handler runs.
 2. **DTOs**: add `<Tool>Input` / `<Tool>Output` to `lattice-core`'s
@@ -82,10 +82,10 @@ integration points that must agree:
 1. the `#[tauri::command]` + `#[specta::specta]` function (for this feature,
    `features/function_calling/plugin.rs`, delegating to `commands.rs`);
 2. the plugin's `tauri::generate_handler!` list in the same file;
-3. the command list in `src-tauri/build.rs`;
-4. the permission in `src-tauri/capabilities/main.json`
+3. the command list in `crates/lattice-desktop/build.rs`;
+4. the permission in `crates/lattice-desktop/capabilities/main.json`
    (`functions:allow-<command-name>`);
-5. the command list in `src-tauri/src/bin/export_bindings/main.rs`, then
+5. the command list in `crates/lattice-desktop/src/bin/export_bindings/main.rs`, then
    `npm run bindings:generate` to refresh `src/lib/bindings.ts`.
 
 `python3 scripts/check-tauri-command-inventory.py` checks that points 2-4
@@ -96,7 +96,7 @@ All run in CI.
 ## Testing
 
 ```bash
-cd src-tauri
+cd crates/lattice-desktop
 cargo test --lib features::function_calling      # registry, executor, DTOs
 cargo test --lib every_vault_tool_is_scoped      # scope classification tripwire
 cargo test --lib features::conversation::chat    # tool selection and the tool loop

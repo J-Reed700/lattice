@@ -148,7 +148,7 @@ describe('computeModelFit', () => {
 });
 
 describe('computeModelFit on the curated chat catalog', () => {
-  // Working sets from src-tauri/src/domain/models/curated.rs (weights + KV
+  // Working sets from crates/lattice-desktop/src/domain/models/curated.rs (weights + KV
   // cache at 8K + 1 GB runtime). Apple Silicon machines of each common size.
   const verdict = (minimumRamGb: number, totalRamGb: number) =>
     computeModelFit(model(minimumRamGb), caps({ total_ram_gb: totalRamGb }))?.verdict;

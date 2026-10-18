@@ -95,7 +95,7 @@ $StartTime = Get-Date
 # Paths
 $ScriptDir = $PSScriptRoot
 $ProjectRoot = (Resolve-Path (Join-Path $ScriptDir "../..")).Path
-$TauriDir = Join-Path $ProjectRoot 'src-tauri'
+$TauriDir = Join-Path $ProjectRoot 'crates/lattice-desktop'
 $LogDir = Join-Path $ProjectRoot 'build-logs'
 $DistDir = Join-Path $ProjectRoot 'dist'
 
@@ -239,7 +239,7 @@ function Invoke-Clean {
     Write-Log "Cleaning Build Artifacts" -Level Header
 
     $pathsToClean = @(
-        (Join-Path $TauriDir 'target'),
+        (Join-Path $ProjectRoot 'target'),
         $DistDir,
         $LogDir,
         (Join-Path $ProjectRoot '.build-cache'),
@@ -363,7 +363,7 @@ function New-Checksums {
 
     Write-Log "Generating Checksums" -Level Header
 
-    $bundleDir = Join-Path $TauriDir "target\$(if($Mode -eq 'dev'){'debug'}else{'release'})\bundle"
+    $bundleDir = Join-Path $ProjectRoot "target\$(if($Mode -eq 'dev'){'debug'}else{'release'})\bundle"
     
     if (-not (Test-Path $bundleDir)) {
         Write-Log "Bundle directory not found, skipping checksums" -Level Warning
@@ -398,7 +398,7 @@ function Show-Summary {
     Write-Log "Total build time: $($duration.ToString('mm\:ss'))" -Level Success
 
     # Find and display output locations
-    $targetDir = Join-Path $TauriDir "target\$(if($Mode -eq 'dev'){'debug'}else{'release'})"
+    $targetDir = Join-Path $ProjectRoot "target\$(if($Mode -eq 'dev'){'debug'}else{'release'})"
     
     if (Test-Path $targetDir) {
         Write-Log "Build artifacts location: $targetDir" -Level Info
