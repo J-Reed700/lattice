@@ -14,6 +14,7 @@ fn page() -> PageSignals {
         dates: SourceDates::default(),
         generator: None,
         license: None,
+        canonical_elsewhere: None,
         links: vec![OutboundLink {
             url: "https://peps.python.org/pep-0492/".into(),
             anchor: "PEP 492".into(),
@@ -25,20 +26,6 @@ fn page() -> PageSignals {
         description: None,
         extraction_version: PAGE_SIGNALS_VERSION.into(),
     }
-}
-
-#[test]
-fn markdown_links_carry_their_byte_offsets() {
-    let text = "See [the docs](https://docs.python.org/3/) and [[1]](https://example.org/ref \"title\"). ünïcode [x](ftp://no)";
-    let links = markdown_links(text);
-    assert_eq!(links.len(), 2);
-    assert_eq!(links[0].anchor, "the docs");
-    assert_eq!(
-        &text[links[0].start_byte..links[0].end_byte],
-        "[the docs](https://docs.python.org/3/)"
-    );
-    assert_eq!(links[1].anchor, "[1]");
-    assert_eq!(links[1].url, "https://example.org/ref");
 }
 
 #[test]
@@ -97,4 +84,11 @@ fn user_material_without_a_stated_origin_is_recognised() {
     });
     assert!(pasted.is_unattributed_user_material());
     assert!(!ProvenanceSignals::Web(Box::new(page())).is_unattributed_user_material());
+}
+
+#[test]
+fn a_canonical_on_another_site_carries_that_sites_origin() {
+    let elsewhere = CanonicalElsewhere::of("https://dan.example.org/pods").unwrap();
+    assert_eq!(elsewhere.origin.0, "web:example.org");
+    assert!(CanonicalElsewhere::of("not a url").is_none());
 }

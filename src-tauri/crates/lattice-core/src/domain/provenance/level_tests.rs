@@ -41,6 +41,7 @@ impl Case {
             dates: SourceDates::default(),
             generator: None,
             license: None,
+            canonical_elsewhere: None,
             links: vec![],
             http: HttpFacts::default(),
             self_description: vec![],

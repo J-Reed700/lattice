@@ -35,7 +35,8 @@ pub struct CitationCandidate {
 /// The links worth following from a supporting passage (§8), best first:
 /// links inside the passage, the nearest link before and after it in the
 /// same paragraph, and footnote targets (links anywhere whose anchor is a
-/// marker like `[3]` or `[^3]` that the passage carries). Ranked by what is
+/// marker like `[3]` or `[^3]` that the passage carries, or that sit on that
+/// marker's definition line). Ranked by what is
 /// known of the link's origin for the claim's subject (`standing`), then by
 /// distance from the passage. `span` is the passage's bytes in `text`.
 pub fn citation_candidates(
@@ -74,6 +75,25 @@ pub fn citation_candidates(
         found.push((link, link.start_byte - end));
     }
     let markers = footnote_markers(text.get(start..end).unwrap_or_default());
+    // A footnote definition line (`[^3]: …` or `[3]: …`) cites the links on
+    // it.
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let defines = markers.iter().any(|marker| {
+            trimmed.starts_with(&format!("[^{marker}]:"))
+                || trimmed.starts_with(&format!("[{marker}]:"))
+        });
+        if defines {
+            let line_end = offset + line.len();
+            for link in links {
+                if link.start_byte >= offset && link.start_byte < line_end {
+                    found.push((link, 0));
+                }
+            }
+        }
+        offset += line.len();
+    }
     for link in links {
         let anchor = link
             .anchor

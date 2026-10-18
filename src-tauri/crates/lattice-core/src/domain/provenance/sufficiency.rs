@@ -241,14 +241,17 @@ pub fn decide(
         };
     }
 
+    // A contrary the claim's scope rules out (misdated, or unplaceable for
+    // a version claim) blocks nothing, as it would lose in `resolve`.
+    let needs_placing =
+        kind == ClaimKind::VersionBound || matches!(profile.temporal, TemporalScope::Since { .. });
     let contrary_levels: Vec<TrustLevel> = contrary
         .iter()
         .filter(|c| c.trust.level != TrustLevel::Distrusted)
-        .filter(|c| {
-            !matches!(
-                c.temporal,
-                super::temporal::TemporalValidity::Invalid { .. }
-            )
+        .filter(|c| match c.temporal {
+            super::temporal::TemporalValidity::Invalid { .. } => false,
+            super::temporal::TemporalValidity::CannotPlace { .. } => !needs_placing,
+            _ => true,
         })
         .map(|c| c.trust.level)
         .collect();

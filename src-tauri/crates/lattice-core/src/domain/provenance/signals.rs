@@ -3,12 +3,11 @@
 //! heading lines and dates found in text, because a page must not be able
 //! to talk its way into trust.
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::judgement::{canonical_json, sha256_hex};
-use super::origin::Origin;
+use super::origin::{Origin, OriginKey};
 
 /// The extraction version stamped on page signals. Bump it when the reader
 /// would record different signals for the same HTML.
@@ -59,6 +58,11 @@ pub struct PageSignals {
     /// `rel=license` / schema.org `license`.
     #[serde(default)]
     pub license: Option<String>,
+    /// A `rel=canonical` / `og:url` naming another site: the page says its
+    /// content lives there (syndication). Capture records it as a
+    /// `CanonicalOf` relation; the page's own origin stays its origin (§7).
+    #[serde(default)]
+    pub canonical_elsewhere: Option<CanonicalElsewhere>,
     /// Markdown links in the reference text, with byte offsets into it.
     #[serde(default)]
     pub links: Vec<OutboundLink>,
@@ -73,6 +77,24 @@ pub struct PageSignals {
     #[serde(default)]
     pub description: Option<String>,
     pub extraction_version: String,
+}
+
+/// A canonical link to another origin, with that origin's key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanonicalElsewhere {
+    pub url: String,
+    pub origin: OriginKey,
+}
+
+impl CanonicalElsewhere {
+    /// The canonical URL with its origin; `None` when it is not a web
+    /// address.
+    pub fn of(url: &str) -> Option<Self> {
+        Origin::of_url(url).ok().map(|origin| Self {
+            url: url.to_owned(),
+            origin: origin.key,
+        })
+    }
 }
 
 /// A named publisher or author.
@@ -220,9 +242,9 @@ const SELF_DESCRIPTION_TOKENS: [&str; 24] = [
 
 /// Phrases that address a reader or a model rather than describe a page.
 /// Metadata describes; text that instructs is an injection attempt (§14),
-/// whatever the model makes of it. Lower-case, matched as substrings of the
-/// lower-cased field.
-const READER_ADDRESSED_PHRASES: [&str; 16] = [
+/// whatever the model makes of it. Matched as whole words in the lower-cased
+/// field with punctuation read as spaces (`addresses_reader`).
+const READER_ADDRESSED_PHRASES: [&str; 17] = [
     "ignore previous instructions",
     "ignore all previous",
     "ignore prior instructions",
@@ -234,11 +256,12 @@ const READER_ADDRESSED_PHRASES: [&str; 16] = [
     "note to llm",
     "note to the model",
     "attention ai",
-    "ai assistants",
-    "language model",
+    "are a language model",
+    "are a large language model",
+    "are an ai",
     "system prompt",
-    "rate this source",
-    "rate this page",
+    "rate this page as",
+    "rate this source as",
 ];
 
 impl ProvenanceSignals {
@@ -320,13 +343,20 @@ impl ProvenanceSignals {
     }
 }
 
-/// Whether `text` addresses a reader or a model.
+/// Whether `text` addresses a reader or a model: a phrase of
+/// `READER_ADDRESSED_PHRASES` as whole words, so "note to aid workers" is
+/// not "note to AI".
 pub fn addresses_reader(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let collapsed = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    let words: Vec<String> = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let padded = format!(" {} ", words.join(" "));
     READER_ADDRESSED_PHRASES
         .iter()
-        .any(|phrase| collapsed.contains(phrase))
+        .any(|phrase| padded.contains(&format!(" {phrase} ")))
 }
 
 /// The self-description tokens in a page's title, site name and
@@ -357,29 +387,6 @@ pub fn self_description<'a>(fields: impl IntoIterator<Item = &'a str>) -> Vec<St
 /// Letters of scripts that separate words with spaces (cased scripts).
 fn is_cased(c: char) -> bool {
     c.is_uppercase() || c.to_uppercase().next() != Some(c)
-}
-
-/// Every markdown link `[anchor](http(s)://…)` in `text`, with its byte
-/// offsets. An anchor may hold one level of brackets (`[[1]](url)`, the
-/// footnote form); an optional link title is dropped.
-pub fn markdown_links(text: &str) -> Vec<OutboundLink> {
-    let Ok(pattern) =
-        Regex::new(r#"\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\((https?://[^\s)]+)(?:\s+"[^"]*")?\)"#)
-    else {
-        return Vec::new();
-    };
-    pattern
-        .captures_iter(text)
-        .filter_map(|captures| {
-            let whole = captures.get(0)?;
-            Some(OutboundLink {
-                url: captures.get(2)?.as_str().to_owned(),
-                anchor: captures.get(1)?.as_str().to_owned(),
-                start_byte: whole.start(),
-                end_byte: whole.end(),
-            })
-        })
-        .collect()
 }
 
 #[cfg(test)]
