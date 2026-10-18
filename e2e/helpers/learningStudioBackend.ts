@@ -81,6 +81,7 @@ type SourceCheck = {
 type SourceLibraryItem = {
   id: string;
   kind: SourceKind;
+  addedBy: "user" | "research" | "outline" | "import" | "verifier";
   origin: string;
   requestedUrl: string | null;
   freshnessPolicy: SourcePolicy;
@@ -369,6 +370,7 @@ export async function installLearningStudioBackend(page: Page) {
         {
           id: "logical-source-field-notes",
           kind: "web",
+          addedBy: "outline",
           origin: source.url ?? "https://example.org/field-notes",
           requestedUrl: source.url,
           freshnessPolicy: "manual",
@@ -1172,12 +1174,12 @@ export async function installLearningStudioBackend(page: Page) {
       get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
-        claimCount: 14, generalKnowledgeCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+        claimCount: 14, generalKnowledgeCount: 0, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
         teachingClaims: [{ sectionIndex: 0, contentQuote: "A comparison begins by naming the measure and the period under observation.",
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }] }],
+            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null }],
       }),
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {
@@ -1725,6 +1727,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.sourceWorkspace.sources.push({
             id,
             kind: "web",
+            addedBy: "user",
             origin: url,
             requestedUrl: url,
             freshnessPolicy: String(request.freshnessPolicy) as SourcePolicy,
@@ -1769,6 +1772,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.sourceWorkspace.sources.push({
             id,
             kind: "document",
+            addedBy: "user",
             origin: String(request.documentId),
             requestedUrl: null,
             freshnessPolicy: "fixed",
@@ -1812,6 +1816,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.sourceWorkspace.sources.push({
             id,
             kind: "pasted",
+            addedBy: "user",
             origin: "Pasted text",
             requestedUrl: null,
             freshnessPolicy: "fixed",

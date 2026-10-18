@@ -12,6 +12,7 @@ import {
 import type {
   LearningClaimEvidenceDto,
   LearningEvidencePassageDto,
+  LearningLessonEvidenceDto,
 } from '@/lib/bindings';
 
 function safeUrl(value: string | null) {
@@ -23,23 +24,33 @@ function safeUrl(value: string | null) {
   }
 }
 
-function Passage({
+/** One compared passage; opens in the source reader. */
+export function Passage({
   passage,
   number,
   onOpenPassage,
+  provenance,
+  defaultOpen = false,
+  readerAlways = false,
 }: {
   passage: LearningEvidencePassageDto;
   number: number;
   onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
+  /** "Added by you", "Found by research"…; who brought the source in. */
+  provenance?: string | null;
+  defaultOpen?: boolean;
+  /** Offer the reader for passages with no web page too (pasted text, documents). */
+  readerAlways?: boolean;
 }) {
   const url = safeUrl(passage.url);
   return (
-    <details className="rounded-lg bg-background p-3">
+    <details className="rounded-lg bg-background p-3" open={defaultOpen}>
       <summary className="cursor-pointer text-xs font-medium text-text-secondary">
         <span className="mr-2 inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">
           {number}
         </span>
         {passage.title}
+        {provenance && <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-text-secondary">{provenance}</span>}
       </summary>
       <p className="mt-2 break-all text-[10px] text-text-muted">
         Saved version {passage.sourceVersionId} · bytes {passage.startByte}–{passage.endByte} · {passage.retrievalKind.replace(/_/g, ' ')}
@@ -47,13 +58,13 @@ function Passage({
       <blockquote className="mt-2 whitespace-pre-wrap wrap-anywhere border-l-2 border-accent/40 pl-3 font-serif text-sm leading-6 text-text-primary">
         {passage.text}
       </blockquote>
-      {url && (
+      {(url || readerAlways) && onOpenPassage && (
         <button
           type="button"
-          onClick={() => onOpenPassage?.(passage, number)}
+          onClick={() => onOpenPassage(passage, number)}
           className="mt-2 inline-flex items-center gap-1 text-xs text-accent underline"
         >
-          Open original page <ExternalLink size={12} />
+          {url ? 'Open original page' : 'Open in reader'} <ExternalLink size={12} />
         </button>
       )}
     </details>
@@ -64,7 +75,39 @@ function Passage({
 const GENERAL_KNOWLEDGE = 'general_knowledge';
 
 function isGeneralKnowledge(claim: LearningClaimEvidenceDto) {
-  return claim.verdict === GENERAL_KNOWLEDGE;
+  return claim.resolution === 'general_knowledge' || claim.verdict === GENERAL_KNOWLEDGE;
+}
+
+/** How the claim was settled, in words (§5.6): confirmed never reads as verified. */
+function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
+  if (isGeneralKnowledge(claim)) {
+    return <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">General knowledge · not checked against a source</span>;
+  }
+  if (claim.resolution === 'confirmed_by_you') {
+    return <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-text-secondary">Confirmed by you</span>;
+  }
+  if (claim.resolution === 'source_removed') {
+    return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">Source removed · review</span>;
+  }
+  return (
+    <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+      {claim.verdict || 'checked'}
+    </span>
+  );
+}
+
+/** "12 claims verified against sources · 3 confirmed by you · 2 general knowledge" (§5.6). */
+export function evidenceSummary(report: LearningLessonEvidenceDto): string {
+  const verified = Math.max(0, report.claimCount - report.generalKnowledgeCount - report.confirmedCount);
+  return [
+    `${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`,
+    report.confirmedCount > 0 ? `${report.confirmedCount} confirmed by you` : null,
+    report.generalKnowledgeCount > 0 ? `${report.generalKnowledgeCount} general knowledge, not checked against a source` : null,
+  ].filter(Boolean).join(' · ');
+}
+
+export function sourceRemovedCount(report: LearningLessonEvidenceDto | null | undefined): number {
+  return report?.teachingClaims.filter((claim) => claim.resolution === 'source_removed').length ?? 0;
 }
 
 function ClaimEvidence({
@@ -80,16 +123,14 @@ function ClaimEvidence({
     <article className="wrap-anywhere rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-sm font-medium leading-6 text-text-primary">{claim.claim}</p>
-        {isGeneralKnowledge(claim) ? (
-          <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">
-            General knowledge · not checked against a source
-          </span>
-        ) : (
-          <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-            {claim.verdict || 'checked'}
-          </span>
-        )}
+        <ResolutionChip claim={claim} />
       </div>
+      {claim.resolution === 'confirmed_by_you' && claim.note && (
+        <p className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">Your note: </span>{claim.note}</p>
+      )}
+      {claim.resolution === 'source_removed' && (
+        <p className="mt-2 text-xs leading-5 text-text-secondary">The source that supported this claim was deleted. The lesson stays readable; review the claim to attach another source or confirm it.</p>
+      )}
       {claim.contentQuote && (
         <blockquote className="mt-2 border-l-2 border-border pl-3 text-xs leading-5 text-text-muted">
           <span className="font-medium text-text-secondary">In the lesson: </span>
@@ -161,9 +202,9 @@ export function LessonEvidencePanel({
             {data && (
               <>
                 <p className="text-sm leading-6 text-text-secondary">
-                  {data.claimCount - data.generalKnowledgeCount} claims checked against saved evidence
-                  {data.generalKnowledgeCount > 0 && ` · ${data.generalKnowledgeCount} general knowledge, not checked against a source`} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
+                  {evidenceSummary(data)} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
                 </p>
+                {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'claim lost its source' : 'claims lost their source'} — review {sourceRemovedCount(data) === 1 ? 'it' : 'them'} in the claim review.</p>}
                 <p className="text-xs leading-5 text-text-muted">
                   {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical_fallback' ? 'Keyword retrieval — embeddings were unavailable' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
                 </p>
@@ -217,7 +258,8 @@ export function LessonSectionEvidence({
   const passageNumbers = useMemo(() => passageNumbersFor(data), [data]);
   const sectionPassages = new Set(claims.flatMap((claim) => claim.passages.map(passageKey)));
   const general = claims.filter(isGeneralKnowledge).length;
-  const checked = claims.length - general;
+  const confirmed = claims.filter((claim) => claim.resolution === 'confirmed_by_you').length;
+  const checked = claims.length - general - confirmed;
 
   const handleOpenPassage = (passage: LearningEvidencePassageDto, number: number) => {
     setPreviewTarget(fromLearningEvidencePassage(passage, number - 1));
@@ -234,6 +276,7 @@ export function LessonSectionEvidence({
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
           <ShieldCheck size={14} />
           Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
+          {confirmed > 0 && ` · ${confirmed} confirmed by you`}
           {general > 0 && ` · ${general} general knowledge`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
           <span className="ml-auto flex gap-1" aria-label="Citations in this section">
             {[...sectionPassages].map((key) => <span key={key} className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">{passageNumbers.get(key)}</span>)}

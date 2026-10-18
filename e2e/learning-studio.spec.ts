@@ -236,7 +236,7 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await openProgram(page);
   await page.getByRole("button", { name: "View lesson evidence" }).first().click();
   const evidence = page.getByRole("region", { name: "Lesson evidence" }).first();
-  await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();
+  await expect(evidence.getByText(/14 claims verified against sources/)).toBeVisible();
   await expect(evidence.getByText("A careful comparison records the chosen measure and observation period.")).toBeVisible();
   await expect(evidence.getByText("The saved reference supports this teaching claim.")).toBeVisible();
   await evidence.locator("summary").filter({ hasText: "Public field notes" }).click();
@@ -249,7 +249,7 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await expect(reader).toHaveCount(0);
   await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();
+  await expect(evidence.getByText(/14 claims verified against sources/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   const section = page.locator('#lesson-lesson-observation-section-0');
