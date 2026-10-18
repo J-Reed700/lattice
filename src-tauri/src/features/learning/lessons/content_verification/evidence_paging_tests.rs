@@ -301,7 +301,10 @@ async fn a_claim_whose_section_cites_its_support_is_settled_on_page_one() -> Res
     // Retrieval alone ranks the support past page 1.
     let retrieved = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
     assert!(retrieved.iter().all(|p| !p.text.contains(MARKER)));
-    let citations = Citations::new(HashMap::from([(0, references.cited_passages(&[MARKER])?)]));
+    let citations = Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
 
     let results = evidence_checks::check_with_citations(
         &model,
@@ -329,7 +332,10 @@ async fn another_sections_citations_are_not_added() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
     // Section 1 cites the support; the claim belongs to section 0.
-    let citations = Citations::new(HashMap::from([(1, references.cited_passages(&[MARKER])?)]));
+    let citations = Citations::new(
+        HashMap::from([(1, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
     evidence_checks::check_with_citations(
         &model,
         &references,
@@ -362,7 +368,7 @@ async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
         "the fixture must overflow"
     );
 
-    let citations = Citations::new(HashMap::from([(0, cited.clone())]));
+    let citations = Citations::new(HashMap::from([(0, cited.clone())]), HashMap::new());
     let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
 
     assert!(within_share(&model, share, page.iter()));
@@ -521,10 +527,13 @@ async fn a_claim_sees_the_lesson_sources_before_the_rest_of_the_course() -> Resu
         "course-wide ranking puts the lesson's source past page 1"
     );
     // Another section of the lesson cites that source.
-    let citations = Citations::new(HashMap::from([(
-        1,
-        references.cited_passages(&["Archive index entry. Archive index entry."])?,
-    )]));
+    let citations = Citations::new(
+        HashMap::from([(
+            1,
+            references.cited_passages(&["Archive index entry. Archive index entry."])?,
+        )]),
+        HashMap::new(),
+    );
     let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
     assert!(
         from_lesson(&page).is_some(),

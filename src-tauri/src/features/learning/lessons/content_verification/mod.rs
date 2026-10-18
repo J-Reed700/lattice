@@ -1,6 +1,5 @@
 //! Fail-closed lesson publication checks. Evidence and execution reduce errors;
 //! the claim inventory and its coverage audit are still fallible model judgments.
-#[cfg(test)]
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
@@ -20,7 +19,10 @@ use std::collections::{HashMap, HashSet};
 
 mod challenge;
 mod citations;
-use citations::{lesson_sources_first, overlaps, section_citations, take_cited, Citations, CITED};
+use citations::{
+    lesson_sources_first, overlaps, section_citations, source_mentions, take_cited, Citations,
+    CITED,
+};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
@@ -33,6 +35,7 @@ mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
 mod portability;
+mod quote_claims;
 #[cfg(test)]
 pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;
 #[cfg(test)]

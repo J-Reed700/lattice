@@ -592,6 +592,34 @@ impl<'a> ReferenceCollection<'a> {
         self.verification_context(found)
     }
 
+    /// The passages around the byte `spans` of source `source_id`, widened as
+    /// verification widens a retrieved passage.
+    pub(in crate::features::learning) fn source_passages(
+        &self,
+        source_id: &str,
+        spans: &[(usize, usize)],
+    ) -> Result<Vec<ReferencePassage>> {
+        let source = self
+            .sources
+            .iter()
+            .find(|source| source.id == source_id)
+            .ok_or_else(|| invalid("Unknown verification source."))?;
+        let passages = spans
+            .iter()
+            .filter_map(|&(start, end)| {
+                Some(ReferencePassage {
+                    source_id: source.id.clone(),
+                    text: source.excerpt.get(start..end)?.to_owned(),
+                    start_byte: start,
+                    end_byte: end,
+                    retrieval_kind: "cited".into(),
+                    score: 0.0,
+                })
+            })
+            .collect();
+        self.verification_context(passages)
+    }
+
     /// Verification needs nearby conditions as well as the matching paragraph.
     /// Keep retrieval ranking unchanged, then restore surrounding source bytes
     /// and remove overlapping windows so repeated hits do not crowd out sources.

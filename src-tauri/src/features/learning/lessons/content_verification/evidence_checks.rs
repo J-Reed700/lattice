@@ -157,6 +157,14 @@ async fn prepare(
     citations: &Citations,
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
+    // A quotation found in the source it names is settled by the match.
+    if let Some(finding) = quote_claims::settle(references, citations, unit, &claim)? {
+        let key = ClaimChecks::key(unit, &claim, &finding.evidence);
+        return Ok(PreparedClaim::Complete(
+            (ordinal, key, finding, false),
+            true,
+        ));
+    }
     let evidence = evidence_selection::select(
         llm, &claim, unit, references, sources, executions, retained, sharing, citations,
     )

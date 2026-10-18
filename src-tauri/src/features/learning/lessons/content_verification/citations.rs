@@ -15,16 +15,31 @@ pub(super) const CITED: &str = "cited";
 pub(super) struct Citations {
     by_unit: HashMap<usize, Vec<EvidencePassage>>,
     sources: HashSet<String>,
+    /// The source each `sourceIndex` of the lesson stands for, as its
+    /// citations resolve: what "Source 2" in the lesson's text names.
+    by_index: HashMap<u64, String>,
 }
 
 impl Citations {
-    pub(super) fn new(by_unit: HashMap<usize, Vec<EvidencePassage>>) -> Self {
+    pub(super) fn new(
+        by_unit: HashMap<usize, Vec<EvidencePassage>>,
+        by_index: HashMap<u64, String>,
+    ) -> Self {
         let sources = by_unit
             .values()
             .flatten()
             .map(|passage| passage.source_id.clone())
             .collect();
-        Self { by_unit, sources }
+        Self {
+            by_unit,
+            sources,
+            by_index,
+        }
+    }
+
+    /// The source the lesson's source index `index` stands for.
+    pub(super) fn source_at(&self, index: u64) -> Option<&str> {
+        self.by_index.get(&index).map(String::as_str)
     }
 
     /// The passages section `unit` cites.
@@ -43,6 +58,7 @@ pub(super) fn section_citations(
     references: &ReferenceCollection<'_>,
 ) -> Result<Citations> {
     let mut citations = HashMap::new();
+    let mut by_index = HashMap::new();
     let items = ["blocks", "questions"].into_iter().flat_map(|field| {
         candidate
             .get(field)
@@ -55,11 +71,19 @@ pub(super) fn section_citations(
             continue;
         };
         let passages = references.cited_passages(&[quote])?;
+        if let (Some(index), Some(passage)) = (
+            item.get("sourceIndex").and_then(Value::as_u64),
+            passages.first(),
+        ) {
+            by_index
+                .entry(index)
+                .or_insert_with(|| passage.source_id.clone());
+        }
         if !passages.is_empty() {
             citations.insert(unit, passages);
         }
     }
-    Ok(Citations::new(citations))
+    Ok(Citations::new(citations, by_index))
 }
 
 /// The next page of evidence for `claim`, in the `share` it has alongside
@@ -97,6 +121,55 @@ pub(super) async fn lesson_sources_first(
         .await?;
     page.extend(rest);
     Ok(page)
+}
+
+/// Where a text names one of the lesson's sources by its index.
+pub(super) struct SourceMention {
+    pub(super) index: u64,
+}
+
+/// Every "Source N" (or "source N") in `text`, as the lesson's writer names
+/// a source by its index.
+pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
+    const WORD: &str = "source";
+    let mut mentions = Vec::new();
+    for (start, _) in text.match_indices(['S', 's']) {
+        let Some(word) = text.get(start..start + WORD.len()) else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (text.get(..start), text.get(start + WORD.len()..))
+        else {
+            continue;
+        };
+        if !word.eq_ignore_ascii_case(WORD)
+            || before
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric)
+        {
+            continue;
+        }
+        let number = after.trim_start_matches(' ');
+        let digits = number.len()
+            - number
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .len();
+        let end = text.len() - number.len() + digits;
+        if digits == 0 || number.len() == after.len() {
+            continue;
+        }
+        if text
+            .get(end..)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(char::is_alphanumeric)
+        {
+            continue;
+        }
+        if let Some(index) = number.get(..digits).and_then(|digits| digits.parse().ok()) {
+            mentions.push(SourceMention { index });
+        }
+    }
+    mentions
 }
 
 /// Add `cited` passages not overlapping `evidence` to it, in order, while
