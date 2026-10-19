@@ -694,18 +694,23 @@ fn turn_intent_merge_never_clears_a_set_flag() {
     assert!(!merged.web_fallback);
 }
 
-/// Diagram guidance is on every turn, after whatever system prompt is saved,
+/// Diagram and math guidance are on every turn, after whatever system prompt is saved,
 /// and the same text each time so the cached prefix does not move.
 #[test]
-fn diagram_guidance_follows_every_system_prompt() {
+fn diagram_and_math_guidance_follow_every_system_prompt() {
     let custom = LLMPromptSettingsDto {
         system_prompt: "You are terse.".into(),
         ..LLMPromptSettingsDto::default()
     };
     let first = normalize_prompt_settings(custom.clone()).system_prompt;
     assert!(first.starts_with("You are terse."));
-    assert!(first.ends_with(prompt_settings::DIAGRAM_GUIDANCE));
+    assert!(first.ends_with(&format!(
+        "{}\n{}",
+        prompt_settings::DIAGRAM_GUIDANCE,
+        prompt_settings::MATH_GUIDANCE
+    )));
     assert_eq!(first, normalize_prompt_settings(custom).system_prompt);
     let default = normalize_prompt_settings(LLMPromptSettingsDto::default()).system_prompt;
     assert_eq!(default.matches("```mermaid").count(), 1);
+    assert_eq!(default.matches(prompt_settings::MATH_GUIDANCE).count(), 1);
 }

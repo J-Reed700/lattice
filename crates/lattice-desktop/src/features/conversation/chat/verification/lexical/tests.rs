@@ -468,3 +468,42 @@ fn fenced_diagrams_and_picture_lines_make_no_claims() {
     assert!(claims[0].sentence.contains("Kennedy Space Center"));
     assert!(claims[0].supported);
 }
+
+/// A displayed formula is set aside like a diagram. An inline one is part of
+/// its sentence: its brackets are no citation and its TeX no claim word, so
+/// `\frac` cannot cost a sentence its support.
+#[test]
+fn formulas_make_no_claims_markers_or_missing_words() {
+    let sources = [source(
+        "Precision is the share of retrieved passages that are relevant to the query.",
+    )];
+    let claims = lexical_pass(
+        "$$\n\\text{precision} = \\frac{a[1]}{b}\n$$\n\n\
+         Precision $\\frac{TP}{TP + FP}$ is the share of retrieved passages that are relevant [1].\n\n\
+         The ordered list $a[2]$ of retrieved passages that are relevant to the query is sorted.",
+        &sources,
+    );
+    assert_eq!(claims.len(), 2, "{claims:?}");
+    assert!(claims
+        .iter()
+        .all(|claim| !claim.sentence.contains("\\text")));
+    assert!(claims[0].sentence.contains("$\\frac{TP}{TP + FP}$"));
+    assert_eq!(claims[0].citation_ids, vec![1]);
+    assert_eq!(claims[0].overlap_ratio, 1.0, "{claims:?}");
+    assert!(claims[1].citation_ids.is_empty(), "{claims:?}");
+}
+
+#[test]
+fn a_formula_is_one_piece_of_its_sentence() {
+    let sentences = sentences_with_citations(
+        "Orderings number $n! \\cdot k_{i}$ for each run of passages [1]. Next one [2].",
+    );
+    assert_eq!(sentences.len(), 2, "{sentences:?}");
+    assert_eq!(
+        sentences[0],
+        (
+            "Orderings number $n! \\cdot k_{i}$ for each run of passages [1].".to_string(),
+            vec![1]
+        )
+    );
+}

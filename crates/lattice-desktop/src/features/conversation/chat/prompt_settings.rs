@@ -53,8 +53,11 @@ pub(super) fn normalize_prompt_settings(
          Distinguish 'not found in the excerpts searched' from 'not present anywhere in the documents'.",
     );
     // Constant text on every turn, so the cached prompt prefix stays the same
-    // whether or not a turn draws anything. The window renders these fences.
+    // whether or not a turn draws anything. The window renders these fences
+    // and formulas.
     prompt_settings.system_prompt.push_str(DIAGRAM_GUIDANCE);
+    prompt_settings.system_prompt.push('\n');
+    prompt_settings.system_prompt.push_str(MATH_GUIDANCE);
     prompt_settings.rag_prompt_template =
         enforce_numeric_citation_format(&prompt_settings.rag_prompt_template);
     prompt_settings
@@ -66,6 +69,10 @@ pub(super) const DIAGRAM_GUIDANCE: &str =
     "\nWhen a process, structure or sequence is clearer drawn than written, add a ```mermaid block \
      (flowchart, sequenceDiagram, stateDiagram-v2, erDiagram, timeline) with short, quoted labels; \
      one diagram per idea, prose around it.";
+
+// Standing guidance for formulas, after the diagram guidance. Shared with
+// the lesson prompts, which the same viewer draws.
+pub(super) use lattice_core::shared::markdown_math::MATH_GUIDANCE;
 
 pub(super) fn stable_prompt_signature(input: &str) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf29ce484222325;

@@ -63,7 +63,9 @@
 .tiptap-editor pre *,
 .tiptap-viewer pre *,
 .tiptap-editor kbd,
-.tiptap-viewer kbd {
+.tiptap-viewer kbd,
+.tiptap-viewer .inline-math-error,
+.tiptap-viewer .block-math-error {
   font-family: var(--font-mono);
 }
 
@@ -245,6 +247,30 @@
   border-radius: 0;
   color: inherit;
   font-size: inherit;
+}
+
+/* TeX math (extensions/math.ts). A displayed formula wider than its pane
+   scrolls inside its own frame instead of widening the message. A formula
+   KaTeX cannot read shows its source, styled as inline code. */
+.tiptap-viewer .tiptap-mathematics-render[data-type='block-math'] {
+  margin: 1em 0;
+  padding: 0.25em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.tiptap-viewer .tiptap-mathematics-render[data-type='block-math'] .katex-display {
+  margin: 0;
+}
+
+.tiptap-viewer .inline-math-error,
+.tiptap-viewer .block-math-error {
+  background: hsl(var(--surface-raised));
+  color: hsl(var(--text-primary));
+  font-size: 0.875em;
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
 }
 
 /* A ```mermaid fence drawn as a diagram (extensions/codeBlockView.tsx).

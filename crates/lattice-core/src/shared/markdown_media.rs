@@ -4,14 +4,17 @@
 //! An answer shows a stored picture as `![caption](img-N)`, where `img-N` is
 //! the ref `find_image` returned. Persistence keeps the refs the answer
 //! actually wrote, memory and handoff read a caption in the picture's place,
-//! and the grounding check reads the answer without code fences (diagrams)
-//! or pictures. Text inside a fenced block is code, never a picture.
+//! and the grounding check reads the answer without code fences (diagrams),
+//! displayed formulas or pictures. Text inside a fenced block or a displayed
+//! formula is never a picture.
 //!
 //! A user message's attached pictures live in its `metadata.images`; every
 //! later reader (history, memory, handoff) reads one caption line per
 //! picture, never the pixels, which ride only in the turn they were sent in.
 //! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.2, §7.11;
 //! docs/design/2026-10-17-chat-vision.md §11.
+
+use super::markdown_math::display_math_lines;
 
 /// The `img-N` targets of `![…](img-N)` outside code fences, in the order
 /// the answer first writes them, each once.
@@ -45,9 +48,9 @@ pub fn images_to_captions(markdown: &str) -> String {
     out
 }
 
-/// The markdown with every fenced block and every picture removed, for the
-/// grounding check: a diagram's labels and a picture's caption are not
-/// claims about the sources. A removed fence leaves one blank line so the
+/// The markdown with every fenced block, displayed formula and picture
+/// removed, for the grounding check: a diagram's labels, a formula and a
+/// picture's caption are not claims about the sources. A removed fence leaves one blank line so the
 /// sentences on either side stay apart; an unclosed fence runs to the end.
 pub fn strip_fences_and_images(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len());
@@ -146,10 +149,15 @@ struct Fence {
 }
 
 /// Call `f(line, in_fence)` for every line (with its newline). Fence lines
-/// themselves — the opening and closing markers — count as inside.
+/// themselves — the opening and closing markers — count as inside. A
+/// displayed formula (`$$…$$`, `\[…\]` on lines of its own) is a fenced block
+/// too: like a diagram's labels, its text is not prose.
 fn for_each_line(markdown: &str, mut f: impl FnMut(&str, bool)) {
+    let lines: Vec<&str> = markdown.split_inclusive('\n').collect();
     let mut open: Option<Fence> = None;
-    for line in markdown.split_inclusive('\n') {
+    let mut index = 0;
+    while let Some(&line) = lines.get(index) {
+        index += 1;
         match &open {
             Some(fence) => {
                 if closes(fence, line) {
@@ -157,13 +165,23 @@ fn for_each_line(markdown: &str, mut f: impl FnMut(&str, bool)) {
                 }
                 f(line, true);
             }
-            None => match opens(line) {
-                Some(fence) => {
+            None => {
+                if let Some(fence) = opens(line) {
                     open = Some(fence);
                     f(line, true);
+                    continue;
                 }
-                None => f(line, false),
-            },
+                let rest = lines.get(index - 1..).unwrap_or_default();
+                match display_math_lines(rest.iter().map(|line| block_content(line))) {
+                    Some(count) => {
+                        for &line in rest.iter().take(count) {
+                            f(line, true);
+                        }
+                        index += count - 1;
+                    }
+                    None => f(line, false),
+                }
+            }
         }
     }
 }
@@ -387,6 +405,30 @@ mod tests {
         let md = "Intro [1].\n```mermaid\nflowchart LR\n  A[2] --> B\n";
         let stripped = strip_fences_and_images(md);
         assert_eq!(stripped.trim(), "Intro [1].");
+    }
+
+    #[test]
+    fn strip_removes_displayed_formulas_like_fences() {
+        let md = "Recall is defined as [1]:\n$$\n\\frac{a[2]}{b}\n$$\n- Step [3]\n  \\[ x[4] \\]\n\
+                  > $$y[5]$$\nThe ratio grows [6].";
+        let stripped = strip_fences_and_images(md);
+        for gone in ["frac", "a[2]", "x[4]", "y[5]"] {
+            assert!(!stripped.contains(gone), "{gone}");
+        }
+        for kept in [
+            "Recall is defined as [1]:",
+            "Step [3]",
+            "The ratio grows [6].",
+        ] {
+            assert!(stripped.contains(kept), "{kept}");
+        }
+    }
+
+    #[test]
+    fn strip_keeps_an_unclosed_or_inline_formula_as_text() {
+        // Unlike a fence, an unclosed `$$` is text: the viewer draws it so.
+        let md = "Intro [1].\n$$\nx = 1\n\nThe end [2].\nArea $$a$$ is wide [3].";
+        assert_eq!(strip_fences_and_images(md), md);
     }
 
     #[test]

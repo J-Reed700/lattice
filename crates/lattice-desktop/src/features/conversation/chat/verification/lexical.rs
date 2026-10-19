@@ -16,6 +16,9 @@ pub(super) use lattice_core::application::services::evidence_retrieval::{
 use lattice_core::application::services::evidence_retrieval::{
     extract_normalized_tokens, passage_windows,
 };
+use lattice_core::shared::markdown_math::{
+    formulas_as_words, inline_math_spans, map_prose, split_at_formulas,
+};
 use lattice_core::shared::text::normalize_whitespace;
 use std::collections::{HashMap, HashSet};
 
@@ -102,7 +105,9 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
             })
             .collect();
         let claim_text = strip_citation_markers(&sentence);
-        let claim_tokens = extract_normalized_tokens(&claim_text);
+        // A formula's names count, its TeX does not: `\frac` is no word of
+        // the claim for a passage to miss.
+        let claim_tokens = extract_normalized_tokens(&formulas_as_words(&claim_text));
         if claim_tokens.is_empty()
             || (citation_ids.is_empty() && claim_tokens.len() < MIN_CLAIM_TOKENS)
         {
@@ -477,8 +482,13 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
 /// panel as part of the claim.
 ///
 /// Asterisk runs always go. Underscores go only when they are not inside a
-/// word, so `snake_case` in a quoted identifier survives.
+/// word, so `snake_case` in a quoted identifier survives. A formula keeps
+/// both: `$a_{ij}$` and `$x^*$` are its own.
 fn strip_emphasis_markers(text: &str) -> String {
+    map_prose(text, strip_prose_emphasis)
+}
+
+fn strip_prose_emphasis(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut idx = 0usize;
@@ -516,11 +526,18 @@ fn strip_emphasis_markers(text: &str) -> String {
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
+    let formulas = inline_math_spans(text);
 
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, ch)) = chars.next() {
+        // A formula is part of its sentence: its stops (`$n!$`) end nothing.
+        if let Some(formula) = formulas.iter().find(|formula| formula.start == at) {
+            current.push_str(text.get(formula.clone()).unwrap_or_default());
+            while chars.next_if(|(next, _)| *next < formula.end).is_some() {}
+            continue;
+        }
         current.push(ch);
-        let pauses = chars.peek().is_none_or(|next| !next.is_alphanumeric());
+        let pauses = chars.peek().is_none_or(|(_, next)| !next.is_alphanumeric());
         if ch == '\n' || (matches!(ch, '.' | '!' | '?') && pauses) {
             let candidate = current.trim();
             if !candidate.is_empty() {
@@ -592,7 +609,12 @@ fn claim_for_note(claim: &str) -> String {
     normalize_whitespace(claim).trim().to_string()
 }
 
+/// A formula's brackets (`$a[1]$`) are its own, not a citation.
 fn strip_citation_markers(sentence: &str) -> String {
+    map_prose(sentence, strip_prose_citation_markers)
+}
+
+fn strip_prose_citation_markers(sentence: &str) -> String {
     let mut out = String::with_capacity(sentence.len());
     let chars: Vec<char> = sentence.chars().collect();
     let mut idx = 0usize;
@@ -623,8 +645,13 @@ fn strip_citation_markers(sentence: &str) -> String {
 
 /// Preserve invalid numbers: silently dropping them would turn a fabricated
 /// citation into an uncited claim and let it borrow evidence from other sources.
+/// A formula's brackets (`$a[1]$`) are not markers.
 fn extract_sentence_citation_ids(sentence: &str) -> Vec<u32> {
-    let chars: Vec<char> = sentence.chars().collect();
+    let prose: String = split_at_formulas(sentence)
+        .into_iter()
+        .map(|(piece, formula)| if formula { " " } else { piece })
+        .collect();
+    let chars: Vec<char> = prose.chars().collect();
     let mut idx = 0usize;
     let mut seen = HashSet::new();
     let mut out = Vec::new();

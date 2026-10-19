@@ -12,6 +12,7 @@ import { CitationMarks, citationMarksKey } from './extensions/citationMarks';
 import { ClaimMarks, claimMarksKey, type ClaimMark } from './extensions/claimMarks';
 import { Diagrams, diagramsKey } from './extensions/codeBlockView';
 import { CodeRefMarks, codeRefMarksKey } from './extensions/codeRefMarks';
+import { ViewerMath } from './extensions/math';
 import { getMarkdownFromEditor } from './markdownStorage';
 
 import './tiptap.css';
@@ -82,6 +83,8 @@ export function TiptapViewer({
     extensions: [
       ...createExtensions({ onWikilinkClick, diagrams, chatImages }),
       Diagrams.configure({ suspendLastBlock: () => suspendLastBlockRef.current }),
+      // Viewer only: the note editor keeps a typed `$` as text (extensions/math.ts).
+      ...ViewerMath,
       CitationMarks.configure({
         isCitation: (number) => citationNumbersRef.current.includes(number),
         isVisible: () => evidenceVisibleRef.current,

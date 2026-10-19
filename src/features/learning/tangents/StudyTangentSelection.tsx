@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Copy, GitBranch } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+import { selectedTextWithFormulas } from '@/components/TiptapEditor';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import type { LearningTangentDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
@@ -75,7 +76,8 @@ export function StudyTangentSelection({
     ) {
       return null;
     }
-    const text = range.toString().trim();
+    // A formula reads as its source, not as KaTeX's drawing of it.
+    const text = (selectedTextWithFormulas(selectedRange) ?? range.toString()).trim();
     return text ? { text, rect: selectedRange.getBoundingClientRect() } : null;
   }, []);
 
