@@ -7,3 +7,5 @@ pub(crate) mod source_workflows;
 pub mod sources;
 pub mod trust;
 pub(crate) mod web_research;
+#[cfg(test)]
+mod web_research_tests;

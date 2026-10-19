@@ -297,18 +297,11 @@ fn web_need(
         }
     }
     let wants_wikipedia = input.include_wikipedia || named.contains(&wikipedia::ID);
-    let only = if kind != NeedKind::Web && named.is_empty() {
-        // Typed source-finding need (`find_sources` or learning `plan_needs`):
-        // let the router choose across the full finder registry.
+    let only = if named.is_empty() {
+        // No engine named: the router chooses across the registry for the
+        // need's kind, the user's keyed engines and SearXNG included (a plain
+        // search reaches Wikipedia through `also`).
         None
-    } else if named.is_empty() {
-        // Plain `web_search` with no engine named: the default engines, plus
-        // Wikipedia when asked.
-        let mut defaults = vec![duckduckgo::ID, bing_html::ID];
-        if wants_wikipedia {
-            defaults.push(wikipedia::ID);
-        }
-        Some(defaults)
     } else {
         if wants_wikipedia && !named.contains(&wikipedia::ID) {
             named.push(wikipedia::ID);

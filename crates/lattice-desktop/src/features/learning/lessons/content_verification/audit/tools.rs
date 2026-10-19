@@ -1,8 +1,9 @@
 //! The Verifier's web tools (lesson claim review §14.5), offered only when
 //! the course allows the Verifier to search and a web service is available.
 //!
-//! `search_web` returns titles, links and snippets; a snippet is never
-//! evidence. `fetch_page` has the app fetch a page and save it as a learning
+//! `search_web` takes a typed need, so the source finder routes it to the
+//! finders that hold its kind of source, and returns titles, links and
+//! snippets; a snippet is never evidence. `fetch_page` has the app fetch a page and save it as a learning
 //! source added by the Verifier, and only then shows the model the saved
 //! text, so every page a verdict can quote is reproducible.
 //!
@@ -23,6 +24,8 @@ use lattice_core::application::services::context_assembler::budget::{
 };
 use lattice_core::shared::error::Result;
 
+use crate::features::learning::references::web_research::{self, PlannedNeed};
+
 use super::calls::{cut_off, fit_text, Answer, AskError};
 use super::AuditPassage;
 
@@ -39,7 +42,7 @@ pub(crate) struct SearchHit {
 /// version as a passage over its whole text.
 #[async_trait]
 pub(crate) trait VerifierWeb: Send + Sync {
-    async fn search(&self, query: &str) -> Result<Vec<SearchHit>>;
+    async fn search(&self, need: &PlannedNeed) -> Result<Vec<SearchHit>>;
     async fn save_page(&self, url: &str) -> Result<AuditPassage>;
 }
 
@@ -50,15 +53,12 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: SEARCH.into(),
-            description: "Search the web for pages that could support or contradict a claim. \
-                          Results are leads only: a snippet is never evidence."
-                .into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
-                "additionalProperties": false
-            }),
+            description: format!(
+                "Search for pages that could support or contradict a claim. Results are leads \
+                 only: a snippet is never evidence. {}",
+                web_research::NEED_GUIDE
+            ),
+            parameters: web_research::need_schema(None),
         },
         ToolDefinition {
             name: FETCH.into(),
@@ -231,16 +231,24 @@ async fn run(name: &str, arguments: &Value, web: &dyn VerifierWeb, answer: &mut 
             .to_owned()
     };
     match name {
-        SEARCH => match web.search(&argument("query")).await {
-            Ok(hits) => json!(hits
-                .iter()
-                .map(|hit| json!({"title": hit.title, "url": hit.url, "snippet": hit.snippet}))
-                .collect::<Vec<_>>())
-            .to_string(),
-            Err(error) => {
-                answer.web_note = Some(format!("Web search was unavailable: {error}"));
-                format!("Search failed: {error}")
-            }
+        SEARCH => match serde_json::from_value::<PlannedNeed>(arguments.clone())
+            .ok()
+            .and_then(PlannedNeed::checked)
+        {
+            None => "Search not run: give a query of 3 to 240 characters and one of the listed \
+                     kinds."
+                .into(),
+            Some(need) => match web.search(&need).await {
+                Ok(hits) => json!(hits
+                    .iter()
+                    .map(|hit| json!({"title": hit.title, "url": hit.url, "snippet": hit.snippet}))
+                    .collect::<Vec<_>>())
+                .to_string(),
+                Err(error) => {
+                    answer.web_note = Some(format!("Web search was unavailable: {error}"));
+                    format!("Search failed: {error}")
+                }
+            },
         },
         FETCH => match web.save_page(&argument("url")).await {
             Ok(page) => {

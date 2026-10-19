@@ -85,7 +85,11 @@ pub(super) struct SavingWeb {
 
 #[async_trait]
 impl VerifierWeb for SavingWeb {
-    async fn search(&self, query: &str) -> Result<Vec<tools::SearchHit>> {
+    async fn search(
+        &self,
+        need: &crate::features::learning::references::web_research::PlannedNeed,
+    ) -> Result<Vec<tools::SearchHit>> {
+        let query = &need.query;
         if self.search_fails {
             return Err(AppError::Network("search engine unreachable".into()));
         }
@@ -128,7 +132,10 @@ async fn pages_the_verifier_fetches_are_saved_before_it_can_quote_them() {
     };
     let llm = ScriptedVerifier::new(BIG, |request, call| {
         Ok(match call {
-            1 => tool_call("search_web", json!({"query": "salt boiling point"})),
+            1 => tool_call(
+                "search_web",
+                json!({"query": "salt boiling point", "kind": "web"}),
+            ),
             2 => tool_call("fetch_page", json!({"url": "https://example.org/salt"})),
             _ => {
                 let fetched = request.input.iter().any(|item| {
@@ -174,7 +181,7 @@ async fn web_search_that_fails_is_noted_and_the_audit_runs_on() {
     };
     let llm = ScriptedVerifier::new(BIG, |request, call| {
         Ok(if call == 1 {
-            tool_call("search_web", json!({"query": "boiling"}))
+            tool_call("search_web", json!({"query": "boiling", "kind": "web"}))
         } else {
             CompletionResponse::from_text(answer_each(request, &supports))
         })
