@@ -5,10 +5,13 @@ on:
   push:
     branches: [main]
 
-# Cancel in-flight runs for the same ref when a new commit lands.
+# Cancel in-flight runs for the same ref when a new commit lands, except on
+# main. A main run waits hours for macOS runners, so the next merge used to
+# cancel it before the Intel desktop job could save main's Rust cache. On main
+# the running run finishes; only a run still waiting its turn is replaced.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
