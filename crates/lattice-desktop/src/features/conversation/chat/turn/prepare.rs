@@ -275,6 +275,7 @@ pub(super) async fn prepare_turn(
         &crate::features::conversation::chat::prompting::evidence_frame(
             &prompt_settings,
             &validated_message,
+            explorer.is_some(),
         ),
         &context,
         settings.llm.bounded_conversation_memory,

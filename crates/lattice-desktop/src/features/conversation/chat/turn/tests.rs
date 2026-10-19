@@ -528,3 +528,142 @@ fn a_research_turn_resumes_needing_tools_only_when_it_was_planned_with_them() {
         ToolSupport::NotNeeded
     );
 }
+
+/// A registry holding the library's core tools.
+struct LibraryTools;
+
+#[async_trait::async_trait]
+impl crate::features::conversation::chat::ports::ChatTools for LibraryTools {
+    fn list_tools(&self) -> Vec<lattice_core::application::contracts::tools::ToolDefinition> {
+        CORE_TOOL_NAMES
+            .iter()
+            .map(
+                |name| lattice_core::application::contracts::tools::ToolDefinition {
+                    name: (*name).into(),
+                    description: String::new(),
+                    input_schema: serde_json::json!({ "type": "object" }),
+                },
+            )
+            .collect()
+    }
+    async fn execute(
+        &self,
+        _call: lattice_core::application::contracts::tools::FunctionCall,
+    ) -> Result<lattice_core::application::contracts::tools::FunctionResult> {
+        unreachable!("only listed")
+    }
+}
+
+/// A model that takes tools.
+struct ToolCalling;
+
+#[async_trait::async_trait]
+impl LLMPort for ToolCalling {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        unreachable!("only offered tools")
+    }
+    fn model_name(&self) -> &str {
+        "tool-calling"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        true
+    }
+}
+
+/// A folder that offers one tool of its own.
+#[derive(Debug)]
+struct Folder;
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::explorer_turn::ExplorerTurnPort for Folder {
+    fn has_folder_index(&self) -> bool {
+        false
+    }
+    fn add_tools(&self, tools: &mut Vec<lattice_core::application::ports::ToolDefinition>) {
+        tools.push(lattice_core::application::ports::ToolDefinition {
+            name: "read_file".into(),
+            description: String::new(),
+            parameters: serde_json::json!({ "type": "object" }),
+        });
+    }
+    async fn context_block(
+        &self,
+        _max_chars: usize,
+        _tools_offered: bool,
+        _question: Option<&str>,
+    ) -> String {
+        String::new()
+    }
+    async fn execute_tool(
+        &self,
+        _call: lattice_core::application::contracts::tools::FunctionCall,
+        _max_chars: usize,
+    ) -> Result<lattice_core::application::contracts::tools::FunctionResult> {
+        unreachable!("only offered tools")
+    }
+}
+
+/// An Explorer turn reads the library only when the user turns it on, so
+/// only then is it handed the tools that search it; a document the message
+/// names stays readable either way.
+#[test]
+fn an_explorer_turn_searches_the_library_only_when_the_user_turns_it_on() {
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(LibraryTools)),
+        ..FakeRuntime::default()
+    };
+    let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
+    let folder: ExplorerTurn = Arc::new(Folder);
+    let offered = |explorer: Option<&ExplorerTurn>, force_kb_search: bool| -> Vec<String> {
+        let flags = SearchFlags {
+            force_kb_search,
+            ..SearchFlags::from_preferences(None)
+        };
+        super::assemble::offered_tools(
+            &runtime,
+            &llm,
+            &[],
+            explorer,
+            flags,
+            None,
+            super::assemble::Grounding {
+                can_open_pages: false,
+                has_grounded_context: false,
+            },
+        )
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect()
+    };
+    let has = |tools: &[String], name: &str| tools.iter().any(|tool| tool == name);
+
+    let folder_only = offered(Some(&folder), false);
+    for name in LIBRARY_TOOL_NAMES {
+        assert!(!has(&folder_only, name), "{name} in {folder_only:?}");
+    }
+    for name in ["get_document", "list_attachments", "read_file"] {
+        assert!(
+            has(&folder_only, name),
+            "{name} missing from {folder_only:?}"
+        );
+    }
+
+    let with_library = offered(Some(&folder), true);
+    for name in LIBRARY_TOOL_NAMES {
+        assert!(
+            has(&with_library, name),
+            "{name} missing from {with_library:?}"
+        );
+    }
+
+    let plain_chat = offered(None, false);
+    for name in LIBRARY_TOOL_NAMES {
+        assert!(has(&plain_chat, name), "{name} missing from {plain_chat:?}");
+    }
+}
