@@ -727,3 +727,32 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
     );
     Ok(())
 }
+
+/// A course plan's searches take the same rewordings and dates as a lesson's,
+/// checked the same way.
+#[tokio::test]
+async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let progress = OutlineProgress::default();
+    let subtopic = |need: Value| json!({"subtopics":[{"title":"Release cadence","needs":[need]}]});
+    let llm = model(vec![subtopic(json!({
+        "query": "Python release cycle",
+        "kind": "official_docs",
+        "alternatives": ["CPython annual release schedule"],
+        "after": "2024-01-01"
+    }))]);
+    let plan = outline_references::plan(&llm, &request, &[], &progress).await?;
+    let need = &plan.subtopics[0].needs[0];
+    assert_eq!(need.alternatives, ["CPython annual release schedule"]);
+    assert_eq!(need.after.as_deref(), Some("2024-01-01"));
+
+    let llm = model(vec![subtopic(json!({
+        "query": "Python release cycle",
+        "kind": "official_docs",
+        "after": "last year"
+    }))]);
+    assert!(outline_references::plan(&llm, &request, &[], &progress)
+        .await
+        .is_err());
+    Ok(())
+}

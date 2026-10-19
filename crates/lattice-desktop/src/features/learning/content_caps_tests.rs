@@ -165,7 +165,10 @@ async fn research_plans_as_many_searches_as_the_gaps_need() -> Result<()> {
         &[],
     )
     .await?;
-    let planned: Vec<String> = planned.into_iter().map(|need| need.query).collect();
+    let planned: Vec<String> = planned
+        .into_iter()
+        .map(|served| served.need.query)
+        .collect();
     assert_eq!(planned, queries);
     Ok(())
 }

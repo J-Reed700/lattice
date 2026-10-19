@@ -100,6 +100,7 @@ impl FunctionExecutor {
                 ecosystem: input.ecosystem,
                 site: input.site,
                 after: None,
+                as_of: None,
                 max_results: input.max_results,
                 page: input.page,
                 offset: 0,

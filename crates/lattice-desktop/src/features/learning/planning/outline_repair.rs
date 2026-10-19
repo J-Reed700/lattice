@@ -194,6 +194,7 @@ async fn research(
     ];
     let needs: Vec<_> = planned
         .into_iter()
+        .map(|served| served.need)
         .filter(|need| {
             if outline_references::copies_private_text(&need.query, &private) {
                 tracing::warn!(finding = %issue.id, "Dropped a research query that copied the learner's goal or prior knowledge");

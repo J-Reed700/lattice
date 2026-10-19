@@ -105,6 +105,18 @@ fn model() -> ScriptedModel {
     }
 }
 
+/// `results` as a plain web search's candidates.
+fn found(results: Vec<WebSearchResult>) -> Vec<web_research::Candidate> {
+    results
+        .into_iter()
+        .map(|result| web_research::Candidate {
+            result,
+            kind: lattice_core::domain::sourcing::NeedKind::Web,
+            owner: None,
+        })
+        .collect()
+}
+
 pub(in crate::features::learning) fn selection(indices: &[usize]) -> String {
     json!({"decisions":indices.iter().map(|i|json!({"id":format!("result-{i}"),"useForGap":true,"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
 }
@@ -124,8 +136,14 @@ async fn reference_selection_accepts_all_valid_selected_results_past_four() -> R
         outputs: Mutex::new([selection(&(0..8).collect::<Vec<_>>())].into()),
         prompts: Mutex::new(vec![]),
     };
-    let selected =
-        select_references(&llm, "Research methods", "random assignment", &[], results).await?;
+    let selected = select_references(
+        &llm,
+        "Research methods",
+        "random assignment",
+        &[],
+        found(results),
+    )
+    .await?;
     assert_eq!(selected.len(), 8);
     assert_eq!(selected[7].url, "https://example.org/reference-7");
     Ok(())
@@ -166,7 +184,7 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
         "Rust programming",
         "cargo build",
         &[],
-        results.clone(),
+        found(results.clone()),
     )
     .await?;
     assert_eq!(chosen.len(), 1);
@@ -176,7 +194,7 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
         "Rust programming",
         "cargo build",
         &[],
-        results.clone()
+        found(results.clone())
     )
     .await?
     .is_empty());
@@ -185,12 +203,12 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
         "Rust programming",
         "cargo build",
         &[],
-        results.clone()
+        found(results.clone())
     )
     .await
     .is_err());
     assert!(
-        select_references(&llm, "Rust programming", "cargo build", &[], results)
+        select_references(&llm, "Rust programming", "cargo build", &[], found(results))
             .await
             .is_err()
     );
@@ -862,4 +880,97 @@ async fn a_link_to_a_place_in_a_saved_page_never_fetches_it_again() -> Result<()
         },
     )
     .await
+}
+
+#[tokio::test]
+async fn a_search_for_an_independent_source_never_offers_the_supports_own_origin() -> Result<()> {
+    use lattice_core::domain::provenance::{
+        AddedBy, ClusterId, Decision, NextStep, PassageKind, SourceDates, Support,
+        TemporalValidity, Trust, TrustLevel,
+    };
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    // The claim's one support is a blog post on example.com.
+    let blog = crate::features::learning::dto::LearningSourceDto {
+        id: "blog-version".into(),
+        title: "Strict mode explained".into(),
+        url: Some("https://blog.example.com/strict-mode".into()),
+        excerpt: "Strict mode makes the model follow the schema.".into(),
+        acquired_at: 0,
+    };
+    let references = ReferenceCollection::lexical(std::slice::from_ref(&blog))?;
+    let mut finding = spec_finding(
+        "Strict mode follows the schema.",
+        "OpenAI API",
+        "openai.com",
+    );
+    if let Some(trust) = finding.trust.as_mut() {
+        trust.supports = vec![Support {
+            source_version_id: blog.id.clone(),
+            origin_cluster: ClusterId(blog.id.clone()),
+            trust: Trust {
+                level: TrustLevel::Established,
+                reasons: vec![],
+                override_: None,
+            },
+            dates: SourceDates::default(),
+            passage: PassageKind::Direct,
+            temporal: TemporalValidity::Valid,
+            added_by: AddedBy::Research,
+            cited_urls: vec![],
+            owner_hints: vec![],
+        }];
+        if let Decision::Insufficient { next, .. } = &mut trust.decision {
+            *next = vec![NextStep::SearchIndependent];
+        }
+    }
+    let web = web(false);
+    let result = |url: &str| WebSearchResult {
+        title: "Strict mode".into(),
+        url: url.into(),
+        snippet: String::new(),
+        published_date: None,
+        source: Some("duckduckgo".into()),
+    };
+    web.0.set_search_results(vec![
+        result("https://docs.example.com/strict-mode"),
+        result("https://independent.org/structured-outputs-review"),
+    ]);
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                json!({"needs":[{"gap":0,"query":"structured outputs strict mode review","kind":"web"}]}).to_string(),
+                selection(&[]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+    run(
+        pool,
+        program.summary.id,
+        program.summary.goal,
+        Some(web.clone()),
+        async {
+            expand(&llm, &references, &[finding], &[], &ClaimChecks::default()).await?;
+            Ok::<_, AppError>(())
+        },
+    )
+    .await?;
+    let prompts = llm.prompts.lock().unwrap();
+    assert!(
+        prompts[0].contains("\"independentOf\":[\"example.com\"]"),
+        "the planner is told which origins to avoid"
+    );
+    let offered = &prompts[1];
+    assert!(offered.contains("independent.org"));
+    assert!(
+        !offered.contains("docs.example.com"),
+        "the supports' own origin is dropped before selection"
+    );
+    assert!(offered.contains("\"needKind\":\"web\""));
+    Ok(())
 }

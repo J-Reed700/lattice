@@ -418,7 +418,19 @@ async fn live_reference_selection() -> Result<()> {
         }
     };
     for (index, case) in cases.into_iter().enumerate() {
-        let results = serde_json::from_value(case["results"].clone())?;
+        let results: Vec<lattice_core::application::contracts::web::WebSearchResult> =
+            serde_json::from_value(case["results"].clone())?;
+        // The fixtures hold results alone: each is a plain web search's.
+        let results = results
+            .into_iter()
+            .map(
+                |result| crate::features::learning::references::web_research::Candidate {
+                    result,
+                    kind: lattice_core::domain::sourcing::NeedKind::Web,
+                    owner: None,
+                },
+            )
+            .collect();
         let chosen = crate::features::learning::content_verification::research::select_references(
             &model,
             case["topic"].as_str().unwrap(),

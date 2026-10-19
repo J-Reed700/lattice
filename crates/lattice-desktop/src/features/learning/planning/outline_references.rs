@@ -17,7 +17,7 @@ use crate::features::learning::{
 use futures::StreamExt;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::{
-    application::{contracts::web::WebSearchResult, ports::LLMPort},
+    application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
@@ -259,7 +259,7 @@ pub(in crate::features::learning) async fn gather_for(
             continue;
         }
         let number = position + 1;
-        let mut merged: Vec<(WebSearchResult, String)> = Vec::new();
+        let mut merged: Vec<(web_research::Candidate, String)> = Vec::new();
         let mut seen = HashSet::new();
         for need in &subtopic.needs {
             progress.check_cancelled()?;
@@ -270,10 +270,12 @@ pub(in crate::features::learning) async fn gather_for(
             ));
             gathered.searches += 1;
             match web_research::search_need(web, need).await {
-                Ok(results) => {
-                    for result in results {
-                        if !urls.contains(&result.url) && seen.insert(result.url.clone()) {
-                            merged.push((result, need.query.clone()));
+                Ok(candidates) => {
+                    for candidate in candidates {
+                        if !urls.contains(&candidate.result.url)
+                            && seen.insert(candidate.result.url.clone())
+                        {
+                            merged.push((candidate, need.query.clone()));
                         }
                     }
                 }
@@ -315,7 +317,10 @@ pub(in crate::features::learning) async fn gather_for(
             topic,
             &hint,
             &gaps,
-            merged.iter().map(|(result, _)| result.clone()).collect(),
+            merged
+                .iter()
+                .map(|(candidate, _)| candidate.clone())
+                .collect(),
         )
         .await?;
         if selected.is_empty() {
@@ -329,7 +334,7 @@ pub(in crate::features::learning) async fn gather_for(
         let jobs = selected.into_iter().enumerate().map(|(order, result)| {
             let query = merged
                 .iter()
-                .find(|(candidate, _)| candidate.url == result.url)
+                .find(|(candidate, _)| candidate.result.url == result.url)
                 .map(|(_, query)| query.clone())
                 .unwrap_or_default();
             async move {

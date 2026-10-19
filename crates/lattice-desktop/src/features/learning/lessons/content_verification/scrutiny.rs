@@ -6,12 +6,14 @@
 //! automatically by decision 3), searches on the hosts where the subject's
 //! owner publishes, a search for an independent source or for newer
 //! material — and the recheck that follows decides. The research planner is
-//! its one model call.
+//! its one model call. A search for an independent source keeps out the
+//! origins the claim's supports already come from in code, not only by
+//! asking the planner.
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §6.2, §8, §11.
 
 use super::provenance_gate::FindingTrust;
 use super::*;
-use lattice_core::domain::provenance::{effective_date, NextStep};
+use lattice_core::domain::provenance::{effective_date, NextStep, Origin};
 use lattice_core::shared::http::url_identity::identity;
 
 /// A cited page to fetch for a claim, with the supporting version that cites
@@ -51,9 +53,55 @@ impl Finding {
     }
 }
 
+/// The sites (registrable domain, or host when there is none) the saved
+/// `sources` behind `trust`'s supports were published on, each once. A file
+/// or pasted text has none: nothing on the web shares its origin.
+fn support_sites(trust: &FindingTrust, sources: &[LearningSourceDto]) -> Vec<String> {
+    let mut sites: Vec<String> = Vec::new();
+    for support in &trust.supports {
+        let site = sources
+            .iter()
+            .find(|source| source.id == support.source_version_id)
+            .and_then(|source| source.url.as_deref())
+            .and_then(|url| Origin::of_url(url).ok())
+            .and_then(|origin| origin.site().map(str::to_owned));
+        if let Some(site) = site.filter(|site| !sites.contains(site)) {
+            sites.push(site);
+        }
+    }
+    sites
+}
+
+/// The sites a search serving `gap` must not return results from: those of
+/// the claim's current supports, when the gap asks for an independent
+/// source.
+pub(super) fn excluded_sites(gap: &Value) -> Vec<&str> {
+    if gap.get("needsIndependentSource").and_then(Value::as_bool) != Some(true) {
+        return Vec::new();
+    }
+    gap.get("independentOf")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+/// Whether `url` is published on one of `sites`. An archived copy is judged
+/// as the page it archives.
+pub(super) fn published_on(url: &str, sites: &[&str]) -> bool {
+    !sites.is_empty()
+        && Origin::of_url(url)
+            .ok()
+            .and_then(|origin| origin.site().map(|site| sites.contains(&site)))
+            .unwrap_or(false)
+}
+
 /// The research `findings` ask for beyond "find evidence": only findings
 /// whose support the gate found insufficient or disputed are scrutinised.
-pub(super) fn review(findings: &[Finding]) -> Scrutiny {
+/// `sources` are the saved versions the supports name, so a request for an
+/// independent source can say which origins it must avoid.
+pub(super) fn review(findings: &[Finding], sources: &[LearningSourceDto]) -> Scrutiny {
     let mut scrutiny = Scrutiny::default();
     for (finding, trust) in findings
         .iter()
@@ -132,6 +180,10 @@ pub(super) fn review(findings: &[Finding]) -> Scrutiny {
         }
         if independent {
             gap.insert("needsIndependentSource".into(), json!(true));
+            let sites = support_sites(trust, sources);
+            if !sites.is_empty() {
+                gap.insert("independentOf".into(), json!(sites));
+            }
         }
         if newer {
             gap.insert("needsNewerThan".into(), json!(newest_support));

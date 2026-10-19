@@ -277,3 +277,49 @@ fn a_direct_read_of_an_archive_url_is_labelled() {
     );
     assert_eq!(direct_read_via(GONE), ReadVia::Direct);
 }
+
+/// A search with `as_of` is a dated read of the page its identifier names:
+/// the one result is the archived copy's snapshot address, dated by its
+/// capture. Without an address there is nothing to look up.
+#[tokio::test]
+async fn a_dated_search_answers_with_the_archived_copy_of_the_named_page() {
+    use lattice_core::application::contracts::web::WebSearchInput;
+    use lattice_core::application::ports::WebServiceTrait;
+    let dir = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(path("/wayback/available"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(AVAILABILITY_HIT))
+        .mount(&server)
+        .await;
+    replay_serves(&server, "20150102000131").await;
+    let service = service(&dir, &server, SourcingSettingsDto::default());
+    let dated = |identifier: Option<&str>| -> WebSearchInput {
+        serde_json::from_value(serde_json::json!({
+            "query": "bridge opening report",
+            "kind": "web",
+            "identifier": identifier,
+            "as_of": "2015-01-01",
+            "max_results": 12
+        }))
+        .unwrap()
+    };
+
+    let output = service.search_web(&dated(Some(GONE))).await.unwrap();
+    assert_eq!(output.results.len(), 1);
+    let copy = &output.results[0];
+    assert_eq!(
+        copy.url,
+        format!("{}/web/20150102000131/{GONE}", server.uri())
+    );
+    assert_eq!(copy.title, "The 2014 report");
+    assert_eq!(
+        copy.published_date,
+        Some(Utc.with_ymd_and_hms(2015, 1, 2, 0, 1, 31).unwrap())
+    );
+    assert!(!output.has_more);
+
+    assert!(matches!(
+        service.search_web(&dated(None)).await,
+        Err(AppError::InvalidInput(_))
+    ));
+}
