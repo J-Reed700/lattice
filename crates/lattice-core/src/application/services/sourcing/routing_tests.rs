@@ -68,6 +68,12 @@ fn finder(
     }
 }
 
+/// A finder that spends the user's credits.
+fn paid(mut descriptor: FinderDescriptor) -> FinderDescriptor {
+    descriptor.cost = Cost::Credits { per_request: 1 };
+    descriptor
+}
+
 fn key(service: KeyService) -> Auth {
     Auth::RequiredKey {
         service,
@@ -81,9 +87,21 @@ fn registry() -> Vec<FinderDescriptor> {
     vec![
         finder("duckduckgo", WEB_FIRST, OpenWeb, Auth::None, true),
         finder("bing_html", WEB_FIRST, OpenWeb, Auth::None, true),
-        finder("brave", WEB_SECOND, OpenWeb, key(KeyService::Brave), true),
-        finder("tavily", WEB_SECOND, OpenWeb, key(KeyService::Tavily), true),
-        finder("exa", EXA, OpenWeb, key(KeyService::Exa), true),
+        paid(finder(
+            "brave",
+            WEB_SECOND,
+            OpenWeb,
+            key(KeyService::Brave),
+            true,
+        )),
+        paid(finder(
+            "tavily",
+            WEB_SECOND,
+            OpenWeb,
+            key(KeyService::Tavily),
+            true,
+        )),
+        paid(finder("exa", EXA, OpenWeb, key(KeyService::Exa), true)),
         finder(
             "searxng",
             WEB_SECOND,
@@ -507,13 +525,104 @@ fn keys_contacts_instances_and_switches_gate_finders() {
     assert_eq!(
         summarise(&setup.plan(&need(K::Web))),
         vec![
+            w(&["brave", "exa"], &["tavily:disabled"], false),
             w(&["duckduckgo", "bing_html"], &[], false),
-            w(&["brave", "exa", "searxng"], &["tavily:disabled"], false),
+            w(&["searxng"], &[], false),
         ]
     );
     assert_eq!(
-        summarise(&setup.plan(&need(K::Paper)))[2],
-        w(&["exa", "unpaywall", "duckduckgo", "bing_html"], &[], false)
+        summarise(&setup.plan(&need(K::Paper)))[3],
+        w(&["unpaywall", "duckduckgo", "bing_html"], &[], false)
+    );
+}
+
+#[test]
+fn a_paid_engine_that_can_run_leads_and_the_free_engines_follow() {
+    let mut setup = Setup::fresh();
+    setup.keys.insert(KeyService::Brave);
+    let mut reworded = need(K::Web);
+    reworded.alternatives = vec!["other words".into()];
+    let docs = with_subject(need(K::OfficialDocs), ".NET", Vec::new());
+    let paid_wave = |step: &str| w(&[step], &["tavily:no_key", "exa:no_key"], false);
+
+    let cases: Vec<(&str, SourceNeed, Summary)> = vec![
+        (
+            "web: the paid engine alone, then the free engines in their usual order",
+            reworded,
+            vec![
+                paid_wave("brave"),
+                w(&["duckduckgo", "bing_html"], &[], false),
+                w(&[], &["searxng:no_instance"], false),
+                w(&["duckduckgo", "bing_html"], &[], true),
+            ],
+        ),
+        (
+            "official docs: the paid engine on the owner's site, and never again later",
+            docs,
+            vec![
+                paid_wave("brave@owner"),
+                w(
+                    &[
+                        "site_discovery@owner",
+                        "duckduckgo@owner",
+                        "bing_html@owner",
+                    ],
+                    &[],
+                    false,
+                ),
+                w(&["duckduckgo", "bing_html"], &[], true),
+                w(&[], &["searxng:no_instance"], true),
+            ],
+        ),
+        (
+            "paper: the scholarly finders keep their place; the paid engine leads the engines",
+            need(K::Paper),
+            vec![
+                w(&["openalex", "crossref"], &[], false),
+                w(&["semantic_scholar", "arxiv"], &[], false),
+                paid_wave("brave"),
+                w(
+                    &["duckduckgo", "bing_html"],
+                    &["unpaywall:no_contact"],
+                    false,
+                ),
+            ],
+        ),
+        (
+            "encyclopedia: no engines, so no paid wave",
+            need(K::Encyclopedia),
+            vec![w(&["wikipedia"], &[], false), w(&["wikidata"], &[], false)],
+        ),
+    ];
+    for (case, need, expected) in cases {
+        assert_eq!(summarise(&setup.plan(&need)), expected, "{case}");
+    }
+}
+
+#[test]
+fn a_paid_engine_that_cannot_run_now_leaves_the_free_engines_first() {
+    let mut setup = Setup::fresh();
+    setup.keys.insert(KeyService::Brave);
+    let until = Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).single().unwrap();
+    setup.refused.insert(
+        FinderId::from_static("brave"),
+        SkipReason::QuotaSpent { until },
+    );
+    assert_eq!(
+        summarise(&setup.plan(&need(K::Web))),
+        vec![
+            w(&["duckduckgo", "bing_html"], &[], false),
+            w(
+                &[],
+                &[
+                    "brave:quota_spent",
+                    "tavily:no_key",
+                    "exa:no_key",
+                    "searxng:no_instance",
+                ],
+                false,
+            ),
+        ]
     );
 }
 
