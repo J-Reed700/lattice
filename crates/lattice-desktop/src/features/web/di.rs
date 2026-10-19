@@ -177,6 +177,30 @@ impl Container {
         self.web_service.source_finding()
     }
 
+    /// Re-registers the finders from the saved sourcing settings and the
+    /// keys in the keyring (Settings → Sources, design §3.14).
+    pub async fn reload_source_finders(&self) {
+        crate::features::web::sources::reload(
+            &self.web_service,
+            self.system.settings_repo().as_ref(),
+            self.core.credentials().as_ref(),
+        )
+        .await;
+    }
+
+    /// The settings and the keyring the Settings → Sources commands save to.
+    pub(crate) fn sourcing_stores(
+        &self,
+    ) -> (
+        Arc<dyn lattice_core::application::ports::SettingsRepositoryPort>,
+        Arc<dyn lattice_core::application::ports::CredentialsPort>,
+    ) {
+        (
+            Arc::clone(self.system.settings_repo()),
+            Arc::clone(self.core.credentials()),
+        )
+    }
+
     /// Frozen copies of cited pages: rows, files, capture jobs, the scheme.
     pub fn web_page_snapshots(
         &self,

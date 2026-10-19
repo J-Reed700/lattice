@@ -96,6 +96,7 @@ describe('Settings', () => {
       'Prompts',
       'Tuning',
       'Tools',
+      'Sources',
       'Source trust',
     ]) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();

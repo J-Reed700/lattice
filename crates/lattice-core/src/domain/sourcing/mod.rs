@@ -6,6 +6,7 @@
 //! adapters and the runner live in the desktop crate's web feature.
 
 pub mod canonical;
+pub mod catalogue;
 pub mod descriptor;
 pub mod fusion;
 pub mod health;
@@ -16,6 +17,7 @@ pub mod policy;
 pub mod records;
 
 pub use canonical::{lead_key, unwrap_archive, ArchiveCopy, CanonicalKey};
+pub use catalogue::{is_known_finder, FINDER_IDS};
 pub use descriptor::{
     Activation, Auth, Cost, Destination, FinderDescriptor, FinderId, Identity, InstanceSetting,
     KeyPlan, KeyService, Privacy, Quota, RatePolicy, Reach, Role, WaveSlot,

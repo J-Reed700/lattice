@@ -483,6 +483,9 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::web::plugin::get_web_page_snapshot,
             lattice::features::web::plugin::capture_web_page_snapshot,
             lattice::features::web::plugin::list_web_page_snapshots,
+            lattice::features::web::plugin::get_sources_status,
+            lattice::features::web::plugin::save_source_key,
+            lattice::features::web::plugin::remove_source_key,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,

@@ -17,6 +17,8 @@ mod service;
 
 pub(crate) use health::HealthBook;
 pub(crate) use owner::OwnerResolver;
+#[cfg(test)]
+pub(crate) use service::Lineup;
 pub(crate) use service::{Search, SourcingService};
 
 #[cfg(test)]

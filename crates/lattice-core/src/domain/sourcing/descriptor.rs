@@ -127,6 +127,35 @@ impl KeyService {
             KeyService::StackExchange => "stack_exchange",
         }
     }
+
+    /// The service's name as the user reads it.
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyService::Brave => "Brave Search",
+            KeyService::Tavily => "Tavily",
+            KeyService::Exa => "Exa",
+            KeyService::GitHub => "GitHub",
+            KeyService::SemanticScholar => "Semantic Scholar",
+            KeyService::ApiDataGov => "api.data.gov",
+            KeyService::StackExchange => "Stack Exchange",
+        }
+    }
+
+    /// The provider's own page for getting a key (read 2026-10-18). The
+    /// settings panel links here; Lattice never fetches it.
+    pub fn key_page_url(self) -> &'static str {
+        match self {
+            KeyService::Brave => "https://brave.com/search/api/",
+            KeyService::Tavily => "https://app.tavily.com/",
+            KeyService::Exa => "https://dashboard.exa.ai/api-keys",
+            KeyService::GitHub => "https://github.com/settings/personal-access-tokens/new",
+            KeyService::SemanticScholar => {
+                "https://www.semanticscholar.org/product/api#api-key-form"
+            }
+            KeyService::ApiDataGov => "https://api.data.gov/signup/",
+            KeyService::StackExchange => "https://stackapps.com/apps/oauth/register",
+        }
+    }
 }
 
 /// A setting that names a user-run instance.

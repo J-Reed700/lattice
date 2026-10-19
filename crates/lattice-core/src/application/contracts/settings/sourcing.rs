@@ -16,7 +16,8 @@ use url::Url;
 
 use crate::domain::sourcing::policy::DEFAULT_FINDER_CONCURRENCY;
 use crate::domain::sourcing::{
-    Auth, FinderDescriptor, FinderId, InstanceSetting, KeyService, Reach, SkipReason,
+    is_known_finder, Auth, FinderDescriptor, FinderId, InstanceSetting, KeyService, Reach,
+    SkipReason,
 };
 
 /// Source-finding settings.
@@ -109,6 +110,33 @@ impl SourcingSettingsDto {
         }
     }
 
+    /// Problems with these settings, each a sentence for the settings check:
+    /// a SearXNG address is an http(s) URL, a contact is an email address or
+    /// an http(s) URL, every switch names a registered finder, and a wave
+    /// runs at least one finder. Clearing a field is `None`, never blank.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.searxng_url.is_some() && self.searxng_url().is_none() {
+            problems.push("searxngUrl must be an http:// or https:// address".to_string());
+        }
+        if self
+            .contact
+            .as_deref()
+            .is_some_and(|contact| !is_contact(contact.trim()))
+        {
+            problems.push(
+                "contact must be an email address or an http:// or https:// address".to_string(),
+            );
+        }
+        for id in self.finders.keys().filter(|id| !is_known_finder(id)) {
+            problems.push(format!("finders names a finder that does not exist: {id}"));
+        }
+        if self.finder_concurrency == 0 {
+            problems.push("finderConcurrency must be at least 1".to_string());
+        }
+        problems
+    }
+
     /// Finders per wave, at least one.
     pub fn finder_concurrency(&self) -> usize {
         usize::try_from(self.finder_concurrency)
@@ -141,3 +169,24 @@ impl SourcingSettingsDto {
         }
     }
 }
+
+/// An email address (one `@`, something before it, a dotted domain after
+/// it, no spaces) or an http(s) URL with a host. The services that pool by
+/// contact accept either; the check is shape only.
+fn is_contact(contact: &str) -> bool {
+    if contact.is_empty() || contact.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if let Some((local, domain)) = contact.split_once('@') {
+        return !local.is_empty()
+            && !domain.contains('@')
+            && domain.contains('.')
+            && domain.split('.').all(|label| !label.is_empty());
+    }
+    Url::parse(contact)
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+}
+
+#[cfg(test)]
+#[path = "sourcing_tests.rs"]
+mod tests;

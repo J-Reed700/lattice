@@ -156,4 +156,27 @@ export const settingsApi = {
     key: string,
   ): Promise<ApiResult<void>> =>
     apiCall<void>('set_cloud_api_key', { provider, key }),
+
+  /**
+   * Settings → Sources: every source finder with its need, privacy line,
+   * switch, gate and health, and which key services have a key stored.
+   */
+  getSourcesStatus: async (): Promise<ApiResult<Wire.SourcesStatusDto>> =>
+    apiCall<Wire.SourcesStatusDto>('get_sources_status'),
+
+  /**
+   * Stores a source-finding key in the system keychain. The answer says only
+   * that a key is stored, never the key.
+   */
+  saveSourceKey: async (
+    service: Wire.KeyServiceDto,
+    key: string,
+  ): Promise<ApiResult<Wire.SourcesStatusDto>> =>
+    apiCall<Wire.SourcesStatusDto>('save_source_key', { service, key }),
+
+  /** Removes a source-finding key from the system keychain. */
+  removeSourceKey: async (
+    service: Wire.KeyServiceDto,
+  ): Promise<ApiResult<Wire.SourcesStatusDto>> =>
+    apiCall<Wire.SourcesStatusDto>('remove_source_key', { service }),
 };

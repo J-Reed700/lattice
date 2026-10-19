@@ -1,6 +1,6 @@
 //! The `SettingsSideEffectsPort` the Container wires: invalidating the
-//! loaded LLMs a change makes stale, the custom-tool refresh, and the vault's
-//! backfill and pre-flight. It reaches into several features, so it is
+//! loaded LLMs a change makes stale, the custom-tool refresh, the vault's
+//! backfill and pre-flight, and re-registering the source finders. It reaches into several features, so it is
 //! composed here rather than inside settings.
 
 use std::sync::Arc;
@@ -10,8 +10,11 @@ use sqlx::SqlitePool;
 use crate::features::function_calling::FunctionExecutorTrait;
 use crate::features::llm::instances::LlmInstances;
 use crate::features::vault::writeback::VaultWriterHandle;
+use crate::features::web::services::web::WebService;
 use lattice_core::application::ports::llm_port::InvalidationCause;
-use lattice_core::application::ports::{SettingsRepositoryPort, SettingsSideEffectsPort};
+use lattice_core::application::ports::{
+    CredentialsPort, SettingsRepositoryPort, SettingsSideEffectsPort,
+};
 use lattice_core::shared::error::Result;
 
 /// Container-bound implementation of `SettingsSideEffectsPort`, so a
@@ -37,6 +40,13 @@ pub(crate) struct ContainerSettingsSideEffects {
     /// Backfill submits through this so it shares the FIFO queue with
     /// per-note writes.
     pub(crate) vault_writer: VaultWriterHandle,
+
+    /// Re-registers its finders when the sourcing settings change. Same
+    /// `Arc` as `Container::web_service`.
+    pub(crate) web_service: Arc<WebService>,
+
+    /// The keyring the keyed finders' keys are read from.
+    pub(crate) credentials: Arc<dyn CredentialsPort>,
 }
 
 #[async_trait::async_trait]
@@ -79,6 +89,17 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                     "Vault enabled but settings re-read failed — skipping backfill"
                 ),
             }
+        }
+
+        // Finder switches, the SearXNG instance, the contact and the archive
+        // switch take effect from the next search, with no restart.
+        if matches!(category, Some(SettingsCategory::Sourcing) | None) {
+            crate::features::web::sources::reload(
+                &self.web_service,
+                self.settings_repository.as_ref(),
+                self.credentials.as_ref(),
+            )
+            .await;
         }
 
         // Only LLM settings (or a global / no-category mutation, which could

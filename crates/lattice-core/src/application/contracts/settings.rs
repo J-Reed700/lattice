@@ -15,6 +15,7 @@ mod llm;
 mod preferences;
 mod retrieval;
 mod sourcing;
+mod sourcing_status;
 
 pub use generation::{
     presence_penalty_problem, LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto,
@@ -38,6 +39,10 @@ pub use retrieval::{
     MIN_VECTOR_COMPRESSION_DIMS,
 };
 pub use sourcing::{FinderSettingDto, SourcingSettingsDto};
+pub use sourcing_status::{
+    FinderGateDto, FinderHealthDto, FinderHealthStateDto, FinderNeedDto, FinderStatusDto,
+    KeyServiceDto, KeyStatusDto, ReachGroupDto, SourcesStatusDto,
+};
 
 /// Complete application settings structure.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -72,6 +77,11 @@ pub struct SettingsDto {
     /// Onboarding state (what the user has already been shown)
     #[serde(default)]
     pub onboarding: OnboardingSettingsDto,
+
+    /// Source finding: finder switches, the SearXNG instance, the polite-pool
+    /// contact and the archive fallback. Keys live in the keyring.
+    #[serde(default)]
+    pub sourcing: SourcingSettingsDto,
 }
 
 /// Settings category identifier.
@@ -96,6 +106,8 @@ pub enum SettingsCategory {
     Vault,
     /// Onboarding state (first-run gate)
     Onboarding,
+    /// Source finding (Settings → Sources)
+    Sourcing,
 }
 
 impl SettingsCategory {
@@ -111,6 +123,7 @@ impl SettingsCategory {
             SettingsCategory::Privacy,
             SettingsCategory::Vault,
             SettingsCategory::Onboarding,
+            SettingsCategory::Sourcing,
         ]
     }
 
@@ -126,6 +139,7 @@ impl SettingsCategory {
             SettingsCategory::Privacy => "privacy",
             SettingsCategory::Vault => "vault",
             SettingsCategory::Onboarding => "onboarding",
+            SettingsCategory::Sourcing => "sourcing",
         }
     }
 }
@@ -144,6 +158,7 @@ impl FromStr for SettingsCategory {
             "privacy" => Ok(SettingsCategory::Privacy),
             "vault" => Ok(SettingsCategory::Vault),
             "onboarding" => Ok(SettingsCategory::Onboarding),
+            "sourcing" => Ok(SettingsCategory::Sourcing),
             _ => Err(format!("Unknown settings category: {}", s)),
         }
     }

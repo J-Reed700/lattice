@@ -23,14 +23,15 @@
 
 use std::collections::BTreeSet;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use lattice_core::application::contracts::settings::SourcingSettingsDto;
 use lattice_core::domain::sourcing::{
-    unwrap_archive, Admission, Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId,
-    FinderOutcome, FinderResult, Identity, NeedKind, Privacy, RatePolicy, Reach, Role, SkipReason,
-    SourcingPolicy, WaveSlot,
+    unwrap_archive, Admission, Auth, Cost, Destination, FailureCause, FinderDescriptor,
+    FinderHealth, FinderId, FinderOutcome, FinderResult, Identity, NeedKind, Privacy, RatePolicy,
+    Reach, Role, SkipReason, SourcingPolicy, WaveSlot,
 };
 use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use reqwest::StatusCode;
@@ -205,10 +206,18 @@ pub(crate) enum ReplayMiss {
 /// The Wayback client: the endpoints, the user's archive switch and one
 /// breaker per endpoint.
 pub(crate) struct Wayback {
-    http: FinderHttp,
+    /// The client and the user's switches; Settings → Sources swaps it
+    /// (`apply`), and a lookup holds the one it started with.
+    config: parking_lot::RwLock<Arc<Config>>,
     endpoints: Endpoints,
-    settings: SourcingSettingsDto,
     health: HealthBook,
+}
+
+/// The finders' HTTP (its contact is the user's) and the sourcing settings
+/// the archive switch is read from.
+struct Config {
+    http: FinderHttp,
+    settings: SourcingSettingsDto,
 }
 
 /// One endpoint call: its outcome and, when it answered, its value.
@@ -228,16 +237,38 @@ impl Wayback {
         endpoints: Endpoints,
     ) -> Self {
         Self {
-            http,
+            config: parking_lot::RwLock::new(Arc::new(Config { http, settings })),
             endpoints,
-            settings,
             health: HealthBook::new(SourcingPolicy::default()),
         }
     }
 
+    /// Takes the user's new sourcing settings (the archive switch, the
+    /// endpoints' own switches) and the finders' HTTP carrying their contact.
+    /// The endpoints' breakers carry over.
+    pub(crate) fn apply(&self, http: FinderHttp, settings: SourcingSettingsDto) {
+        *self.config.write() = Arc::new(Config { http, settings });
+    }
+
+    fn config(&self) -> Arc<Config> {
+        Arc::clone(&self.config.read())
+    }
+
+    /// The three endpoints, as the settings panel lists them.
+    pub(crate) fn descriptors() -> [FinderDescriptor; 3] {
+        [AVAILABILITY, CDX, REPLAY]
+    }
+
+    /// Each endpoint's breaker health, gate aside.
+    pub(crate) fn breaker_health(&self) -> Vec<FinderHealth> {
+        let descriptors = Self::descriptors();
+        let descriptors: Vec<&FinderDescriptor> = descriptors.iter().collect();
+        self.health.breaker_health(&descriptors)
+    }
+
     /// The user turned the archive fallback off (decision 4: on by default).
     pub(crate) fn is_off(&self) -> bool {
-        !self.settings.archive_fallback
+        !self.config().settings.archive_fallback
     }
 
     /// When `id`'s breaker lets it be called again, while it is open.
@@ -325,7 +356,7 @@ impl Wayback {
                 value: None,
             }
         };
-        if let Some(reason) = self.settings.gate(descriptor, &BTreeSet::new()) {
+        if let Some(reason) = self.config().settings.gate(descriptor, &BTreeSet::new()) {
             return skipped(reason);
         }
         if let Admission::Refuse(reason) = self.health.admit(descriptor, Utc::now()) {
@@ -382,8 +413,10 @@ impl Wayback {
     }
 
     async fn index_body(&self, request: &str) -> Result<String, FailureCause> {
-        let headers = identity::declared_client_headers(self.http.contact.as_deref(), JSON_ACCEPT);
-        match self.http.get(request, headers, INDEX_BODY_BYTES).await {
+        let config = self.config();
+        let headers =
+            identity::declared_client_headers(config.http.contact.as_deref(), JSON_ACCEPT);
+        match config.http.get(request, headers, INDEX_BODY_BYTES).await {
             Fetched::Body(body) => Ok(body),
             Fetched::Status { code, retry_after } => {
                 Err(FailureCause::Status { code, retry_after })
@@ -397,9 +430,11 @@ impl Wayback {
         &self,
         request: &str,
     ) -> Result<Option<(String, Option<String>, String)>, FailureCause> {
-        let _site_slot = self.http.pacer.acquire(request).await;
-        let headers = identity::declared_client_headers(self.http.contact.as_deref(), PAGE_ACCEPT);
-        let response = self
+        let config = self.config();
+        let _site_slot = config.http.pacer.acquire(request).await;
+        let headers =
+            identity::declared_client_headers(config.http.contact.as_deref(), PAGE_ACCEPT);
+        let response = config
             .http
             .client
             .get(request)

@@ -7179,6 +7179,12 @@
           "markdownDescription": "Enables the fetch_url_preview command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_sources_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-get-sources-status",
+          "markdownDescription": "Enables the get_sources_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_web_page_snapshot command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-get-web-page-snapshot",
@@ -7203,6 +7209,18 @@
           "markdownDescription": "Enables the read_web_page command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_source_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-remove-source-key",
+          "markdownDescription": "Enables the remove_source_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_source_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-save-source-key",
+          "markdownDescription": "Enables the save_source_key command without any pre-configured scope."
+        },
+        {
           "description": "Denies the capture_web_page_snapshot command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-capture-web-page-snapshot",
@@ -7219,6 +7237,12 @@
           "type": "string",
           "const": "web:deny-fetch-url-preview",
           "markdownDescription": "Denies the fetch_url_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_sources_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-get-sources-status",
+          "markdownDescription": "Denies the get_sources_status command without any pre-configured scope."
         },
         {
           "description": "Denies the get_web_page_snapshot command without any pre-configured scope.",
@@ -7243,6 +7267,18 @@
           "type": "string",
           "const": "web:deny-read-web-page",
           "markdownDescription": "Denies the read_web_page command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_source_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-remove-source-key",
+          "markdownDescription": "Denies the remove_source_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_source_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-save-source-key",
+          "markdownDescription": "Denies the save_source_key command without any pre-configured scope."
         }
       ]
     },

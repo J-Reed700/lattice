@@ -40,15 +40,44 @@ pub(crate) struct Search {
 /// One per process (held by the web service), so every caller shares the
 /// finders' health and the provider-page cache.
 pub(crate) struct SourcingService {
-    registry: Vec<FinderEntry>,
-    settings: SourcingSettingsDto,
-    keys: BTreeSet<KeyService>,
-    policy: SourcingPolicy,
+    /// The finders in force. Settings → Sources swaps it whole (`replace`);
+    /// a search holds the lineup it started with to the end.
+    lineup: parking_lot::RwLock<Arc<Lineup>>,
     health: HealthBook,
     cache: ProviderPageCache,
     clock: Arc<dyn Clock>,
     owner: Option<Arc<OwnerResolver>>,
     http: Option<FinderHttp>,
+}
+
+/// The registered finders and what gates them: the user's sourcing settings
+/// and the services with a key in the keyring.
+pub(crate) struct Lineup {
+    pub registry: Vec<FinderEntry>,
+    pub settings: SourcingSettingsDto,
+    pub keys: BTreeSet<KeyService>,
+    pub policy: SourcingPolicy,
+}
+
+impl Lineup {
+    fn new(
+        registry: Vec<FinderEntry>,
+        settings: SourcingSettingsDto,
+        keys: BTreeSet<KeyService>,
+    ) -> Self {
+        let policy =
+            SourcingPolicy::default().with_finder_concurrency(settings.finder_concurrency());
+        Self {
+            registry,
+            settings,
+            keys,
+            policy,
+        }
+    }
+
+    pub(crate) fn descriptors(&self) -> Vec<&FinderDescriptor> {
+        self.registry.iter().map(FinderEntry::descriptor).collect()
+    }
 }
 
 impl SourcingService {
@@ -68,19 +97,42 @@ impl SourcingService {
         keys: BTreeSet<KeyService>,
         clock: Arc<dyn Clock>,
     ) -> Self {
-        let policy =
-            SourcingPolicy::default().with_finder_concurrency(settings.finder_concurrency());
+        let lineup = Lineup::new(registry, settings, keys);
+        // The breakers' thresholds and the cache's TTLs are the policy's
+        // fixed numbers; only the wave concurrency follows the settings, and
+        // that is read from the lineup.
+        let policy = lineup.policy;
         Self {
-            registry,
-            settings,
-            keys,
-            policy,
+            lineup: parking_lot::RwLock::new(Arc::new(lineup)),
             health: HealthBook::new(policy),
             cache: ProviderPageCache::new(policy),
             clock,
             owner: None,
             http: None,
         }
+    }
+
+    /// Re-registers the finders: `registry` built from `settings` and the
+    /// keys in the keyring (`keys` names their services). Searches already
+    /// running finish on the lineup they started with; every finder's health
+    /// and the cached provider pages carry over, keyed by finder id.
+    pub(crate) fn replace(
+        &self,
+        registry: Vec<FinderEntry>,
+        settings: SourcingSettingsDto,
+        keys: BTreeSet<KeyService>,
+    ) {
+        *self.lineup.write() = Arc::new(Lineup::new(registry, settings, keys));
+    }
+
+    /// The finders in force now.
+    pub(crate) fn lineup(&self) -> Arc<Lineup> {
+        Arc::clone(&self.lineup.read())
+    }
+
+    /// Every registered finder's breaker health, gate aside.
+    pub(crate) fn breaker_health(&self, lineup: &Lineup) -> Vec<FinderHealth> {
+        self.health.breaker_health(&lineup.descriptors())
     }
 
     pub(crate) fn with_owner_and_http(
@@ -103,7 +155,8 @@ impl SourcingService {
         budget: Budget,
         only: Option<&[FinderId]>,
     ) -> Result<Search> {
-        let entries: Vec<FinderEntry> = self
+        let lineup = self.lineup();
+        let entries: Vec<FinderEntry> = lineup
             .registry
             .iter()
             .filter(|entry| only.is_none_or(|ids| ids.contains(&entry.descriptor().id)))
@@ -115,8 +168,8 @@ impl SourcingService {
             .collect();
         let refused = self.health.refused(self.clock.now(), budget.remaining());
         let gate = FinderGate {
-            settings: &self.settings,
-            keys: &self.keys,
+            settings: &lineup.settings,
+            keys: &lineup.keys,
             refused: &refused,
         };
         let plan = plan(&need, &descriptors, &gate);
@@ -134,7 +187,7 @@ impl SourcingService {
             &self.health,
             &self.cache,
             self.clock.as_ref(),
-            self.policy,
+            lineup.policy,
             &need,
             &budget,
             initial_owner,
@@ -173,8 +226,10 @@ impl SourcingService {
             })
             .collect();
         let owner_ref = report.owner.as_ref();
-        let mut leads =
-            fusion::diversify(fusion::rrf(&lists, self.policy.rrf_k, owner_ref), owner_ref);
+        let mut leads = fusion::diversify(
+            fusion::rrf(&lists, lineup.policy.rrf_k, owner_ref),
+            owner_ref,
+        );
         if let Some(scope) = &need.scope {
             leads.retain(|lead| scope.covers(&lead.url));
         }
@@ -412,9 +467,8 @@ impl SourceFinding for SourcingService {
     }
 
     fn health(&self) -> Vec<FinderHealth> {
-        let descriptors: Vec<&FinderDescriptor> =
-            self.registry.iter().map(FinderEntry::descriptor).collect();
+        let lineup = self.lineup();
         self.health
-            .snapshot(&descriptors, &self.settings, &self.keys)
+            .snapshot(&lineup.descriptors(), &lineup.settings, &lineup.keys)
     }
 }

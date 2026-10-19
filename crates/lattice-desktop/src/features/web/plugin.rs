@@ -4,6 +4,7 @@
 
 use crate::features::web::snapshots::{commands as snapshots, WebPageSnapshotDto};
 use crate::{features::web::commands as web_ingest, interfaces::di::Container};
+use lattice_core::application::contracts::settings::{KeyServiceDto, SourcesStatusDto};
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -94,6 +95,55 @@ pub async fn list_web_page_snapshots(
         .map_err(ApiError::from)
 }
 
+/// Settings → Sources: every finder with its need, disclosure, switch, gate
+/// and health, and which key services have a key stored (never the key).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_sources_status(
+    container: State<'_, Container>,
+) -> Result<SourcesStatusDto, ApiError> {
+    Ok(container.web_service().sources_status())
+}
+
+/// Store a source-finding key in the keyring; its finders run from the next
+/// search. Returns the panel's status, which says only that a key is stored.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_source_key(
+    service: KeyServiceDto,
+    key: String,
+    container: State<'_, Container>,
+) -> Result<SourcesStatusDto, ApiError> {
+    let (settings, credentials) = container.sourcing_stores();
+    crate::features::web::sources::save_key(
+        &container.web_service(),
+        settings.as_ref(),
+        credentials.as_ref(),
+        service,
+        &key,
+    )
+    .await
+    .map_err(ApiError::from)
+}
+
+/// Remove a source-finding key from the keyring; its finders stop.
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_source_key(
+    service: KeyServiceDto,
+    container: State<'_, Container>,
+) -> Result<SourcesStatusDto, ApiError> {
+    let (settings, credentials) = container.sourcing_stores();
+    crate::features::web::sources::remove_key(
+        &container.web_service(),
+        settings.as_ref(),
+        credentials.as_ref(),
+        service,
+    )
+    .await
+    .map_err(ApiError::from)
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .setup(|app, _api| {
@@ -101,6 +151,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // Registration settles snapshot jobs the last process left
             // running, then starts delivering saved work.
             tauri::async_runtime::block_on(container.web_page_snapshots().register_job())?;
+            // The finders the user configured (keys, SearXNG, contact,
+            // switches) replace the keyless defaults before the first search.
+            tauri::async_runtime::block_on(container.reload_source_finders());
             // The scheme handler resolves the service from managed state (not the container).
             app.manage(container.web_page_snapshots());
             app.manage(container.chat_images_service());
@@ -114,6 +167,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_web_page_snapshot,
             capture_web_page_snapshot,
             list_web_page_snapshots,
+            get_sources_status,
+            save_source_key,
+            remove_source_key,
         ])
         .build()
 }

@@ -359,6 +359,8 @@ impl Container {
                 settings_repository: system.settings_repo().clone(),
                 db_pool: core.db_pool().clone(),
                 vault_writer: vault_writer.clone(),
+                web_service: Arc::clone(&web_service),
+                credentials: Arc::clone(core.credentials()),
             });
 
         let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());

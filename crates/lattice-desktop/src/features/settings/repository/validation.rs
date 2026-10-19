@@ -561,6 +561,10 @@ impl SettingsRepository {
             );
         }
 
+        for problem in settings.sourcing.problems() {
+            result.add_error("sourcing", problem);
+        }
+
         // Validate backup settings.
         // `backup_path` is intentionally empty: scheduled backups always use
         // the application-owned backups directory. The field is retained for

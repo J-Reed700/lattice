@@ -22,13 +22,14 @@ use crate::features::web::services::sourcing::SourcingService;
 use crate::features::web::services::wayback::Wayback;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use lattice_core::application::contracts::settings::SourcingSettingsDto;
+use lattice_core::application::contracts::settings::{SourcesStatusDto, SourcingSettingsDto};
 use lattice_core::application::contracts::web::*;
 use lattice_core::application::ports::{SourceFinding, WebServiceTrait};
+use lattice_core::domain::sourcing::KeyService;
 use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -89,6 +90,9 @@ const PAGE_CACHE_DIR_NAME: &str = "web-cache";
 pub struct WebService {
     /// The guarded public client (no cookie jar, no proxy).
     client: Client,
+    /// The client for the user's own SearXNG server, and nothing else
+    /// ([`build_instance_client`]).
+    instance_client: Client,
     /// Per-site request queue shared by page reads and every finder.
     pacer: Arc<SitePacer>,
     /// Pages and settled refusals kept across turns, on disk.
@@ -106,6 +110,9 @@ pub struct WebService {
     /// The Internet Archive: the last resort for a page nothing else reads,
     /// and dated reads (design §3.8).
     wayback: Wayback,
+    /// Held while the finders are re-registered from the settings and the
+    /// keyring (`features::web::sources::reload`), one change at a time.
+    sourcing_reload: tokio::sync::Mutex<()>,
 }
 
 /// A page read for display, which is a fetch plus the one thing the tool
@@ -131,9 +138,11 @@ impl WebService {
 
     /// Create with a custom request timeout. The keyless finders are
     /// registered under the default sourcing settings; keyed finders and the
-    /// user's switches arrive with the sourcing settings (design §3.14).
+    /// user's switches arrive with [`WebService::apply_sourcing`], which the
+    /// app runs at startup and on every change (design §3.14).
     pub fn with_timeout(timeout: Duration, data_dir: &Path) -> Result<Self> {
         let client = build_public_client(timeout)?;
+        let instance_client = build_instance_client(timeout)?;
         let pacer = Arc::new(SitePacer::default());
         let html_parsers = Arc::new(Semaphore::new(MAX_HTML_PARSERS));
         let settings = SourcingSettingsDto::default();
@@ -158,12 +167,14 @@ impl WebService {
         );
         Ok(Self {
             client,
+            instance_client,
             pacer,
             page_cache: PageCache::new(data_dir.join(PAGE_CACHE_DIR_NAME)),
             html_parsers,
             browser: OnceLock::new(),
             sourcing,
             wayback,
+            sourcing_reload: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -188,6 +199,60 @@ impl WebService {
     pub fn source_finding(&self) -> Arc<dyn SourceFinding> {
         Arc::clone(&self.sourcing) as Arc<dyn SourceFinding>
     }
+
+    /// Re-registers every finder from the user's sourcing settings and the
+    /// keys in the keyring, and hands the archive its new switch, with no
+    /// restart. The finders' HTTP carries the contact, so a contact change
+    /// reaches every finder that declares it. `keys` are the key values; they
+    /// go to the finders and nowhere else.
+    pub fn apply_sourcing(
+        &self,
+        settings: SourcingSettingsDto,
+        keys: BTreeMap<KeyService, String>,
+    ) {
+        let http = FinderHttp {
+            client: self.client.clone(),
+            pacer: Arc::clone(&self.pacer),
+            parsers: Arc::clone(&self.html_parsers),
+            contact: settings.contact().map(str::to_owned),
+        };
+        let registry = finders::registry(&http, &self.instance_client, &settings, &keys);
+        self.wayback.apply(http, settings.clone());
+        self.sourcing
+            .replace(registry, settings, keys.into_keys().collect());
+    }
+
+    /// The finders in force, for tests that route against them.
+    #[cfg(test)]
+    pub(crate) fn sourcing_lineup(&self) -> Arc<crate::features::web::services::sourcing::Lineup> {
+        self.sourcing.lineup()
+    }
+
+    /// Held while the finders are re-registered.
+    pub(crate) fn sourcing_reload(&self) -> &tokio::sync::Mutex<()> {
+        &self.sourcing_reload
+    }
+
+    /// Settings → Sources: every registered finder and archive endpoint with
+    /// its need, disclosure, switch, gate and health, and which key services
+    /// have a key, as the finders in force see them.
+    pub fn sources_status(&self) -> SourcesStatusDto {
+        let lineup = self.sourcing.lineup();
+        let archive = Wayback::descriptors();
+        let descriptors: Vec<&lattice_core::domain::sourcing::FinderDescriptor> = lineup
+            .descriptors()
+            .into_iter()
+            .chain(archive.iter())
+            .collect();
+        let health: Vec<_> = self
+            .sourcing
+            .breaker_health(&lineup)
+            .into_iter()
+            .chain(self.wayback.breaker_health())
+            .collect();
+        let finders: Vec<_> = descriptors.into_iter().zip(health.iter()).collect();
+        SourcesStatusDto::new(&finders, &lineup.settings, &lineup.keys)
+    }
 }
 
 /// The one client for reading public web pages, with the default request
@@ -203,6 +268,19 @@ fn build_public_client(timeout: Duration) -> Result<Client> {
         .timeout(timeout)
         .redirect(redirect_policy())
         .dns_resolver(Arc::new(PublicOnlyResolver))
+        .build()
+        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+}
+
+/// The client for the user's own SearXNG server, which usually runs on this
+/// machine or the user's network. The one origin the user typed is trusted,
+/// so it skips the public-only resolver; it follows no redirect, so the only
+/// place it can reach is `{that origin}/search`. Every other finder and every
+/// read of a result's page keeps the public client.
+fn build_instance_client(timeout: Duration) -> Result<Client> {
+    identity::client_builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
 }
