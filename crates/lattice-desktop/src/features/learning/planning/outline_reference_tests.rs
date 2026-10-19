@@ -44,6 +44,8 @@ pub(super) struct ResearchWeb {
     pages: Vec<Page>,
     routes: HashMap<String, Vec<usize>>,
     pub queries: Mutex<Vec<String>>,
+    /// The kind each search asked for, in search order.
+    pub kinds: Mutex<Vec<Option<String>>>,
     pub fetches: Mutex<Vec<String>>,
 }
 impl ResearchWeb {
@@ -66,6 +68,7 @@ impl ResearchWeb {
             pages,
             routes: HashMap::new(),
             queries: Mutex::new(vec![]),
+            kinds: Mutex::new(vec![]),
             fetches: Mutex::new(vec![]),
         }
     }
@@ -78,6 +81,7 @@ impl ResearchWeb {
 impl WebServiceTrait for ResearchWeb {
     async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
         self.queries.lock().unwrap().push(input.query.clone());
+        self.kinds.lock().unwrap().push(input.kind.clone());
         if self.pages.is_empty() {
             return Err(AppError::ServiceNotAvailable(
                 "Search fixture unavailable".into(),
@@ -188,7 +192,14 @@ pub(super) fn model(outputs: Vec<Value>) -> ScriptedModel {
     }
 }
 pub(super) fn plan_output(subtopics: &[(&str, &[&str])]) -> Value {
-    json!({"subtopics":subtopics.iter().map(|(title, queries)| json!({"title":title,"queries":queries})).collect::<Vec<_>>()})
+    json!({"subtopics":subtopics.iter().map(|(title, queries)| json!({"title":title,"needs":queries.iter().map(|query| json!({"query":query,"kind":"official_docs"})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+}
+/// A planned search for papers.
+fn paper(query: &str) -> crate::features::learning::references::web_research::PlannedNeed {
+    crate::features::learning::references::web_research::PlannedNeed {
+        kind: lattice_core::domain::sourcing::NeedKind::Paper,
+        ..crate::features::learning::references::web_research::PlannedNeed::web(query.into())
+    }
 }
 pub(super) fn select_all(count: usize) -> Value {
     json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":true,"reason":"A primary reference for this subtopic."})).collect::<Vec<_>>()})
@@ -304,13 +315,20 @@ async fn the_plan_guard_drops_queries_that_copy_the_goal_and_fails_only_when_non
     let plan = outline_references::plan(&llm, &request, &[], &progress).await?;
     assert_eq!(plan.query_count(), 2);
     assert_eq!(
-        plan.subtopics[0].queries,
-        vec!["randomized controlled trial design documentation".to_owned()]
+        plan.subtopics[0]
+            .needs
+            .iter()
+            .map(|need| (need.query.as_str(), need.kind))
+            .collect::<Vec<_>>(),
+        [(
+            "randomized controlled trial design documentation",
+            lattice_core::domain::sourcing::NeedKind::OfficialDocs
+        )]
     );
     for subtopic in &plan.subtopics {
-        for query in &subtopic.queries {
+        for need in &subtopic.needs {
             assert!(!outline_references::copies_private_text(
-                query,
+                &need.query,
                 &[GOAL, &request.prior_knowledge]
             ));
         }
@@ -376,15 +394,15 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
         subtopics: vec![
             PlannedSubtopic {
                 title: "Random assignment".into(),
-                queries: vec!["q1".into(), "q2".into()],
+                needs: vec![paper("q1"), paper("q2")],
             },
             PlannedSubtopic {
                 title: "Uncertainty".into(),
-                queries: vec!["q3".into()],
+                needs: vec![paper("q3")],
             },
             PlannedSubtopic {
                 title: "Already covered".into(),
-                queries: vec![],
+                needs: vec![],
             },
         ],
     };
@@ -396,6 +414,15 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
         outline_references::gather(&llm, &web, &plan, &existing, &OutlineProgress::default())
             .await?;
     assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
+    assert_eq!(
+        web.kinds.lock().unwrap().as_slice(),
+        [
+            Some("paper".to_owned()),
+            Some("paper".to_owned()),
+            Some("paper".to_owned())
+        ],
+        "each search goes out with the kind its plan gave it"
+    );
     assert_eq!(found.searches, 3);
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     let selection = payload(&llm.prompts.lock().unwrap()[0]);
