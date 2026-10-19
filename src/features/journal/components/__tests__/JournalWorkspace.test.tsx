@@ -22,7 +22,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsSt
 vi.mock('@/features/journal/hooks/useJournalEntries', () => ({
   useJournalEntries: () => ({
     entries: [], pinnedIds: new Set(), selectedId: null, setSelectedId: vi.fn(),
-    messagesByConversation: {}, loadingByConversation: {}, loadMessages: vi.fn(),
+    selectedMessages: [], selectedMessagesLoading: false,
     removeEntry: vi.fn(), reload: vi.fn(), search: '', setSearch: vi.fn(),
     filter: 'all', setFilter: vi.fn(), isLoading: false, loadError: null,
     togglePinned: vi.fn(),
