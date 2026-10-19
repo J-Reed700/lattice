@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::application::contracts::settings::SourcingSettingsDto;
 use crate::domain::sourcing::{
-    FinderDescriptor, FinderId, Freshness, KeyService, NeedKind, Reach, SkipReason, SourceNeed,
-    WaveSlot,
+    Cost, FinderDescriptor, FinderId, Freshness, KeyService, NeedKind, Reach, SkipReason,
+    SourceNeed, WaveSlot,
 };
 
 /// The calls a need makes, wave by wave.
@@ -80,7 +80,8 @@ enum Engines {
     /// The keyless engines (finders with a `Web` role in the first wave).
     Keyless(StepScope),
     /// The opt-in engines (finders with a `Web` role in the second wave:
-    /// keyed engines and the user's SearXNG).
+    /// the user's SearXNG, Marginalia, and the paid engines unless they
+    /// lead, see `is_paid_engine`).
     OptIn(StepScope),
 }
 
@@ -107,6 +108,7 @@ fn recipe(kind: NeedKind, owner_known: bool) -> [WaveRecipe; 3] {
     match kind {
         // Wave 1 DDG + Bing, wave 2 the opt-in engines (their own roles),
         // wave 3 the keyless engines again with the caller's rewordings.
+        // Paid engines that can run go ahead of all of them.
         NeedKind::Web => [NO_ENGINES, NO_ENGINES, wave(Keyless(AsAsked), true)],
         NeedKind::OfficialDocs if owner_known => [
             wave(Keyless(Owner), false),
@@ -143,23 +145,87 @@ pub fn routed_kind(need: &SourceNeed) -> NeedKind {
     }
 }
 
+/// A general web engine the user pays for. When one of them can run, the
+/// paid engines lead: they get a wave of their own ahead of the first wave
+/// that runs engines, and no later wave calls them again, so the free
+/// engines run only if the paid ones come up thin. When none can run, the
+/// free engines lead.
+fn is_paid_engine(descriptor: &FinderDescriptor) -> bool {
+    descriptor.slot_for(NeedKind::Web).is_some() && descriptor.cost != Cost::Free
+}
+
+/// An owner-scoped engine call needs a native site filter; filtering an
+/// unscoped list afterwards would leave nothing.
+fn engine_reaches(descriptor: &FinderDescriptor, scope: StepScope) -> bool {
+    scope == StepScope::AsAsked || descriptor.supports_scope
+}
+
+/// What earlier waves already did: the steps they made and the skips they
+/// reported.
+#[derive(Default)]
+struct Planned {
+    steps: HashSet<(FinderId, StepScope, bool)>,
+    reported: HashSet<FinderId>,
+}
+
+impl Planned {
+    /// A wave of the candidates the gate lets run, leaving out steps an
+    /// earlier wave made; `None` when it has nothing to run or report.
+    fn wave<'a>(
+        &mut self,
+        candidates: impl IntoIterator<Item = (&'a FinderDescriptor, StepScope)>,
+        reformulated: bool,
+        uses_alternatives: bool,
+        gate: &FinderGate<'_>,
+    ) -> Option<Wave> {
+        let mut wave = Wave {
+            steps: Vec::new(),
+            skipped: Vec::new(),
+            reformulated,
+        };
+        for (descriptor, scope) in candidates {
+            if let Some(reason) = gate.check(descriptor) {
+                if self.reported.insert(descriptor.id.clone()) {
+                    wave.skipped.push((descriptor.id.clone(), reason));
+                }
+                continue;
+            }
+            if self
+                .steps
+                .insert((descriptor.id.clone(), scope, uses_alternatives))
+            {
+                wave.steps.push(Step {
+                    finder: descriptor.id.clone(),
+                    scope,
+                });
+            }
+        }
+        (!wave.steps.is_empty() || !wave.skipped.is_empty()).then_some(wave)
+    }
+}
+
 /// Plans the waves for a need over the registry's descriptors (in registry
 /// order). Steps an earlier wave already made (same finder, scope and query)
 /// are not repeated, and a wave left with nothing to run or report is
-/// dropped.
+/// dropped. A paid engine that can run puts the paid engines first
+/// (`is_paid_engine`).
 pub fn plan(need: &SourceNeed, registry: &[FinderDescriptor], gate: &FinderGate<'_>) -> Plan {
     let kind = routed_kind(need);
     let owner_known = need.subject.is_some() || need.scope.is_some();
     let recipes = recipe(kind, owner_known);
     let has_alternatives = !need.alternatives.is_empty();
     let ecosystem = need.ecosystem();
+    let paid_lead = registry
+        .iter()
+        .any(|descriptor| is_paid_engine(descriptor) && gate.check(descriptor).is_none());
 
-    let mut planned: HashSet<(FinderId, StepScope, bool)> = HashSet::new();
-    let mut reported: HashSet<FinderId> = HashSet::new();
+    let mut planned = Planned::default();
+    let mut paid_placed = false;
     let mut waves = Vec::new();
 
     for (slot, recipe) in WaveSlot::ALL.into_iter().zip(recipes) {
-        let mut candidates: Vec<(&FinderDescriptor, StepScope)> = Vec::new();
+        // Each candidate with whether it is a general web engine.
+        let mut candidates: Vec<(&FinderDescriptor, StepScope, bool)> = Vec::new();
 
         let mut kinds = vec![kind];
         if slot == WaveSlot::First {
@@ -183,7 +249,7 @@ pub fn plan(need: &SourceNeed, registry: &[FinderDescriptor], gate: &FinderGate<
                 if scope == StepScope::Owner && kind == NeedKind::OfficialDocs && !owner_known {
                     continue;
                 }
-                candidates.push((descriptor, scope));
+                candidates.push((descriptor, scope, serving == NeedKind::Web));
             }
         }
 
@@ -195,37 +261,34 @@ pub fn plan(need: &SourceNeed, registry: &[FinderDescriptor], gate: &FinderGate<
         if let Some((engine_slot, scope)) = engines {
             for descriptor in registry {
                 let is_engine = descriptor.slot_for(NeedKind::Web) == Some(engine_slot);
-                // An owner-scoped engine call needs a native site filter;
-                // filtering an unscoped list afterwards would leave nothing.
-                if is_engine && (scope == StepScope::AsAsked || descriptor.supports_scope) {
-                    candidates.push((descriptor, scope));
+                if is_engine && engine_reaches(descriptor, scope) {
+                    candidates.push((descriptor, scope, true));
                 }
             }
         }
 
         let uses_alternatives = recipe.reformulated && has_alternatives;
-        let mut wave = Wave {
-            steps: Vec::new(),
-            skipped: Vec::new(),
-            reformulated: recipe.reformulated,
-        };
-        for (descriptor, scope) in candidates {
-            if let Some(reason) = gate.check(descriptor) {
-                if reported.insert(descriptor.id.clone()) {
-                    wave.skipped.push((descriptor.id.clone(), reason));
-                }
-                continue;
-            }
-            if planned.insert((descriptor.id.clone(), scope, uses_alternatives)) {
-                wave.steps.push(Step {
-                    finder: descriptor.id.clone(),
-                    scope,
-                });
+        if paid_lead {
+            candidates.retain(|(descriptor, _, engine)| !(*engine && is_paid_engine(descriptor)));
+            let first_engine_scope = candidates
+                .iter()
+                .find(|(_, _, engine)| *engine)
+                .map(|(_, scope, _)| *scope);
+            if let (false, Some(scope)) = (paid_placed, first_engine_scope) {
+                paid_placed = true;
+                let paid = registry
+                    .iter()
+                    .filter(|descriptor| {
+                        is_paid_engine(descriptor) && engine_reaches(descriptor, scope)
+                    })
+                    .map(|descriptor| (descriptor, scope));
+                waves.extend(planned.wave(paid, recipe.reformulated, uses_alternatives, gate));
             }
         }
-        if !wave.steps.is_empty() || !wave.skipped.is_empty() {
-            waves.push(wave);
-        }
+        let candidates = candidates
+            .into_iter()
+            .map(|(descriptor, scope, _)| (descriptor, scope));
+        waves.extend(planned.wave(candidates, recipe.reformulated, uses_alternatives, gate));
     }
 
     let package_without_registry = kind == NeedKind::Package
