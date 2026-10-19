@@ -1,6 +1,11 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 
-import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
+import { useQueries, type UseQueryResult } from '@tanstack/react-query';
+
+import {
+  journalEntryMessagesQueryOptions,
+  type JournalEntrySummary,
+} from '@/features/journal/hooks/useJournalEntries';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import { getSourceExternalUrl } from '@/utils/sourcePreview';
 
@@ -121,18 +126,23 @@ export interface UseJournalSourcesResult {
   isLoading: boolean;
 }
 
+/** Each scanned entry's messages in scan order, and whether any is still unread. */
+function combineScannedMessages(results: UseQueryResult<SnapshotMessage[]>[]) {
+  return {
+    messages: results.map((result) => result.data),
+    isLoading: results.some((result) => result.isPending),
+  };
+}
+
 /**
  * Aggregates assistant-cited sources across the recent N journal entries.
  */
 export function useJournalSources(options: {
   entries: JournalEntrySummary[];
   pinnedIds: Set<string>;
-  messagesByConversation: Record<string, SnapshotMessage[]>;
-  loadingByConversation: Record<string, boolean>;
-  loadMessages: (conversationId: string) => Promise<SnapshotMessage[]>;
   enabled: boolean;
 }): UseJournalSourcesResult {
-  const { entries, pinnedIds, messagesByConversation, loadingByConversation, loadMessages, enabled } = options;
+  const { entries, pinnedIds, enabled } = options;
 
   const scanConversations = useMemo(() => {
     if (!enabled || entries.length === 0) return [];
@@ -149,29 +159,17 @@ export function useJournalSources(options: {
       .slice(0, JOURNAL_SOURCE_SCAN_LIMIT);
   }, [enabled, entries, pinnedIds]);
 
-  useEffect(() => {
-    if (!enabled || scanConversations.length === 0) return;
-    const toLoad = scanConversations.filter(
-      (entry) =>
-        messagesByConversation[entry.id] === undefined && !loadingByConversation[entry.id],
-    );
-    if (toLoad.length === 0) return;
-    void Promise.all(toLoad.map((entry) => loadMessages(entry.id)));
-  }, [enabled, scanConversations, messagesByConversation, loadingByConversation, loadMessages]);
-
-  const isLoading = useMemo(() => {
-    if (!enabled || scanConversations.length === 0) return false;
-    return scanConversations.some(
-      (entry) =>
-        loadingByConversation[entry.id] || messagesByConversation[entry.id] === undefined,
-    );
-  }, [enabled, scanConversations, loadingByConversation, messagesByConversation]);
+  const scanned = useQueries({
+    queries: scanConversations.map((entry) => journalEntryMessagesQueryOptions(entry.id)),
+    combine: combineScannedMessages,
+  });
+  const scannedMessages = scanned.messages;
 
   const summaries = useMemo(() => {
     if (!enabled || scanConversations.length === 0) return [];
     const byKey = new Map<string, JournalSourceSummary>();
-    for (const conversation of scanConversations) {
-      const messages = messagesByConversation[conversation.id];
+    for (const [index, conversation] of scanConversations.entries()) {
+      const messages = scannedMessages[index];
       if (!messages || messages.length === 0) continue;
       for (const message of messages) {
         if (message.role !== 'assistant') continue;
@@ -213,11 +211,11 @@ export function useJournalSources(options: {
       if (a.score !== b.score) return b.score - a.score;
       return a.fileName.localeCompare(b.fileName);
     });
-  }, [enabled, scanConversations, messagesByConversation]);
+  }, [enabled, scanConversations, scannedMessages]);
 
   return {
     summaries,
     scannedConversationCount: scanConversations.length,
-    isLoading,
+    isLoading: scanned.isLoading,
   };
 }

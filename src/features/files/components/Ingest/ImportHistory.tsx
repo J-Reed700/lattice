@@ -1,6 +1,7 @@
 /** Import results and recovery, backed by durable per-file job records. */
 import { type FC, useState, useEffect, useCallback, useRef } from 'react';
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 
 import { BATCH_IMPORT_JOBS } from '@/features/batch/jobKinds';
@@ -15,6 +16,16 @@ const isActive = (job: BatchJobSummary) => ['running', 'pending', 'processing'].
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const itemPriority = (status: string) => ['processing', 'running'].includes(status) ? 0 : status === 'failed' ? 1 : status === 'pending' ? 2 : 3;
 const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
+/** Every import's summary, read together with the file details its rows need. */
+const importHistoryKey = ['import-history'] as const;
+/**
+ * The import list and why the newest read, or a clear, failed. A failure keeps
+ * the last list on screen beside its reason until a read succeeds.
+ */
+interface HistoryRead { jobs: BatchJobSummary[]; error?: string; }
+/** While a read has failed, everything is read again on this cadence. */
+const FAILED_READ_POLL_MS = 2000;
+const NO_JOBS: BatchJobSummary[] = [];
 
 function jobStatusLabel(job: BatchJobSummary): string {
   if (isActive(job) && job.completedItems + job.failedItems >= job.totalItems) return 'Finishing import…';
@@ -33,9 +44,7 @@ function recoveryHint(error: string | null): string {
 }
 
 export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
-  const [jobs, setJobs] = useState<BatchJobSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string>();
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<Map<string, ExpandedJob>>(new Map());
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
@@ -43,9 +52,9 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   const busyRef = useRef(new Set<string>());
   const [busy, setBusy] = useState(new Set<string>());
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
-  const loadingRef = useRef(false);
   const generation = useRef(0);
-  const listRequest = useRef(0);
+  // Whether the next read also refreshes every file list already read.
+  const forceRef = useRef(false);
   const detailRequests = useRef(new Map<string, number>());
 
   const loadDetails = useCallback(async (id: string) => {
@@ -63,58 +72,73 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
     }
   }, []);
 
-  const loadJobs = useCallback(async (force = false) => {
-    if (loadingRef.current && !force) return;
-    loadingRef.current = true;
-    const request = ++listRequest.current;
-    const epoch = generation.current;
-    try {
-      const next = await listAllBatchJobs();
-      if (request !== listRequest.current || epoch !== generation.current) return;
-      setJobs(next);
-      setLoadError(undefined);
-      // Read single-file details even while collapsed, so their headings identify
-      // the file. Keep every expanded/active result fresh through its final poll.
-      const toLoad = next.filter(job => {
-        const cached = expandedRef.current.get(job.id);
-        const changed = cached?.details && (job.status !== cached.details.status
-          || job.completedItems !== cached.details.completedItems || job.failedItems !== cached.details.failedItems);
-        return (job.totalItems === 1 && !cached?.details) || cached?.open || cached?.error || isActive(job) || changed || (force && cached?.details)
-          || (cached?.details && isActive(cached.details)) || (!seen.current.has(job.id) && job.failedItems > 0);
-      });
-      const autoOpen = new Set(next.filter(job => !seen.current.has(job.id) && (job.failedItems > 0 || isActive(job))).map(job => job.id));
-      for (const job of next) seen.current.add(job.id);
-      setExpanded(prev => {
-        const updated = new Map(prev);
-        for (const job of toLoad) if (!updated.has(job.id)) updated.set(job.id, { open: autoOpen.has(job.id), loading: true });
-        return updated;
-      });
-      await Promise.all(toLoad.map(job => loadDetails(job.id)));
-    } catch (error) {
-      if (request === listRequest.current && epoch === generation.current) setLoadError(message(error));
-    } finally {
-      if (request === listRequest.current) {
-        setLoading(false);
-        loadingRef.current = false;
-      }
-    }
+  const loadJobDetails = useCallback(async (next: BatchJobSummary[], force: boolean) => {
+    // Read single-file details even while collapsed, so their headings identify
+    // the file. Keep every expanded/active result fresh through its final poll.
+    const toLoad = next.filter(job => {
+      const cached = expandedRef.current.get(job.id);
+      const changed = cached?.details && (job.status !== cached.details.status
+        || job.completedItems !== cached.details.completedItems || job.failedItems !== cached.details.failedItems);
+      return (job.totalItems === 1 && !cached?.details) || cached?.open || cached?.error || isActive(job) || changed || (force && cached?.details)
+        || (cached?.details && isActive(cached.details)) || (!seen.current.has(job.id) && job.failedItems > 0);
+    });
+    const autoOpen = new Set(next.filter(job => !seen.current.has(job.id) && (job.failedItems > 0 || isActive(job))).map(job => job.id));
+    for (const job of next) seen.current.add(job.id);
+    setExpanded(prev => {
+      const updated = new Map(prev);
+      for (const job of toLoad) if (!updated.has(job.id)) updated.set(job.id, { open: autoOpen.has(job.id), loading: true });
+      return updated;
+    });
+    await Promise.all(toLoad.map(job => loadDetails(job.id)));
   }, [loadDetails]);
 
-  useEffect(() => { void loadJobs(); }, [loadJobs]);
+  const hasDetailErrors = Array.from(expanded.values()).some(detail => !!detail.error);
+  const jobsQuery = useQuery({
+    queryKey: importHistoryKey,
+    // A list read superseded by a newer one, or by a retry, removal or clear, is
+    // cancelled and discarded before it plans any file-detail reads.
+    queryFn: async ({ signal }): Promise<HistoryRead> => {
+      const force = forceRef.current;
+      forceRef.current = false;
+      const first = queryClient.getQueryState(importHistoryKey)?.status === 'pending';
+      let next: BatchJobSummary[];
+      try {
+        next = await listAllBatchJobs();
+      } catch (error) {
+        return { jobs: queryClient.getQueryData<HistoryRead>(importHistoryKey)?.jobs ?? NO_JOBS, error: message(error) };
+      }
+      if (signal.aborted) return { jobs: next };
+      const details = loadJobDetails(next, force);
+      // Until the first read's file details arrive, the history shows as loading.
+      if (first) await details;
+      return { jobs: next };
+    },
+    // The file details live in this component's state, so the list must not outlive it.
+    gcTime: 0,
+    // A read that failed is tried again until it succeeds.
+    refetchInterval: (query) => query.state.data?.error !== undefined || hasDetailErrors ? FAILED_READ_POLL_MS : false,
+    refetchIntervalInBackground: true,
+  });
+  const jobs = jobsQuery.data?.jobs ?? NO_JOBS;
+  const loading = jobsQuery.isPending;
+  const loadError = jobsQuery.data?.error;
+  const { refetch } = jobsQuery;
+  /** A read that starts at once, superseding any in flight, and refreshes every file list read. */
+  const refreshJobs = useCallback(() => {
+    forceRef.current = true;
+    void queryClient.cancelQueries({ queryKey: importHistoryKey });
+    return refetch();
+  }, [queryClient, refetch]);
+  // A retry, removal or clear discards every list read in flight.
+  const discardListReads = () => { void queryClient.cancelQueries({ queryKey: importHistoryKey }); };
+
   // An import's job reports each file it settles; the newest read wins.
   useJobStatus((report) => {
-    if (BATCH_IMPORT_JOBS.has(report.kind)) void loadJobs(true);
+    if (BATCH_IMPORT_JOBS.has(report.kind)) void refreshJobs();
   });
   const hasActiveJobs = jobs.some(job => isActive(expanded.get(job.id)?.details ?? job));
-  // A read that failed is tried again until it succeeds.
-  const hasDetailErrors = Array.from(expanded.values()).some(detail => !!detail.error);
   useEffect(() => {
-    if (!loadError && !hasDetailErrors) return;
-    const timer = setInterval(() => { void loadJobs(); }, 2000);
-    return () => clearInterval(timer);
-  }, [loadError, hasDetailErrors, loadJobs]);
-  useEffect(() => {
-    const refresh = () => { void loadJobs(true); };
+    const refresh = () => { void refreshJobs(); };
     const visible = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', visible);
@@ -122,7 +146,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [loadJobs]);
+  }, [refreshJobs]);
 
   const toggle = (id: string) => {
     const opening = !expanded.get(id)?.open;
@@ -148,12 +172,14 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
       }
       // Discard reads started before this retry, even if they resolve later.
       generation.current += 1;
+      discardListReads();
       const id = await retryFailedItems(job.id, item?.itemId, replacement);
       generation.current += 1;
-      setJobs(prev => prev.map(entry => entry.id === id ? { ...entry, status: 'pending' } : entry));
+      discardListReads();
+      queryClient.setQueryData<HistoryRead>(importHistoryKey, prev => prev && { ...prev, jobs: prev.jobs.map(entry => entry.id === id ? { ...entry, status: 'pending' } : entry) });
       setExpanded(prev => new Map(prev).set(id, { open: true, loading: true }));
       await loadDetails(id);
-      await loadJobs(true);
+      await refreshJobs();
       onRefresh?.();
     } catch (error) {
       setActionErrors(prev => ({ ...prev, [job.id]: `Could not start the retry: ${message(error)}` }));
@@ -167,7 +193,8 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
     try {
       await deleteBatchJob(job.id);
       generation.current += 1;
-      setJobs(prev => prev.filter(entry => entry.id !== job.id));
+      discardListReads();
+      queryClient.setQueryData<HistoryRead>(importHistoryKey, prev => prev && { ...prev, jobs: prev.jobs.filter(entry => entry.id !== job.id) });
       setExpanded(prev => { const next = new Map(prev); next.delete(job.id); return next; });
       onRefresh?.();
     } catch (error) { setActionErrors(prev => ({ ...prev, [job.id]: `Could not remove this import: ${message(error)}` })); }
@@ -177,11 +204,12 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
     try {
       await Promise.all(jobs.map(job => deleteBatchJob(job.id)));
       generation.current += 1;
-      setJobs([]);
+      discardListReads();
+      queryClient.setQueryData<HistoryRead>(importHistoryKey, prev => prev && { ...prev, jobs: NO_JOBS });
       setExpanded(new Map());
       onRefresh?.();
     } catch (error) {
-      setLoadError(`Could not clear history: ${message(error)}`);
+      queryClient.setQueryData<HistoryRead>(importHistoryKey, prev => ({ jobs: prev?.jobs ?? NO_JOBS, error: `Could not clear history: ${message(error)}` }));
     }
   };
 
@@ -189,7 +217,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   return (
     <div>
       {loadError && <div role="alert" className="mb-4 text-sm text-text-secondary">Import status is unavailable: {loadError}{' '}
-        <button type="button" onClick={() => { void loadJobs(); }} className="text-accent underline">Refresh status</button>
+        <button type="button" onClick={() => { void refetch({ cancelRefetch: false }); }} className="text-accent underline">Refresh status</button>
       </div>}
       {!loadError && jobs.length === 0 && <p className="text-sm text-text-muted">No imports yet.</p>}
       {jobs.length > 0 && <>

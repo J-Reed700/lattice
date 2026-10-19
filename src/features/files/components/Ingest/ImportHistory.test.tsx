@@ -1,6 +1,9 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render as renderBare, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JOB_STATUS_EVENT } from '@/features/jobs/api';
 import { jobFixture } from '@/tests/fixtures/jobs';
@@ -37,6 +40,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderBare(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+}
+
+afterEach(() => { vi.useRealTimers(); });
 beforeEach(() => {
   vi.resetAllMocks();
   api.listAllBatchJobs.mockResolvedValue([job]);
@@ -191,5 +200,35 @@ describe('PDF import recovery', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load files: Connection lost');
     expect(screen.getByRole('status')).toHaveTextContent('Status unavailable');
     expect(screen.getByRole('button', { name: 'Refresh files' })).toBeEnabled();
+  });
+  it('reads again every two seconds while a read has failed, and stops once one succeeds', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const reread = deferred<unknown>();
+    api.listAllBatchJobs.mockRejectedValueOnce(new Error('Database busy')).mockReturnValueOnce(reread.promise);
+    render(<ImportHistory />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Import status is unavailable: Database busy');
+    await act(async () => { vi.advanceTimersByTime(1999); });
+    expect(api.listAllBatchJobs).toHaveBeenCalledOnce();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    // The reason stays on screen while the read is tried again.
+    expect(api.listAllBatchJobs).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('alert')).toHaveTextContent('Database busy');
+    expect(screen.queryByText('Loading import history…')).not.toBeInTheDocument();
+    await act(async () => { reread.resolve([job]); });
+    expect(await screen.findByText('Failed — PDF extraction timed out')).toBeVisible();
+    expect(screen.queryByText(/Import status is unavailable/)).not.toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(api.listAllBatchJobs).toHaveBeenCalledTimes(2);
+  });
+  it('reads again every two seconds while a file list has failed, and stops once it loads', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    api.getBatchJobDetails.mockRejectedValueOnce(new Error('Database unavailable'));
+    render(<ImportHistory />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load files: Database unavailable');
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(await screen.findByText('mpep-2100.pdf')).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(api.getBatchJobDetails).toHaveBeenCalledTimes(2);
   });
 });
