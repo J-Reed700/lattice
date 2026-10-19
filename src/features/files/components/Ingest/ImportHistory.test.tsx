@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render as renderBare, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,12 +40,24 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/** Fakes only the clock React Query waits on between retries; its notifications run as microtasks. */
+function fakeRetryClock() {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  notifyManager.setScheduler(queueMicrotask);
+}
+/** Lets reads settle and render without moving the clock. */
+const settle = async () => { for (let pass = 0; pass < 4; pass++) await act(() => vi.advanceTimersByTimeAsync(0)); };
+/** The page is shown again, which React Query treats as regaining focus. */
+const refocus = () => act(() => { document.dispatchEvent(new Event('visibilitychange', { bubbles: true })); });
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderBare(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
 }
 
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  vi.useRealTimers();
+  notifyManager.setScheduler(callback => setTimeout(callback, 0));
+});
 beforeEach(() => {
   vi.resetAllMocks();
   api.listAllBatchJobs.mockResolvedValue([job]);
@@ -138,7 +150,7 @@ describe('PDF import recovery', () => {
     const old = deferred<unknown>();
     const mockedRead = kind === 'details' ? api.getBatchJobDetails : api.listAllBatchJobs;
     mockedRead.mockReturnValueOnce(old.promise);
-    fireEvent.focus(window);
+    refocus();
     await waitFor(() => expect(mockedRead).toHaveBeenCalledTimes(2));
     api.retryFailedItems.mockImplementation(async () => {
       api.listAllBatchJobs.mockResolvedValue([completed]);
@@ -171,7 +183,7 @@ describe('PDF import recovery', () => {
     fireEvent.click(heading);
     api.listAllBatchJobs.mockResolvedValue([job]);
     api.getBatchJobDetails.mockResolvedValue({ ...job, items });
-    fireEvent.focus(window);
+    refocus();
     expect(await screen.findByText('1 imported, 1 failed')).toBeVisible();
     expect(heading).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(heading);
@@ -201,34 +213,40 @@ describe('PDF import recovery', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Status unavailable');
     expect(screen.getByRole('button', { name: 'Refresh files' })).toBeEnabled();
   });
-  it('reads again every two seconds while a read has failed, and stops once one succeeds', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  it('retries a failed list read every two seconds, keeping the reason on screen', async () => {
+    fakeRetryClock();
     const reread = deferred<unknown>();
     api.listAllBatchJobs.mockRejectedValueOnce(new Error('Database busy')).mockReturnValueOnce(reread.promise);
     render(<ImportHistory />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Import status is unavailable: Database busy');
-    await act(async () => { vi.advanceTimersByTime(1999); });
+    await settle();
+    expect(screen.getByRole('alert')).toHaveTextContent('Import status is unavailable: Database busy');
+    await act(() => vi.advanceTimersByTimeAsync(1999));
     expect(api.listAllBatchJobs).toHaveBeenCalledOnce();
-    await act(async () => { vi.advanceTimersByTime(1); });
-    // The reason stays on screen while the read is tried again.
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    await settle();
     expect(api.listAllBatchJobs).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('alert')).toHaveTextContent('Database busy');
     expect(screen.queryByText('Loading import history…')).not.toBeInTheDocument();
-    await act(async () => { reread.resolve([job]); });
-    expect(await screen.findByText('Failed — PDF extraction timed out')).toBeVisible();
+    reread.resolve([job]);
+    await settle();
+    expect(screen.getByText('Failed — PDF extraction timed out')).toBeVisible();
     expect(screen.queryByText(/Import status is unavailable/)).not.toBeInTheDocument();
-    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
     expect(api.listAllBatchJobs).toHaveBeenCalledTimes(2);
   });
-  it('reads again every two seconds while a file list has failed, and stops once it loads', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  it('retries a failed file-details read every two seconds until it loads', async () => {
+    fakeRetryClock();
     api.getBatchJobDetails.mockRejectedValueOnce(new Error('Database unavailable'));
     render(<ImportHistory />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load files: Database unavailable');
-    await act(async () => { vi.advanceTimersByTime(2000); });
-    expect(await screen.findByText('mpep-2100.pdf')).toBeVisible();
+    await settle();
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load files: Database unavailable');
+    await act(() => vi.advanceTimersByTimeAsync(1999));
+    expect(api.getBatchJobDetails).toHaveBeenCalledOnce();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    await settle();
+    expect(screen.getByText('mpep-2100.pdf')).toBeVisible();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
     expect(api.getBatchJobDetails).toHaveBeenCalledTimes(2);
   });
 });
