@@ -610,6 +610,7 @@ fn incomplete_or_unquoted_receipts_never_resume_as_approval() {
             reason: "Incomplete fixture".into(),
             supporting_quote: None,
             interpretation_policy: None,
+            shown: None,
         };
         assert!(receipt.finding(0, &claim, &[]).is_none());
     }
@@ -644,6 +645,7 @@ fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts()
             reason: "Recorded comparison".into(),
             supporting_quote: Some(GOOD.into()),
             interpretation_policy: policy.map(str::to_owned),
+            shown: None,
         };
         assert_eq!(receipt.finding(0, &claim, &evidence).is_some(), reusable);
     }

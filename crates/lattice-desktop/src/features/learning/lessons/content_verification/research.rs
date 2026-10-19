@@ -273,7 +273,11 @@ pub(in crate::features::learning) async fn research_topics<'a>(
         kind: Gaps::Topics,
     };
     match research(llm, references, &context, round).await {
-        Err(error @ (AppError::InvalidInput(_) | AppError::Other(_))) => {
+        Err(
+            error @ (AppError::InvalidInput(_)
+            | AppError::PromptExceedsWindow { .. }
+            | AppError::Other(_)),
+        ) => {
             tracing::warn!(%error, topics = gaps.len(), "Lesson topic research gave no usable answer; the topics stay uncovered");
             Ok(None)
         }

@@ -125,11 +125,11 @@ impl ClaimChecker<'_> {
             .collect();
         self.batch_request_parts(&located)
             .3
-            .saturating_sub(1200 * claims.len())
+            .saturating_sub(ANSWER_ROOM_TOKENS * claims.len())
     }
 
     pub fn batch_fits(&self, claims: &[LocatedClaim]) -> bool {
-        self.batch_request_parts(claims).3 >= 1200 * claims.len()
+        self.batch_request_parts(claims).3 >= ANSWER_ROOM_TOKENS * claims.len()
     }
 
     pub async fn check_batch_without_deadline(
@@ -147,7 +147,7 @@ impl ClaimChecker<'_> {
             ));
         }
         let (prompt, passages, system, remaining) = self.batch_request_parts(claims);
-        if remaining < 1200 * claims.len() {
+        if remaining < ANSWER_ROOM_TOKENS * claims.len() {
             return Err(AppError::InvalidInput(
                 "The evidence batch needs a smaller context.".into(),
             ));

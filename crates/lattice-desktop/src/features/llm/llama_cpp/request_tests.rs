@@ -383,7 +383,14 @@ async fn an_answer_the_window_cannot_hold_is_cut_to_the_room_left_not_refused() 
     // Only a prompt that fills the window is refused.
     for (tokens, counted) in [(Some(8_200), "(counted exactly)"), (None, "(estimated)")] {
         let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
-        assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
+        assert!(
+            matches!(
+                refused,
+                AppError::PromptExceedsWindow { window: 8_192, counted_exactly, .. }
+                    if counted_exactly == tokens.is_some()
+            ),
+            "{refused}"
+        );
         let told = refused.to_string();
         for expected in [
             counted,

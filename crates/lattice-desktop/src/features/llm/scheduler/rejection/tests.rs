@@ -94,7 +94,15 @@ fn a_prompt_that_fills_the_window_is_refused_with_its_numbers() {
         ..RequestSize::default()
     };
     let refused = window_refusal("m", size, 131_072);
-    assert!(matches!(refused, AppError::InvalidInput(_)));
+    assert!(matches!(
+        refused,
+        AppError::PromptExceedsWindow {
+            prompt_tokens: 140_000,
+            window: 131_072,
+            counted_exactly: false,
+            ..
+        }
+    ));
     let told = refused.to_string();
     for expected in [
         "prompt is 140000 tokens (estimated), which leaves no room for an answer",

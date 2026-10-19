@@ -14,7 +14,7 @@
 //! Progress counts each claim once. A deeper page's check adds no check; it
 //! moves its claim out of the unresolved count when the page supports it.
 use super::*;
-use lattice_core::application::services::claim_verification::LocatedClaim;
+use lattice_core::application::services::claim_verification::{LocatedClaim, ANSWER_ROOM_TOKENS};
 use std::collections::BTreeMap;
 
 const BATCH_SIZE: usize = 8;
@@ -136,7 +136,7 @@ async fn prepare(
             quote: None,
             confidence: None,
         }))
-    } else if llm.count_tokens(&text) + llm.count_tokens(&claim.statement) + 1200
+    } else if llm.count_tokens(&text) + llm.count_tokens(&claim.statement) + ANSWER_ROOM_TOKENS
         > llm.max_context_tokens()
     {
         Some(ClaimJudgment::Unusable)
@@ -154,14 +154,22 @@ async fn prepare(
     };
     if let Some(judgment) = local {
         return Ok(PreparedClaim::Complete(
-            finish(pending, judgment).await?,
+            finish(pending, judgment, None).await?,
             false,
         ));
     }
     Ok(PreparedClaim::Pending(pending))
 }
 
-async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<CheckedClaim> {
+/// Finish `pending` with the judge's `judgment`. `shown` holds the positions
+/// in the page of the passages the judge was shown when it was not shown them
+/// all; the pending claim's evidence is already cut to those, and its receipt
+/// records them, so a restored decision names the same passages.
+async fn finish(
+    pending: PendingClaim,
+    judgment: ClaimJudgment,
+    shown: Option<Vec<usize>>,
+) -> Result<CheckedClaim> {
     let (verdict, reason, supporting_quote) = match judgment {
         ClaimJudgment::Failed(error) => return Err(error),
         ClaimJudgment::Judged(outcome) => (
@@ -207,6 +215,7 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
                     lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
                         .into(),
                 ),
+                shown,
             })?,
         )
         .await?;
@@ -252,15 +261,27 @@ fn unlabelled(judgment: ClaimJudgment, pending: &PendingClaim, labels: &Labels) 
     }
 }
 
+/// One claim checked alone. A page too long for the judge's window loses
+/// its least needed passages (see [`ranking`]); the finding and its receipt
+/// name only the passages the judge was shown, so one cut for size is still
+/// unshown and a deeper page can carry it.
 async fn individual(
     llm: &dyn LLMPort,
-    pending: PendingClaim,
+    mut pending: PendingClaim,
     labels: &Labels,
 ) -> Result<CheckedClaim> {
     let input = target(&pending, labels);
-    let judgment = judge_for_publication(llm, &input.claim, &input.passages).await;
+    let (judgment, shown) = judge_for_publication(
+        llm,
+        &input.claim,
+        &input.passages,
+        &ranking(&pending.evidence),
+    )
+    .await;
+    let cut = shown.len() < pending.evidence.len();
+    pending.evidence = shown_of(&pending.evidence, &shown);
     let judgment = unlabelled(judgment, &pending, labels);
-    finish(pending, judgment).await
+    finish(pending, judgment, cut.then_some(shown)).await
 }
 
 fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim, check: Check) {
@@ -331,16 +352,30 @@ async fn group(
         let _model_call = crate::features::learning::lesson_progress::model_call();
         let judgments = match judge_batch_for_publication(llm, &targets).await {
             Ok(judgments) => judgments,
-            Err(AppError::ServiceNotAvailable(_)) => {
+            // A group the model could not finish, or one the backend counted
+            // past the context window, is checked in halves on the same
+            // evidence, so every receipt is unchanged.
+            Err(
+                error @ (AppError::ServiceNotAvailable(_) | AppError::PromptExceedsWindow { .. }),
+            ) => {
                 crate::features::learning::lesson_drafts::record_checkpoint(
                     &split_key,
                     json!(true),
                 )
                 .await?;
-                crate::features::learning::lesson_progress::stage(format!(
-                    "The model could not finish a group of {} checks; retrying in smaller groups with the same evidence",
-                    pending.len()
-                ));
+                crate::features::learning::lesson_progress::stage(
+                    if matches!(error, AppError::PromptExceedsWindow { .. }) {
+                        format!(
+                            "A group of {} checks was too long for the model's context window; checking them in smaller groups with the same evidence",
+                            pending.len()
+                        )
+                    } else {
+                        format!(
+                            "The model could not finish a group of {} checks; retrying in smaller groups with the same evidence",
+                            pending.len()
+                        )
+                    },
+                );
                 let rest = pending.split_off(pending.len() / 2);
                 groups.push(rest);
                 groups.push(pending);
@@ -359,7 +394,7 @@ async fn group(
                 // Save completed siblings before a malformed response needs a
                 // slower individual recheck. An outage must not discard them.
                 let judgment = unlabelled(judgment, &item, labels);
-                completed(&mut results, finish(item, judgment).await?, check);
+                completed(&mut results, finish(item, judgment, None).await?, check);
             }
         }
         for item in unresolved {
@@ -615,12 +650,12 @@ async fn deepen(
                     unit: walk.unit,
                     claim: walk.claim.clone(),
                     checked: checked.statement,
-                    evidence: page.clone(),
+                    evidence: page,
                 });
             }
-            let mut shown = walk.shown;
-            shown.extend(page);
-            walks.insert(ordinal, Walk { shown, ..walk });
+            // The page joins what the claim was shown once its check says
+            // what the judge saw: a passage cut for size was not shown.
+            walks.insert(ordinal, walk);
         }
         if !pending.is_empty() || !outcomes.is_empty() {
             crate::features::learning::lesson_progress::deeper_page(
@@ -655,6 +690,9 @@ async fn deepen(
         let mut settled = 0;
         for (ordinal, finding) in outcomes {
             if finding.verdict == ClaimVerdict::Unsupported {
+                if let Some(walk) = walks.get_mut(&ordinal) {
+                    walk.shown.extend(finding.evidence);
+                }
                 continue;
             }
             settled += usize::from(matches!(

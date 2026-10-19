@@ -4444,6 +4444,15 @@ export type AppError =
  */
 { ModelRejected: string } |
 /**
+ * A request whose prompt alone fills the configured context window, so
+ * it leaves no room for an answer and was never sent. The numbers let a
+ * caller send less and ask again: `prompt_tokens` is the prompt as the
+ * backend's tokenizer counted it when `counted_exactly`, otherwise as
+ * estimated, and `window` is the configured window. `message` is what
+ * the user is told.
+ */
+{ PromptExceedsWindow: { prompt_tokens: number; window: number; counted_exactly: boolean; message: string } } |
+/**
  * Serialization error
  */
 { Serialization: string } |

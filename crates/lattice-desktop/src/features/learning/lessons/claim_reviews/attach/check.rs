@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::learning::lessons::content_verification::{
-    bank_tokens, claim_share, evidence_policy, judge_for_publication,
+    bank_tokens, claim_share, evidence_policy, judge_for_publication, ranking, shown_of,
 };
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 
@@ -84,7 +84,10 @@ pub(super) async fn judge(
         .iter()
         .map(|passage| passage.text.clone())
         .collect();
-    let judgment = judge_for_publication(llm, statement, &texts).await;
+    let (judgment, shown) = judge_for_publication(llm, statement, &texts, &ranking(passages)).await;
+    // A passage cut for the judge's window was never compared with the
+    // claim: the check names only those it was shown.
+    let passages = &shown_of(passages, &shown);
     let (result, reason) = match judgment {
         ClaimJudgment::Judged(outcome) => {
             let reason = outcome.reason.unwrap_or_default();

@@ -37,7 +37,10 @@ pub(super) fn escalated(items: &[Value]) -> bool {
 /// for use their attempt and the loop goes on (§3 `Rejected`), rather than an
 /// outage or a cancellation, which stop the job.
 pub(super) fn rejected(error: &AppError) -> bool {
-    matches!(error, AppError::InvalidInput(_))
+    matches!(
+        error,
+        AppError::InvalidInput(_) | AppError::PromptExceedsWindow { .. }
+    )
 }
 
 /// Takes a sent group's claims, and with the section's first request its

@@ -18,6 +18,10 @@ struct BatchModel {
     block_individual: bool,
     block_batch: bool,
     max_batch_size: Option<usize>,
+    /// A group of more claims than this fits the window by the calibrated
+    /// estimate but not by the backend's exact count, and is refused for its
+    /// size with the numbers, as the scheduler refuses it.
+    window_holds: Option<usize>,
     batch_error: Option<AppError>,
     batch_sizes: Mutex<Vec<usize>>,
 }
@@ -58,6 +62,18 @@ impl LLMPort for BatchModel {
             self.batch_sizes.lock().unwrap().push(size);
             if self.block_batch {
                 std::future::pending::<()>().await;
+            }
+            if self.window_holds.is_some_and(|holds| size > holds) {
+                let window = self.max_context_tokens();
+                return Err(crate::features::llm::scheduler::rejection::window_refusal(
+                    self.model_name(),
+                    crate::features::llm::scheduler::rejection::RequestSize {
+                        prompt_tokens: window + 831,
+                        counted_exactly: true,
+                        ..Default::default()
+                    },
+                    window,
+                ));
             }
             if self.max_batch_size.is_some_and(|max| size > max) {
                 return Err(AppError::ServiceNotAvailable(
@@ -208,6 +224,98 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     })
     .await?;
     pool.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = BatchModel {
+        window_holds: Some(4),
+        ..Default::default()
+    };
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let report = check_evidence(
+            &model,
+            &candidate(GOOD),
+            &references,
+            inventory(8),
+            coverage(8),
+            vec![],
+            &mut ClaimChecks::default(),
+        )
+        .await?;
+        assert!(report.issues.is_empty(), "{:?}", report.issues);
+        assert_eq!(report.findings.len(), 8);
+        assert!(report
+            .findings
+            .iter()
+            .all(|finding| finding.verdict == ClaimVerdict::Supported));
+        // The refused group is checked in halves on the same evidence; no
+        // claim falls back to a check of its own.
+        assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8, 4, 4]);
+        assert!(!model.calls.lock().unwrap().contains(&"individual-evidence"));
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        // The refusal splits the group and records the split; an outage then
+        // stops the first half.
+        let interrupted = BatchModel {
+            window_holds: Some(4),
+            batch_error: Some(AppError::Network(
+                "Interrupted after the split was saved".into(),
+            )),
+            ..Default::default()
+        };
+        let result = check_evidence(
+            &interrupted,
+            &candidate(GOOD),
+            &references,
+            inventory(8),
+            coverage(8),
+            vec![],
+            &mut ClaimChecks::default(),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Network(_))));
+        assert_eq!(*interrupted.batch_sizes.lock().unwrap(), vec![8, 4]);
+        // Resumed, the recorded split sends halves straight away.
+        let resumed = BatchModel {
+            window_holds: Some(4),
+            ..Default::default()
+        };
+        let report = check_evidence(
+            &resumed,
+            &candidate(GOOD),
+            &references,
+            inventory(8),
+            coverage(8),
+            vec![],
+            &mut ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(report.findings.len(), 8);
+        assert_eq!(
+            *resumed.batch_sizes.lock().unwrap(),
+            vec![4, 4],
+            "Never resend a group the backend counted past the window"
+        );
+        Ok(())
+    })
+    .await?;
     Ok(())
 }
 

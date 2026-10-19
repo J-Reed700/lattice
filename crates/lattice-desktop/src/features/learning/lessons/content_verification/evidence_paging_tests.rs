@@ -658,6 +658,7 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
                     lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
                         .into(),
                 ),
+                shown: None,
             })?,
         )
         .await?;
@@ -679,4 +680,155 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
         Ok(())
     })
     .await
+}
+
+/// A backend whose tokenizer counts the fixture's text half again denser than
+/// the calibrated estimate: a page the estimate fits is refused by the exact
+/// count, with its numbers, as the scheduler refuses it.
+struct DenseModel {
+    paging: PagingModel,
+    refused: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for DenseModel {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        use lattice_core::application::ports::llm_port::CompletionInput;
+        let estimate: usize = request
+            .input
+            .iter()
+            .map(|item| match item {
+                CompletionInput::Message { content, .. } => self.count_tokens(content),
+                _ => 0,
+            })
+            .sum();
+        let exact = estimate * 3 / 2;
+        let window = self.max_context_tokens();
+        if exact >= window {
+            self.refused
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Err(crate::features::llm::scheduler::rejection::window_refusal(
+                self.model_name(),
+                crate::features::llm::scheduler::rejection::RequestSize {
+                    prompt_tokens: exact,
+                    counted_exactly: true,
+                    ..Default::default()
+                },
+                window,
+            ));
+        }
+        self.paging.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "dense-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.paging.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.paging.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> Result<()> {
+    let sources: Vec<_> = (0..14).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = DenseModel {
+        paging: PagingModel::new(6_000),
+        refused: Default::default(),
+    };
+    let first = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    let results = evidence_checks::check(
+        &model,
+        &references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &ClaimChecks::default(),
+    )
+    .await?;
+
+    assert!(model.refused.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    let checks = model.paging.checks.lock().unwrap();
+    let saw = |check: &[String], text: &str| check.iter().any(|seen| seen.contains(text));
+    // The refused page was judged, on fewer passages: the claim has a verdict.
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
+    assert!(
+        checks[0].len() < first.len(),
+        "page 1 was sent again, shorter"
+    );
+    // The finding names only the passages the judge read.
+    assert!(!results[0].2.evidence.is_empty());
+    assert!(results[0]
+        .2
+        .evidence
+        .iter()
+        .all(|passage| saw(&checks[0], &passage.text)));
+    // A passage cut for size was not shown, so the next page carries it.
+    let cut: Vec<_> = first
+        .iter()
+        .filter(|passage| !saw(&checks[0], &passage.text))
+        .collect();
+    assert!(!cut.is_empty());
+    assert!(checks.len() >= 2, "page 1, then a deeper page");
+    assert!(cut.iter().any(|passage| saw(&checks[1], &passage.text)));
+    // No page repeats a passage an earlier page showed.
+    let shown: Vec<&String> = checks.iter().flatten().collect();
+    let unique: HashSet<&String> = shown.iter().copied().collect();
+    assert_eq!(shown.len(), unique.len());
+    Ok(())
+}
+
+fn ranked_passage(kind: &str, score: f64, text: &str) -> EvidencePassage {
+    EvidencePassage {
+        source_id: format!("source-{text}"),
+        text: text.into(),
+        start_byte: 0,
+        end_byte: text.len(),
+        retrieval_kind: kind.into(),
+        score,
+    }
+}
+
+#[test]
+fn a_page_loses_its_least_needed_passages_not_its_last() {
+    // In page order, as the judge reads it; cited and researched passages
+    // carry no score.
+    let page = vec![
+        ranked_passage(evidence_selection::RESEARCHED, 0.0, "researched"),
+        ranked_passage(CITED, 0.0, "cited"),
+        ranked_passage("lexical", 1.0 / 63.0, "third-ranked"),
+        ranked_passage("lexical", 1.0 / 61.0, "top-ranked"),
+        ranked_passage("lexical", 1.0 / 62.0, "second-ranked"),
+    ];
+    assert_eq!(ranking(&page), vec![1, 0, 3, 4, 2]);
+}
+
+#[test]
+fn a_restored_receipt_names_only_the_passages_its_judge_was_shown() {
+    let page = vec![
+        ranked_passage("lexical", 1.0 / 61.0, "shown"),
+        ranked_passage("lexical", 1.0 / 62.0, "cut for size"),
+    ];
+    let claim = Claim {
+        quote: CLAIM.into(),
+        statement: CLAIM.into(),
+    };
+    let finding = ClaimReceipt {
+        verdict: ClaimVerdict::Supported,
+        reason: "The passage states it.".into(),
+        supporting_quote: Some("shown".into()),
+        interpretation_policy: Some(
+            lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                .into(),
+        ),
+        shown: Some(vec![0]),
+    }
+    .finding(0, &claim, &page)
+    .unwrap();
+    assert_eq!(finding.evidence.len(), 1);
+    assert_eq!(finding.evidence[0].text, "shown");
 }

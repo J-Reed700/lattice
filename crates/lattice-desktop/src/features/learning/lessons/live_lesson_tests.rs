@@ -96,7 +96,12 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
             }
         } else {
             for claim in &claims {
-                outcomes.push(judge_for_publication(&model, &claim.claim, &claim.passages).await);
+                let ranking: Vec<usize> = (0..claim.passages.len()).collect();
+                outcomes.push(
+                    judge_for_publication(&model, &claim.claim, &claim.passages, &ranking)
+                        .await
+                        .0,
+                );
             }
         }
         let failures: Vec<_> = cases
@@ -340,8 +345,10 @@ async fn live_source_passage_judgments() -> Result<()> {
                 &model,
                 case["claim"].as_str().unwrap(),
                 &passages,
+                &(0..passages.len()).collect::<Vec<_>>(),
             )
             .await
+            .0
         } else if let Some(context) = case.get("context") {
             if case["contextKind"] == "teaching" {
                 checker

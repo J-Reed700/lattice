@@ -131,6 +131,11 @@ impl From<AppError> for ApiError {
                 message: format!("Invalid input: {}", msg),
                 details: None,
             },
+            AppError::PromptExceedsWindow { ref message, .. } => ApiError {
+                code: ErrorCode::InvalidInput,
+                message: message.clone(),
+                details: None,
+            },
             AppError::ValidationFailed(ref msg) => ApiError {
                 code: ErrorCode::ValidationError,
                 message: format!("Validation failed: {}", msg),
