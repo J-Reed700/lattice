@@ -5,20 +5,26 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use lattice_core::application::contracts::settings::{
     FinderGateDto, FinderNeedDto, KeyServiceDto, SettingsDto, SourcesStatusDto,
 };
 use lattice_core::application::ports::{
-    CredentialsPort, MockSettingsRepository, SettingsRepositoryPort,
+    Budget, CredentialsPort, MockSettingsRepository, SettingsRepositoryPort,
 };
 use lattice_core::application::services::sourcing::{plan, FinderGate};
 use lattice_core::domain::sourcing::{
-    FinderId, Freshness, HealthState, KeyService, NeedKind, SkipReason, SourceNeed, FINDER_IDS,
+    FailureCause, FinderId, FinderOutcome, FinderResult, Freshness, HealthState, KeyService,
+    NeedKind, SkipReason, SourceNeed, FINDER_IDS,
 };
 use lattice_core::shared::error::AppError;
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
+use url::Url;
+use wiremock::matchers::path;
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::{reload, remove_key, save_key};
 use crate::features::web::services::web::WebService;
@@ -88,10 +94,8 @@ fn gate_of(status: &SourcesStatusDto, id: &str) -> Option<FinderGateDto> {
         .gate
 }
 
-/// Where the router puts `id` for a general web search under the finders in
-/// force: `Ok(())` when a wave runs it, else the reason it was skipped.
-fn routed(web: &WebService, id: &str) -> Result<(), SkipReason> {
-    let need = SourceNeed {
+fn web_need() -> SourceNeed {
+    SourceNeed {
         kind: NeedKind::Web,
         query: "rust async".to_string(),
         subject: None,
@@ -100,7 +104,21 @@ fn routed(web: &WebService, id: &str) -> Result<(), SkipReason> {
         want: 10,
         alternatives: Vec::new(),
         also: Vec::new(),
-    };
+    }
+}
+
+fn budget() -> Budget {
+    Budget {
+        deadline: Instant::now() + Duration::from_secs(60),
+        stop: CancellationToken::new(),
+        requests: None,
+    }
+}
+
+/// Where the router puts `id` for a general web search under the finders in
+/// force: `Ok(())` when a wave runs it, else the reason it was skipped.
+fn routed(web: &WebService, id: &str) -> Result<(), SkipReason> {
+    let need = web_need();
     let lineup = web.sourcing_lineup();
     let descriptors: Vec<_> = lineup.descriptors().into_iter().cloned().collect();
     let refused = BTreeMap::new();
@@ -323,4 +341,90 @@ async fn no_status_or_log_line_carries_a_key() {
     let logs = String::from_utf8(captured.0.lock().clone()).unwrap();
     assert!(logs.contains("Source finders registered"), "{logs}");
     assert!(!logs.contains(SECRET), "{logs}");
+}
+
+/// Settings naming a SearXNG instance on this machine, by name, so the
+/// public client's resolver would refuse it.
+fn with_local_searxng(server: &MockServer) -> SettingsDto {
+    let mut settings = SettingsDto::default();
+    settings.sourcing.searxng_url = Some(format!("http://localhost:{}", server.address().port()));
+    settings
+}
+
+/// One page from the SearXNG finder in force.
+async fn searxng_page(web: &WebService) -> FinderOutcome {
+    let lineup = web.sourcing_lineup();
+    let entry = lineup
+        .registry
+        .iter()
+        .find(|entry| entry.descriptor().id == FinderId::new("searxng"))
+        .unwrap();
+    entry.finder.find(&web_need(), 1, &budget()).await
+}
+
+#[tokio::test]
+async fn searxng_reaches_the_users_own_server_and_no_other_finder_does() {
+    let server = MockServer::start().await;
+    Mock::given(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [{ "url": "https://example.org/a", "title": "A", "content": "a" }]
+        })))
+        .mount(&server)
+        .await;
+    let f = fixture(with_local_searxng(&server));
+    reload(&f.web, &f.settings, &f.keyring).await;
+
+    let outcome = searxng_page(&f.web).await;
+    assert_eq!(
+        outcome.result,
+        FinderResult::Answered,
+        "{:?}",
+        outcome.result
+    );
+    assert_eq!(outcome.leads.len(), 1);
+
+    // Following a page's links uses the public client every other finder
+    // shares: the same server, by the same name, is refused unconnected.
+    let page = Url::parse(&format!(
+        "http://localhost:{}/page",
+        server.address().port()
+    ))
+    .unwrap();
+    let refused = f
+        .web
+        .source_finding()
+        .leads_from_page(&page, None, budget())
+        .await;
+    assert!(refused.is_err());
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.path(), "/search");
+}
+
+#[tokio::test]
+async fn searxng_follows_no_redirect() {
+    let server = MockServer::start().await;
+    Mock::given(path("/search"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/elsewhere", server.uri()).as_str()),
+        )
+        .mount(&server)
+        .await;
+    let f = fixture(with_local_searxng(&server));
+    reload(&f.web, &f.settings, &f.keyring).await;
+
+    let outcome = searxng_page(&f.web).await;
+    assert!(
+        matches!(
+            outcome.result,
+            FinderResult::Failed(FailureCause::Status { code: 302, .. })
+        ),
+        "{:?}",
+        outcome.result
+    );
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests
+        .iter()
+        .all(|request| request.url.path() == "/search"));
 }

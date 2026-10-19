@@ -90,6 +90,9 @@ const PAGE_CACHE_DIR_NAME: &str = "web-cache";
 pub struct WebService {
     /// The guarded public client (no cookie jar, no proxy).
     client: Client,
+    /// The client for the user's own SearXNG server, and nothing else
+    /// ([`build_instance_client`]).
+    instance_client: Client,
     /// Per-site request queue shared by page reads and every finder.
     pacer: Arc<SitePacer>,
     /// Pages and settled refusals kept across turns, on disk.
@@ -139,6 +142,7 @@ impl WebService {
     /// app runs at startup and on every change (design §3.14).
     pub fn with_timeout(timeout: Duration, data_dir: &Path) -> Result<Self> {
         let client = build_public_client(timeout)?;
+        let instance_client = build_instance_client(timeout)?;
         let pacer = Arc::new(SitePacer::default());
         let html_parsers = Arc::new(Semaphore::new(MAX_HTML_PARSERS));
         let settings = SourcingSettingsDto::default();
@@ -163,6 +167,7 @@ impl WebService {
         );
         Ok(Self {
             client,
+            instance_client,
             pacer,
             page_cache: PageCache::new(data_dir.join(PAGE_CACHE_DIR_NAME)),
             html_parsers,
@@ -211,7 +216,7 @@ impl WebService {
             parsers: Arc::clone(&self.html_parsers),
             contact: settings.contact().map(str::to_owned),
         };
-        let registry = finders::registry(&http, &settings, &keys);
+        let registry = finders::registry(&http, &self.instance_client, &settings, &keys);
         self.wayback.apply(http, settings.clone());
         self.sourcing
             .replace(registry, settings, keys.into_keys().collect());
@@ -263,6 +268,19 @@ fn build_public_client(timeout: Duration) -> Result<Client> {
         .timeout(timeout)
         .redirect(redirect_policy())
         .dns_resolver(Arc::new(PublicOnlyResolver))
+        .build()
+        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+}
+
+/// The client for the user's own SearXNG server, which usually runs on this
+/// machine or the user's network. The one origin the user typed is trusted,
+/// so it skips the public-only resolver; it follows no redirect, so the only
+/// place it can reach is `{that origin}/search`. Every other finder and every
+/// read of a result's page keeps the public client.
+fn build_instance_client(timeout: Duration) -> Result<Client> {
+    identity::client_builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
 }

@@ -158,13 +158,22 @@ fn entry<F: SourceFinder + 'static>(finder: F, page_size: usize) -> FinderEntry 
 /// report `Skipped(NoKey)` / `Skipped(NoInstance)` / `Skipped(NoContact)` until
 /// configured), in the order their leads are listed when they tie.
 pub(crate) fn keyless_registry(http: &FinderHttp) -> Vec<FinderEntry> {
-    registry(http, &SourcingSettingsDto::default(), &BTreeMap::new())
+    // The default settings name no SearXNG instance, so its client is never
+    // used: the public one stands in.
+    registry(
+        http,
+        &http.client,
+        &SourcingSettingsDto::default(),
+        &BTreeMap::new(),
+    )
 }
 
 /// The full finder catalogue (§3.10), wired with any user-configured keys and
-/// instance URLs.
+/// instance URLs. Every finder shares `http` and its public-only client,
+/// except SearXNG, which reaches the user's own instance through `instance`.
 pub(crate) fn registry(
     http: &FinderHttp,
+    instance: &Client,
     settings: &SourcingSettingsDto,
     keys: &BTreeMap<KeyService, String>,
 ) -> Vec<FinderEntry> {
@@ -192,7 +201,13 @@ pub(crate) fn registry(
             exa::RESULTS_PER_PAGE,
         ),
         entry(
-            searxng::Searxng::new(http.clone(), settings.searxng_url().map(|u| u.to_string())),
+            searxng::Searxng::new(
+                FinderHttp {
+                    client: instance.clone(),
+                    ..http.clone()
+                },
+                settings.searxng_url().map(|u| u.to_string()),
+            ),
             searxng::RESULTS_PER_PAGE,
         ),
         entry(

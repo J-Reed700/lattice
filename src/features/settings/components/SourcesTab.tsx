@@ -127,7 +127,7 @@ export function SourcesTab() {
         <AddressField
           id="searxngUrl"
           label="Server address"
-          hint="Your own instance, with its JSON output turned on. Lattice sends it nothing until you set one."
+          hint="Your own instance, on this computer, your network or the web, with its JSON output turned on. Lattice sends it nothing until you set one, and asks that address for nothing but searches."
           saved={sourcing.searxngUrl}
           placeholder="https://search.example.org"
           check={isHttpUrl}
