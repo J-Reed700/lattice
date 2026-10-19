@@ -143,6 +143,13 @@ describe('PDF import recovery', () => {
     expect(screen.getAllByRole('region')).toHaveLength(2);
     expect(api.retryFailedItems).toHaveBeenCalledWith('job', 'bad', undefined);
   });
+  it('reads again when the window regains focus without the page being hidden', async () => {
+    render(<ImportHistory />);
+    await screen.findByText('Failed — PDF extraction timed out');
+    const reads = api.listAllBatchJobs.mock.calls.length;
+    act(() => { window.dispatchEvent(new Event('focus')); });
+    await waitFor(() => expect(api.listAllBatchJobs).toHaveBeenCalledTimes(reads + 1));
+  });
   it.each(['details', 'list'] as const)('ignores an older %s response arriving after a successful retry', async kind => {
     const user = userEvent.setup();
     render(<ImportHistory />);

@@ -1,5 +1,5 @@
 /** Import results and recovery, backed by durable per-file job records. */
-import { type FC, useState } from 'react';
+import { type FC, useEffect, useState } from 'react';
 
 import { type QueryClient, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -78,6 +78,13 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   useJobStatus((report) => {
     if (BATCH_IMPORT_JOBS.has(report.kind)) void refresh();
   });
+  // WebKit keeps the page visible while another app has focus, so coming back
+  // to the window is a return React Query never hears about.
+  useEffect(() => {
+    const onFocus = () => { void queryClient.invalidateQueries({ queryKey: importHistoryKeys.all }); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [queryClient]);
   // A refresh asked for by the user also restarts a read waiting to retry.
   const refreshNow = async () => {
     await queryClient.cancelQueries({ queryKey: importHistoryKeys.all });
