@@ -6,6 +6,7 @@ use crate::features::learning::references::web_research;
 use lattice_core::application::contracts::web::WebSearchInput;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::shared::http::url_identity::identity;
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use web_research::within_search_scope;
@@ -396,7 +397,12 @@ async fn research<'a>(
     let mut sources = program_repo
         .verification_sources(&context.program_id)
         .await?;
-    let mut urls: HashSet<_> = sources.iter().filter_map(|s| s.url.clone()).collect();
+    // Pages already held, without fragments: a link to a place in a saved
+    // page is that page.
+    let mut urls: HashSet<_> = sources
+        .iter()
+        .filter_map(|s| s.url.as_deref().map(identity))
+        .collect();
     let mut added = 0;
     let mut searched = Searched::default();
     let saving = Saving {
@@ -405,7 +411,7 @@ async fn research<'a>(
         library: &library,
     };
     for cited in follow {
-        if urls.contains(&cited.url) {
+        if urls.contains(&identity(&cited.url)) {
             continue;
         }
         crate::features::learning::lesson_progress::stage(
@@ -451,12 +457,12 @@ async fn research<'a>(
         let mut capture_failed = false;
         let candidates = results
             .into_iter()
-            .filter(|result| !urls.contains(&result.url))
+            .filter(|result| !urls.contains(&identity(&result.url)))
             .collect();
         let selected =
             select_references(llm, &context.topic, &need.query, gaps, candidates).await?;
         for result in selected {
-            if !urls.insert(result.url.clone()) {
+            if !urls.insert(identity(&result.url)) {
                 continue;
             }
             crate::features::learning::lesson_progress::stage(
@@ -513,7 +519,8 @@ struct Saving<'s> {
 impl Saving<'_> {
     /// Saves a capture as a research source unless the course already holds
     /// that page; the new version's id, or `None` for a page already held.
-    /// `sources` and `urls` are brought up to date.
+    /// `sources` and `urls` (pages without fragments) are brought up to
+    /// date.
     async fn save(
         &self,
         sources: &mut Vec<LearningSourceDto>,
@@ -523,7 +530,8 @@ impl Saving<'_> {
     ) -> Result<Option<String>> {
         let resolved = captured.resolved_url.clone().unwrap_or_default();
         if sources.iter().any(|s| {
-            s.url.as_deref() == Some(resolved.as_str()) || s.excerpt.trim() == captured.text.trim()
+            s.url.as_deref().map(identity) == Some(identity(&resolved))
+                || s.excerpt.trim() == captured.text.trim()
         }) {
             return Ok(None);
         }
@@ -546,8 +554,8 @@ impl Saving<'_> {
                 hash,
             )
             .await?;
-        urls.insert(requested_url.to_owned());
-        urls.insert(resolved);
+        urls.insert(identity(requested_url));
+        urls.insert(identity(&resolved));
         // The repository normalizes captures. Retrieve those canonical
         // bytes so the report and vectors bind to exactly what is saved.
         *sources = self

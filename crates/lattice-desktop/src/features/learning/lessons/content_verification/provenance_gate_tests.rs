@@ -239,6 +239,26 @@ fn links_to_its_own_site_or_to_a_non_owner_leave_a_passage_direct() {
 }
 
 #[test]
+fn a_supports_own_pages_and_its_publishers_are_never_citations_to_follow() {
+    let guide = "https://platform.openai.com/docs/guides/structured-outputs";
+    let text = format!("Structured Outputs ensures the model always follows the supplied JSON Schema ([below](https://blog.example.org/structured#strict), [related post](https://www.example.org/rlhf)), as [the guide]({guide}) says.");
+    let links = lattice_core::domain::provenance::markdown_links(&text);
+    let blog = facts(level("established"), "web:example.org", &text, links);
+    let claim = finding(
+        STRUCTURED,
+        "Structured Outputs ensures the model always follows the supplied JSON Schema",
+        vec![passage("blog", &text)],
+    );
+    let facts = HashMap::from([("blog".to_owned(), blog)]);
+    let trust = weighed(
+        &profile(ClaimKind::Specification, Some("OpenAI API")),
+        &claim,
+        &facts,
+    );
+    assert_eq!(trust.supports[0].cited_urls, vec![guide.to_owned()]);
+}
+
+#[test]
 fn copies_from_one_origin_are_one_support_and_independent_origins_corroborate() {
     let text = "The Peace of Westphalia was signed in 1648.";
     let historical = profile(ClaimKind::Historical, Some("Peace of Westphalia"));

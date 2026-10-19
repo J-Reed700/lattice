@@ -496,6 +496,12 @@ pub(super) async fn check_with_citations(
     // The gate call (§18.6): every supported verdict's support is weighed
     // before the claim ledger sees it; no further model check is made.
     provenance_gate::weigh(llm, &mut results, &decided).await?;
+    crate::features::learning::lesson_progress::sent_back(
+        results
+            .iter()
+            .filter(|(_, _, finding, _)| finding.scrutinised().is_some())
+            .count(),
+    );
     Ok(results)
 }
 

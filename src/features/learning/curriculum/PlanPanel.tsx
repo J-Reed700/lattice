@@ -15,6 +15,7 @@ import {
   useStartLearningDiagnostic,
   useSubmitLearningDiagnostic,
 } from '@/features/learning/curriculum/useLearningPlan';
+import { PREPARATION_PHASES } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationProgress } from '@/features/learning/lessons/LessonPreparationProgress';
 import { VerifierAuditSwitch } from '@/features/learning/lessons/review/VerifierAuditSwitch';
 import type {
@@ -70,6 +71,35 @@ function OtherJobCard({ job, programId, revision }: { job: LearningGenerationJob
   return <article className="rounded-xl border border-border bg-background/40 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-medium capitalize text-text-primary">{job.kind.replace('_', ' ')}</h4><span className="rounded-full bg-surface px-2.5 py-1 text-[10px] capitalize text-text-muted">{job.status}</span></div><p className="mt-1 text-[10px] text-text-muted">Created {dateLabel(job.createdAt)}</p></div><div className="flex gap-2">{active && <button type="button" disabled={pending} onClick={() => cancel.mutate(request())} className="rounded-full border border-border px-3 py-2 text-[10px] disabled:opacity-50">Cancel</button>}{['failed', 'interrupted', 'cancelled'].includes(job.status) && <button type="button" disabled={pending} onClick={() => retry.mutate(request())} className="inline-flex items-center gap-1 rounded-full border border-accent/30 px-3 py-2 text-[10px] font-semibold text-accent disabled:opacity-50"><RotateCcw size={12} /> Retry</button>}</div></div>{job.status === 'running' || job.status === 'pending' ? <><div className="mt-3 flex items-center justify-between text-[10px] text-text-muted"><span>{job.progressMessage || 'Working on this request…'}</span><span>{job.progressCompleted}/{job.progressTotal || '—'}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent}%` }} /></div></> : job.error && <p role="alert" className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700">{job.error}</p>}{(cancel.error || retry.error) && <p role="alert" className="mt-2 text-xs text-rose-700">{message(cancel.error ?? retry.error)}</p>}</article>;
 }
 
+const ATTEMPT_OUTCOMES: Record<LearningGenerationJob['status'], string> = {
+  pending: 'Waiting', running: 'Running', completed: 'Completed', failed: 'Stopped', cancelled: 'Paused', interrupted: 'Interrupted',
+};
+
+/** One line for an earlier attempt: how and where it ended, when, and why. */
+function attemptOutcome(job: LearningGenerationJob): string {
+  const phase = job.kind === 'lesson_preparation' && job.activity ? PREPARATION_PHASES[job.activity.phase].title : null;
+  return [
+    phase ? `${ATTEMPT_OUTCOMES[job.status]} at ${phase}` : ATTEMPT_OUTCOMES[job.status],
+    dateLabel(job.finishedAt ?? job.createdAt),
+    job.error,
+  ].filter(Boolean).join(' · ');
+}
+
+/** The jobs of the activity list, newest first; a retry supersedes its parent, which is an earlier attempt. */
+function jobAttempts(jobs: LearningGenerationJob[]) {
+  const superseded = new Set(jobs.map((job) => job.retryOfJobId).filter(Boolean));
+  const sorted = jobs.slice().sort((a, b) => b.createdAt - a.createdAt);
+  return { current: sorted.filter((job) => !superseded.has(job.id)), earlier: sorted.filter((job) => superseded.has(job.id)) };
+}
+
+function EarlierAttempts({ jobs }: { jobs: LearningGenerationJob[] }) {
+  if (jobs.length === 0) return null;
+  return <details className="rounded-xl border border-border bg-background/40 px-4 py-3 text-xs">
+    <summary className="cursor-pointer font-medium text-text-primary">Earlier attempts ({jobs.length})</summary>
+    <ol className="mt-3 space-y-2 text-text-secondary">{jobs.map((job) => <li key={job.id} className="truncate" title={attemptOutcome(job)}>{attemptOutcome(job)}</li>)}</ol>
+  </details>;
+}
+
 function JobCard({ job, programId, revision }: { job: LearningGenerationJob; programId: string; revision: number }) {
   return job.kind === 'lesson_preparation' && job.status !== 'completed'
     ? <LessonPreparationProgress job={job} pending={false} programId={programId} revision={revision} />
@@ -101,6 +131,7 @@ export function PlanPanel({ programId, onStartingPoint }: { programId: string; o
     if (previousEditModeRef.current && !editMode) editorTriggerRef.current?.focus();
     previousEditModeRef.current = editMode;
   }, [editMode]);
+  const attempts = useMemo(() => jobAttempts(plan?.jobs ?? []), [plan?.jobs]);
   const allLessons = useMemo(() => current?.modules.flatMap((module) => module.lessons.map((lesson) => ({ module, lesson }))) ?? [], [current]);
   const draftActions = (next: LearningCurriculumOperation[]) => setOperations(next);
   const previewRequest = () => preview.mutate({ operationId: uuid(), programId, expectedRevision, reason, operations });
@@ -153,6 +184,6 @@ export function PlanPanel({ programId, onStartingPoint }: { programId: string; o
       {(accept.error || discard.error) && <p role="alert" className="mt-4 text-xs text-rose-700">{message(accept.error ?? discard.error)} · The current revision remains in place.</p>}
     </section>
 
-    <section className="rounded-2xl border border-border bg-surface p-5 sm:p-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Durable generation</div><h3 className="mt-1 font-serif text-xl text-text-primary">Job activity</h3></div><span className="text-xs text-text-muted">Progress is reported by the job itself</span></div>{plan.jobs.length === 0 ? <p className="mt-4 rounded-xl bg-background p-4 text-sm text-text-muted">No generation jobs have been recorded.</p> : <div className="mt-4 space-y-3">{plan.jobs.slice().sort((a, b) => b.createdAt - a.createdAt).map((job) => <JobCard key={job.id} job={job} programId={programId} revision={expectedRevision} />)}</div>}</section>
+    <section className="rounded-2xl border border-border bg-surface p-5 sm:p-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Durable generation</div><h3 className="mt-1 font-serif text-xl text-text-primary">Job activity</h3></div><span className="text-xs text-text-muted">Progress is reported by the job itself</span></div>{plan.jobs.length === 0 ? <p className="mt-4 rounded-xl bg-background p-4 text-sm text-text-muted">No generation jobs have been recorded.</p> : <div className="mt-4 space-y-3">{attempts.current.map((job) => <JobCard key={job.id} job={job} programId={programId} revision={expectedRevision} />)}<EarlierAttempts jobs={attempts.earlier} /></div>}</section>
   </div>;
 }

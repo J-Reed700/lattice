@@ -26,7 +26,7 @@ export type ClaimFilter = (typeof CLAIM_FILTERS)[number];
 
 export const FILTER_LABELS: Record<ClaimFilter, string> = {
   needs_you: 'Needs you',
-  repairing: 'Being repaired',
+  repairing: 'With the machine',
   machine: 'Resolved by the machine',
   confirmed: 'Confirmed by you',
   general: 'General knowledge',
@@ -167,7 +167,7 @@ export function stateLabel(item: ClaimReviewItemDto): string {
   const state = item.state;
   switch (state.state) {
     case 'unchecked': return 'Waiting to be checked';
-    case 'open': return `Being repaired · ${state.machineAttemptsLeft} ${state.machineAttemptsLeft === 1 ? 'try' : 'tries'} left`;
+    case 'open': return `${item.verdictKind?.kind === 'insufficient_standing' ? 'Sent back for stronger sources' : 'With the machine'} · ${state.machineAttemptsLeft} ${state.machineAttemptsLeft === 1 ? 'try' : 'tries'} left`;
     case 'queued': return 'Needs your review';
     case 'resolved_by_evidence': return 'Verified against a source';
     case 'confirmed': return `Confirmed by you · ${date(state.at)}`;
@@ -307,7 +307,7 @@ export function countsLine(review: LessonClaimReviewDto): string {
     `${verified} verified`,
     confirmed ? `${confirmed} confirmed by you` : null,
     generalKnowledge ? `${generalKnowledge} general knowledge` : null,
-    open ? `${open} being repaired` : null,
+    open ? `${open} with the machine` : null,
     removed ? `${removed} removed` : null,
     `${queued} waiting for you`,
   ].filter(Boolean).join(' · ');

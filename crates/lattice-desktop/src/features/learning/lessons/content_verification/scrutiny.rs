@@ -12,6 +12,7 @@
 use super::provenance_gate::FindingTrust;
 use super::*;
 use lattice_core::domain::provenance::{effective_date, NextStep};
+use lattice_core::shared::http::url_identity::identity;
 
 /// A cited page to fetch for a claim, with the supporting version that cites
 /// it.
@@ -26,7 +27,8 @@ pub(super) struct Follow {
 pub(super) struct Scrutiny {
     /// Planner gaps, one per scrutinised claim (`web_research::plan_queries`).
     pub(super) gaps: Vec<Value>,
-    /// Citations to capture before any search, best first, each once.
+    /// Citations to capture before any search, best first, each page once
+    /// (links to places in one page are that page).
     pub(super) follow: Vec<Follow>,
 }
 
@@ -42,7 +44,7 @@ impl Finding {
     }
 
     /// The gate's account of a supported finding that needs scrutiny.
-    fn scrutinised(&self) -> Option<&FindingTrust> {
+    pub(super) fn scrutinised(&self) -> Option<&FindingTrust> {
         self.trust
             .as_deref()
             .filter(|trust| self.verdict == ClaimVerdict::Supported && trust.needs_scrutiny())
@@ -69,7 +71,12 @@ pub(super) fn review(findings: &[Finding]) -> Scrutiny {
         for step in steps {
             match step {
                 NextStep::FollowCitation { url, from } => {
-                    if !scrutiny.follow.iter().any(|follow| &follow.url == url) {
+                    let page = identity(url);
+                    if !scrutiny
+                        .follow
+                        .iter()
+                        .any(|follow| identity(&follow.url) == page)
+                    {
                         scrutiny.follow.push(Follow {
                             url: url.clone(),
                             from: from.clone(),

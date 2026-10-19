@@ -26,11 +26,21 @@ export function HeldLessonsReview({ lessonIds, programId, revision }: {
   );
 }
 
-/** "Pass 3 · 2 claims being repaired · 5 waiting for you · 108 verified" (§6.3). */
+/**
+ * "Pass 3 · 4 claims sent back for stronger sources · 2 being repaired · 5
+ * waiting for you · 108 verified" (§6.3). The machine's claims are named by
+ * what is done to them next; only a rewrite of their text is a repair.
+ */
 export function claimTallyLine(pass: number, tally: LearningClaimTally): string {
+  const machine: [number, string][] = [
+    [tally.unchecked, 'not checked yet'],
+    [tally.sentBack, 'sent back for stronger sources'],
+    [tally.searching, 'looking for sources'],
+    [tally.repairing, 'being repaired'],
+  ];
   return [
     `Pass ${pass}`,
-    `${tally.repairing} ${tally.repairing === 1 ? 'claim' : 'claims'} being repaired`,
+    ...machine.filter(([count]) => count > 0).map(([count, what], index) => index === 0 ? `${count} ${count === 1 ? 'claim' : 'claims'} ${what}` : `${count} ${what}`),
     `${tally.waiting} waiting for you`,
     `${tally.verified} verified`,
     tally.resolvedByYou ? `${tally.resolvedByYou} resolved by you` : null,

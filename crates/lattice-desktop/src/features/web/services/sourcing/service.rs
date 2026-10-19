@@ -266,9 +266,14 @@ pub(crate) fn leads_from_markdown(
     near: Option<&Near>,
 ) -> Vec<Lead> {
     let all_links = markdown_links(markdown);
+    // Links back into the page or onto its publisher's other pages are not
+    // its references.
+    let citing: Vec<_> = lattice_core::domain::provenance::Origin::of_url(page_url.as_str())
+        .map(|origin| vec![origin.key])
+        .unwrap_or_default();
     let ordered: Vec<OutboundLink> = match near {
         Some(Near::Bytes { start, end }) => {
-            citation_candidates(markdown, (*start, *end), &all_links, |_| {
+            citation_candidates(markdown, (*start, *end), &all_links, &citing, |_| {
                 LinkStanding::Unknown
             })
             .into_iter()
@@ -297,17 +302,17 @@ pub(crate) fn leads_from_markdown(
                     })
             };
             match span {
-                Some(span) => {
-                    citation_candidates(markdown, span, &all_links, |_| LinkStanding::Unknown)
-                        .into_iter()
-                        .map(|c| OutboundLink {
-                            url: c.url,
-                            anchor: c.anchor,
-                            start_byte: c.start_byte,
-                            end_byte: c.end_byte,
-                        })
-                        .collect()
-                }
+                Some(span) => citation_candidates(markdown, span, &all_links, &citing, |_| {
+                    LinkStanding::Unknown
+                })
+                .into_iter()
+                .map(|c| OutboundLink {
+                    url: c.url,
+                    anchor: c.anchor,
+                    start_byte: c.start_byte,
+                    end_byte: c.end_byte,
+                })
+                .collect(),
                 None => all_links,
             }
         }

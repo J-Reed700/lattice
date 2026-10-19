@@ -135,7 +135,10 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     let active = expanded.as_ref().ok_or_else(|| {
                         AppError::InternalError("Missing expanded references".into())
                     })?;
-                    report = check_evidence(
+                    crate::features::learning::lesson_progress::new_references(Some(
+                        searched.sources_added.len(),
+                    ));
+                    let rechecked = check_evidence(
                         llm,
                         &candidate,
                         active,
@@ -148,7 +151,9 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                         report.executions,
                         &mut checks,
                     )
-                    .await?;
+                    .await;
+                    crate::features::learning::lesson_progress::new_references(None);
+                    report = rechecked?;
                     // The round is recorded first: a claim whose evidence it
                     // changed may be researched again on that evidence.
                     ledger.record_research(&claims, &searched, &report).await?;

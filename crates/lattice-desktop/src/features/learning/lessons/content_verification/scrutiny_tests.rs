@@ -147,6 +147,35 @@ fn an_insufficient_support_becomes_a_targeted_gap_and_citations_to_follow() {
 }
 
 #[test]
+fn places_in_one_cited_page_are_followed_as_that_page_once() {
+    let at = |fragment: &str| NextStep::FollowCitation {
+        url: format!("{GUIDE}#{fragment}"),
+        from: "blog".into(),
+    };
+    let findings = vec![
+        finding(
+            "Strict mode follows the schema.",
+            ClaimVerdict::Supported,
+            Some(insufficient(vec![at("why-models-need-tools")])),
+        ),
+        finding(
+            "Strict mode rejects extra keys.",
+            ClaimVerdict::Supported,
+            Some(insufficient(vec![at("exercises"), at("summary")])),
+        ),
+    ];
+    let scrutiny = review(&findings);
+    assert_eq!(
+        scrutiny.follow,
+        vec![Follow {
+            url: format!("{GUIDE}#why-models-need-tools"),
+            from: "blog".into()
+        }],
+        "the page is fetched once, at the best-ranked link"
+    );
+}
+
+#[test]
 fn a_stale_support_asks_for_newer_material() {
     let next = vec![NextStep::FetchNewer {
         newer_primary: "python-org".into(),

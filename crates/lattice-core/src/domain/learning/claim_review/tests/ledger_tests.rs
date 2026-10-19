@@ -217,6 +217,98 @@ fn kinds_the_machine_cannot_repair_research_once_or_go_to_the_user() {
 }
 
 #[test]
+fn research_that_cannot_change_a_claims_sufficiency_is_not_new_evidence() {
+    use crate::domain::provenance::{Bar, ClusterId, CountedSupport, TrustLevel};
+    let counted = |version: &str, cluster: &str, level| CountedSupport {
+        source_version_id: version.into(),
+        origin_cluster: ClusterId(cluster.into()),
+        counted: Some(level),
+    };
+    let short = |have: Vec<CountedSupport>| {
+        Some(VerdictKind::InsufficientStanding {
+            bar: Bar::Primary,
+            have,
+        })
+    };
+    let research = || ClaimEvent::Researched {
+        queries: vec!["boiling point sea level".into()],
+        sources_added: vec!["v2".into()],
+        passages_found: 1,
+    };
+    let blog = || counted("v1", "v1", TrustLevel::Established);
+    let started = |id: &str| {
+        let mut entry = claim(id);
+        entry
+            .append(machine(2), checked(short(vec![blog()]), "v1"))
+            .unwrap();
+        entry.append(machine(3), research()).unwrap();
+        entry
+    };
+
+    // The round saved another page of the same publisher, no higher: the
+    // evidence changed, but not what the claim can reach.
+    let mut entry = started("c1");
+    let same_publisher = counted("v2", "v1", TrustLevel::Established);
+    entry
+        .append(
+            machine(4),
+            checked(short(vec![blog(), same_publisher.clone()]), "v2"),
+        )
+        .unwrap();
+    assert!(
+        !entry.may_research(),
+        "no further research on that evidence"
+    );
+    assert!(entry.may_repair(), "its repairs on that evidence are left");
+    entry
+        .append(machine(5), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    entry
+        .append(
+            machine(6),
+            checked(short(vec![blog(), same_publisher.clone()]), "v2"),
+        )
+        .unwrap();
+    entry
+        .append(machine(7), rewrite(2, true, RepairOutcome::Rewritten))
+        .unwrap();
+    entry
+        .append(
+            machine(8),
+            checked(short(vec![blog(), same_publisher]), "v2"),
+        )
+        .unwrap();
+    assert!(
+        entry.state().awaits_user(),
+        "two tries on that evidence hand it over: {:?}",
+        entry.state()
+    );
+
+    // An independent origin, or a stronger source of the same one, is
+    // progress: the budget is restored and research may go on.
+    for (id, gained) in [
+        ("c2", counted("v2", "v2", TrustLevel::Established)),
+        ("c3", counted("v2", "v1", TrustLevel::Authoritative)),
+    ] {
+        let mut entry = started(id);
+        entry
+            .append(machine(4), checked(short(vec![blog(), gained]), "v2"))
+            .unwrap();
+        assert!(entry.may_research(), "{id}");
+        assert!(
+            matches!(
+                entry.state(),
+                ClaimState::Open {
+                    machine_attempts_left: MACHINE_ATTEMPTS,
+                    ..
+                }
+            ),
+            "{id}"
+        );
+    }
+}
+
+#[test]
 fn the_log_is_append_only_and_replays_to_the_same_state() {
     let entry = queued_claim("c1", VerdictKind::Unsupported);
     let ordinals: Vec<u32> = entry.events().iter().map(|e| e.ordinal).collect();

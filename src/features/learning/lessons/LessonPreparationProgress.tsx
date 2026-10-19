@@ -14,6 +14,12 @@ import type { LearningGenerationJob } from '@/lib/bindings';
 
 const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Publish'];
 
+/** "Re-checking 81 claims against 72 new references"; the claim count once saved checks are compared. */
+function recheckLine(references: number, claims: number | null): string {
+  const what = claims == null ? 'claims' : `${claims} ${claims === 1 ? 'claim' : 'claims'}`;
+  return `Re-checking ${what} against ${references} new ${references === 1 ? 'reference' : 'references'}`;
+}
+
 export function LessonPreparationProgress({ job, pending, programId, revision, error }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
 }) {
@@ -50,12 +56,16 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   const actionError = cancel.error ?? retry.error;
   const hasChecks = activity && activity.checksTotal > 0;
   const remaining = hasChecks ? Math.max(0, activity.checksTotal - activity.checksCompleted) : 0;
-  const supported = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved) : 0;
+  // The source check's claims were supported by the checker but not by
+  // strong enough sources: they count apart from both.
+  const supported = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved - activity.checksSentBack) : 0;
   const restoringChecks = active && activity?.phase === 'evidence' && activity.modelChecksTotal == null;
   const currentChecks = active && !queued && activity?.phase === 'evidence';
   // After every claim's first check, unsupported claims are checked against
   // further evidence pages. Those checks move claims between counts.
   const deeper = (currentChecks && activity?.deeperEvidence) || null;
+  // Research saved references; this step of the pass checks claims again against them.
+  const recheck = currentChecks && activity?.newReferences != null ? recheckLine(activity.newReferences, activity.modelChecksTotal) : null;
   const bar = deeper
     ? { label: `Unsupported claims checked against evidence page ${deeper.page}`, value: deeper.checked, max: deeper.claims, text: `${deeper.checked} of ${deeper.claims} checked on evidence page ${deeper.page}` }
     : hasChecks ? { label: 'Claim checks this pass', value: activity.checksCompleted, max: activity.checksTotal, text: `${activity.checksCompleted} of ${activity.checksTotal} checked` } : null;
@@ -100,15 +110,16 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
       </div>}
       {hasChecks && <div className="rounded-xl border border-border bg-background/70 p-4">
-        <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{activity.phase === 'evidence' ? 'Claim checks this pass' : 'Last verification pass'} · Pass {activity.verificationPass}</span><span className="tabular-nums text-text-secondary">{restoringChecks ? `${activity.checksTotal} lesson claims` : `${activity.checksCompleted} / ${activity.checksTotal} checked`}</span></div>
+        <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{recheck ?? (activity.phase === 'evidence' ? 'Claim checks this pass' : 'Last verification pass')} · Pass {activity.verificationPass}</span><span className="tabular-nums text-text-secondary">{restoringChecks ? `${activity.checksTotal} lesson claims` : `${activity.checksCompleted} / ${activity.checksTotal} checked`}</span></div>
         {restoringChecks ? <p className="mt-3 text-sm leading-6 text-text-secondary" role="status">Looking for saved checks to reuse. The number needing model review will appear once all saved results have been compared with the current evidence.</p> : <>
           {activity.modelChecksTotal != null && currentChecks && <p className="mt-3 text-sm leading-6 text-text-secondary">{activity.checksReused} saved checks reused. {deeper ? `Every claim has had its first check. Checking ${deeper.claims} unsupported claims against evidence page ${deeper.page}; ${deeper.claims - deeper.checked} left.` : remaining === 0 ? 'Checking finished. Preparing the next step.' : `${remaining} of ${activity.modelChecksTotal} model checks remaining in this pass.`}</p>}
           {currentChecks && bar && <div role="progressbar" aria-label={bar.label} aria-valuenow={bar.value} aria-valuemin={0} aria-valuemax={bar.max} aria-valuetext={`${bar.text}; ${activity.checksUnresolved} need attention; ${activity.checksReused} saved checks reused`} className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, bar.value / bar.max * 100)}%` }} /></div>}
         </>}
-        <dl className={`mt-3 grid grid-cols-2 gap-3 text-xs ${currentChecks ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+        <dl className={`mt-3 grid grid-cols-2 gap-3 text-xs ${currentChecks ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
           <div><dt className="text-text-muted">Supported</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{supported}</dd></div>
           <div><dt className="text-text-muted">{currentChecks ? 'Need attention' : 'Needed attention in this pass'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksUnresolved}</dd></div>
-          {currentChecks && <div><dt className="text-text-muted">{deeper ? `Left on evidence page ${deeper.page}` : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : deeper ? deeper.claims - deeper.checked : remaining}</dd></div>}
+          <div><dt className="text-text-muted">Sent back for stronger sources</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksSentBack}</dd></div>
+          {currentChecks && <div><dt className="text-text-muted">{deeper ? `Left on evidence page ${deeper.page}` : recheck ? 'Still to re-check' : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : deeper ? deeper.claims - deeper.checked : remaining}</dd></div>}
           <div><dt className="text-text-muted">Saved checks reused</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksReused}</dd></div>
         </dl>
         <p className="mt-3 text-xs leading-5 text-text-muted">{PASS_BOUND}</p>

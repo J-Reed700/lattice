@@ -64,6 +64,28 @@ describe('Learning Studio Plan editor', () => {
     await waitFor(() => expect(mocks.cancelJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', expectedRevision: 9 })));
   });
 
+  it('folds attempts a retry superseded into one closed list of one-line outcomes', async () => {
+    const running = plan().jobs[0];
+    const attempt = (id: string, status: string, retryOfJobId: string | null, createdAt: number, error: string | null) => ({
+      ...running, id, status, retryOfJobId, createdAt, finishedAt: createdAt + 1000, error,
+      activity: { phase: 'evidence', phaseStartedAt: 0, lastActivityAt: 0, lastCheckpointAt: null, lessonTitle: null, modelName: null, modelRunning: false, responseCharacters: 0, modelAttempt: 0, verificationPass: 2, checksCompleted: 0, checksTotal: 0, checksReused: 0, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null, recentSteps: [] },
+    });
+    mocks.getPlan.mockResolvedValue(ok(plan({ jobs: [
+      attempt('job-a', 'failed', null, 1_790_000_000_000, 'The model rejected the request.'),
+      attempt('job-b', 'cancelled', 'job-a', 1_790_000_100_000, null),
+      { ...running, id: 'job-c', retryOfJobId: 'job-b', createdAt: 1_790_000_200_000 },
+    ] })));
+    renderPlan();
+    expect(await screen.findByText('Preparing a lesson')).toBeVisible();
+    expect(screen.getAllByRole('button', { name: 'Pause lesson preparation' })).toHaveLength(1);
+    const earlier = screen.getByText('Earlier attempts (2)');
+    const disclosure = earlier.closest('details')!;
+    expect(disclosure).not.toHaveAttribute('open');
+    const lines = within(disclosure).getAllByRole('listitem').map((item) => item.textContent);
+    expect(lines[0]).toMatch(/^Paused at Verifying factual claims · /);
+    expect(lines[1]).toMatch(/^Stopped at Verifying factual claims · .* · The model rejected the request\.$/);
+  });
+
   it('composes an add operation, previews semantic changes, and accepts the immutable revision', async () => {
     const user = userEvent.setup();
     renderPlan();
