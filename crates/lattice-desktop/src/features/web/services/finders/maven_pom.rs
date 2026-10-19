@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, Ecosystem, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
-    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role,
-    SourceNeed, WaveSlot,
+    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, PackageRef, Privacy, RatePolicy, Reach,
+    Role, SourceNeed, WaveSlot,
 };
 use url::Url;
 
@@ -69,7 +69,13 @@ fn clean_str(s: Option<&str>) -> Option<&str> {
     s.map(str::trim).filter(|s| !s.is_empty())
 }
 
-fn leads_from(payload: &serde_json::Value, page: usize) -> Result<Vec<Lead>, FailureCause> {
+/// Leads for each artifact in `payload`; when the need names a package, only
+/// its record (a search also returns artifacts that merely share words).
+fn leads_from(
+    payload: &serde_json::Value,
+    page: usize,
+    named: Option<PackageRef<'_>>,
+) -> Result<Vec<Lead>, FailureCause> {
     let Some(docs) = payload
         .get("response")
         .and_then(|r| r.get("docs"))
@@ -87,6 +93,9 @@ fn leads_from(payload: &serde_json::Value, page: usize) -> Result<Vec<Lead>, Fai
         let (Some(g), Some(a)) = (g, a) else {
             continue;
         };
+        if named.is_some_and(|package| !package.is_record(Ecosystem::Maven, &format!("{g}:{a}"))) {
+            continue;
+        }
         let latest_version =
             clean_str(doc.get("latestVersion").and_then(serde_json::Value::as_str));
         let snippet = latest_version.map(|v| format!("version {v}"));
@@ -130,21 +139,17 @@ impl SourceFinder for MavenPom {
 
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
         let started = Instant::now();
-        let query_term = if !need.query.trim().is_empty() {
-            need.query.trim()
-        } else if let Some(pkg) = need.subject.as_ref().and_then(|s| {
-            s.identifiers.iter().find_map(|id| match id {
-                Identifier::PackageName { name, .. } => Some(name.as_str()),
-                _ => None,
-            })
-        }) {
-            pkg
-        } else if let Some(subject) = need.subject.as_ref() {
-            subject.name.trim()
-        } else {
-            ""
+        // A named artifact is searched by its coordinates, so the search
+        // finds it by name rather than by words.
+        let named = need.package();
+        let query_term = match named.map(|package| package.name) {
+            Some(name) => match name.split_once(':') {
+                Some((group, artifact)) => format!("g:\"{group}\" AND a:\"{artifact}\""),
+                None => format!("a:\"{name}\""),
+            },
+            None => need.query.trim().to_string(),
         };
-        let query = urlencoding::encode(query_term).into_owned();
+        let query = urlencoding::encode(&query_term).into_owned();
         let offset = rank_of(page, RESULTS_PER_PAGE, 0).saturating_sub(1);
         let url = format!(
             "{}/solrsearch/select?q={query}&rows={RESULTS_PER_PAGE}&start={offset}&wt=json",
@@ -166,7 +171,7 @@ impl SourceFinder for MavenPom {
                 )
             }
         };
-        match leads_from(&payload, page) {
+        match leads_from(&payload, page, named) {
             Ok(leads) => answered(&self.descriptor, leads, started),
             Err(cause) => failed(&self.descriptor, cause, started),
         }

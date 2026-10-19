@@ -12,9 +12,9 @@ use lattice_core::domain::provenance::{
     citation_candidates, markdown_links, LinkStanding, OutboundLink,
 };
 use lattice_core::domain::sourcing::{
-    fusion, FinderDescriptor, FinderHealth, FinderId, FinderOutcome, FinderResult, Findings,
-    KeyService, Lead, LeadKind, LinkPlace, Near, Origin, OwnerResolution, SourceNeed,
-    SourcingPolicy, SubjectHint,
+    fusion, records_on_owner, FinderDescriptor, FinderHealth, FinderId, FinderOutcome,
+    FinderResult, Findings, KeyService, Lead, LeadKind, LinkPlace, Near, Origin, OwnerResolution,
+    Reach, SourceNeed, SourcingPolicy, SubjectHint,
 };
 use lattice_core::shared::error::{AppError, Result};
 use url::Url;
@@ -140,6 +140,23 @@ impl SourcingService {
             initial_owner,
         );
         let mut report = runner.run(&plan).await;
+        // A package named without its registry may be a different package in
+        // each one: only the records on the resolved owner's origins are the
+        // subject's.
+        let unnamed_registry = need
+            .package()
+            .is_some_and(|package| package.ecosystem.is_none());
+        if let Some(res) = owner_resolution.as_ref().filter(|_| unnamed_registry) {
+            if !res.origins.is_empty() {
+                for step in report
+                    .steps
+                    .iter_mut()
+                    .filter(|step| matches!(step.entry.descriptor().reaches, Reach::Registry(_)))
+                {
+                    step.leads = records_on_owner(std::mem::take(&mut step.leads), &res.origins);
+                }
+            }
+        }
         if let Some(ref res) = owner_resolution {
             let mut combined = res.outcomes.clone();
             combined.extend(report.outcomes);

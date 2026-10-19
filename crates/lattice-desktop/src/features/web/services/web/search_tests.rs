@@ -36,6 +36,7 @@ fn input(query: &str, max_results: usize, page: usize) -> WebSearchInput {
         kind: None,
         subject: None,
         identifier: None,
+        ecosystem: None,
         site: None,
         after: None,
         max_results,

@@ -368,6 +368,16 @@ fn each_kind_gets_its_waves() {
             ],
         ),
         (
+            "package named without its registry: its owner first, then every registry",
+            with_subject(need(K::Package), "requests", Vec::new()),
+            true,
+            vec![
+                w(&["github", "crates_io", "npm"], &[], false),
+                w(&["site_discovery@owner"], &[], false),
+                w(&["duckduckgo@owner", "bing_html@owner"], &[], false),
+            ],
+        ),
+        (
             "paper: OpenAlex + Crossref, then S2 + arXiv, then Unpaywall and the engines",
             need(K::Paper),
             false,

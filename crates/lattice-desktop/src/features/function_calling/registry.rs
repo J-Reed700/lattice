@@ -36,6 +36,7 @@
 
 use crate::features::function_calling::FunctionRegistryTrait;
 use lattice_core::application::contracts::tools::{RegistryStats, ToolDefinition};
+use lattice_core::domain::sourcing::Ecosystem;
 use lattice_core::shared::error::{AppError, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -451,6 +452,11 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                 "identifier": {
                     "type": "string",
                     "description": "Optional exact id: DOI, arXiv id, 'npm:react', 'crates:tokio', 'pypi:requests', 'rfc:9110', 'celex:32016R0679'"
+                },
+                "ecosystem": {
+                    "type": "string",
+                    "enum": Ecosystem::ALL.map(Ecosystem::as_str),
+                    "description": "For a package: the registry it is published in, from the language you are working in. Without it the name is looked up in every registry, and a name several registries hold is nobody's"
                 },
                 "site": {
                     "type": "string",

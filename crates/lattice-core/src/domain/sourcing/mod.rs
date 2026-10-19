@@ -13,6 +13,7 @@ pub mod lead;
 pub mod need;
 pub mod outcome;
 pub mod policy;
+pub mod records;
 
 pub use canonical::{lead_key, unwrap_archive, ArchiveCopy, CanonicalKey};
 pub use descriptor::{
@@ -26,7 +27,9 @@ pub use health::{
 };
 pub use lead::{Lead, LeadKind, LinkPlace, Near, OwnerResolution, OwnerSource, Terms};
 pub use need::{
-    Ecosystem, Freshness, Identifier, NeedKind, Origin, SourceNeed, SubjectHint, SubjectKind,
+    Ecosystem, Freshness, Identifier, NeedKind, Origin, PackageRef, SourceNeed, SubjectHint,
+    SubjectKind,
 };
 pub use outcome::{FailureCause, FinderOutcome, FinderResult, Findings, SkipReason};
 pub use policy::{BreakerTrip, SourcingPolicy};
+pub use records::{asserted_owner, records_on_owner, registry_owner};

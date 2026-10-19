@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, Ecosystem, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
-    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role,
-    SourceNeed, WaveSlot,
+    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, PackageRef, Privacy, RatePolicy, Reach,
+    Role, SourceNeed, WaveSlot,
 };
 use url::Url;
 
@@ -82,7 +82,13 @@ fn derive_owner(
         .or_else(|| Origin::parse(&format!("https://rubygems.org/gems/{name}")))
 }
 
-fn leads_from(payload: &serde_json::Value, page: usize) -> Result<Vec<Lead>, FailureCause> {
+/// Leads for each gem in `payload`; when the need names a package, only its
+/// record (a search also returns gems that merely share words).
+fn leads_from(
+    payload: &serde_json::Value,
+    page: usize,
+    named: Option<PackageRef<'_>>,
+) -> Result<Vec<Lead>, FailureCause> {
     let Some(items) = payload.as_array() else {
         return Err(FailureCause::Parse("expected array of gems".to_string()));
     };
@@ -92,6 +98,9 @@ fn leads_from(payload: &serde_json::Value, page: usize) -> Result<Vec<Lead>, Fai
         let Some(name) = clean_str(gem.get("name").and_then(serde_json::Value::as_str)) else {
             continue;
         };
+        if named.is_some_and(|package| !package.is_record(Ecosystem::RubyGems, name)) {
+            continue;
+        }
         let info = clean_str(gem.get("info").and_then(serde_json::Value::as_str));
         let homepage_uri = clean_str(gem.get("homepage_uri").and_then(serde_json::Value::as_str));
         let documentation_uri = clean_str(
@@ -163,20 +172,8 @@ impl SourceFinder for RubyGems {
 
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
         let started = Instant::now();
-        let query_term = if !need.query.trim().is_empty() {
-            need.query.trim()
-        } else if let Some(pkg) = need.subject.as_ref().and_then(|s| {
-            s.identifiers.iter().find_map(|id| match id {
-                Identifier::PackageName { name, .. } => Some(name.as_str()),
-                _ => None,
-            })
-        }) {
-            pkg
-        } else if let Some(subject) = need.subject.as_ref() {
-            subject.name.trim()
-        } else {
-            ""
-        };
+        let named = need.package();
+        let query_term = named.map_or(need.query.trim(), |package| package.name);
         let query = urlencoding::encode(query_term).into_owned();
         let url = format!("{}/api/v1/search.json?query={query}&page={page}", self.api);
         let headers =
@@ -195,7 +192,7 @@ impl SourceFinder for RubyGems {
                 )
             }
         };
-        match leads_from(&payload, page) {
+        match leads_from(&payload, page, named) {
             Ok(leads) => answered(&self.descriptor, leads, started),
             Err(cause) => failed(&self.descriptor, cause, started),
         }

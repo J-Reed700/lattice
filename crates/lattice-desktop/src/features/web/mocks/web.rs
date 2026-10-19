@@ -304,6 +304,7 @@ pub struct ScriptedFinder {
     queued:
         std::sync::Mutex<std::collections::VecDeque<lattice_core::domain::sourcing::FailureCause>>,
     always: Option<lattice_core::domain::sourcing::FailureCause>,
+    owner: Option<lattice_core::domain::sourcing::Origin>,
     calls: std::sync::Mutex<Vec<(String, usize)>>,
 }
 
@@ -319,7 +320,16 @@ impl ScriptedFinder {
             per_page,
             queued: std::sync::Mutex::new(std::collections::VecDeque::new()),
             always: None,
+            owner: None,
             calls: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Every lead asserts `owner`, as a registry or code host record does.
+    pub fn asserting_owner(self, owner: lattice_core::domain::sourcing::Origin) -> Self {
+        Self {
+            owner: Some(owner),
+            ..self
         }
     }
 
@@ -386,6 +396,7 @@ impl lattice_core::application::ports::SourceFinder for ScriptedFinder {
                     .expect("scripted lead URL");
                 Lead {
                     title: Some(format!("{id} {rank}")),
+                    owner: self.owner.clone(),
                     ..Lead::page(url, id.clone(), rank)
                 }
             })
