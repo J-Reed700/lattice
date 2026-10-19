@@ -224,10 +224,10 @@ jobs:
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Intel hosted runners need close to an hour for the release link alone
-    # after building the native x64 sidecar. Leave room for the actual package
-    # and runtime checks instead of cancelling a healthy build at minute 60.
-    timeout-minutes: 90
+    # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
+    # job cancelled at a cap never saves its Rust cache, so main never got a
+    # warm cache and every Intel run after it started cold and was cancelled
+    # too. GitHub's own six-hour limit still ends a hung job.
     strategy:
       fail-fast: false
       matrix:
