@@ -3,7 +3,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Paperclip } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import { TiptapViewer } from '@/components/TiptapEditor';
+import { TiptapViewer, textWithFormulas } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
 import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
 import { CitationHoverCard } from '@/features/chat/components/CitationHoverCard';
@@ -29,6 +29,12 @@ import { useCitationDisplayStore } from '@/features/reading/stores/citationDispl
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
+
+/** The answer as the reader sees it, each formula as its source. */
+function readAnswer(answer: HTMLElement | null): string {
+  if (!answer) return '';
+  return textWithFormulas(answer) ?? answer.innerText;
+}
 
 interface MessageProps {
   message: DisplayMessage;
@@ -371,7 +377,7 @@ export const Message = memo(({
           onEdit={() => setIsEditing(true)}
           onBranch={handleBranch}
           tangentSource={!isUser && !isPending && !isFailed && message.status !== 'processing' && conversationId && messageId ? {
-            conversationId, messageId, getText: () => answerRef.current?.innerText || normalizedMarkdownContent,
+            conversationId, messageId, getText: () => readAnswer(answerRef.current) || normalizedMarkdownContent,
           } : undefined}
           answerSources={isAssistantWithSources ? sources : undefined}
           answerMarkdown={isUser ? undefined : normalizedMarkdownContent}

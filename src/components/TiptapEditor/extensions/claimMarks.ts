@@ -47,24 +47,31 @@ function comparable(sentence: string): string {
   return out;
 }
 
+/** Tiptap's `renderText`: what an atom (a formula) reads as in the text. */
+type LeafText = (props: { node: ProseMirrorNode; pos: number; parent: ProseMirrorNode; index: number }) => string;
+
 /** The document's letters and digits, each with the position it came from. */
 function comparableDocument(doc: ProseMirrorNode): { text: string; positions: number[] } {
   let text = '';
   const positions: number[] = [];
-  doc.descendants((node, pos, parent) => {
-    if (!node.isText || !node.text) return;
+  doc.descendants((node, pos, parent, index) => {
     if (parent?.type.spec.code) return;
+    // A formula's source is in the sentence the verifier cut (`$\frac{a}{b}$`);
+    // its letters all sit at the formula's one position.
+    const leafText = node.isAtom && !node.isText ? (node.type.spec.toText as LeafText | undefined) : undefined;
+    const source = node.isText ? node.text : leafText && parent ? leafText({ node, pos, parent, index }) : undefined;
+    if (!source) return;
     if (node.marks.some((mark) => mark.type.spec.code)) return;
     const skipped = new Set<number>();
-    for (const match of node.text.matchAll(CITATION_MARKER)) {
+    for (const match of source.matchAll(CITATION_MARKER)) {
       const start = match.index ?? 0;
       for (let i = start; i < start + match[0].length; i += 1) skipped.add(i);
     }
-    for (let i = 0; i < node.text.length; i += 1) {
-      const unit = skipped.has(i) ? '' : comparableUnit(node.text[i] ?? '');
+    for (let i = 0; i < source.length; i += 1) {
+      const unit = skipped.has(i) ? '' : comparableUnit(source[i] ?? '');
       if (!unit) continue;
       text += unit;
-      positions.push(pos + i);
+      positions.push(node.isText ? pos + i : pos);
     }
   });
   return { text, positions };

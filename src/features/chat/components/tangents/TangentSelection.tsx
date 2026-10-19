@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { Copy, GitBranch } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+import { selectedTextWithFormulas } from '@/components/TiptapEditor';
 import { toast } from '@/stores/toastStore';
 
 export interface TangentSelectionData {
@@ -39,7 +40,8 @@ export function TangentSelection({ conversationId, messageId, enabled, children 
     if (!range || range.isCollapsed || !range.rangeCount) return null;
     const selectedRange = range.getRangeAt(0);
     if (!bodyRef.current?.contains(selectedRange.startContainer) || !bodyRef.current.contains(selectedRange.endContainer)) return null;
-    const text = range.toString().trim();
+    // A formula reads as its source, not as KaTeX's drawing of it.
+    const text = (selectedTextWithFormulas(selectedRange) ?? range.toString()).trim();
     return text ? { text, rect: selectedRange.getBoundingClientRect() } : null;
   }, []);
 
