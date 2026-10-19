@@ -26,7 +26,7 @@ Goals
 1. A model declared to see gets pictures as pixels: attached images in the turn they were sent in, and `find_image` candidates in a side pick.
 2. One capability contract for every backend: bundled sidecar, remote llama.cpp, Ollama, OpenAI, Anthropic, Google. Declared, never probed.
 3. Encoder geometry per model drives downscaling and token cost; both are derived, not constants. A conservative default exists for an undeclared geometry and says so in the UI.
-4. Image tokens go through the same accounting as text: the turn budget, `ensure_fits`, `measured_body`, the prefill allowance.
+4. Image tokens go through the same accounting as text: the turn budget, `room_for_answer`, `measured_body`, the prefill allowance.
 5. Prompt prefix stays stable: pictures only in the turn that needs them, captions afterwards; tool list unchanged across turns; no candidate pictures in the conversation transcript.
 6. Local sidecar vision first-class: projector in the catalog, downloadable per model, `--mmproj` at launch, speculative decoding kept.
 7. Architecture ratchets unchanged: new cross-feature calls go through lattice-core ports; no file over 800 lines; bindings regenerated; UI on the app's tokens in both themes.
@@ -76,7 +76,7 @@ flowchart LR
     SVC --> RP[repository.rs\norigin=attachment]
   end
   subgraph llm[features::llm]
-    LLM[ScheduledLlm → LlamaCppLlm · OllamaClient · CloudLlm\nimage parts → wire format\nimage tokens → ensure_fits · measured_body]
+    LLM[ScheduledLlm → LlamaCppLlm · OllamaClient · CloudLlm\nimage parts → wire format\nimage tokens → room_for_answer · measured_body]
     SC[sidecar_manager\n--mmproj + draft-mtp]
     ROLES[di/roles.rs\ndeclaration → adapter.vision]
   end
@@ -310,7 +310,7 @@ pub fn prepare(source: &[u8], mime: &str, geometry: VisionGeometry, max_tokens: 
 
 - Planning (`chat/turn/budget.rs::plan`): `BudgetRequest::current_input` gains the pictures' tokens, computed from the rows' stored `width`/`height` through `geometry.plan` — no decoding needed to budget. Pictures are the reader's own material, paid with the message before evidence (passages, folder block, memory) is sized, as attachments are.
 - Shrink, then drop (`turn/pictures.rs`): if the fixed parts (system + tools + message + pictures) exceed capacity, re-fit pictures from the last attached to the first with `fit_within(remaining)`, down to `min_tokens`; if still over, drop pictures last-first (each becomes its caption line plus a `status` event "picture not shown: the window has no room"); if still over, the turn is refused by #85 as today. The counts are logged: `chat.pictures_carried { count, tokens, shrunk, dropped }`.
-- `ensure_fits` and `measured_body`: `prompt_tokens += request.image_tokens()` in both the estimate and the exact path; `RequestSize` gains `image_tokens: usize` and `describe()` reads "a prompt of 7,900 (text counted exactly; 2,052 tokens for 2 pictures estimated from the model's declared geometry)". The `counted_exactly` flag stays about the text.
+- `room_for_answer` and `measured_body`: `prompt_tokens += request.image_tokens()` in both the estimate and the exact path; `RequestSize` gains `image_tokens: usize` and `describe()` reads "a prompt of 7,900 (text counted exactly; 2,052 tokens for 2 pictures estimated from the model's declared geometry)". The `counted_exactly` flag stays about the text.
 - `prefill_allowance`: image tokens count as prompt tokens. Encoding a picture costs more wall time per token than text does; the allowance is what the live checklist watches (§19.3), and raising it is derived from the measured tokens, never a fixed add.
 - The side pick (§9) is its own request through the same scheduler, so it gets the same check.
 
@@ -441,7 +441,7 @@ Speculative decoding with a projector: upstream issue ggml-org/llama.cpp#19712 (
 
 Unit (lattice-core): `domain/models/vision/tests.rs` — `Grid` 28 and 32 (`1280×1600` → fit and tokens; never upscales `400×300`; `fit_within` halves area until under budget; stops at `min_pixels`), `Fixed` (constant tokens; `fit_within` is `None` below), `Tiles` (OpenAI `1024×1024` = 85 + 4·170 = 765; max tiles), `CONSERVATIVE_DEFAULT` ≥ each preset's tokens at its fit for three sizes, `cloud_vision_default` names, preset validation; `completion_input` tests — `attach_images_to_last_user` on both paths, `strip_images`, `text()` excludes base64; `markdown_media::picture_captions`.
 
-Adapters: `llama_cpp/request_tests.rs` — `Multimodal` body shape; base64 not counted (`plain_prompt_tokens` of a 400 KB image ≈ its text + declared tokens); `measured_body` adds image tokens and the refusal names pictures; a `ServerConfig` without `vision` refuses image parts; `prefill_allowance` ignores base64; non-user role refused. `cloud/tests.rs` — OpenAI `input_image`, Anthropic `image` block, Google `image_url`; refusal without `vision`. `engine/ollama_client/tests.rs` — `images` field. `scheduler/tests.rs` — `ensure_fits` counts images in estimate and exact paths; message text. `scheduled`/`pinned`/`patient_model` delegate `vision()`.
+Adapters: `llama_cpp/request_tests.rs` — `Multimodal` body shape; base64 not counted (`plain_prompt_tokens` of a 400 KB image ≈ its text + declared tokens); `measured_body` adds image tokens and the refusal names pictures; a `ServerConfig` without `vision` refuses image parts; `prefill_allowance` ignores base64; non-user role refused. `cloud/tests.rs` — OpenAI `input_image`, Anthropic `image` block, Google `image_url`; refusal without `vision`. `engine/ollama_client/tests.rs` — `images` field. `scheduler/tests.rs` — `room_for_answer` counts images in estimate and exact paths; message text. `scheduled`/`pinned`/`patient_model` delegate `vision()`.
 
 Web images: `prepare` (decode → orient → fit → encode for JPEG/PNG/GIF/WebP fixtures generated in the test; alpha flattened; limits refuse a crafted 20k×20k header; EXIF orientation 6 rotates), cache path and hit, `gc` removes `prepared/<id>-*`, `store_attachment` (origin, refs `att-1..`, nullable columns), `rows_for_ids` ignores other conversations, `attach_ids_to_message` idempotent, `release_images`, `restage`, the migration applied on the sqlx test pool.
 
@@ -467,7 +467,7 @@ lattice-core
 
 features/llm
 - `llama_cpp/mod.rs` (`ServerConfig.vision`, `sidecar` parameter, `chat_messages`, refusal), `llama_cpp/request.rs` (typed counting), `llama_cpp/retry.rs`, `llama_cpp/request_tests.rs`.
-- `scheduler/rejection.rs` (`RequestSize.image_tokens`, `describe`, `request_texts`), `scheduler/scheduled.rs` (`ensure_fits`, counters, delegate), `scheduler/tests.rs`.
+- `scheduler/rejection.rs` (`RequestSize.image_tokens`, `describe`, `request_texts`), `scheduler/scheduled.rs` (`room_for_answer`, counters, delegate), `scheduler/tests.rs`.
 - `cloud.rs` → `cloud/messages.rs` (new) + `vision` field; `cloud/tests.rs`.
 - `engine/ollama_client.rs`, `engine/ollama_client/tests.rs`.
 - `engine/vision.rs` (new); `engine/factory.rs` (`sidecar_config`, `create_local_llm_sidecar`, `create_ollama_llm`, mock `with_vision`); `engine/sidecar_manager/{config,readiness,tests}.rs`; `di/roles.rs` (declarations → adapters); `instances/pinned.rs`.

@@ -83,14 +83,14 @@ async fn the_estimate_charges_a_pictures_declared_tokens_and_the_refusal_says_so
     let model = Arc::new(Recorder::default());
     let llm = scheduled(model.clone());
     let refused = llm
-        .complete(&with_picture("What is this?", 7_900))
+        .complete(&with_picture("What is this?", 8_200))
         .await
         .unwrap_err();
     assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
     let told = refused.to_string();
     assert!(
         told.contains(
-            "text estimated; 7900 tokens for 1 picture estimated from the model's declared geometry"
+            "text estimated; 8200 tokens for 1 picture estimated from the model's declared geometry"
         ),
         "{told}"
     );
@@ -117,10 +117,10 @@ async fn the_exact_count_adds_the_pictures_to_the_counted_text() {
     // 6,000 text tokens by the estimate; the server counts 3,000.
     let text = "x".repeat(24_000);
     llm.complete(&with_picture(&text, 4_000)).await.unwrap();
-    let refused = llm.complete(&with_picture(&text, 5_000)).await.unwrap_err();
+    let refused = llm.complete(&with_picture(&text, 5_200)).await.unwrap_err();
     let told = refused.to_string();
-    assert!(told.contains("a prompt of 8000"), "{told}");
-    assert!(told.contains("text counted exactly; 5000 tokens"), "{told}");
+    assert!(told.contains("prompt is 8200 tokens"), "{told}");
+    assert!(told.contains("text counted exactly; 5200 tokens"), "{told}");
     assert_eq!(model.seen.lock().len(), 1);
 }
 
