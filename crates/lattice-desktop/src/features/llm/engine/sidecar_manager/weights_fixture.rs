@@ -14,7 +14,12 @@ pub(crate) fn sparse_file(path: &Path, bytes: u64) {
     file.set_len(bytes).unwrap();
 }
 
+// SAFETY: the handle is the open file's own and outlives the call, no input
+// or output buffer is passed, and `returned` is a live u32 the call writes
+// the byte count into. A failure comes back as an error, not undefined
+// behaviour.
 #[cfg(windows)]
+#[allow(unsafe_code)]
 fn mark_sparse(file: &std::fs::File) {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
