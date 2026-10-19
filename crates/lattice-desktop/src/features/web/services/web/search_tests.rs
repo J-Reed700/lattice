@@ -39,6 +39,7 @@ fn input(query: &str, max_results: usize, page: usize) -> WebSearchInput {
         ecosystem: None,
         site: None,
         after: None,
+        as_of: None,
         max_results,
         page,
         offset: 0,
@@ -174,5 +175,66 @@ fn only_named_engines_pin_a_search() {
     assert_eq!(
         super::web_need(&pinned, "rust async", 5).1,
         Some(vec![duckduckgo::ID, bing_html::ID])
+    );
+}
+
+/// A dated read wins over a newer-than date; without one, `after` is kept.
+#[test]
+fn a_dated_read_routes_to_the_archive_and_after_stays_a_freshness_bound() {
+    use chrono::NaiveDate;
+    use lattice_core::application::services::sourcing::routed_kind;
+    use lattice_core::domain::sourcing::{Freshness, NeedKind};
+    let day = |text: &str| NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap();
+    let dated = WebSearchInput {
+        kind: Some("official_docs".into()),
+        identifier: Some("https://www.python.org/downloads/".into()),
+        after: Some("2018-01-01".into()),
+        as_of: Some("2019-03-01".into()),
+        ..input("python downloads", 5, 1)
+    };
+    let (need, _) = super::web_need(&dated, "python downloads", 5);
+    assert_eq!(need.freshness, Freshness::AsOf(day("2019-03-01")));
+    assert_eq!(routed_kind(&need), NeedKind::Archive);
+
+    let newer = WebSearchInput {
+        as_of: None,
+        alternatives: vec!["CPython latest".into()],
+        ..dated
+    };
+    let (need, _) = super::web_need(&newer, "python downloads", 5);
+    assert_eq!(need.freshness, Freshness::After(day("2018-01-01")));
+    assert_eq!(need.alternatives, ["CPython latest"]);
+}
+
+/// A `leads` search for a paper's references goes to the finders that read
+/// a work's reference list, never to the general engines. Its query is the
+/// DOI, so the encyclopedia's article lookup (wave 1) finds no article and
+/// the reference-list finders (wave 2) run.
+#[tokio::test]
+async fn a_leads_need_is_routed_to_the_reference_list_finders() {
+    use crate::features::web::services::finders::{crossref, openalex, wikipedia};
+    let ddg = Arc::new(ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 10));
+    let wiki = Arc::new(ScriptedFinder::answering(wikipedia::DESCRIPTOR, 0));
+    let cross = Arc::new(ScriptedFinder::answering(crossref::DESCRIPTOR, 3));
+    let alex = Arc::new(ScriptedFinder::answering(openalex::DESCRIPTOR, 3));
+    let service = web_service(&[(&ddg, 10), (&wiki, 0), (&cross, 3), (&alex, 3)]);
+    let leads = WebSearchInput {
+        kind: Some("leads".into()),
+        identifier: Some("10.48550/arXiv.1706.03762".into()),
+        providers: Vec::new(),
+        ..input("10.48550/arXiv.1706.03762", 12, 1)
+    };
+    let output = service.search_web(&leads).await.unwrap();
+    let routed: Vec<&str> = output
+        .outcomes
+        .iter()
+        .map(|outcome| outcome.finder.as_str())
+        .collect();
+    for finder in ["wikipedia", "crossref", "openalex"] {
+        assert!(routed.contains(&finder), "{finder} not routed: {routed:?}");
+    }
+    assert!(
+        ddg.calls().is_empty(),
+        "no general engine reads a reference list"
     );
 }

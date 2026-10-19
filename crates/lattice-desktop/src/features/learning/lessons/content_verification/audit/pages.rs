@@ -34,10 +34,10 @@ impl VerifierWeb for VerifierPages {
         Ok(web_research::search_need(self.web.as_ref(), need)
             .await?
             .into_iter()
-            .map(|result| SearchHit {
-                title: result.title,
-                url: result.url,
-                snippet: result.snippet,
+            .map(|candidate| SearchHit {
+                title: candidate.result.title,
+                url: candidate.result.url,
+                snippet: candidate.result.snippet,
             })
             .collect())
     }

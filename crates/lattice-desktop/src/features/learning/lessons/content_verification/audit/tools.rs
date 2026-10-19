@@ -235,8 +235,9 @@ async fn run(name: &str, arguments: &Value, web: &dyn VerifierWeb, answer: &mut 
             .ok()
             .and_then(PlannedNeed::checked)
         {
-            None => "Search not run: give a query of 3 to 240 characters and one of the listed \
-                     kinds."
+            None => "Search not run: give a query and rewordings of 3 to 240 characters, one \
+                     of the listed kinds, dates as YYYY-MM-DD, and for asOf the page's address \
+                     as identifier."
                 .into(),
             Some(need) => match web.search(&need).await {
                 Ok(hits) => json!(hits
@@ -262,3 +263,7 @@ async fn run(name: &str, arguments: &Value, web: &dyn VerifierWeb, answer: &mut 
         other => format!("There is no tool named {other}."),
     }
 }
+
+#[cfg(test)]
+#[path = "tools_tests.rs"]
+mod tests;

@@ -88,7 +88,7 @@ fn only_an_insufficient_or_disputed_support_is_scrutinised() {
             None,
         ),
     ];
-    assert_eq!(review(&findings), Scrutiny::default());
+    assert_eq!(review(&findings, &[]), Scrutiny::default());
     assert!(!findings[0].wants_research());
     assert!(!findings[1].wants_research());
     assert!(findings[2].wants_research());
@@ -120,7 +120,7 @@ fn an_insufficient_support_becomes_a_targeted_gap_and_citations_to_follow() {
         ),
     ];
     assert!(findings.iter().all(Finding::wants_research));
-    let scrutiny = review(&findings);
+    let scrutiny = review(&findings, &[]);
     assert_eq!(
         scrutiny.follow,
         vec![Follow {
@@ -164,7 +164,7 @@ fn places_in_one_cited_page_are_followed_as_that_page_once() {
             Some(insufficient(vec![at("exercises"), at("summary")])),
         ),
     ];
-    let scrutiny = review(&findings);
+    let scrutiny = review(&findings, &[]);
     assert_eq!(
         scrutiny.follow,
         vec![Follow {
@@ -180,11 +180,84 @@ fn a_stale_support_asks_for_newer_material() {
     let next = vec![NextStep::FetchNewer {
         newer_primary: "python-org".into(),
     }];
-    let scrutiny = review(&[finding(
-        "The current stable Python is 3.13.",
-        ClaimVerdict::Supported,
-        Some(insufficient(next)),
-    )]);
+    let scrutiny = review(
+        &[finding(
+            "The current stable Python is 3.13.",
+            ClaimVerdict::Supported,
+            Some(insufficient(next)),
+        )],
+        &[],
+    );
     assert!(scrutiny.gaps[0].get("needsNewerThan").is_some());
     assert!(scrutiny.follow.is_empty());
+}
+
+/// A saved version with `url`, as research reads the program's sources.
+fn saved(id: &str, url: Option<&str>) -> LearningSourceDto {
+    LearningSourceDto {
+        id: id.into(),
+        title: id.into(),
+        url: url.map(str::to_owned),
+        excerpt: String::new(),
+        acquired_at: 0,
+    }
+}
+
+#[test]
+fn an_independent_source_gap_names_the_sites_its_supports_come_from() {
+    use lattice_core::domain::provenance::{
+        AddedBy, ClusterId, PassageKind, SourceDates, Support, TemporalValidity, Trust, TrustLevel,
+    };
+    let support = |id: &str| Support {
+        source_version_id: id.into(),
+        origin_cluster: ClusterId(id.into()),
+        trust: Trust {
+            level: TrustLevel::Established,
+            reasons: Vec::new(),
+            override_: None,
+        },
+        dates: SourceDates::default(),
+        passage: PassageKind::Direct,
+        temporal: TemporalValidity::Valid,
+        added_by: AddedBy::Research,
+        cited_urls: Vec::new(),
+        owner_hints: Vec::new(),
+    };
+    let mut trust = insufficient(vec![NextStep::SearchIndependent]);
+    trust.supports = vec![support("blog"), support("copy"), support("notes")];
+    let sources = [
+        saved("blog", Some("https://blog.example.com/strict-mode")),
+        // An archived copy of the same site is the same origin.
+        saved(
+            "copy",
+            Some("https://web.archive.org/web/20250101000000/https://www.example.com/strict"),
+        ),
+        // A file has no web origin to avoid.
+        saved("notes", None),
+    ];
+    let scrutiny = review(
+        &[finding(
+            "Strict mode follows the schema.",
+            ClaimVerdict::Supported,
+            Some(trust),
+        )],
+        &sources,
+    );
+    let gap = &scrutiny.gaps[0];
+    assert_eq!(gap["independentOf"], json!(["example.com"]));
+
+    let excluded = excluded_sites(gap);
+    assert!(published_on("https://docs.example.com/guide", &excluded));
+    assert!(published_on(
+        "https://web.archive.org/web/2024/https://example.com/old",
+        &excluded
+    ));
+    assert!(!published_on("https://independent.org/review", &excluded));
+    // Only a gap that asks for independence excludes anything.
+    let mut owner_gap = gap.clone();
+    owner_gap
+        .as_object_mut()
+        .unwrap()
+        .remove("needsIndependentSource");
+    assert!(excluded_sites(&owner_gap).is_empty());
 }

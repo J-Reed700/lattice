@@ -28,7 +28,7 @@ pub struct WebSearchInput {
     pub query: String,
 
     /// Optional source kind (`official_docs`, `package`, `paper`, `standard`,
-    /// `law`, `community`, `encyclopedia`, `web`).
+    /// `law`, `community`, `encyclopedia`, `leads`, `web`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
 
@@ -54,6 +54,12 @@ pub struct WebSearchInput {
     /// Optional ISO date (`YYYY-MM-DD`): only pages published after this date.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
+
+    /// Optional ISO date (`YYYY-MM-DD`): a dated read of the page whose
+    /// address is `identifier`, the archived copy nearest this date. It wins
+    /// over `after`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
 
     /// Maximum number of web results to return for this page (1-50)
     #[serde(default = "default_max_results")]
@@ -407,6 +413,7 @@ mod tests {
             ecosystem: None,
             site: None,
             after: None,
+            as_of: None,
             max_results: default_max_results(),
             page: default_web_page(),
             offset: 0,

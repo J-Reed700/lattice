@@ -40,6 +40,9 @@ impl WebService {
             .offset
             .saturating_add(page.saturating_sub(1).saturating_mul(max_results));
         let (need, only) = web_need(input, query, offset.saturating_add(max_results));
+        if let Freshness::AsOf(day) = need.freshness {
+            return self.dated_search(query, page, offset, &need, day).await;
+        }
         let started = Instant::now();
         let search = self
             .sourcing
@@ -58,6 +61,64 @@ impl WebService {
             "Web search completed"
         );
         Ok(output)
+    }
+
+    /// A dated need (`as_of`) is a read, not a search: the archive finders
+    /// look a page up by its address, so the need must name one as its
+    /// identifier. The answer is the archived copy nearest `day`, at the
+    /// snapshot address a reference capture reads.
+    async fn dated_search(
+        &self,
+        query: &str,
+        page: usize,
+        offset: usize,
+        need: &SourceNeed,
+        day: chrono::NaiveDate,
+    ) -> Result<WebSearchOutput> {
+        use lattice_core::domain::sourcing::Identifier;
+        let address = need
+            .subject
+            .iter()
+            .flat_map(|subject| &subject.identifiers)
+            .find_map(|identifier| match identifier {
+                Identifier::Url(address) => Some(address.as_str()),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                AppError::InvalidInput(
+                    "A dated read names the address of the page to read as its identifier".into(),
+                )
+            })?;
+        let read = self.read_page_as_of(address, day).await?.output;
+        let copy = WebSearchResult {
+            title: read.title.clone().unwrap_or_else(|| read.url.clone()),
+            url: read.url.clone(),
+            snippet: String::new(),
+            published_date: match read.read_via {
+                lattice_core::application::contracts::web::ReadVia::Archive {
+                    captured_at, ..
+                } => Some(captured_at),
+                _ => None,
+            },
+            source: Some(crate::features::web::services::wayback::REPLAY_ID.to_string()),
+        };
+        let results: Vec<WebSearchResult> = std::iter::once(copy).skip(offset).collect();
+        Ok(WebSearchOutput {
+            result_count: results.len(),
+            results,
+            query: query.to_string(),
+            page,
+            offset,
+            total_results: 1,
+            has_more: false,
+            providers_used: vec![crate::features::web::services::wayback::REPLAY_ID.to_string()],
+            unique_query_count: 1,
+            unique_url_count: 1,
+            unique_domain_count: 1,
+            followup_queries: Vec::new(),
+            outcomes: Vec::new(),
+            owner: None,
+        })
     }
 }
 
@@ -209,7 +270,8 @@ fn parse_identifier(raw: &str) -> Option<lattice_core::domain::sourcing::Identif
 }
 
 /// The tool's input as a `SourceNeed`: the query, optional `kind`, `subject`,
-/// `identifier`, `site`, `after`, and rewordings (`alternatives` + `followup_queries`).
+/// `identifier`, `site`, `as_of` (a dated read, which wins) or `after`, and
+/// rewordings (`alternatives` + `followup_queries`).
 fn web_need(
     input: &WebSearchInput,
     query: &str,
@@ -279,11 +341,12 @@ fn web_need(
     });
 
     let scope = input.site.as_deref().and_then(Origin::parse);
-    let freshness = input
-        .after
-        .as_deref()
-        .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
-        .map(Freshness::After)
+    let day = |value: Option<&str>| {
+        value.and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
+    };
+    let freshness = day(input.as_of.as_deref())
+        .map(Freshness::AsOf)
+        .or_else(|| day(input.after.as_deref()).map(Freshness::After))
         .unwrap_or(Freshness::Any);
 
     let mut named: Vec<FinderId> = Vec::new();
