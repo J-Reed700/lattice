@@ -30,8 +30,8 @@ use futures::StreamExt;
 use lattice_core::application::ports::Budget;
 use lattice_core::application::services::sourcing::{cache_policy, Plan, StepScope};
 use lattice_core::domain::sourcing::{
-    canonical, classify, Admission, FailureCause, FailureClass, FinderId, FinderOutcome,
-    FinderResult, Lead, Origin, SkipReason, SourceNeed, SourcingPolicy,
+    asserted_owner, canonical, classify, Admission, FailureCause, FailureClass, FinderId,
+    FinderOutcome, FinderResult, Lead, Origin, SkipReason, SourceNeed, SourcingPolicy,
 };
 use tracing::info;
 
@@ -84,8 +84,8 @@ pub(super) struct RunReport {
     pub alternatives_run: Vec<String>,
     /// Every planned wave ran and no step may hold more.
     pub exhausted: bool,
-    /// The subject owner's origin, resolved before wave 1 or asserted by a
-    /// registry/standards finder in an earlier wave.
+    /// The subject owner's origin, resolved before wave 1 or asserted by an
+    /// earlier wave's lookup of the named subject (`asserted_owner`).
     pub owner: Option<Origin>,
 }
 
@@ -223,11 +223,13 @@ impl<'a> Runner<'a> {
                 self.deepen(&mut report, range, want, &mut fused).await;
             }
             if report.owner.is_none() {
-                report.owner = report
-                    .steps
-                    .iter()
-                    .flat_map(|step| &step.leads)
-                    .find_map(|lead| lead.owner.clone());
+                report.owner = asserted_owner(
+                    self.need,
+                    report
+                        .steps
+                        .iter()
+                        .map(|step| (step.entry.descriptor().reaches, step.leads.as_slice())),
+                );
             }
             last_wave_new = fused.saturating_sub(before);
         }

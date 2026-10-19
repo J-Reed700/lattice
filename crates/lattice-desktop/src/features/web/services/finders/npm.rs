@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, Ecosystem, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
-    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role,
-    SourceNeed, WaveSlot,
+    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, PackageRef, Privacy, RatePolicy, Reach,
+    Role, SourceNeed, WaveSlot,
 };
 use serde::Deserialize;
 use url::Url;
@@ -121,12 +121,21 @@ fn sanitize_repo_url(s: &str) -> Option<Url> {
     }
 }
 
-fn leads_from_objects(objects: Vec<NpmObject>, page: usize) -> Vec<Lead> {
+/// Leads for each package in `objects`; when the need names a package, only
+/// its record (a search also returns packages that merely share words).
+fn leads_from_objects(
+    objects: Vec<NpmObject>,
+    page: usize,
+    named: Option<PackageRef<'_>>,
+) -> Vec<Lead> {
     let mut leads = Vec::new();
     for obj in objects {
         let pkg = obj.package;
         let name = pkg.name.trim();
         if name.is_empty() {
+            continue;
+        }
+        if named.is_some_and(|package| !package.is_record(Ecosystem::Npm, name)) {
             continue;
         }
 
@@ -214,7 +223,8 @@ impl SourceFinder for Npm {
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
         let started = Instant::now();
         let offset = rank_of(page, RESULTS_PER_PAGE, 0).saturating_sub(1);
-        let query = urlencoding::encode(need.query.trim());
+        let named = need.package();
+        let query = urlencoding::encode(named.map_or(need.query.trim(), |package| package.name));
         let url = format!(
             "{}/-/v1/search?text={query}&size={RESULTS_PER_PAGE}&from={offset}",
             self.api
@@ -238,7 +248,7 @@ impl SourceFinder for Npm {
             }
         };
 
-        let leads = leads_from_objects(payload.objects, page);
+        let leads = leads_from_objects(payload.objects, page, named);
         answered(&self.descriptor, leads, started)
     }
 }

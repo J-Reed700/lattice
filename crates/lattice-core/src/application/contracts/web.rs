@@ -40,6 +40,13 @@ pub struct WebSearchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
 
+    /// The registry a package is published in (`pypi`, `crates`, `npm`,
+    /// `nuget`, `rubygems`, `maven`, `go`). Without it a named package is
+    /// looked up in every registry and trusted only where that is
+    /// unambiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ecosystem: Option<String>,
+
     /// Optional host or host/path to search within (`learn.microsoft.com`, `docs.python.org/3`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site: Option<String>,
@@ -397,6 +404,7 @@ mod tests {
             kind: None,
             subject: None,
             identifier: None,
+            ecosystem: None,
             site: None,
             after: None,
             max_results: default_max_results(),

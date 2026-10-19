@@ -90,12 +90,47 @@ pub struct SourceNeed {
 impl SourceNeed {
     /// The package ecosystem the need names through an identifier, if any.
     pub fn ecosystem(&self) -> Option<Ecosystem> {
-        self.subject.as_ref().and_then(|subject| {
-            subject.identifiers.iter().find_map(|id| match id {
-                Identifier::PackageName { ecosystem, .. } => Some(*ecosystem),
-                _ => None,
+        self.package().and_then(|package| package.ecosystem)
+    }
+
+    /// The package the need names: an identifier's exact name and ecosystem,
+    /// or a package need's subject, whose ecosystem is then unknown. A need
+    /// that names none is asking which packages exist, and a registry's
+    /// search answers it.
+    pub fn package(&self) -> Option<PackageRef<'_>> {
+        let subject = self.subject.as_ref()?;
+        let named = subject.identifiers.iter().find_map(|id| match id {
+            Identifier::PackageName { ecosystem, name } => Some(PackageRef {
+                ecosystem: Some(*ecosystem),
+                name: name.trim(),
+            }),
+            _ => None,
+        });
+        named
+            .or_else(|| {
+                (self.kind == NeedKind::Package).then(|| PackageRef {
+                    ecosystem: None,
+                    name: subject.name.trim(),
+                })
             })
-        })
+            .filter(|package| !package.name.is_empty())
+    }
+}
+
+/// A package a need names, and its registry when the caller knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackageRef<'a> {
+    pub ecosystem: Option<Ecosystem>,
+    pub name: &'a str,
+}
+
+impl PackageRef<'_> {
+    /// True when `registry`'s record named `record` is this package: the
+    /// registry is the one named, if any, and the names are the same under
+    /// that registry's rules.
+    pub fn is_record(&self, registry: Ecosystem, record: &str) -> bool {
+        self.ecosystem.is_none_or(|named| named == registry)
+            && registry.same_package(self.name, record)
     }
 }
 
@@ -165,6 +200,84 @@ pub enum Ecosystem {
     RubyGems,
     Maven,
     Go,
+}
+
+impl Ecosystem {
+    /// Every ecosystem, in declaration order (the tool and planner schemas
+    /// list their names).
+    pub const ALL: [Ecosystem; 7] = [
+        Ecosystem::Crates,
+        Ecosystem::PyPi,
+        Ecosystem::Npm,
+        Ecosystem::NuGet,
+        Ecosystem::RubyGems,
+        Ecosystem::Maven,
+        Ecosystem::Go,
+    ];
+
+    /// The name the tool and planner schemas use (`pypi`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Ecosystem::Crates => "crates",
+            Ecosystem::PyPi => "pypi",
+            Ecosystem::Npm => "npm",
+            Ecosystem::NuGet => "nuget",
+            Ecosystem::RubyGems => "rubygems",
+            Ecosystem::Maven => "maven",
+            Ecosystem::Go => "go",
+        }
+    }
+
+    /// The ecosystem a schema name means, in any case.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        Self::ALL
+            .into_iter()
+            .find(|ecosystem| ecosystem.as_str().eq_ignore_ascii_case(raw))
+    }
+
+    /// True when `named` and `record` are one package under this registry's
+    /// naming rules. Case is folded everywhere, because `named` comes from
+    /// prose. PyPI treats any run of `-`, `_` and `.` as one separator
+    /// (PEP 503) and crates.io treats `-` and `_` as one. Maven names a
+    /// package `group:artifact` and Go by module path, so a bare name there
+    /// matches the artifact or the path's last segment.
+    pub fn same_package(self, named: &str, record: &str) -> bool {
+        let (named, record) = (named.trim(), record.trim());
+        match self {
+            Ecosystem::PyPi => pep503(named) == pep503(record),
+            Ecosystem::Crates => {
+                let fold = |name: &str| name.to_ascii_lowercase().replace('_', "-");
+                fold(named) == fold(record)
+            }
+            Ecosystem::Maven if !named.contains(':') => record
+                .rsplit_once(':')
+                .is_some_and(|(_, artifact)| artifact.eq_ignore_ascii_case(named)),
+            Ecosystem::Go if !named.contains('/') => record
+                .rsplit('/')
+                .next()
+                .is_some_and(|last| last.eq_ignore_ascii_case(named)),
+            _ => named.eq_ignore_ascii_case(record),
+        }
+    }
+}
+
+/// A PyPI name in its normalized form (PEP 503).
+fn pep503(name: &str) -> String {
+    let mut normalized = String::with_capacity(name.len());
+    let mut separator = false;
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            separator = true;
+            continue;
+        }
+        if separator && !normalized.is_empty() {
+            normalized.push('-');
+        }
+        separator = false;
+        normalized.push(c.to_ascii_lowercase());
+    }
+    normalized
 }
 
 /// A host, optionally narrowed to a path prefix (`github.com/dotnet`). Used

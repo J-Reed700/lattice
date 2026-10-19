@@ -215,7 +215,7 @@ fn web_need(
     query: &str,
     want: usize,
 ) -> (SourceNeed, Option<Vec<FinderId>>) {
-    use lattice_core::domain::sourcing::{Origin, SubjectHint, SubjectKind};
+    use lattice_core::domain::sourcing::{Ecosystem, Identifier, Origin, SubjectHint, SubjectKind};
 
     let depth = input.depth.clamp(1, MAX_DEPTH);
     let branch_queries = input.branch_queries.clamp(1, MAX_BRANCH_QUERIES);
@@ -241,7 +241,7 @@ fn web_need(
         .and_then(parse_need_kind)
         .unwrap_or(NeedKind::Web);
 
-    let parsed_id = input.identifier.as_deref().and_then(parse_identifier);
+    let mut parsed_id = input.identifier.as_deref().and_then(parse_identifier);
     let subject_name = input
         .subject
         .as_deref()
@@ -257,6 +257,15 @@ fn web_need(
                 _ => query.to_owned(),
             })
         });
+    // A registry named alongside a package subject names the package
+    // exactly; an `identifier` that already names one wins.
+    let ecosystem = input.ecosystem.as_deref().and_then(Ecosystem::parse);
+    if let (Some(ecosystem), Some(name), None) = (ecosystem, subject_name.as_ref(), &parsed_id) {
+        parsed_id = Some(Identifier::PackageName {
+            ecosystem,
+            name: name.clone(),
+        });
+    }
     let subject = subject_name.map(|name| SubjectHint {
         name,
         kind: match kind {

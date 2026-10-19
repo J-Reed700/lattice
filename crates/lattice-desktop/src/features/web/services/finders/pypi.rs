@@ -240,26 +240,16 @@ impl SourceFinder for PyPi {
             return answered(&self.descriptor, Vec::new(), started);
         }
 
+        // PyPI looks a project up by name and has no search, so a need that
+        // names no package (or another registry's) has nothing to ask it.
         let pkg_name = need
-            .subject
-            .as_ref()
-            .and_then(|s| {
-                s.identifiers.iter().find_map(|id| match id {
-                    Identifier::PackageName {
-                        ecosystem: Ecosystem::PyPi,
-                        name,
-                    } => Some(name.as_str()),
-                    _ => None,
-                })
+            .package()
+            .filter(|package| {
+                package
+                    .ecosystem
+                    .is_none_or(|named| named == Ecosystem::PyPi)
             })
-            .or_else(|| {
-                need.subject
-                    .as_ref()
-                    .map(|s| s.name.trim())
-                    .filter(|s| !s.is_empty())
-            })
-            .or_else(|| need.query.split_whitespace().next());
-
+            .map(|package| package.name);
         let Some(pkg) = pkg_name else {
             return answered(&self.descriptor, Vec::new(), started);
         };

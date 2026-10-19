@@ -10,14 +10,17 @@ use futures::future::BoxFuture;
 use lattice_core::application::contracts::settings::SourcingSettingsDto;
 use lattice_core::application::ports::{Budget, SourceFinding};
 use lattice_core::domain::sourcing::{
-    FailureCause, FinderResult, Freshness, HealthState, NeedKind, SkipReason, SourceNeed,
+    FailureCause, FinderResult, Freshness, HealthState, Identifier, NeedKind, Origin, SkipReason,
+    SourceNeed, SubjectHint, SubjectKind,
 };
 use tokio_util::sync::CancellationToken;
 
 use super::runner::Clock;
 use super::SourcingService;
 use crate::features::web::mocks::web::ScriptedFinder;
-use crate::features::web::services::finders::{bing_html, duckduckgo, FinderEntry};
+use crate::features::web::services::finders::{
+    bing_html, duckduckgo, github, site_discovery, FinderEntry,
+};
 
 /// A clock that stands still until the runner sleeps, then jumps.
 struct FakeClock {
@@ -382,4 +385,52 @@ async fn a_short_page_ends_paging_and_marks_the_need_exhausted() {
     assert_eq!(ddg.calls().len(), 1);
     assert_eq!(findings.leads.len(), 4);
     assert!(findings.exhausted);
+}
+
+/// A search hit never becomes the subject's owner. With nothing named,
+/// GitHub's repository search scopes nothing, so the owner-site step is
+/// skipped without a request. Naming the repository makes its record the
+/// owner, and the owner-site step then reads that site.
+#[tokio::test]
+async fn only_a_named_repository_scopes_the_owner_wave() {
+    let package_need = |identifiers: Vec<Identifier>| SourceNeed {
+        kind: NeedKind::Package,
+        query: "http client".to_string(),
+        subject: (!identifiers.is_empty()).then(|| SubjectHint {
+            name: "reqwest".to_string(),
+            kind: SubjectKind::Software,
+            identifiers,
+        }),
+        scope: None,
+        freshness: Freshness::Any,
+        want: 50,
+        alternatives: Vec::new(),
+        also: Vec::new(),
+    };
+    let run = |need: SourceNeed| async move {
+        let clock = FakeClock::new();
+        let repos = Arc::new(
+            ScriptedFinder::answering(github::DESCRIPTOR, 3)
+                .asserting_owner(Origin::parse("github.com/seanmonstar/reqwest").unwrap()),
+        );
+        let site = Arc::new(ScriptedFinder::answering(site_discovery::DESCRIPTOR, 3));
+        let sourcing = service(vec![entry(&repos, 30), entry(&site, 30)], &clock);
+        let findings = sourcing.find(need, budget(PLENTY)).await.unwrap();
+        (site.calls().len(), findings.outcomes)
+    };
+
+    let (site_calls, outcomes) = run(package_need(Vec::new())).await;
+    assert_eq!(site_calls, 0);
+    assert_eq!(
+        result_of(&outcomes, "site_discovery"),
+        &FinderResult::Skipped(SkipReason::NotApplicable)
+    );
+
+    let (site_calls, _) = run(package_need(vec![Identifier::Repo {
+        host: "github.com".to_string(),
+        owner: "seanmonstar".to_string(),
+        name: "reqwest".to_string(),
+    }]))
+    .await;
+    assert_eq!(site_calls, 1);
 }
