@@ -143,9 +143,11 @@ async fn read_picture(path: &Path) -> Result<(String, Vec<u8>)> {
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.trim().is_empty())
         .ok_or_else(|| AppError::InvalidInput(format!("{} is not a file", path.display())))?;
+    // repository-barrier-allow: the picture the reader chose is the resource; its size bounds the read.
     let meta = tokio::fs::metadata(path)
         .await
         .map_err(|error| AppError::InvalidInput(format!("{name}: {error}")))?;
+    // repository-barrier-allow: only a regular file is read, never a device or a directory.
     if !meta.is_file() {
         return Err(AppError::InvalidInput(format!("{name} is not a file")));
     }

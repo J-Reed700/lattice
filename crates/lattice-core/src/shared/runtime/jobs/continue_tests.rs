@@ -11,7 +11,10 @@ async fn pool() -> sqlx::SqlitePool {
         .connect(":memory:")
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
     pool
 }
 
