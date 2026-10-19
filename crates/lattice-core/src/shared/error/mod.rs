@@ -20,7 +20,9 @@ pub use domain::DomainError;
 
 // Main error definitions
 mod types;
-pub use types::{AppError, ErrorResponse, Result, ResultExt};
+pub use types::{AppError, ErrorResponse, Result};
+mod context;
+pub use context::ResultExt;
 
 // Examples module
 #[cfg(any(test, doc))]

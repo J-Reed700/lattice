@@ -80,7 +80,8 @@ impl RequestSize {
 /// The refusal of a request whose prompt alone fills the configured `window`,
 /// before it is sent. Nothing else is refused for its size: an answer always
 /// shrinks to the room its prompt leaves, so only a prompt that leaves none
-/// cannot be sent.
+/// cannot be sent. It carries the numbers, so a caller that can send less
+/// (fewer passages, a smaller group) knows by how much and asks again.
 pub(crate) fn window_refusal(model: &str, size: RequestSize, window: usize) -> AppError {
     tracing::warn!(
         model,
@@ -89,13 +90,18 @@ pub(crate) fn window_refusal(model: &str, size: RequestSize, window: usize) -> A
         window,
         "llm.request_refused"
     );
-    AppError::InvalidInput(format!(
-        "This request's prompt is {} tokens ({}), which leaves no room for an answer; the \
-         configured context window is {window}. It was not sent. Shorten the request, or raise \
-         the context window in Settings if the model's server holds more.",
-        size.prompt_tokens,
-        size.counted()
-    ))
+    AppError::PromptExceedsWindow {
+        prompt_tokens: size.prompt_tokens,
+        window,
+        counted_exactly: size.counted_exactly,
+        message: format!(
+            "This request's prompt is {} tokens ({}), which leaves no room for an answer; the \
+             configured context window is {window}. It was not sent. Shorten the request, or \
+             raise the context window in Settings if the model's server holds more.",
+            size.prompt_tokens,
+            size.counted()
+        ),
+    }
 }
 
 /// A server's message made safe to show, log and compare: whitespace

@@ -1825,7 +1825,18 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
         })
         .await
         .unwrap_err();
-    assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
+    assert!(
+        matches!(
+            error,
+            AppError::PromptExceedsWindow {
+                prompt_tokens: 5_001,
+                window: 4_096,
+                counted_exactly: false,
+                ..
+            }
+        ),
+        "{error}"
+    );
     let told = error.to_string();
     for expected in [
         "prompt is 5001 tokens (estimated), which leaves no room for an answer",

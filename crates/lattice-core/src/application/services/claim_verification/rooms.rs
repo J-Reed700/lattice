@@ -35,37 +35,29 @@ impl ClaimChecker<'_> {
     /// The tokens a durable located check of `claim` leaves for its passages
     /// once its instructions, the claim and the answer are paid.
     pub fn located_evidence_room(&self, claim: &str) -> usize {
-        let reasoned = self.policy.strict();
-        let empty = ClaimEvidence {
-            text: String::new(),
-            quote: None,
-        };
-        let prompt = self.compose_prompt(claim, &empty, reasoned, true, None);
         self.llm
             .max_context_tokens()
-            .saturating_sub(self.llm.count_tokens(&self.system_prompt(true, reasoned)))
-            .saturating_sub(self.llm.count_tokens(&prompt))
-            .saturating_sub(1200)
+            .saturating_sub(self.located_prompt_tokens(claim, &[]))
+            .saturating_sub(ANSWER_ROOM_TOKENS)
     }
 
     /// Whether a durable located check of `claim` against `passages` fits the
     /// window beside its answer.
     pub fn located_fits(&self, claim: &str, passages: &[String]) -> bool {
-        let reasoned = self.policy.strict();
-        let evidence = ClaimEvidence {
-            text: passages
-                .iter()
-                .enumerate()
-                .map(|(i, text)| format!("[passage-{i}]\n{text}"))
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-            quote: None,
-        };
-        let prompt = self.compose_prompt(claim, &evidence, reasoned, true, None);
         self.llm
             .max_context_tokens()
-            .saturating_sub(self.llm.count_tokens(&self.system_prompt(true, reasoned)))
-            .saturating_sub(self.llm.count_tokens(&prompt))
-            >= 1200
+            .saturating_sub(self.located_prompt_tokens(claim, passages))
+            >= ANSWER_ROOM_TOKENS
+    }
+
+    /// The estimated tokens of a durable located check of `claim` against
+    /// `passages`: its instructions and its prompt, as `check_inner` sends
+    /// them, by the calibrated count.
+    pub fn located_prompt_tokens(&self, claim: &str, passages: &[String]) -> usize {
+        let reasoned = self.policy.strict();
+        let prompt = self.compose_prompt(claim, &located(passages), reasoned, true, None);
+        self.llm
+            .count_tokens(&self.system_prompt(true, reasoned))
+            .saturating_add(self.llm.count_tokens(&prompt))
     }
 }

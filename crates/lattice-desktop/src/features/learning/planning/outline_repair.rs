@@ -3,7 +3,9 @@
 //! what it contradicts or leaves unsupported is rewritten. A plan finding is
 //! rewritten. Repair never adds a citation of its own: a rewrite keeps or
 //! drops what it was given, and evidence linking then runs on that module.
-use crate::features::learning::lessons::content_verification::judge_for_publication;
+use crate::features::learning::lessons::content_verification::{
+    judge_for_publication, ranking, shown_of,
+};
 use crate::features::learning::outline_linking::{
     self, CitationReceipt, CitationReceipts, ItemKind,
 };
@@ -94,9 +96,17 @@ fn claim_key(model: &str, claim: &str, passages: &[ReferencePassage]) -> String 
     )
 }
 
-async fn judge(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Result<JudgeOutcome> {
-    match judge_for_publication(llm, claim, passages).await {
-        ClaimJudgment::Judged(outcome) => Ok(outcome),
+/// The judge's outcome for `claim`, and the positions of the `passages` it
+/// was shown (see `judge_for_publication`).
+async fn judge(
+    llm: &dyn LLMPort,
+    claim: &str,
+    passages: &[String],
+    ranking: &[usize],
+) -> Result<(JudgeOutcome, Vec<usize>)> {
+    let (judgment, shown) = judge_for_publication(llm, claim, passages, ranking).await;
+    match judgment {
+        ClaimJudgment::Judged(outcome) => Ok((outcome, shown)),
         ClaimJudgment::Failed(error) => Err(error),
         ClaimJudgment::Unusable => Err(AppError::Other(
             "The claim check returned no usable verdict. The finding is kept; Repair can try again."
@@ -310,14 +320,20 @@ async fn resolve_factual(
             break;
         }
         let key = claim_key(llm.model_name(), &claim, &passages);
-        let judged = match draft.claim_receipts.get(&key) {
+        let (judged, seen) = match draft.claim_receipts.get(&key) {
             Some(receipt) => (
-                receipt.verdict,
-                receipt.reason.clone(),
+                (
+                    receipt.verdict,
+                    receipt.reason.clone(),
+                    receipt
+                        .source_id
+                        .clone()
+                        .zip(receipt.supporting_quote.clone()),
+                ),
                 receipt
-                    .source_id
+                    .shown
                     .clone()
-                    .zip(receipt.supporting_quote.clone()),
+                    .unwrap_or_else(|| (0..passages.len()).collect()),
             ),
             None => {
                 progress.detail(format!(
@@ -325,7 +341,7 @@ async fn resolve_factual(
                     passages.len()
                 ));
                 let texts: Vec<String> = passages.iter().map(|p| p.text.clone()).collect();
-                let outcome = judge(llm, &claim, &texts).await?;
+                let (outcome, seen) = judge(llm, &claim, &texts, &ranking(&passages)).await?;
                 let evidence = outcome.quote.as_deref().and_then(|located| {
                     locate(located, outcome.verdict, &passages, &base, sources)
                 });
@@ -344,12 +360,16 @@ async fn resolve_factual(
                             claim: claim.clone(),
                             path: issue.path.clone(),
                             source_id: evidence.as_ref().map(|(id, _)| id.clone()),
+                            shown: (seen.len() < passages.len()).then(|| seen.clone()),
                         },
                     );
                 }
-                (outcome.verdict, reason, evidence)
+                ((outcome.verdict, reason, evidence), seen)
             }
         };
+        // The judge saw the passages at `seen`; one cut for its window was
+        // never compared, so it stays unshown for the next page.
+        let passages = shown_of(&passages, &seen);
         let unsupported = judged.0 == ClaimVerdict::Unsupported;
         // An unsupported verdict on a deeper page does not replace the first.
         if decision.is_none() || !unsupported {

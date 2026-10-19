@@ -196,6 +196,10 @@ pub(in crate::features::learning) struct OutlineClaimReceipt {
     pub claim: String,
     pub path: String,
     pub source_id: Option<String>,
+    /// The positions of the page's passages the judge was shown when the
+    /// whole page did not fit its window; `None` when it saw them all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<Vec<usize>>,
 }
 impl OutlineDraft {
     pub fn new(

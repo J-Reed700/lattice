@@ -270,7 +270,12 @@ mod tests {
     #[async_trait::async_trait]
     impl LLMPort for Refusing {
         async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
-            Err(AppError::InvalidInput(NUMBERED_REFUSAL.into()))
+            Err(AppError::PromptExceedsWindow {
+                prompt_tokens: 8_500,
+                window: 8_192,
+                counted_exactly: true,
+                message: NUMBERED_REFUSAL.into(),
+            })
         }
         fn model_name(&self) -> &str {
             "refusing"
@@ -306,7 +311,7 @@ mod tests {
             )
             .await
             .err();
-            let Some(AppError::InvalidInput(message)) = error else {
+            let Some(AppError::PromptExceedsWindow { message, .. }) = error else {
                 panic!("expected the backend's refusal, got {error:?}");
             };
             assert_eq!(message, NUMBERED_REFUSAL);

@@ -692,7 +692,10 @@ async fn a_request_the_configured_window_cannot_hold_never_reaches_the_backend()
         .complete(&request(&"x".repeat(40_000), None))
         .await
         .unwrap_err();
-    assert!(matches!(full, AppError::InvalidInput(_)), "{full}");
+    assert!(
+        matches!(full, AppError::PromptExceedsWindow { window: 8_192, .. }),
+        "{full}"
+    );
     let told = full.to_string();
     for expected in [
         "(estimated)",

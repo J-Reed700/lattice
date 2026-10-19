@@ -34,6 +34,8 @@ mod evidence_checks;
 mod evidence_selection;
 mod execution;
 mod general_knowledge;
+mod judge;
+pub(in crate::features::learning) use judge::{judge_for_publication, ranking, shown_of};
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
@@ -270,6 +272,12 @@ struct ClaimReceipt {
     supporting_quote: Option<String>,
     #[serde(default)]
     interpretation_policy: Option<String>,
+    /// The positions of the page's passages the judge was shown when the
+    /// whole page did not fit its window; `None` when it saw them all. The
+    /// finding names only those: a passage cut for size was never compared
+    /// with the claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shown: Option<Vec<usize>>,
 }
 
 fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
@@ -288,6 +296,11 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
 
 impl ClaimReceipt {
     fn finding(self, unit: usize, claim: &Claim, evidence: &[EvidencePassage]) -> Option<Finding> {
+        let evidence = match &self.shown {
+            Some(shown) => shown_of(evidence, shown),
+            None => evidence.to_vec(),
+        };
+        let evidence = evidence.as_slice();
         if self.verdict == ClaimVerdict::Unverified
             || (self.verdict != ClaimVerdict::Supported
                 && self.interpretation_policy.as_deref() != Some(
@@ -562,43 +575,6 @@ async fn verify(
         &mut ClaimChecks::default(),
     )
     .await
-}
-
-/// The strict judgment of one claim against its passages. Whether a
-/// supported verdict's support is enough is the provenance gate's decision,
-/// never a second model call (source provenance §11).
-pub(in crate::features::learning) async fn judge_for_publication(
-    llm: &dyn LLMPort,
-    claim: &str,
-    passages: &[String],
-) -> ClaimJudgment {
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        512,
-        CheckPolicy::Strict,
-    );
-    // A page is sized for this judge; one sized for a batch call is cut to
-    // what this judge's window holds, best first.
-    let mut fitted = passages.len();
-    while fitted > 0 && !checker.located_fits(claim, passages.get(..fitted).unwrap_or_default()) {
-        fitted -= 1;
-    }
-    if fitted == 0 && !passages.is_empty() {
-        return unchecked("The claim and its first passage do not fit the claim check in this model's context window.");
-    }
-    if fitted < passages.len() {
-        tracing::warn!(
-            shown = fitted,
-            page = passages.len(),
-            "A claim's page holds more than the single-claim judge's window; checking the passages that fit"
-        );
-    }
-    let passages = passages.get(..fitted).unwrap_or_default();
-    let _model_call = crate::features::learning::lesson_progress::model_call();
-    checker
-        .check_passages_without_deadline(claim, passages)
-        .await
 }
 
 pub(in crate::features::learning) async fn judge_batch_for_publication(

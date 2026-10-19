@@ -551,7 +551,8 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
         let checker = CountingChecker {
             calls: AtomicUsize::new(0),
         };
-        let judged = judge_for_publication(&checker, statement, &[text.to_owned()]).await;
+        let (judged, _) =
+            judge_for_publication(&checker, statement, &[text.to_owned()], &[0]).await;
         assert_eq!(
             checker.calls.load(Ordering::SeqCst),
             1,

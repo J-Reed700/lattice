@@ -105,6 +105,19 @@ pub enum AppError {
     /// request's size against the configured context window.
     ModelRejected(String),
 
+    /// A request whose prompt alone fills the configured context window, so
+    /// it leaves no room for an answer and was never sent. The numbers let a
+    /// caller send less and ask again: `prompt_tokens` is the prompt as the
+    /// backend's tokenizer counted it when `counted_exactly`, otherwise as
+    /// estimated, and `window` is the configured window. `message` is what
+    /// the user is told.
+    PromptExceedsWindow {
+        prompt_tokens: usize,
+        window: usize,
+        counted_exactly: bool,
+        message: String,
+    },
+
     /// Serialization error
     Serialization(String),
 
@@ -253,6 +266,7 @@ impl AppError {
             AppError::Storage(_) => "STORAGE_ERROR",
             AppError::ServiceNotAvailable(_) => "SERVICE_UNAVAILABLE",
             AppError::ModelRejected(_) => "MODEL_REJECTED",
+            AppError::PromptExceedsWindow { .. } => "PROMPT_EXCEEDS_WINDOW",
             AppError::Serialization(_) => "SERIALIZATION_ERROR",
             AppError::Security(_) => "SECURITY_ERROR",
             AppError::KeyringError(_) => "KEYRING_ERROR",
@@ -279,6 +293,7 @@ impl AppError {
             AppError::NotFound(_) | AppError::FileNotFound { .. } => 404,
             AppError::PermissionDenied(_) | AppError::Security(_) => 403,
             AppError::InvalidInput(_)
+            | AppError::PromptExceedsWindow { .. }
             | AppError::ValidationFailed(_)
             | AppError::InvalidUrl(_)
             | AppError::UnsupportedFileType { .. } => 400,
@@ -332,6 +347,7 @@ impl AppError {
     pub fn is_user_fixable(&self) -> bool {
         match self {
             AppError::InvalidInput(_)
+            | AppError::PromptExceedsWindow { .. }
             | AppError::InvalidConfig(_)
             | AppError::PermissionDenied(_)
             | AppError::FileTooLarge { .. }
@@ -404,6 +420,16 @@ impl AppError {
             AppError::ConcurrentModification { resource, details } => {
                 context.insert("resource".to_string(), json!(resource));
                 context.insert("details".to_string(), json!(details));
+            }
+            AppError::PromptExceedsWindow {
+                prompt_tokens,
+                window,
+                counted_exactly,
+                ..
+            } => {
+                context.insert("prompt_tokens".to_string(), json!(prompt_tokens));
+                context.insert("window".to_string(), json!(window));
+                context.insert("counted_exactly".to_string(), json!(counted_exactly));
             }
             _ => {}
         }
@@ -550,6 +576,7 @@ impl fmt::Display for AppError {
             AppError::Storage(e) => write!(f, "Storage error: {}", e),
             AppError::ServiceNotAvailable(e) => write!(f, "Service not available: {}", e),
             AppError::ModelRejected(e) => write!(f, "{}", e),
+            AppError::PromptExceedsWindow { message, .. } => write!(f, "{}", message),
             AppError::Serialization(e) => write!(f, "Serialization error: {}", e),
             AppError::Security(e) => write!(f, "Security error: {}", e),
             AppError::KeyringError(e) => write!(f, "Keyring error: {}", e),
@@ -718,68 +745,6 @@ impl From<ApplicationError> for AppError {
 
 /// Convenience type alias for Results using AppError by default
 pub type Result<T, E = AppError> = std::result::Result<T, E>;
-
-/// Extension trait for adding context to Result types.
-///
-/// This trait provides convenient methods to add contextual information
-/// to errors, making debugging and error messages more helpful.
-///
-/// # Examples
-///
-/// ```
-/// use lattice_core::shared::error::{ResultExt, AppError};
-///
-/// fn read_config(path: &str) -> Result<String, AppError> {
-///     std::fs::read_to_string(path)
-///         .context("Failed to read config file")?;
-///     Ok("config".to_string())
-/// }
-/// ```
-pub trait ResultExt<T> {
-    /// Add static context to an error.
-    fn context(self, msg: impl Into<String>) -> Result<T>;
-
-    /// Add dynamic context to an error using a closure.
-    /// The closure is only called if there's an error.
-    fn with_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String;
-}
-
-impl<T, E> ResultExt<T> for std::result::Result<T, E>
-where
-    E: Into<AppError>,
-{
-    fn context(self, msg: impl Into<String>) -> Result<T> {
-        self.map_err(|e| {
-            let base_error = e.into();
-            AppError::Other(format!("{}: {}", msg.into(), base_error))
-        })
-    }
-
-    fn with_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.map_err(|e| {
-            let base_error = e.into();
-            AppError::Other(format!("{}: {}", f(), base_error))
-        })
-    }
-}
-
-impl<T> ResultExt<T> for Option<T> {
-    fn context(self, msg: impl Into<String>) -> Result<T> {
-        self.ok_or_else(|| AppError::Other(msg.into()))
-    }
-
-    fn with_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.ok_or_else(|| AppError::Other(f()))
-    }
-}
 
 #[cfg(test)]
 mod tests;

@@ -86,7 +86,10 @@ async fn the_estimate_charges_a_pictures_declared_tokens_and_the_refusal_says_so
         .complete(&with_picture("What is this?", 8_200))
         .await
         .unwrap_err();
-    assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
+    assert!(
+        matches!(refused, AppError::PromptExceedsWindow { .. }),
+        "{refused}"
+    );
     let told = refused.to_string();
     assert!(
         told.contains(

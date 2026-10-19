@@ -54,6 +54,10 @@ pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 
 const MAX_QUOTE_CHARS: usize = 400;
 const MAX_REASON_CHARS: usize = 600;
+/// The tokens a durable check keeps for each claim's answer: the reason, the
+/// passage it cites and the verdict. Evidence fills what the window leaves
+/// past it, alone or in a batch.
+pub const ANSWER_ROOM_TOKENS: usize = 1200;
 /// Instructions for the claim judge.
 ///
 /// The evidence is text the user's own documents and fetched pages produced,
@@ -115,6 +119,27 @@ impl ClaimJudgment {
             | AppError::RateLimitExceeded(_) => Self::Failed(error),
             _ => Self::Unusable,
         }
+    }
+}
+
+/// A failed judge call as a judgment: an outage stays an error the caller
+/// can defer on; anything else leaves the claim unchecked.
+fn unchecked_after(error: crate::shared::error::AppError) -> ClaimJudgment {
+    warn!(%error, "Claim judge call failed — leaving this claim unchecked");
+    ClaimJudgment::from_request_error(error)
+}
+
+/// `passages` as a located check shows them, each under its `passage-N`
+/// identifier.
+fn located(passages: &[String]) -> ClaimEvidence {
+    ClaimEvidence {
+        text: passages
+            .iter()
+            .enumerate()
+            .map(|(i, text)| format!("[passage-{i}]\n{text}"))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        quote: None,
     }
 }
 
@@ -199,22 +224,34 @@ impl<'a> ClaimChecker<'a> {
             .await
     }
 
+    /// [`Self::check_passages_without_deadline`], except that a request whose
+    /// prompt alone fills the configured window comes back as that refusal,
+    /// [`AppError::PromptExceedsWindow`](crate::shared::error::AppError::PromptExceedsWindow)
+    /// with its numbers, rather than as an unusable judgment: the caller can
+    /// show fewer passages and ask again. Every other failure ends as it does
+    /// there.
+    pub async fn check_passages_or_size_refusal(
+        &self,
+        claim: &str,
+        passages: &[String],
+    ) -> Result<ClaimJudgment> {
+        use crate::shared::error::AppError;
+        match self
+            .judged(claim, &located(passages), Some(passages), None)
+            .await
+        {
+            Err(refusal @ AppError::PromptExceedsWindow { .. }) => Err(refusal),
+            judged => Ok(judged.unwrap_or_else(unchecked_after)),
+        }
+    }
+
     async fn check_located(
         &self,
         claim: &str,
         passages: &[String],
         context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
-        let evidence = ClaimEvidence {
-            text: passages
-                .iter()
-                .enumerate()
-                .map(|(i, text)| format!("[passage-{i}]\n{text}"))
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-            quote: None,
-        };
-        self.check_inner(claim, &evidence, Some(passages), context)
+        self.check_inner(claim, &located(passages), Some(passages), context)
             .await
     }
 
@@ -225,6 +262,19 @@ impl<'a> ClaimChecker<'a> {
         locations: Option<&[String]>,
         context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
+        self.judged(claim, evidence, locations, context)
+            .await
+            .unwrap_or_else(unchecked_after)
+    }
+
+    /// The judgment of `claim`, or the error of a request that failed.
+    async fn judged(
+        &self,
+        claim: &str,
+        evidence: &ClaimEvidence,
+        locations: Option<&[String]>,
+        context: Option<FidelityContext<'_>>,
+    ) -> Result<ClaimJudgment> {
         let reasoned = locations.is_some() && self.policy.strict();
         let verdict_of = |text: &str| {
             if reasoned {
@@ -238,14 +288,7 @@ impl<'a> ClaimChecker<'a> {
         let mut prompt = original_prompt.clone();
         let mut corrected_format = false;
         let (text, logprobs) = loop {
-            let reply = self.request(&prompt, locations.is_some()).await;
-            let (text, logprobs) = match reply {
-                Ok(reply) => reply,
-                Err(e) => {
-                    warn!(error = %e, "Claim judge call failed — leaving this claim unchecked");
-                    return ClaimJudgment::from_request_error(e);
-                }
-            };
+            let (text, logprobs) = self.request(&prompt, locations.is_some()).await?;
             let text = if reasoned {
                 normalize_reasoned_fields(&text).unwrap_or(text)
             } else {
@@ -292,7 +335,7 @@ impl<'a> ClaimChecker<'a> {
                 response_chars = text.len(),
                 "Claim judge reply held no verdict — leaving this claim unchecked"
             );
-            return ClaimJudgment::Unusable;
+            return Ok(ClaimJudgment::Unusable);
         };
         if self.policy.strict()
             && labeled_value(&text, &["Reason", "Explanation"])
@@ -300,7 +343,7 @@ impl<'a> ClaimChecker<'a> {
                 .is_none_or(|reason| reason.trim().is_empty())
         {
             warn!("Strict claim judgment omitted its reason");
-            return ClaimJudgment::Unusable;
+            return Ok(ClaimJudgment::Unusable);
         }
         if self.policy.strict()
             && (verdict_of(&text) != Some(verdict)
@@ -308,12 +351,12 @@ impl<'a> ClaimChecker<'a> {
         {
             // Uncertain evidence cannot approve or assert a contradiction. It
             // needs research/repair, rather than being a broken checker call.
-            return ClaimJudgment::Judged(JudgeOutcome {
+            return Ok(ClaimJudgment::Judged(JudgeOutcome {
                 verdict: ClaimVerdict::Unsupported,
                 quote: None,
                 reason: Some(format!("The checker could not confidently establish a factual finding from these passages. {}",labeled_value(&text,&["Reason","Explanation"]).unwrap_or_default())),
                 confidence,
-            });
+            }));
         }
         let mut explanation = parse_judge_explanation(&text, evidence, verdict);
         if let Some(passages) = locations {
@@ -340,14 +383,14 @@ impl<'a> ClaimChecker<'a> {
                 located = locations.is_some(),
                 "Strict claim judgment has no valid supporting evidence location"
             );
-            return ClaimJudgment::Unusable;
+            return Ok(ClaimJudgment::Unusable);
         }
 
         if verdict == ClaimVerdict::Contradicted && explanation.reason.is_none() {
             warn!(
                 "Claim judge returned a contradiction without a factual explanation — leaving this claim unchecked"
             );
-            return ClaimJudgment::Unusable;
+            return Ok(ClaimJudgment::Unusable);
         }
         // The quote is what the verdict rests on. An unsupported claim rests on
         // nothing, and showing the nearest sentence beside it would read as
@@ -364,12 +407,12 @@ impl<'a> ClaimChecker<'a> {
             }
             ClaimVerdict::Unsupported | ClaimVerdict::Unverified => None,
         };
-        ClaimJudgment::Judged(JudgeOutcome {
+        Ok(ClaimJudgment::Judged(JudgeOutcome {
             verdict,
             quote,
             reason: explanation.reason,
             confidence,
-        })
+        }))
     }
 
     fn system_prompt(&self, located: bool, reasoned: bool) -> String {
