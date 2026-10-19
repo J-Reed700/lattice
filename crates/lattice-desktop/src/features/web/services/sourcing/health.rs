@@ -148,26 +148,32 @@ impl HealthBook {
 
     /// Every registered finder's health, with the settings' and keyring's
     /// reasons for the ones that cannot run.
-    pub(super) fn snapshot(
+    pub(crate) fn snapshot(
         &self,
         descriptors: &[&FinderDescriptor],
         settings: &SourcingSettingsDto,
         keys: &BTreeSet<KeyService>,
     ) -> Vec<FinderHealth> {
+        let mut health = self.breaker_health(descriptors);
+        for (finder, descriptor) in health.iter_mut().zip(descriptors) {
+            if let Some(reason) = settings.gate(descriptor, keys) {
+                finder.state = HealthState::Unavailable(reason);
+            }
+        }
+        health
+    }
+
+    /// Every registered finder's breaker and counters, whether or not the
+    /// settings let it run (the settings panel reports the gate apart).
+    pub(crate) fn breaker_health(&self, descriptors: &[&FinderDescriptor]) -> Vec<FinderHealth> {
         let entries = self.entries.lock();
         descriptors
             .iter()
             .map(|descriptor| {
                 let entry = entries.get(&descriptor.id);
-                let state = match settings.gate(descriptor, keys) {
-                    Some(reason) => HealthState::Unavailable(reason),
-                    None => {
-                        entry.map_or(HealthState::Healthy, |entry| entry.breaker.health_state())
-                    }
-                };
                 FinderHealth {
                     id: descriptor.id.clone(),
-                    state,
+                    state: entry.map_or(HealthState::Healthy, |entry| entry.breaker.health_state()),
                     calls: entry.map_or(0, |entry| entry.calls),
                     answered: entry.map_or(0, |entry| entry.answered),
                     empty: entry.map_or(0, |entry| entry.empty),

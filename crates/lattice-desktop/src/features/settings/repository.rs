@@ -216,6 +216,7 @@ impl SettingsRepository {
             existing.sync = imported_settings.sync;
             existing.backup = imported_settings.backup;
             existing.privacy = imported_settings.privacy;
+            existing.sourcing = imported_settings.sourcing;
 
             existing
         } else {
@@ -274,6 +275,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
             SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
             SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
+            SettingsCategory::Sourcing => serde_json::to_value(&settings.sourcing)?,
         };
 
         Ok(value)
@@ -307,6 +309,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
                     SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
                     SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
+                    SettingsCategory::Sourcing => serde_json::to_value(&settings.sourcing)?,
                 };
 
                 let merged = self.merge_category_updates(category_value, &updates)?;
@@ -357,6 +360,9 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Onboarding => {
                         settings.onboarding = serde_json::from_value(merged)?;
                     }
+                    SettingsCategory::Sourcing => {
+                        settings.sourcing = serde_json::from_value(merged)?;
+                    }
                 }
             }
             None => {
@@ -400,6 +406,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                 SettingsCategory::Privacy => settings.privacy = Default::default(),
                 SettingsCategory::Vault => settings.vault = Default::default(),
                 SettingsCategory::Onboarding => settings.onboarding = Default::default(),
+                SettingsCategory::Sourcing => settings.sourcing = Default::default(),
             },
             None => {
                 settings = SettingsDto::default();

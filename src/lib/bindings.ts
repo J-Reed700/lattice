@@ -4118,6 +4118,41 @@ async listWebPageSnapshots(conversationId: string) : Promise<Result<WebPageSnaps
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Settings → Sources: every finder with its need, disclosure, switch, gate
+ * and health, and which key services have a key stored (never the key).
+ */
+async getSourcesStatus() : Promise<Result<SourcesStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|get_sources_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Store a source-finding key in the keyring; its finders run from the next
+ * search. Returns the panel's status, which says only that a key is stored.
+ */
+async saveSourceKey(service: KeyServiceDto, key: string) : Promise<Result<SourcesStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|save_source_key", { service, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove a source-finding key from the keyring; its finders stop.
+ */
+async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|remove_source_key", { service }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
@@ -6398,6 +6433,82 @@ path: string }
  * Supported file types for internal viewing
  */
 export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
+/**
+ * Why a finder cannot run under the user's settings and keys.
+ */
+export type FinderGateDto =
+/**
+ * The user turned it off (or, for the archive, the archive fallback).
+ */
+"disabled" | "noKey" | "noInstance" | "noContact"
+/**
+ * A finder's health since the app started.
+ */
+export type FinderHealthDto = { state: FinderHealthStateDto;
+/**
+ * When a cooling-down finder may be called again.
+ */
+until: string | null;
+/**
+ * The latest failure, as the user reads it.
+ */
+lastError: string | null; calls: number; answered: number; empty: number; failed: number; skipped: number; medianMs: number | null }
+/**
+ * A finder's breaker as the panel reads it.
+ */
+export type FinderHealthStateDto = "healthy" |
+/**
+ * Refused or failing; not called again until `until`.
+ */
+"coolingDown" |
+/**
+ * Its pause is over; the next call decides whether it is healthy.
+ */
+"retrying"
+/**
+ * What a finder needs before it can run.
+ */
+export type FinderNeedDto = { kind: "nothing" } |
+/**
+ * Runs without a key; the user's key raises its limits.
+ */
+{ kind: "optionalKey"; service: KeyServiceDto } |
+/**
+ * Runs only with the user's key.
+ */
+{ kind: "requiredKey"; service: KeyServiceDto } |
+/**
+ * Runs only once the user names their own instance.
+ */
+{ kind: "instanceUrl" } |
+/**
+ * Runs only once the user sets a contact.
+ */
+{ kind: "contact" }
+/**
+ * One finder's switch.
+ */
+export type FinderSettingDto = { enabled: boolean }
+/**
+ * One finder in the panel.
+ */
+export type FinderStatusDto = { id: string;
+/**
+ * The name the user reads (`DuckDuckGo`).
+ */
+name: string; reach: ReachGroupDto; needs: FinderNeedDto;
+/**
+ * Where the query goes, rendered from the descriptor.
+ */
+disclosure: string;
+/**
+ * The user's switch: on unless they turned it off.
+ */
+enabled: boolean;
+/**
+ * Why it cannot run, or `None` when it may.
+ */
+gate: FinderGateDto | null; health: FinderHealthDto }
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 /**
  * Where the open folder's index stands.
@@ -6804,6 +6915,19 @@ export type JournalSynthesisDto = { job: JobDto; title: string; heading: string;
  */
 activity: SynthesisActivityDto | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
+/**
+ * A service whose key lives in the keyring, as the panel and the key
+ * commands name it.
+ */
+export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange"
+/**
+ * Whether a key service has a key stored, and where to get one.
+ */
+export type KeyStatusDto = { service: KeyServiceDto; name: string;
+/**
+ * The provider's own page for getting a key.
+ */
+keyPageUrl: string; stored: boolean }
 export type KnowledgeItemDto = { id: string; conversationId: string; conversationTitle: string; label: string; kind: string; state: string; scope: string; learnedAt: string; validFrom: string | null; validUntil: string | null; verifiedAt: string | null; forgotten: boolean; supersededBy: string | null;
 /**
  * Exact original passages, resolved on every read.
@@ -8516,6 +8640,10 @@ export type QuickCaptureResultDto = { noteId: string; noteTitle: string;
  * True when today's page had to be created for this capture.
  */
 created: boolean }
+/**
+ * What part of the world a finder reaches; the panel groups finders by it.
+ */
+export type ReachGroupDto = "openWeb" | "ownerSites" | "registry" | "codeHost" | "scholarly" | "standards" | "law" | "community" | "encyclopedia" | "archive" | "linkedPages"
 export type ReassessLearningSourceTrustRequestDto = { programId: string; sourceId: string }
 /**
  * Recency search options for time-aware search.
@@ -9176,7 +9304,12 @@ privacy: PrivacySettingsDto; vault: VaultSettingsDto;
 /**
  * Onboarding state (what the user has already been shown)
  */
-onboarding: OnboardingSettingsDto }
+onboarding: OnboardingSettingsDto;
+/**
+ * Source finding: finder switches, the SearXNG instance, the polite-pool
+ * contact and the archive fallback. Keys live in the keyring.
+ */
+sourcing: SourcingSettingsDto }
 /**
  * One neighbour of a document, collapsed from its chunk hits.
  */
@@ -9342,6 +9475,39 @@ export type SourceRefDto = {
  * The library source the version belongs to, for "Capture again" (§5.4).
  */
 sourceId: string; sourceVersionId: string; title: string; url: string | null; addedBy: SourceAddedByDto }
+/**
+ * Everything Settings → Sources shows.
+ */
+export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[] }
+/**
+ * Source-finding settings.
+ */
+export type SourcingSettingsDto = {
+/**
+ * Per-finder switches by finder id; a finder left out is on (its `Auth`
+ * still gates it).
+ */
+finders: { [key in string]: FinderSettingDto };
+/**
+ * The user's SearXNG instance (its JSON API must be enabled). Unset
+ * keeps the SearXNG finder off.
+ */
+searxngUrl: string | null;
+/**
+ * An email or URL sent to polite pools (Crossref, Unpaywall). Off by
+ * default and never a project address: one shared address would make
+ * every user look like one client and rate-limit them together.
+ */
+contact: string | null;
+/**
+ * Read a page from the Internet Archive when it will not load, and
+ * allow dated archive reads. Sends the failed URL to archive.org.
+ */
+archiveFallback: boolean;
+/**
+ * The most finders one wave runs at once.
+ */
+finderConcurrency: number }
 /**
  * One document a chat in this space is allowed to read.
  *

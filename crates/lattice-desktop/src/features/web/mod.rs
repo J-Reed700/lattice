@@ -30,6 +30,7 @@ pub mod images;
 pub mod plugin;
 pub mod services;
 pub mod snapshots;
+pub mod sources;
 pub mod traits;
 pub mod use_cases;
 

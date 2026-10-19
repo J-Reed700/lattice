@@ -149,6 +149,13 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
     onboarding: {
       firstRunDismissed: false,
     },
+    sourcing: {
+      finders: {},
+      searxngUrl: null,
+      contact: null,
+      archiveFallback: true,
+      finderConcurrency: 4,
+    },
     ...overrides,
   };
 }

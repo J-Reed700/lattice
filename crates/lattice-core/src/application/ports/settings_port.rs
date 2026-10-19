@@ -252,6 +252,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
             SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
             SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
+            SettingsCategory::Sourcing => serde_json::to_value(&settings.sourcing)?,
         };
         Ok(value)
     }
@@ -280,6 +281,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
                     SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
                     SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
+                    SettingsCategory::Sourcing => serde_json::to_value(&settings.sourcing)?,
                 };
 
                 let mut category_map = category_value
@@ -336,6 +338,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                         settings.onboarding =
                             serde_json::from_value(serde_json::Value::Object(category_map))?;
                     }
+                    SettingsCategory::Sourcing => {
+                        settings.sourcing =
+                            serde_json::from_value(serde_json::Value::Object(category_map))?;
+                    }
                 }
             }
             None => {
@@ -377,6 +383,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                 SettingsCategory::Privacy => settings.privacy = Default::default(),
                 SettingsCategory::Vault => settings.vault = Default::default(),
                 SettingsCategory::Onboarding => settings.onboarding = Default::default(),
+                SettingsCategory::Sourcing => settings.sourcing = Default::default(),
             },
             None => {
                 *settings = SettingsDto::default();
@@ -665,6 +672,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                 "sync",
                 "sync_url is required when sync is enabled".to_string(),
             );
+        }
+
+        for problem in settings.sourcing.problems() {
+            result.add_error("sourcing", problem);
         }
 
         // Match the production repository: the field remains in the DTO, but

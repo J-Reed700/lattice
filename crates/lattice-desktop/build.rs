@@ -343,6 +343,9 @@ fn main() {
                     "get_web_page_snapshot",
                     "capture_web_page_snapshot",
                     "list_web_page_snapshots",
+                    "get_sources_status",
+                    "save_source_key",
+                    "remove_source_key",
                 ]),
             )
             .plugin(
