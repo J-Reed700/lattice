@@ -94,20 +94,21 @@ impl LlamaCppLlm {
     }
 
     /// [`Self::body`] with an output reservation the configured window holds,
-    /// and the request's size; or the refusal of a request it cannot hold,
-    /// which is never sent.
+    /// and the request's size; or the refusal of a request whose prompt alone
+    /// fills the window, which is never sent.
     ///
-    /// A caller that fixed the answer's size (`max_output_tokens`) gets all of
-    /// it or a refusal: a section rewrite cut short is unusable JSON, and the
-    /// retries would spend the budget again. Any other request takes the room
-    /// its prompt leaves, and is refused only when the prompt leaves none.
+    /// The answer's size (`max_output_tokens`) is a ceiling, never a demand:
+    /// the answer takes what was asked or the room the prompt leaves,
+    /// whichever is less. A caller that sized its answer to the room its own
+    /// count left, and counts the prompt a few tokens lower than this does,
+    /// gets a few tokens less answer, not a refusal.
     ///
     /// The estimate settles a request that fits as asked, with no extra call.
     /// One that does not is counted exactly with the server's tokenizer before
-    /// anything is cut or refused: the rough estimate reads high on a large
-    /// prompt a caller measured exactly. When the server cannot count, the
-    /// plain estimate, without the reservation's margin, decides: a server
-    /// with no tokenizer is not refused a request on a margin.
+    /// the answer is cut or anything refused: the rough estimate reads high on
+    /// a large prompt a caller measured exactly. When the server cannot count,
+    /// the plain estimate, without the reservation's margin, decides: a server
+    /// with no tokenizer is not cut or refused on a margin.
     pub(super) async fn measured_body(
         &self,
         request: &CompletionRequest,
@@ -115,13 +116,12 @@ impl LlamaCppLlm {
         let mut body = self.body(request)?;
         let configured = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);
         let requested = request.effective_max_output_tokens(configured);
-        let fixed = request.max_output_tokens.is_some_and(|tokens| tokens > 0);
-        let fits = |size: &RequestSize| {
-            if fixed {
-                size.output_tokens >= requested
-            } else {
-                size.output_tokens > 0
-            }
+        // A caller's own ceiling is counted for exactly before the margin cuts
+        // it; the configured default is not worth a round trip to the server.
+        let wanted = if request.max_output_tokens.is_some_and(|tokens| tokens > 0) {
+            requested
+        } else {
+            1
         };
         let input = &request.input;
         let pictures = RequestSize {
@@ -136,7 +136,7 @@ impl LlamaCppLlm {
             output_tokens: self.output_room_after(estimated, requested),
             ..pictures
         };
-        if !fits(&size) {
+        if size.output_tokens < wanted {
             let (prompt_tokens, counted_exactly) = match self.exact_prompt_tokens(input).await {
                 Some(exact) => (exact, true),
                 None => (Self::plain_prompt_tokens(input), false),
@@ -148,15 +148,11 @@ impl LlamaCppLlm {
                 ..pictures
             };
         }
-        if !fits(&size) {
+        if size.output_tokens == 0 {
             return Err(window_refusal(
                 &self.config.model,
-                RequestSize {
-                    output_tokens: requested,
-                    ..size
-                },
+                size,
                 self.config.context_window,
-                fixed,
             ));
         }
         if let Some(fields) = body.as_object_mut() {

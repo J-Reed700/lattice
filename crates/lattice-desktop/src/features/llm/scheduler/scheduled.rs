@@ -4,9 +4,10 @@
 //! request carries. The same decorator owns the backend's calibrated token estimate, because it is
 //! the one place that sees both what was sent and the usage reported back.
 //!
-//! Before admission, a request that cannot fit the port's configured context
-//! window is refused, whichever backend is behind it: nothing that cannot fit
-//! waits for a slot or reaches a server.
+//! Before admission, a request whose prompt alone fills the port's configured
+//! context window is refused, whichever backend is behind it: nothing that
+//! cannot fit waits for a slot or reaches a server. Any other request is sent,
+//! its answer cut to the room the prompt leaves.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -56,30 +57,29 @@ impl ScheduledLlm {
         self
     }
 
-    /// Refuse a request that cannot fit the configured window, before it is
-    /// queued or sent.
+    /// The room the request's prompt leaves in the configured window for an
+    /// answer; or, before it is queued or sent, the refusal of a request whose
+    /// prompt leaves none.
     ///
-    /// A caller that fixed the answer's size needs all of it beside the
-    /// prompt; any other answer can shrink to the room left, so only a prompt
-    /// that leaves none is refused. The calibrated estimate decides when the
-    /// request plainly fits. When it does not, a backend with a tokenizer
+    /// The answer's size is a ceiling, never a demand, so nothing else is
+    /// refused: a caller that sized its answer to the room its own count left,
+    /// and counts the prompt a few tokens lower than this does, gets a few
+    /// tokens less answer. The calibrated estimate decides when the prompt
+    /// plainly leaves room. When it does not, a backend with a tokenizer
     /// counts the prompt's text exactly before anything is refused. Opaque
     /// provider state (signed reasoning) is not text and is left out of both
     /// counts, so it never causes a refusal. Pictures are charged in both by
     /// their declared geometry, never as their bytes.
-    async fn ensure_fits(&self, request: &CompletionRequest) -> Result<()> {
+    async fn room_for_answer(&self, request: &CompletionRequest) -> Result<usize> {
         let window = self.inner.max_context_tokens();
-        let fixed = request.max_output_tokens.filter(|tokens| *tokens > 0);
-        let answer = fixed.map_or(1, |tokens| usize::try_from(tokens).unwrap_or(usize::MAX));
         let image_tokens = request.image_tokens();
-        let fits = |prompt: usize| prompt.saturating_add(answer) <= window;
         let estimate = tokens_for_chars(
             prompt_texts(request).map(|text| text.chars().count()).sum(),
             self.estimator.chars_per_token(),
         )
         .saturating_add(image_tokens);
-        if fits(estimate) {
-            return Ok(());
+        if estimate < window {
+            return Ok(window - estimate);
         }
         let (prompt_tokens, counted_exactly) = match &self.tokenizer {
             Some(_) => match self.count_tokens_exact(&prompt_text(request)).await {
@@ -91,20 +91,19 @@ impl ScheduledLlm {
             },
             None => (estimate, false),
         };
-        if fits(prompt_tokens) {
-            return Ok(());
+        if prompt_tokens < window {
+            return Ok(window - prompt_tokens);
         }
         Err(window_refusal(
             self.inner.model_name(),
             RequestSize {
                 prompt_tokens,
                 counted_exactly,
-                output_tokens: fixed.unwrap_or(0),
+                output_tokens: 0,
                 image_tokens,
                 image_count: request.image_count(),
             },
             window,
-            fixed.is_some(),
         ))
     }
 
@@ -113,8 +112,14 @@ impl ScheduledLlm {
         &self,
         request: &'r CompletionRequest,
     ) -> Result<(Permit, Cow<'r, CompletionRequest>)> {
-        self.ensure_fits(request).await?;
-        let output = request.effective_max_output_tokens(self.output_limit) as usize;
+        let room = self.room_for_answer(request).await?;
+        let ceiling = request.effective_max_output_tokens(self.output_limit) as usize;
+        // A llama-server counts the prompt exactly and cuts the answer to the
+        // room that leaves (`LlamaCppLlm::measured_body`). Every other backend
+        // has its answer cut here, so no provider is asked for more than its
+        // window holds.
+        let cut = self.tokenizer.is_none() && ceiling > room;
+        let output = if cut { room } else { ceiling };
         let prompt = tokens_for_chars(prompt_chars(request), self.estimator.chars_per_token())
             .saturating_add(request.image_tokens());
         let permit = self
@@ -128,14 +133,13 @@ impl ScheduledLlm {
                 request.cancel.as_ref(),
             )
             .await?;
-        let request = match permit.slot() {
-            Some(slot) => {
-                let mut pinned = request.clone();
-                pinned.assigned_slot = Some(slot);
-                Cow::Owned(pinned)
-            }
-            None => Cow::Borrowed(request),
-        };
+        let mut request = Cow::Borrowed(request);
+        if cut {
+            request.to_mut().max_output_tokens = Some(u32::try_from(room).unwrap_or(u32::MAX));
+        }
+        if let Some(slot) = permit.slot() {
+            request.to_mut().assigned_slot = Some(slot);
+        }
         Ok((permit, request))
     }
 
