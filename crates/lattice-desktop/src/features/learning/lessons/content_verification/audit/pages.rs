@@ -30,8 +30,8 @@ pub(crate) struct VerifierPages {
 
 #[async_trait]
 impl VerifierWeb for VerifierPages {
-    async fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
-        Ok(web_research::search(self.web.as_ref(), query)
+    async fn search(&self, need: &web_research::PlannedNeed) -> Result<Vec<SearchHit>> {
+        Ok(web_research::search_need(self.web.as_ref(), need)
             .await?
             .into_iter()
             .map(|result| SearchHit {

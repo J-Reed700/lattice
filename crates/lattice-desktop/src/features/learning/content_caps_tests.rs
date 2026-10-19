@@ -141,8 +141,10 @@ async fn web_search_pages_while_new_results_appear() -> Result<()> {
             })
             .collect(),
     );
+    let need =
+        crate::features::learning::references::web_research::PlannedNeed::web("query".into());
     let results =
-        crate::features::learning::references::web_research::search(&web, "query").await?;
+        crate::features::learning::references::web_research::search_need(&web, &need).await?;
     assert_eq!(results.len(), 30, "not the former 12");
     Ok(())
 }
@@ -150,8 +152,12 @@ async fn web_search_pages_while_new_results_appear() -> Result<()> {
 #[tokio::test]
 async fn research_plans_as_many_searches_as_the_gaps_need() -> Result<()> {
     let queries: Vec<String> = (0..5).map(|i| format!("distinct search {i}")).collect();
-    let llm = scripted(vec![json!({ "queries": queries }).to_string()]);
-    let planned = crate::features::learning::references::web_research::plan_queries(
+    let needs: Vec<Value> = queries
+        .iter()
+        .map(|query| json!({"gap": 0, "query": query, "kind": "web"}))
+        .collect();
+    let llm = scripted(vec![json!({ "needs": needs }).to_string()]);
+    let planned = crate::features::learning::references::web_research::plan_needs(
         &llm,
         "topic",
         &[json!({"claim":"c","missingEvidence":"m"})],
@@ -159,6 +165,7 @@ async fn research_plans_as_many_searches_as_the_gaps_need() -> Result<()> {
         &[],
     )
     .await?;
+    let planned: Vec<String> = planned.into_iter().map(|need| need.query).collect();
     assert_eq!(planned, queries);
     Ok(())
 }

@@ -187,33 +187,33 @@ async fn research(
         "Finding {position} of {total}: planning searches for \"{}\"",
         short(&issue.claim)
     ));
-    let planned = web_research::plan_queries(llm, topic, &gaps, catalog, &already).await?;
+    let planned = web_research::plan_needs(llm, topic, &gaps, catalog, &already).await?;
     let private = [
         draft.request.goal.as_str(),
         draft.request.prior_knowledge.as_str(),
     ];
-    let queries: Vec<String> = planned
+    let needs: Vec<_> = planned
         .into_iter()
-        .filter(|query| {
-            if outline_references::copies_private_text(query, &private) {
+        .filter(|need| {
+            if outline_references::copies_private_text(&need.query, &private) {
                 tracing::warn!(finding = %issue.id, "Dropped a research query that copied the learner's goal or prior knowledge");
                 return false;
             }
-            !already.contains(query)
+            !already.contains(&need.query)
         })
         .collect();
-    if queries.is_empty() {
+    if needs.is_empty() {
         tracing::info!(finding = %issue.id, "No new public searches were planned for this finding");
         return Ok(());
     }
     let log = draft.research_log.entry(issue.id.clone()).or_default();
-    log.extend(queries.iter().cloned());
+    log.extend(needs.iter().map(|need| need.query.clone()));
     let searched = log.clone();
     issue_mut(draft, &issue.id)?.searched = searched;
     let plan = ReferencePlan {
         subtopics: vec![PlannedSubtopic {
             title: issue.claim.clone(),
-            queries,
+            needs,
         }],
     };
     let found = outline_references::gather_for(

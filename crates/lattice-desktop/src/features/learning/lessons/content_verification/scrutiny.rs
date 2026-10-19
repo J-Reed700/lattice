@@ -25,7 +25,7 @@ pub(super) struct Follow {
 /// The research a set of findings asks for.
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct Scrutiny {
-    /// Planner gaps, one per scrutinised claim (`web_research::plan_queries`).
+    /// Planner gaps, one per scrutinised claim (`web_research::plan_needs`).
     pub(super) gaps: Vec<Value>,
     /// Citations to capture before any search, best first, each page once
     /// (links to places in one page are that page).

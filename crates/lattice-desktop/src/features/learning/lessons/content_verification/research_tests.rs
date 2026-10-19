@@ -96,7 +96,7 @@ fn model() -> ScriptedModel {
     ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"queries":["random assignment confounding official guidance"]}).to_string(),
+                json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string(),
                 selection(&[0]),
             ]
             .into(),
@@ -282,7 +282,7 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"queries":["site:docs.example.org/manual random assignment"]}).to_string(),
+                json!({"needs":[{"gap":0,"query":"site:docs.example.org/manual random assignment","kind":"web"}]}).to_string(),
                 selection(&[0, 1]),
             ]
             .into(),
@@ -469,7 +469,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
         Some(web(false)),
         async {
             let llm = ScriptedModel {
-                outputs: Mutex::new([json!({"queries":[]}).to_string()].into()),
+                outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
                 prompts: Mutex::new(vec![]),
             };
             let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
@@ -572,7 +572,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
                     "Research should finish once both gaps are resolved"
                 );
                 return Ok(
-                    json!({"queries":[if *plans == 1 {"random assignment confounding official guidance"} else {"allocation concealment official guidance"}]})
+                    json!({"needs":[{"gap":0,"kind":"web","query":if *plans == 1 {"random assignment confounding official guidance"} else {"allocation concealment official guidance"}}]})
                         .to_string(),
                 );
             }
@@ -756,9 +756,11 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"queries":["AsyncLocal value flow across await"]}).to_string(),
+                // The subject comes from the gap the need serves; the host
+                // only because the planner set it.
+                json!({"needs":[{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","site":"learn.microsoft.com"}]}).to_string(),
                 selection(&[0]),
-                json!({"needs":[{"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
+                json!({"needs":[{"gap":0,"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
                 selection(&[0]),
                 json!({"needs":[]}).to_string(),
             ]
