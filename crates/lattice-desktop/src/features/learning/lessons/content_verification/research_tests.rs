@@ -20,6 +20,7 @@ pub(in crate::features::learning) const CAPTURE: &str =
 pub(in crate::features::learning) struct ResearchWeb(
     MockWebService,
     Arc<Mutex<Vec<WebSearchInput>>>,
+    Arc<Mutex<Vec<String>>>,
 );
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
@@ -28,6 +29,7 @@ impl WebServiceTrait for ResearchWeb {
         self.0.search_web(input).await
     }
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.2.lock().unwrap().push(url.to_owned());
         self.0.fetch_url_content(url).await
     }
     async fn fetch_url_content(&self, _: &str) -> Result<FetchUrlContentOutput> {
@@ -40,6 +42,9 @@ impl WebServiceTrait for ResearchWeb {
 impl ResearchWeb {
     pub(in crate::features::learning) fn recorded_inputs(&self) -> Vec<WebSearchInput> {
         self.1.lock().unwrap().clone()
+    }
+    fn fetched(&self) -> Vec<String> {
+        self.2.lock().unwrap().clone()
     }
 }
 pub(in crate::features::learning) fn web(truncated: bool) -> Arc<ResearchWeb> {
@@ -68,7 +73,11 @@ fn web_capture(truncated: bool, url: &str, content: &str) -> Arc<ResearchWeb> {
             read_via: Default::default(),
         },
     );
-    Arc::new(ResearchWeb(web, Arc::new(Mutex::new(Vec::new()))))
+    Arc::new(ResearchWeb(
+        web,
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(Vec::new())),
+    ))
 }
 fn gap() -> Finding {
     Finding {
@@ -786,6 +795,69 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
             let exhausted =
                 expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
             assert!(matches!(exhausted, Expansion::Exhausted(_)));
+            Ok(())
+        },
+    )
+    .await
+}
+
+/// A supported finding whose gate asks only to follow `urls`.
+fn citing_finding(urls: &[&str]) -> Finding {
+    use lattice_core::domain::provenance::{Decision, NextStep};
+    let mut finding = spec_finding(CAPTURE, "Random assignment", "example.org");
+    if let Some(Decision::Insufficient { next, .. }) =
+        finding.trust.as_mut().map(|trust| &mut trust.decision)
+    {
+        *next = urls
+            .iter()
+            .map(|url| NextStep::FollowCitation {
+                url: (*url).into(),
+                from: "citing-version".into(),
+            })
+            .collect();
+    }
+    finding
+}
+
+#[tokio::test]
+async fn a_link_to_a_place_in_a_saved_page_never_fetches_it_again() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let web = web(false);
+    let empty_plan = || json!({"needs":[]}).to_string();
+    let llm = ScriptedModel {
+        outputs: Mutex::new([empty_plan(), empty_plan()].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    run(
+        pool,
+        program.summary.id,
+        program.summary.goal,
+        Some(web.clone()),
+        async {
+            let page = "https://example.org/research";
+            let first = [citing_finding(&[page])];
+            let expanded = expand(&llm, &references, &first, &[], &ClaimChecks::default())
+                .await?
+                .saved()
+                .expect("the cited page is saved");
+            assert_eq!(web.fetched(), vec![page.to_owned()]);
+            let places = [citing_finding(&[
+                "https://example.org/research#why-models-need-tools",
+                "https://example.org/research#exercises",
+            ])];
+            let again = expand(&llm, &expanded, &places, &[], &ClaimChecks::default()).await?;
+            assert!(again.saved().is_none(), "nothing new to save");
+            assert_eq!(
+                web.fetched(),
+                vec![page.to_owned()],
+                "links to places in the saved page are that page"
+            );
             Ok(())
         },
     )

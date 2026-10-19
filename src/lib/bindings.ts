@@ -7319,12 +7319,29 @@ export type LearningClaimSubjectDto = { name: string; kind: string; aliases: str
  */
 classes: string[] }
 /**
- * The lesson's claims by who acts next (§6.3): "Pass 3 · 2 claims being
- * repaired · 5 waiting for you · 108 verified".
+ * The lesson's claims by who acts next and what is done to them (§6.3):
+ * "Pass 3 · 4 sent back for stronger sources · 2 being repaired · 5
+ * waiting for you · 108 verified".
  */
 export type LearningClaimTally = {
 /**
- * The machine's: being checked, researched or repaired.
+ * The machine's, not checked yet.
+ */
+unchecked: number;
+/**
+ * The machine's: no passage supports them or one contradicts them, and
+ * research looks for sources before they are checked again.
+ */
+searching: number;
+/**
+ * The machine's: the checker supported them, but the source check found
+ * their sources too weak, and research looks for stronger ones before
+ * they are checked again.
+ */
+sentBack: number;
+/**
+ * The machine's: research is done, and their text is rewritten next or
+ * a rewrite awaits its check.
  */
 repairing: number;
 /**
@@ -7411,6 +7428,17 @@ checksCompleted: number; checksTotal: number; checksReused: number;
  * a deeper evidence page supports leaves this count.
  */
 checksUnresolved: number;
+/**
+ * Checked claims of this pass the checker supported but whose sources
+ * the source check found too weak for the claim: research looks for
+ * stronger sources for them. Not counted in `checks_unresolved`.
+ */
+checksSentBack: number;
+/**
+ * Set while this pass checks its claims again against references
+ * research has just saved: how many it saved.
+ */
+newReferences: number | null;
 /**
  * None while looking up saved checks; otherwise the number requiring the
  * model in this pass, after every reusable comparison has been restored.

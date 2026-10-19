@@ -278,6 +278,17 @@ pub(super) fn assess(
             .find(|cluster| cluster.members.iter().any(|member| member == id))
             .map_or_else(|| ClusterId(id.to_owned()), |cluster| cluster.id.clone())
     };
+    // The origins clustered with a version publish what it publishes: a
+    // link into one of them is not a citation (§8).
+    let publisher = |id: &str| -> Vec<OriginKey> {
+        clustered
+            .iter()
+            .find(|cluster| cluster.members.iter().any(|member| member == id))
+            .map_or_else(|| vec![id.to_owned()], |cluster| cluster.members.clone())
+            .iter()
+            .filter_map(|member| origins.get(member).cloned())
+            .collect()
+    };
     // Staleness is relative to the newest primary support the claim has.
     let newest_primary = passages
         .iter()
@@ -311,7 +322,7 @@ pub(super) fn assess(
                     newest_primary,
                 ),
                 added_by: facts.added_by,
-                cited_urls: cited_urls(passage, facts),
+                cited_urls: cited_urls(passage, facts, &publisher(&passage.source_id)),
                 owner_hints: facts.owner_hints.clone(),
             }
         })
@@ -355,12 +366,18 @@ fn passage_kind(passage: &EvidencePassage, facts: &VersionFacts) -> PassageKind 
 
 /// The links worth following from a supporting passage, best first (§8):
 /// links on a host where the subject's owner is believed to publish rank
-/// as the owner's.
-fn cited_urls(passage: &EvidencePassage, facts: &VersionFacts) -> Vec<String> {
+/// as the owner's; links into `publisher`, the origins of the version's
+/// cluster, are not citations.
+fn cited_urls(
+    passage: &EvidencePassage,
+    facts: &VersionFacts,
+    publisher: &[OriginKey],
+) -> Vec<String> {
     citation_candidates(
         &facts.saved.text,
         (passage.start_byte, passage.end_byte),
         &facts.saved.links,
+        publisher,
         |link| {
             if owner_hinted(&link.url, &facts.owner_hints) {
                 LinkStanding::Owner

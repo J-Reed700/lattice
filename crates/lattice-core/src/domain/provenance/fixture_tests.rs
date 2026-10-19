@@ -624,8 +624,12 @@ fn every_chain_case_ranks_its_candidates_as_labelled() {
         let owners = strings(case.get("owner_domains"));
         let authorities = strings(case.get("authoritative_domains"));
         let links = markdown_links(text);
-        let candidates =
-            citation_candidates(text, (start, start + span_text.len()), &links, |link| {
+        let candidates = citation_candidates(
+            text,
+            (start, start + span_text.len()),
+            &links,
+            &[],
+            |link| {
                 let site = Origin::of_url(&link.url)
                     .ok()
                     .and_then(|o| o.site().map(str::to_owned))
@@ -637,7 +641,8 @@ fn every_chain_case_ranks_its_candidates_as_labelled() {
                 } else {
                     LinkStanding::Unknown
                 }
-            });
+            },
+        );
         let got: Vec<String> = candidates.into_iter().map(|c| c.url).collect();
         let want = strings(case.get("expected_candidates_in_order"));
         if got != want {

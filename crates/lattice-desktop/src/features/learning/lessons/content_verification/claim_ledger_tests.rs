@@ -783,3 +783,83 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
     assert_eq!(ledger.revision, Revision(revision + 1));
     Ok(())
 }
+
+#[test]
+fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() {
+    use lattice_core::domain::provenance::{Bar, ClusterId, CountedSupport, TrustLevel};
+    let machine = || EventProvenance {
+        actor: Actor::Machine,
+        at: 1,
+        job_id: None,
+        app_version: "fixture".into(),
+        checker_model: Some("figures-fixture".into()),
+    };
+    let seen = vec![EvidenceSeen {
+        source_version_id: "source-1".into(),
+        start_byte: 0,
+        end_byte: SOURCE.len(),
+        text_sha256: text_sha256(SOURCE),
+    }];
+    let entry = |index: usize, kind: Option<VerdictKind>, researched: bool| {
+        let sentence = figure(index);
+        let mut entry = ClaimLedgerEntry::extracted(
+            ClaimId(format!("claim-{index}")),
+            machine(),
+            ClaimLocation::locate(index, UnitKind::Block, "body", &sentence, &sentence),
+            sentence.clone(),
+        )
+        .unwrap();
+        if let Some(kind) = kind {
+            let check = Check {
+                checker: Checker::Local {
+                    model: "figures-fixture".into(),
+                },
+                result: CheckResult::Failed { kind },
+                reason: "The reference does not say so.".into(),
+                fingerprint: EvidenceFingerprint::of(evidence_policy(), "figures-fixture", &seen),
+                evidence: seen.clone(),
+                window_tokens: 128_000,
+            };
+            entry.append(machine(), ClaimEvent::Checked(check)).unwrap();
+        }
+        if researched {
+            entry
+                .append(
+                    machine(),
+                    ClaimEvent::Researched {
+                        queries: vec![],
+                        sources_added: vec![],
+                        passages_found: 0,
+                    },
+                )
+                .unwrap();
+        }
+        entry
+    };
+    let weak = || VerdictKind::InsufficientStanding {
+        bar: Bar::Primary,
+        have: vec![CountedSupport {
+            source_version_id: "source-1".into(),
+            origin_cluster: ClusterId("source-1".into()),
+            counted: Some(TrustLevel::Established),
+        }],
+    };
+    let entries = vec![
+        entry(0, None, false),
+        entry(1, Some(VerdictKind::Unsupported), false),
+        entry(2, Some(weak()), false),
+        entry(3, Some(weak()), false),
+        // Researched on this evidence: a rewrite comes next.
+        entry(4, Some(weak()), true),
+    ];
+    let tally = claim_ledger::claim_tally(&entries);
+    assert_eq!(
+        (
+            tally.unchecked,
+            tally.searching,
+            tally.sent_back,
+            tally.repairing
+        ),
+        (1, 1, 2, 1)
+    );
+}

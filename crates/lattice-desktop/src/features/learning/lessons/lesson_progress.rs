@@ -218,6 +218,7 @@ pub(in crate::features::learning) fn begin_checks(total: usize) {
         activity.checks_completed = 0;
         activity.checks_reused = 0;
         activity.checks_unresolved = 0;
+        activity.checks_sent_back = 0;
         activity.model_checks_total = None;
         activity.deeper_evidence = None;
     });
@@ -241,6 +242,32 @@ pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
         state.activity.checks_completed += 1;
         state.activity.checks_reused += u32::from(reused);
         state.activity.checks_unresolved += u32::from(unresolved);
+    });
+}
+
+/// The source check sent back `count` of this pass's supported claims: their
+/// sources are too weak for them, and research looks for stronger ones.
+pub(in crate::features::learning) fn sent_back(count: usize) {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .checks_sent_back = u32::try_from(count).unwrap_or(u32::MAX);
+    });
+}
+
+/// The checks that follow compare claims with `count` references research
+/// has just saved (a step inside the pass, §6.3); `None` once they are done.
+pub(in crate::features::learning) fn new_references(count: Option<usize>) {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .new_references = count.map(|count| u32::try_from(count).unwrap_or(u32::MAX));
     });
 }
 
@@ -487,6 +514,33 @@ mod tests {
                 deeper_page(2, 1);
                 begin_checks(4);
                 assert_eq!(progress.snapshot().2.deeper_evidence, None);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn sent_back_claims_and_a_recheck_against_new_references_are_named() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                begin_checks(3);
+                checked(false, true);
+                checked(false, false);
+                checked(false, false);
+                sent_back(2);
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.checks_unresolved, activity.checks_sent_back),
+                    (1, 2),
+                    "the source check's claims are not the checker's"
+                );
+                new_references(Some(5));
+                begin_checks(3);
+                let activity = progress.snapshot().2;
+                assert_eq!(activity.new_references, Some(5));
+                assert_eq!(activity.checks_sent_back, 0, "a new check counts afresh");
+                new_references(None);
+                assert_eq!(progress.snapshot().2.new_references, None);
             })
             .await;
     }

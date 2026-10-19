@@ -65,7 +65,7 @@ describe('Durable lesson preparation progress', () => {
       phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 120_000,
       lastCheckpointAt: Date.now() - 180_000, lessonTitle: 'Understanding observations', modelName: 'Test model',
       modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 2,
-      checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134, deeperEvidence: null, claims: null,
+      checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, checksSentBack: 0, newReferences: null, modelChecksTotal: 134, deeperEvidence: null, claims: null,
       recentSteps: [{ phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
     } };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
@@ -119,7 +119,7 @@ describe('Durable lesson preparation progress', () => {
       phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: false,
       responseCharacters: 0, modelAttempt: 0, verificationPass: 41, checksCompleted: 3,
-      checksTotal: 170, checksReused: 3, checksUnresolved: 0, modelChecksTotal: null, deeperEvidence: null, claims: null, recentSteps: [],
+      checksTotal: 170, checksReused: 3, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null, recentSteps: [],
     } };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
     const view = show();
@@ -148,7 +148,7 @@ describe('Durable lesson preparation progress', () => {
       phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Async/Await Under the Hood', modelName: 'Test model', modelRunning: true,
       responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted: 115,
-      checksTotal: 115, checksReused: 115, checksUnresolved: 21, modelChecksTotal: 0,
+      checksTotal: 115, checksReused: 115, checksUnresolved: 21, checksSentBack: 0, newReferences: null, modelChecksTotal: 0,
       deeperEvidence: { page: 3, claims: 21, checked: 8 }, claims: null, recentSteps: [],
     } };
     const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
@@ -182,7 +182,7 @@ describe('Durable lesson preparation progress', () => {
         phase: 'repair', phaseStartedAt: now - 600_000, lastActivityAt: now - 120_000,
         lastCheckpointAt: now - 120_000, lessonTitle: 'Understanding observations', modelName: 'Test model',
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 43,
-        checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, modelChecksTotal: 115, deeperEvidence: null, claims: null, recentSteps: [],
+        checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, checksSentBack: 0, newReferences: null, modelChecksTotal: 115, deeperEvidence: null, claims: null, recentSteps: [],
       },
     };
     const client = new QueryClient();
@@ -217,7 +217,7 @@ describe('Durable lesson preparation progress', () => {
         phase: 'evidence', phaseStartedAt: Date.now() - 60_000, lastActivityAt: Date.now(),
         lastCheckpointAt: Date.now(), lessonTitle: 'Understanding observations', modelName: 'Previous main model',
         modelRunning: true, responseCharacters: 420, modelAttempt: 1, verificationPass: 2,
-        checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134, deeperEvidence: null, claims: null, recentSteps: [],
+        checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, checksSentBack: 0, newReferences: null, modelChecksTotal: 134, deeperEvidence: null, claims: null, recentSteps: [],
       },
     };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
@@ -309,14 +309,43 @@ describe('Durable lesson preparation progress', () => {
       phase: 'repair', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: true,
       responseCharacters: 0, modelAttempt: 1, verificationPass: 3, checksCompleted: 115,
-      checksTotal: 115, checksReused: 0, checksUnresolved: 7, modelChecksTotal: 115, deeperEvidence: null,
-      claims: { repairing: 2, waiting: 5, verified: 108, resolvedByYou: 0 }, recentSteps: [],
+      checksTotal: 115, checksReused: 0, checksUnresolved: 7, checksSentBack: 0, newReferences: null, modelChecksTotal: 115, deeperEvidence: null,
+      claims: { unchecked: 0, searching: 0, sentBack: 0, repairing: 2, waiting: 5, verified: 108, resolvedByYou: 0 }, recentSteps: [],
     } }] } });
     const { client, unmount } = show();
     expect(await screen.findByText('Pass 3 · 2 claims being repaired · 5 waiting for you · 108 verified')).toBeVisible();
     expect(screen.getByText(/Claims waiting for you can be resolved now/)).toBeVisible();
     expect(screen.getByText(/the machine gives up on a claim after two tries on the same evidence/)).toBeVisible();
     unmount(); client.clear();
+  });
+
+  it('names claims the source check sent back apart from those needing attention, and a re-check against new references', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
+      phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
+      lessonTitle: 'Tool use', modelName: 'Test model', modelRunning: true,
+      responseCharacters: 0, modelAttempt: 1, verificationPass: 14, checksCompleted: 8,
+      checksTotal: 89, checksReused: 8, checksUnresolved: 0, checksSentBack: 0, newReferences: 72, modelChecksTotal: 81,
+      deeperEvidence: null, claims: { unchecked: 0, searching: 9, sentBack: 72, repairing: 0, waiting: 3, verified: 5, resolvedByYou: 0 }, recentSteps: [],
+    } }] } });
+    const { client, unmount } = show();
+    expect(await screen.findByText('Re-checking 81 claims against 72 new references · Pass 14')).toBeVisible();
+    expect(screen.getByText('Still to re-check')).toBeVisible();
+    expect(screen.getByText('Pass 14 · 72 claims sent back for stronger sources · 9 looking for sources · 3 waiting for you · 5 verified')).toBeVisible();
+    expect(screen.queryByText(/being repaired/)).not.toBeInTheDocument();
+    unmount(); client.clear();
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
+      phase: 'research', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
+      lessonTitle: 'Tool use', modelName: 'Test model', modelRunning: false,
+      responseCharacters: 0, modelAttempt: 1, verificationPass: 14, checksCompleted: 89,
+      checksTotal: 89, checksReused: 8, checksUnresolved: 9, checksSentBack: 72, newReferences: null, modelChecksTotal: 81,
+      deeperEvidence: null, claims: null, recentSteps: [],
+    } }] } });
+    const view = show();
+    const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
+    await screen.findByText('Sent back for stronger sources');
+    expect([count('Supported'), count('Needed attention in this pass'), count('Sent back for stronger sources')]).toEqual(['8', '9', '72']);
+    expect(screen.getByText(/9 claims needed attention and 72 were sent back for stronger sources in the last pass/)).toBeVisible();
+    view.unmount(); view.client.clear();
   });
 
   it('shows a lesson held only by a Verifier audit stop with its reason, never "0 claims", and lets it resume', async () => {

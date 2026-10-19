@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::authority::TrustLevel;
 use super::independence::ClusterId;
+use super::origin::{Origin, OriginKey};
 use super::signals::OutboundLink;
 
 /// What is known about a link's origin for the claim's subject, for
@@ -39,12 +40,21 @@ pub struct CitationCandidate {
 /// marker's definition line). Ranked by what is
 /// known of the link's origin for the claim's subject (`standing`), then by
 /// distance from the passage. `span` is the passage's bytes in `text`.
+/// `citing` holds the citing page's origins (its own and those of its
+/// origin cluster): a link into one of them, back into the page itself or
+/// elsewhere on its publisher's site, is not a citation, since following it
+/// cannot reach an independent origin (§7, §8).
 pub fn citation_candidates(
     text: &str,
     span: (usize, usize),
     links: &[OutboundLink],
+    citing: &[OriginKey],
     standing: impl Fn(&OutboundLink) -> LinkStanding,
 ) -> Vec<CitationCandidate> {
+    let links: Vec<&OutboundLink> = links
+        .iter()
+        .filter(|link| !published_by(link, citing))
+        .collect();
     let (start, end) = (span.0.min(text.len()), span.1.min(text.len()));
     let paragraph_start = text
         .get(..start)
@@ -55,7 +65,7 @@ pub fn citation_candidates(
         .and_then(|after| after.find("\n\n"))
         .map_or(text.len(), |at| end + at);
     let mut found: Vec<(&OutboundLink, usize)> = Vec::new();
-    for link in links {
+    for &link in &links {
         if link.start_byte >= start && link.start_byte < end {
             found.push((link, 0));
         }
@@ -64,14 +74,14 @@ pub fn citation_candidates(
         .iter()
         .filter(|link| link.start_byte >= paragraph_start && link.end_byte <= start)
         .max_by_key(|link| link.end_byte);
-    if let Some(link) = before {
+    if let Some(&link) = before {
         found.push((link, start - link.end_byte));
     }
     let after = links
         .iter()
         .filter(|link| link.start_byte >= end && link.end_byte <= paragraph_end)
         .min_by_key(|link| link.start_byte);
-    if let Some(link) = after {
+    if let Some(&link) = after {
         found.push((link, link.start_byte - end));
     }
     let markers = footnote_markers(text.get(start..end).unwrap_or_default());
@@ -86,7 +96,7 @@ pub fn citation_candidates(
         });
         if defines {
             let line_end = offset + line.len();
-            for link in links {
+            for &link in &links {
                 if link.start_byte >= offset && link.start_byte < line_end {
                     found.push((link, 0));
                 }
@@ -94,7 +104,7 @@ pub fn citation_candidates(
         }
         offset += line.len();
     }
-    for link in links {
+    for &link in &links {
         let anchor = link
             .anchor
             .trim_matches(|c: char| c == '[' || c == ']' || c == '^' || c.is_whitespace());
@@ -136,6 +146,11 @@ pub fn follow_further(
     seen: &[ClusterId],
 ) -> bool {
     target_level < TrustLevel::Primary && !seen.contains(target_cluster)
+}
+
+/// Whether `link` points into one of `citing`, the citing page's origins.
+fn published_by(link: &OutboundLink, citing: &[OriginKey]) -> bool {
+    Origin::of_url(&link.url).is_ok_and(|origin| citing.contains(&origin.key))
 }
 
 /// The footnote markers in a passage: `[3]`, `[^3]`, `[a]`.

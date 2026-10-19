@@ -100,7 +100,7 @@ test('Lesson preparation explains verification and research across navigation an
       resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
       activity: { phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 95_000, lastCheckpointAt: Date.now() - 96_000,
         lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
-        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134,
+        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, checksSentBack: 0, newReferences: null, modelChecksTotal: 134,
         recentSteps: [{ phase: 'review', startedAt: Date.now() - 900_000 }, { phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
       },
     }];

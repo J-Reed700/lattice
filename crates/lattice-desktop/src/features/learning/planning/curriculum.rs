@@ -203,6 +203,13 @@ pub struct LearningGenerationActivity {
     /// Checked claims of this pass that are not supported at present. A claim
     /// a deeper evidence page supports leaves this count.
     pub checks_unresolved: u32,
+    /// Checked claims of this pass the checker supported but whose sources
+    /// the source check found too weak for the claim: research looks for
+    /// stronger sources for them. Not counted in `checks_unresolved`.
+    pub checks_sent_back: u32,
+    /// Set while this pass checks its claims again against references
+    /// research has just saved: how many it saved.
+    pub new_references: Option<u32>,
     /// None while looking up saved checks; otherwise the number requiring the
     /// model in this pass, after every reusable comparison has been restored.
     pub model_checks_total: Option<u32>,
@@ -215,12 +222,23 @@ pub struct LearningGenerationActivity {
     pub recent_steps: Vec<LearningGenerationStep>,
 }
 
-/// The lesson's claims by who acts next (§6.3): "Pass 3 · 2 claims being
-/// repaired · 5 waiting for you · 108 verified".
+/// The lesson's claims by who acts next and what is done to them (§6.3):
+/// "Pass 3 · 4 sent back for stronger sources · 2 being repaired · 5
+/// waiting for you · 108 verified".
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningClaimTally {
-    /// The machine's: being checked, researched or repaired.
+    /// The machine's, not checked yet.
+    pub unchecked: u32,
+    /// The machine's: no passage supports them or one contradicts them, and
+    /// research looks for sources before they are checked again.
+    pub searching: u32,
+    /// The machine's: the checker supported them, but the source check found
+    /// their sources too weak, and research looks for stronger ones before
+    /// they are checked again.
+    pub sent_back: u32,
+    /// The machine's: research is done, and their text is rewritten next or
+    /// a rewrite awaits its check.
     pub repairing: u32,
     /// Waiting for the user.
     pub waiting: u32,

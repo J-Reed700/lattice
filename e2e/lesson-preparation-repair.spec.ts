@@ -23,7 +23,7 @@ test('Completed checking gives way to visible repair progress, including when de
       resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
       activity: { phase: 'repair', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 120_000, lastCheckpointAt: Date.now() - 120_000,
         lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
-        verificationPass: 43, checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, modelChecksTotal: 115,
+        verificationPass: 43, checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, checksSentBack: 0, newReferences: null, modelChecksTotal: 115,
         recentSteps: [{ phase: 'evidence', startedAt: Date.now() - 900_000 }, { phase: 'repair', startedAt: Date.now() - 600_000 }],
       },
     }];
