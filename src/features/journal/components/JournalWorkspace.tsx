@@ -67,9 +67,8 @@ export function JournalWorkspace() {
     pinnedIds,
     selectedId,
     setSelectedId,
-    messagesByConversation,
-    loadingByConversation,
-    loadMessages,
+    selectedMessages: selectedEntryMessages,
+    selectedMessagesLoading: selectedEntryLoading,
     removeEntry,
     reload: reloadEntries,
   } = entriesState;
@@ -100,9 +99,6 @@ export function JournalWorkspace() {
   const sourcesState = useJournalSources({
     entries,
     pinnedIds,
-    messagesByConversation,
-    loadingByConversation,
-    loadMessages,
     enabled: true,
   });
 
@@ -203,9 +199,6 @@ export function JournalWorkspace() {
     () => entries.find((e) => e.id === selectedId) ?? null,
     [entries, selectedId],
   );
-
-  const selectedEntryMessages = selectedId ? messagesByConversation[selectedId] ?? [] : [];
-  const selectedEntryLoading = selectedId ? Boolean(loadingByConversation[selectedId]) : false;
 
   const handleSynthesize = useJournalSynthesis({
     activeNote,

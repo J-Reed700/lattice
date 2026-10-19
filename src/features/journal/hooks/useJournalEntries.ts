@@ -122,6 +122,29 @@ export const journalEntriesQueryOptions = (journalSpaceId: string) =>
     staleTime: 0,
   });
 
+const NO_MESSAGES: SnapshotMessage[] = [];
+
+export const journalEntryMessagesKey = (conversationId: string) =>
+  [...conversationKeys.all, 'journal-entry-messages', conversationId] as const;
+
+/**
+ * One journal entry's messages; the query cache is the per-entry cache. Under
+ * the conversation keys, so any conversation change marks them stale, and read
+ * again whenever the journal shows them anew. A failed read leaves the entry
+ * empty at once rather than retrying.
+ */
+export const journalEntryMessagesQueryOptions = (conversationId: string) =>
+  queryOptions({
+    queryKey: journalEntryMessagesKey(conversationId),
+    queryFn: async () => {
+      const result = await VaultAPI.getConversationMessages(conversationId);
+      if (!result.ok) throw new Error(result.error);
+      return result.data.messages.map((m) => normalizeMessage(m));
+    },
+    retry: false,
+    staleTime: 0,
+  });
+
 export interface UseJournalEntriesResult {
   entries: JournalEntrySummary[];
   isLoading: boolean;
@@ -134,16 +157,15 @@ export interface UseJournalEntriesResult {
   togglePinned: (conversationId: string) => void;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
-  messagesByConversation: Record<string, SnapshotMessage[]>;
-  loadingByConversation: Record<string, boolean>;
-  loadMessages: (conversationId: string) => Promise<SnapshotMessage[]>;
+  selectedMessages: SnapshotMessage[];
+  selectedMessagesLoading: boolean;
   reload: () => Promise<void>;
   removeEntry: (conversationId: string) => void;
 }
 
 /**
- * Owns journal entry list lifecycle, search/filter, selection, and
- * message-content caching for the selected entry.
+ * Owns journal entry list lifecycle, search/filter, selection, and the
+ * selected entry's messages.
  */
 export function useJournalEntries(options: {
   journalSpaceId: string | null;
@@ -173,10 +195,12 @@ export function useJournalEntries(options: {
   );
   const setEntryPinned = useSetJournalEntryPinnedMutation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [messagesByConversation, setMessagesByConversation] = useState<
-    Record<string, SnapshotMessage[]>
-  >({});
-  const [loadingByConversation, setLoadingByConversation] = useState<Record<string, boolean>>({});
+  const selectedMessagesQuery = useQuery({
+    ...journalEntryMessagesQueryOptions(selectedId ?? ''),
+    enabled: selectedId !== null,
+  });
+  const selectedMessages = selectedId ? selectedMessagesQuery.data ?? NO_MESSAGES : NO_MESSAGES;
+  const selectedMessagesLoading = selectedId !== null && selectedMessagesQuery.isPending;
 
   const appliedRequestedEntryKeyRef = useRef<string | null>(null);
   const { refetch: refetchEntries } = entriesQuery;
@@ -277,29 +301,6 @@ export function useJournalEntries(options: {
     }
   }, [journalSpaceId, requestedEntryId, filteredEntries, selectedId]);
 
-  const loadMessages = useCallback(
-    async (conversationId: string): Promise<SnapshotMessage[]> => {
-      const cached = messagesByConversation[conversationId];
-      if (cached) return cached;
-
-      setLoadingByConversation((current) => ({ ...current, [conversationId]: true }));
-      const result = await VaultAPI.getConversationMessages(conversationId);
-      const messages = result.ok
-        ? result.data.messages.map((m) => normalizeMessage(m))
-        : [];
-      setMessagesByConversation((current) => ({ ...current, [conversationId]: messages }));
-      setLoadingByConversation((current) => ({ ...current, [conversationId]: false }));
-      return messages;
-    },
-    [messagesByConversation],
-  );
-
-  useEffect(() => {
-    if (!selectedId) return;
-    if (messagesByConversation[selectedId] !== undefined) return;
-    void loadMessages(selectedId);
-  }, [selectedId, messagesByConversation, loadMessages]);
-
   /** The entry left the journal, and its pin went with it. */
   const removeEntry = useCallback((conversationId: string) => {
     if (journalSpaceId) {
@@ -323,9 +324,8 @@ export function useJournalEntries(options: {
     togglePinned,
     selectedId,
     setSelectedId,
-    messagesByConversation,
-    loadingByConversation,
-    loadMessages,
+    selectedMessages,
+    selectedMessagesLoading,
     reload,
     removeEntry,
   };

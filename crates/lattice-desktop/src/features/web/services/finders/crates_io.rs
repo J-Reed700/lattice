@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, Ecosystem, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
-    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role,
-    SourceNeed, WaveSlot,
+    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, PackageRef, Privacy, RatePolicy, Reach,
+    Role, SourceNeed, WaveSlot,
 };
 use serde::Deserialize;
 use url::Url;
@@ -106,11 +106,20 @@ fn origin_from_url(url: &Url) -> Option<Origin> {
     Some(Origin::new(&host_lower, None))
 }
 
-fn leads_from_crates(crates: Vec<CrateItem>, page: usize) -> Vec<Lead> {
+/// Leads for each crate in `crates`; when the need names a package, only its
+/// record (a search also returns crates that merely share words).
+fn leads_from_crates(
+    crates: Vec<CrateItem>,
+    page: usize,
+    named: Option<PackageRef<'_>>,
+) -> Vec<Lead> {
     let mut leads = Vec::new();
     for krate in crates {
         let name = krate.name.trim();
         if name.is_empty() {
+            continue;
+        }
+        if named.is_some_and(|package| !package.is_record(Ecosystem::Crates, name)) {
             continue;
         }
 
@@ -210,19 +219,12 @@ impl SourceFinder for CratesIo {
 
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
         let started = Instant::now();
-        let exact_crate = need.subject.as_ref().and_then(|subject| {
-            subject.identifiers.iter().find_map(|id| match id {
-                Identifier::PackageName {
-                    ecosystem: Ecosystem::Crates,
-                    name,
-                } => Some(name.as_str()),
-                _ => None,
-            })
-        });
-
-        let (url, is_single) = match exact_crate {
-            Some(name) if page == 1 => {
-                let encoded = urlencoding::encode(name.trim());
+        // A named crate is looked up exactly; only a need that names none
+        // searches.
+        let named = need.package();
+        let (url, is_single) = match named {
+            Some(package) if page == 1 => {
+                let encoded = urlencoding::encode(package.name);
                 (format!("{}/api/v1/crates/{encoded}", self.api), true)
             }
             _ => {
@@ -271,7 +273,7 @@ impl SourceFinder for CratesIo {
             }
         };
 
-        let leads = leads_from_crates(crates, page);
+        let leads = leads_from_crates(crates, page, named);
         answered(&self.descriptor, leads, started)
     }
 }

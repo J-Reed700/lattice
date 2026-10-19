@@ -361,7 +361,7 @@ async fn research<'a>(
     .await?;
     let mut needs: Vec<web_research::PlannedNeed> = hints
         .iter()
-        .map(|hint| web_research::PlannedNeed::inferred_from_gaps(hint.clone(), gaps))
+        .map(|hint| web_research::PlannedNeed::web(hint.clone()))
         .collect();
     for need in planned {
         if !needs.iter().any(|existing| existing.query == need.query) {

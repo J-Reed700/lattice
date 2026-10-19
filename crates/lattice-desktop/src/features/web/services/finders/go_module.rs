@@ -7,9 +7,8 @@ use std::time::Instant;
 use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
-    Auth, Cost, Destination, Ecosystem, FinderDescriptor, FinderId, FinderOutcome, Identifier,
-    Identity, Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role, SourceNeed,
-    WaveSlot,
+    Auth, Cost, Destination, Ecosystem, FinderDescriptor, FinderId, FinderOutcome, Identity, Lead,
+    LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
 };
 use url::Url;
 
@@ -90,23 +89,22 @@ impl SourceFinder for GoModule {
             return answered(&self.descriptor, Vec::new(), started);
         }
 
-        let module_opt = need.subject.as_ref().and_then(|s| {
-            s.identifiers.iter().find_map(|id| match id {
-                Identifier::PackageName {
-                    ecosystem: Ecosystem::Go,
-                    name,
-                } => Some(name.as_str()),
-                _ => None,
-            })
-        });
-        let module = module_opt
-            .unwrap_or(need.query.trim())
-            .trim()
-            .trim_matches('/');
-
-        if module.is_empty() {
+        // The proxy answers module paths only, and a module path's first
+        // element holds a dot (`github.com/gorilla/mux`): any other name or
+        // a question names no Go module.
+        let module = need
+            .package()
+            .filter(|package| package.ecosystem.is_none_or(|named| named == Ecosystem::Go))
+            .map(|package| package.name.trim_matches('/'))
+            .filter(|module| {
+                module
+                    .split('/')
+                    .next()
+                    .is_some_and(|first| first.contains('.'))
+            });
+        let Some(module) = module else {
             return answered(&self.descriptor, Vec::new(), started);
-        }
+        };
 
         let escaped = escape_module_path(module);
         let url = format!("{}/{escaped}/@latest", self.api.trim_end_matches('/'));

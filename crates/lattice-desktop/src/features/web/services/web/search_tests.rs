@@ -36,6 +36,7 @@ fn input(query: &str, max_results: usize, page: usize) -> WebSearchInput {
         kind: None,
         subject: None,
         identifier: None,
+        ecosystem: None,
         site: None,
         after: None,
         max_results,
@@ -149,4 +150,29 @@ async fn page_two_of_a_twelve_result_search_makes_no_provider_request_when_the_p
         .results
         .iter()
         .all(|result| !first_urls.contains(&result.url.as_str())));
+}
+
+/// A search that names no engine is the router's to place, so the user's
+/// keyed engines and SearXNG are reached; naming engines still pins them.
+#[test]
+fn only_named_engines_pin_a_search() {
+    let plain = WebSearchInput {
+        providers: Vec::new(),
+        ..input("rust async", 5, 1)
+    };
+    let (need, only) = super::web_need(&plain, "rust async", 5);
+    assert_eq!(need.kind, lattice_core::domain::sourcing::NeedKind::Web);
+    assert_eq!(only, None);
+
+    let typed = WebSearchInput {
+        kind: Some("paper".into()),
+        ..plain.clone()
+    };
+    assert_eq!(super::web_need(&typed, "attention", 5).1, None);
+
+    let pinned = input("rust async", 5, 1);
+    assert_eq!(
+        super::web_need(&pinned, "rust async", 5).1,
+        Some(vec![duckduckgo::ID, bing_html::ID])
+    );
 }

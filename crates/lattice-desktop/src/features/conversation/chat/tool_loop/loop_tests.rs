@@ -1,7 +1,7 @@
 //! The loop end to end against a scripted model and fake tools: the last
 //! round's shape, calls run side by side, and condensing that lets a turn
 //! read past its window.
-use super::final_round::FINAL_ROUND_INSTRUCTION;
+use super::final_round::{OUT_OF_ROUNDS_INSTRUCTION, WINDOW_FULL_INSTRUCTION};
 use super::research_notes::{CONDENSE_INSTRUCTION, NOTES_HEADER};
 use super::*;
 use crate::features::conversation::chat::cancellation;
@@ -392,7 +392,7 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
         later.as_array().unwrap()[..earlier.as_array().unwrap().len()],
         earlier.as_array().unwrap()[..]
     );
-    assert!(last_text(&requests[1]).ends_with(FINAL_ROUND_INSTRUCTION));
+    assert!(last_text(&requests[1]).ends_with(OUT_OF_ROUNDS_INSTRUCTION));
     // Said at the end of the last result, not as a message of its own.
     assert!(matches!(
         requests[1].input.last(),
@@ -435,7 +435,7 @@ async fn a_thinking_answer_is_asked_for_without_tools() {
     assert!(requests[1].tools.is_empty());
     assert_eq!(requests[1].tool_choice, None);
     assert_eq!(requests[1].thinking, ThinkingMode::On);
-    assert!(last_text(&requests[1]).ends_with(FINAL_ROUND_INSTRUCTION));
+    assert!(last_text(&requests[1]).ends_with(OUT_OF_ROUNDS_INSTRUCTION));
 }
 
 #[tokio::test]
@@ -465,7 +465,7 @@ async fn a_last_round_of_calls_is_asked_again_without_tools() {
     // The calls it was not allowed to make are not replayed, and the firmer
     // instruction takes the first one's place.
     assert_eq!(retry.input.len(), requests[1].input.len());
-    assert!(!last_text(retry).contains(FINAL_ROUND_INSTRUCTION));
+    assert!(!last_text(retry).contains(OUT_OF_ROUNDS_INSTRUCTION));
     assert!(last_text(retry).contains("Do not call any tools"));
     assert_eq!(web.log().len(), 2, "the last round's call never ran");
     assert!(run
@@ -724,7 +724,8 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     // instruction to stop, and the notes in place of page A's text.
     let after = &requests[3];
     assert_eq!(after.tool_choice, None);
-    assert!(!last_text(after).contains(FINAL_ROUND_INSTRUCTION));
+    assert!(!last_text(after).contains(OUT_OF_ROUNDS_INSTRUCTION));
+    assert!(!last_text(after).contains(WINDOW_FULL_INSTRUCTION));
     assert!(last_text(after).starts_with(NOTES_HEADER));
     assert!(results_mentioning(after, &format!("Text of {PAGE_A}")).is_empty());
     // The condensing request is the round before it and an instruction: the
@@ -812,7 +813,7 @@ async fn a_page_condensed_away_is_read_again_when_asked_for() {
 }
 
 /// Notes that save nothing are refused, and the full-window ending is still
-/// there behind them.
+/// there behind them. Rounds are left over, so the window is what ends it.
 #[tokio::test]
 async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let web = Web::with_pages_of(30_000);
@@ -833,7 +834,7 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
         &web,
         &[tool("fetch_url_content")],
         ONE_PAGE_WINDOW,
-        5,
+        10,
         "condense-refused",
     )
     .await;
@@ -842,8 +843,43 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let requests = model.requests();
     assert!(requests.iter().any(is_condense_request));
     let last = requests.last().unwrap();
-    assert!(last_text(last).ends_with(FINAL_ROUND_INSTRUCTION));
+    // The model is told the window is full, not that its rounds ran out.
+    assert!(last_text(last).ends_with(WINDOW_FULL_INSTRUCTION));
+    assert!(!last_text(last).contains(OUT_OF_ROUNDS_INSTRUCTION));
     assert!(!results_mentioning(last, &format!("Text of {PAGE_A}")).is_empty());
+}
+
+/// An answer cut at a call it wrote in a full window says the window stopped
+/// it, not a tool limit it never reached.
+#[tokio::test]
+async fn an_answer_cut_short_by_a_full_window_names_the_window() {
+    let web = Web::with_pages_of(30_000);
+    let model = Model::with_notes(
+        [
+            reads(&[PAGE_A]),
+            reads(&[PAGE_B]),
+            reads(&[PAGE_C]),
+            reads(&[PAGE_D]),
+            CompletionResponse::from_text(
+                "It opened in 1932 [1].\n<tool_call>\n<function=fetch_url_content>",
+            ),
+        ],
+        &"n".repeat(40_000),
+    );
+    let run = run(
+        &model,
+        &web,
+        &[tool("fetch_url_content")],
+        ONE_PAGE_WINDOW,
+        10,
+        "window-full-note",
+    )
+    .await;
+
+    assert_eq!(
+        run.outcome.unwrap().response,
+        format!("It opened in 1932 [1].{WINDOW_FULL_NOTE}")
+    );
 }
 
 /// `find_image` runs in the turn, not through the tool registry: what it

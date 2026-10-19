@@ -42,6 +42,18 @@ fn need(query: &str) -> SourceNeed {
     }
 }
 
+/// A package need that names its package but not its registry.
+fn named(name: &str) -> SourceNeed {
+    SourceNeed {
+        subject: Some(SubjectHint {
+            name: name.to_string(),
+            kind: SubjectKind::Software,
+            identifiers: Vec::new(),
+        }),
+        ..need(name)
+    }
+}
+
 fn budget() -> Budget {
     Budget {
         deadline: Instant::now() + Duration::from_secs(60),
@@ -188,14 +200,14 @@ async fn go_module_proxy_github_and_404() {
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/nonexistent/@latest"))
+        .and(path("/example.com/nonexistent/@latest"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
 
     let finder = GoModule::with_api(http(), server.uri());
     let outcome = finder
-        .find(&need("github.com/spf13/cobra"), 1, &budget())
+        .find(&named("github.com/spf13/cobra"), 1, &budget())
         .await;
     assert_eq!(outcome.result, FinderResult::Answered);
     assert_eq!(outcome.leads.len(), 2);
@@ -215,9 +227,21 @@ async fn go_module_proxy_github_and_404() {
     );
     assert_eq!(outcome.leads[1].owner, expected_owner);
 
-    let outcome_404 = finder.find(&need("nonexistent"), 1, &budget()).await;
+    let outcome_404 = finder
+        .find(&named("example.com/nonexistent"), 1, &budget())
+        .await;
     assert_eq!(outcome_404.result, FinderResult::Empty);
     assert!(outcome_404.leads.is_empty());
+
+    // A bare name or a question is not a module path, so the proxy is not
+    // asked.
+    let bare = finder.find(&named("cobra"), 1, &budget()).await;
+    assert_eq!(bare.result, FinderResult::Empty);
+    let question = finder
+        .find(&need("how do cobra subcommands work"), 1, &budget())
+        .await;
+    assert_eq!(question.result, FinderResult::Empty);
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
 #[test]

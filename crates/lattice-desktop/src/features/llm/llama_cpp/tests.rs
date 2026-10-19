@@ -1799,8 +1799,8 @@ async fn a_rejection_shows_the_servers_words_but_never_the_prompt_they_quote() {
     );
 }
 
-/// A request whose prompt and fixed answer exceed the configured window is
-/// refused with its numbers and never reaches the server.
+/// A request whose prompt alone fills the configured window is refused with
+/// its numbers and never reaches the server.
 #[tokio::test]
 async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
     let server = MockServer::start().await;
@@ -1828,10 +1828,48 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
     assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
     let told = error.to_string();
     for expected in [
-        "1024 for the answer",
+        "prompt is 5001 tokens (estimated), which leaves no room for an answer",
         "configured context window is 4096",
         "It was not sent",
     ] {
         assert!(told.contains(expected), "{told}");
     }
+}
+
+/// The lesson check seen in production: the caller sized its answer to the
+/// room its own count of the prompt left, this client counts the prompt two
+/// tokens higher, and the request goes out with the answer two tokens
+/// shorter instead of being refused.
+#[tokio::test]
+async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
+    let server = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(sse_response(json!({"content":"ok"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let settings = LLMSettingsDto {
+        context_window: 4_096,
+        ..settings(server.uri())
+    };
+    // "user" and 11 996 characters: 3 000 tokens by the estimate, 1 096 left.
+    LlamaCppLlm::new(&settings)
+        .unwrap()
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "x".repeat(11_996),
+            }],
+            max_output_tokens: Some(1_098),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let sent = requests
+        .iter()
+        .find(|request| request.url.path() == "/v1/chat/completions")
+        .unwrap();
+    let body: Value = serde_json::from_slice(&sent.body).unwrap();
+    assert_eq!(body["max_tokens"], json!(1_096));
 }

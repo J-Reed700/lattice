@@ -264,8 +264,8 @@ mod tests {
     /// numbers, as the scheduler and the llama.cpp client do.
     struct Refusing;
 
-    const NUMBERED_REFUSAL: &str = "This request needs 9000 tokens: a prompt of 8500 (counted \
-         exactly) and 500 for the answer; the configured context window is 8192. It was not sent.";
+    const NUMBERED_REFUSAL: &str = "This request's prompt is 8500 tokens (counted exactly), \
+         which leaves no room for an answer; the configured context window is 8192. It was not sent.";
 
     #[async_trait::async_trait]
     impl LLMPort for Refusing {

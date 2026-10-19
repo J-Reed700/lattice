@@ -552,8 +552,8 @@ fn is_claim_candidate(sentence: &str) -> bool {
     if lattice_core::shared::text::contains_line_reference(s) {
         return false;
     }
-    // The app's own lines, appended when the model hit its output limit or ran
-    // out of tool rounds. The splitter stops at a full stop, so compare the
+    // The app's own lines, appended when the model hit its output limit, ran
+    // out of tool rounds or filled its window. The splitter stops at a full stop, so compare the
     // words, not the wrapper — and the emphasis around them is gone by now, so
     // match either form.
     let app_note = |note: &'static str| {
@@ -568,6 +568,7 @@ fn is_claim_candidate(sentence: &str) -> bool {
     if [
         super::super::tool_loop::CUT_SHORT_NOTE,
         super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
+        super::super::tool_loop::WINDOW_FULL_NOTE,
     ]
     .into_iter()
     .any(|note| unwrapped.starts_with(app_note(note)))

@@ -181,7 +181,7 @@ async fn pypi_package_lookup_and_leads() {
 
     let finder = PyPi::with_api(http(), server.uri());
     let res = finder
-        .find(&need(Ecosystem::PyPi, "requests", false), 1, &budget())
+        .find(&need(Ecosystem::PyPi, "requests", true), 1, &budget())
         .await;
     assert_eq!(res.result, FinderResult::Answered);
     assert_eq!(res.leads.len(), 3);
@@ -201,13 +201,25 @@ async fn pypi_package_lookup_and_leads() {
     );
 
     let empty = finder
-        .find(&need(Ecosystem::PyPi, "missing", false), 1, &budget())
+        .find(&need(Ecosystem::PyPi, "missing", true), 1, &budget())
         .await;
     assert_eq!(empty.result, FinderResult::Empty);
     let p2 = finder
-        .find(&need(Ecosystem::PyPi, "requests", false), 2, &budget())
+        .find(&need(Ecosystem::PyPi, "requests", true), 2, &budget())
         .await;
     assert_eq!(p2.result, FinderResult::Empty);
+
+    // PyPI has no search: a need that names no package asks it nothing,
+    // rather than looking up the question's first word.
+    let unnamed = finder
+        .find(
+            &need(Ecosystem::PyPi, "requests timeout", false),
+            1,
+            &budget(),
+        )
+        .await;
+    assert_eq!(unnamed.result, FinderResult::Empty);
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -250,6 +262,41 @@ async fn npm_search_and_pagination() {
         })
     );
     assert_eq!(res.leads[2].found_by[0].1, 3);
+}
+
+#[tokio::test]
+async fn npm_keeps_only_the_named_package_from_a_search() {
+    let server = MockServer::start().await;
+    let package = |name: &str| {
+        serde_json::json!({"package": {
+            "name": name,
+            "links": {"homepage": format!("https://{name}.example/")}
+        }})
+    };
+    // The search is by the package's name, and the registry ranks packages
+    // that only share words alongside it.
+    Mock::given(method("GET"))
+        .and(path("/-/v1/search"))
+        .and(query_param("text", "request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "objects": [package("request-promise"), package("Request"), package("got")]
+        })))
+        .mount(&server)
+        .await;
+
+    let finder = Npm::with_api(http(), server.uri());
+    let mut asked = need(Ecosystem::Npm, "request", true);
+    asked.query = "retry a request after a timeout".to_string();
+    let res = finder.find(&asked, 1, &budget()).await;
+    assert_eq!(res.result, FinderResult::Answered);
+    let owners: Vec<_> = res.leads.iter().map(|lead| lead.owner.clone()).collect();
+    assert!(!owners.is_empty());
+    assert!(
+        owners
+            .iter()
+            .all(|owner| *owner == Some(Origin::new("request.example", None))),
+        "only the record named `request` (npm folds case) is kept: {owners:?}"
+    );
 }
 
 #[tokio::test]

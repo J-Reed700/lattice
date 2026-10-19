@@ -431,6 +431,12 @@ pub struct FindSourcesInput {
     /// Optional exact identifier (`crates:tokio`, `npm:react`, `rfc:9110`, DOI, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
+    /// The registry a package is published in (`pypi`, `crates`, `npm`,
+    /// `nuget`, `rubygems`, `maven`, `go`). Without it a named package is
+    /// looked up in every registry and trusted only where that is
+    /// unambiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ecosystem: Option<String>,
     /// Optional host or host/path scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site: Option<String>,

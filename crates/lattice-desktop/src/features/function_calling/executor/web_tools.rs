@@ -97,6 +97,7 @@ impl FunctionExecutor {
                 kind: Some(input.kind),
                 subject: input.subject,
                 identifier: input.identifier,
+                ecosystem: input.ecosystem,
                 site: input.site,
                 after: None,
                 max_results: input.max_results,

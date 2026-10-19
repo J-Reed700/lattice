@@ -373,15 +373,21 @@ async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
 }
 
 #[tokio::test]
-async fn a_fixed_answer_the_window_cannot_hold_is_refused_never_shrunk() {
+async fn an_answer_the_window_cannot_hold_is_cut_to_the_room_left_not_refused() {
     let long = "word ".repeat(8_000);
-    for (tokens, counted) in [(Some(7_900), "(counted exactly)"), (None, "(estimated)")] {
+    // The server counts 6,500 tokens and the framing 24 more: the answer gets
+    // the 1,668 left, not the 2,000 asked.
+    let (reserved, size) = measured(Some(6_500), &long, Some(2_000)).await.unwrap();
+    assert_eq!(reserved, 1_668);
+    assert!(size.counted_exactly);
+    // Only a prompt that fills the window is refused.
+    for (tokens, counted) in [(Some(8_200), "(counted exactly)"), (None, "(estimated)")] {
         let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
         assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
         let told = refused.to_string();
         for expected in [
             counted,
-            "2000 for the answer",
+            "leaves no room for an answer",
             "configured context window is 8192",
         ] {
             assert!(told.contains(expected), "{told}");
@@ -562,13 +568,13 @@ async fn the_exact_count_adds_the_pictures_and_a_refusal_names_them() {
     let refused = client
         .measured_body(&CompletionRequest {
             max_output_tokens: Some(2_000),
-            ..picture_request("user", &"x".repeat(24_000), 6_000)
+            ..picture_request("user", &"x".repeat(24_000), 7_200)
         })
         .await
         .unwrap_err()
         .to_string();
     assert!(
-        refused.contains("text counted exactly; 6000 tokens for 1 picture"),
+        refused.contains("text counted exactly; 7200 tokens for 1 picture"),
         "{refused}"
     );
 }

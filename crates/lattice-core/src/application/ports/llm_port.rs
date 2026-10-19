@@ -419,6 +419,10 @@ pub struct CompletionRequest {
     /// a reservation nothing enforces is only bookkeeping: without this the model
     /// may generate past what the budget set aside and overrun the window it was
     /// measured against. `None` keeps the provider's configured limit.
+    ///
+    /// A ceiling, never a demand: when the prompt leaves less room in the
+    /// window, the answer gets the room left. No request is refused for its
+    /// answer's size, only for a prompt that leaves no room at all.
     pub max_output_tokens: Option<u32>,
     /// Caps wall-clock time across all attempts. Stalls are detected separately,
     /// so this only needs to exceed the longest legitimate generation.

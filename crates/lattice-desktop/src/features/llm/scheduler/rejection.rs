@@ -77,38 +77,24 @@ impl RequestSize {
     }
 }
 
-/// The refusal of a request that does not fit the configured `window`, before
-/// it is sent. `size.output_tokens` is what the caller asked for. With
-/// `reserved`, the caller fixed the answer's size and needs all of it;
-/// otherwise the answer could have shrunk to the room left, and only a prompt
-/// that leaves none is refused.
-pub(crate) fn window_refusal(
-    model: &str,
-    size: RequestSize,
-    window: usize,
-    reserved: bool,
-) -> AppError {
+/// The refusal of a request whose prompt alone fills the configured `window`,
+/// before it is sent. Nothing else is refused for its size: an answer always
+/// shrinks to the room its prompt leaves, so only a prompt that leaves none
+/// cannot be sent.
+pub(crate) fn window_refusal(model: &str, size: RequestSize, window: usize) -> AppError {
     tracing::warn!(
         model,
         prompt_tokens = size.prompt_tokens,
         counted_exactly = size.counted_exactly,
-        output_tokens = size.output_tokens,
-        reserved,
         window,
         "llm.request_refused"
     );
-    let need = if reserved {
-        format!("This request needs {}", size.describe())
-    } else {
-        format!(
-            "This request's prompt is {} tokens ({}), which leaves no room for an answer",
-            size.prompt_tokens,
-            size.counted()
-        )
-    };
     AppError::InvalidInput(format!(
-        "{need}; the configured context window is {window}. It was not sent. Shorten the \
-         request, or raise the context window in Settings if the model's server holds more."
+        "This request's prompt is {} tokens ({}), which leaves no room for an answer; the \
+         configured context window is {window}. It was not sent. Shorten the request, or raise \
+         the context window in Settings if the model's server holds more.",
+        size.prompt_tokens,
+        size.counted()
     ))
 }
 

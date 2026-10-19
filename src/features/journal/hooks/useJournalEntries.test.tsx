@@ -18,6 +18,7 @@ vi.mock('@/lib/api', () => {
 });
 vi.mock('@/stores/toastStore', () => ({ toast: { error: vi.fn() } }));
 type ListResult = Awaited<ReturnType<typeof VaultAPI.listJournalConversations>>;
+type MessagesResult = Awaited<ReturnType<typeof VaultAPI.getConversationMessages>>;
 const response = (conversations: unknown): ListResult => ({ ok: true, data: { conversations } } as ListResult);
 const first = { id: 'a', title: 'Older café entry', updatedAt: '2026-10-07T12:00:00Z', messageCount: 1 };
 const second = { id: 'b', title: 'Latest entry', updatedAt: '2026-10-08T12:00:00Z', messageCount: 2 };
@@ -58,13 +59,27 @@ it('does not query without a journal and clears entries when leaving it', async 
 });
 
 it('loads newest entries first, selects one and requests its messages once', async () => {
-  const { result } = renderHook(useJournalEntries, { initialProps: initial });
+  const { result, rerender } = renderHook(useJournalEntries, { initialProps: initial });
   await waitFor(() => expect(result.current.entries.map(entry => entry.id)).toEqual(['b', 'a']));
-  await waitFor(() => expect(result.current.messagesByConversation.b).toEqual([]));
+  await waitFor(() => expect(result.current.selectedId).toBe('b'));
+  await waitFor(() => expect(result.current.selectedMessagesLoading).toBe(false));
+  expect(result.current.selectedMessages).toEqual([]);
   expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', includeArchived: true, limit: 100, offset: 0 });
-  expect(result.current.selectedId).toBe('b');
-  await act(async () => { expect(await result.current.loadMessages('b')).toEqual([]); });
+  rerender({ ...initial });
   expect(VaultAPI.getConversationMessages).toHaveBeenCalledExactlyOnceWith('b');
+});
+
+it('shows the selected entry as loading until its read settles, and a failed read as empty', async () => {
+  const read = deferred<MessagesResult>();
+  vi.mocked(VaultAPI.getConversationMessages).mockReturnValueOnce(read.promise);
+  const { result } = renderHook(useJournalEntries, { initialProps: initial });
+  await waitFor(() => expect(result.current.selectedId).toBe('b'));
+  expect(result.current.selectedMessagesLoading).toBe(true);
+  expect(result.current.selectedMessages).toEqual([]);
+  await act(async () => { read.resolve({ ok: false, error: 'Database busy' }); });
+  await waitFor(() => expect(result.current.selectedMessagesLoading).toBe(false));
+  expect(result.current.selectedMessages).toEqual([]);
+  expect(VaultAPI.getConversationMessages).toHaveBeenCalledOnce();
 });
 
 it('lists the journal\'s saved pins first', async () => {
@@ -197,9 +212,9 @@ it('normalizes legacy entry and message fields without rendering invalid values'
   vi.mocked(VaultAPI.listJournalConversations).mockResolvedValue(response([{ id: 'legacy', title: 42, updated_at: '2026-10-08', message_count: 'invalid' }]));
   vi.mocked(VaultAPI.getConversationMessages).mockResolvedValue({ ok: true, data: { total: 1, messages: [{ role: 'unknown', content: 42, created_at: '2026-10-08', metadata: null }] } } as unknown as Awaited<ReturnType<typeof VaultAPI.getConversationMessages>>);
   const { result } = renderHook(useJournalEntries, { initialProps: initial });
-  await waitFor(() => expect(result.current.messagesByConversation.legacy).toHaveLength(1));
+  await waitFor(() => expect(result.current.selectedMessages).toHaveLength(1));
   expect(result.current.entries[0]).toEqual({ id: 'legacy', title: 'Untitled entry', updatedAt: '2026-10-08', messageCount: 0 });
-  expect(result.current.messagesByConversation.legacy[0]).toMatchObject({ id: expect.stringMatching(/^message_/), role: 'assistant', content: '', createdAt: '2026-10-08', metadata: null });
+  expect(result.current.selectedMessages[0]).toMatchObject({ id: expect.stringMatching(/^message_/), role: 'assistant', content: '', createdAt: '2026-10-08', metadata: null });
 });
 
 it('reads the entries again when a conversation changes elsewhere', async () => {
@@ -210,4 +225,16 @@ it('reads the entries again when a conversation changes elsewhere', async () => 
   vi.mocked(VaultAPI.listJournalConversations).mockResolvedValueOnce(response([second]));
   await act(async () => { await client.invalidateQueries({ queryKey: conversationKeys.all }); });
   await waitFor(() => expect(result.current.entries).toEqual([second]));
+});
+
+it('reads the selected entry\'s messages again when a conversation changes elsewhere', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { result } = renderBareHook(() => useJournalEntries(initial), { wrapper });
+  await waitFor(() => expect(result.current.selectedId).toBe('b'));
+  await waitFor(() => expect(result.current.selectedMessagesLoading).toBe(false));
+  const fresh = { id: 'm1', role: 'assistant', content: 'Added elsewhere', createdAt: '2026-10-08T12:00:00Z', metadata: null };
+  vi.mocked(VaultAPI.getConversationMessages).mockResolvedValue({ ok: true, data: { total: 1, messages: [fresh] } } as unknown as MessagesResult);
+  await act(async () => { await client.invalidateQueries({ queryKey: conversationKeys.all }); });
+  await waitFor(() => expect(result.current.selectedMessages).toEqual([fresh]));
 });

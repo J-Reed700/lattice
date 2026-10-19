@@ -680,45 +680,57 @@ fn scheduled(model: Arc<GatedModel>) -> ScheduledLlm {
     ScheduledLlm::new(model, scheduler, 512)
 }
 
-/// Whatever backend is behind the port, nothing its configured window cannot
-/// hold is queued or sent.
+/// Whatever backend is behind the port, nothing whose prompt alone fills its
+/// configured window is queued or sent.
 #[tokio::test]
 async fn a_request_the_configured_window_cannot_hold_never_reaches_the_backend() {
     let model = GatedModel::new();
     model.gate.add_permits(1);
     let llm = scheduled(model.clone());
-    // About 6 000 tokens by the estimate, in the model's 8 192-token window.
-    let prompt = "x".repeat(24_000);
-    let refused = llm
-        .complete(&CompletionRequest {
-            max_output_tokens: Some(4_096),
-            ..request(&prompt, None)
-        })
-        .await
-        .unwrap_err();
-    assert!(matches!(refused, AppError::InvalidInput(_)), "{refused}");
-    let told = refused.to_string();
-    for expected in [
-        "(estimated)",
-        "4096 for the answer",
-        "configured context window is 8192",
-    ] {
-        assert!(told.contains(expected), "{told}");
-    }
-    // A prompt that fills the window leaves no room for any answer at all.
+    // About 10 000 tokens by the estimate, in the model's 8 192-token window.
     let full = llm
         .complete(&request(&"x".repeat(40_000), None))
         .await
         .unwrap_err();
-    assert!(
-        full.to_string().contains("leaves no room for an answer"),
-        "{full}"
-    );
+    assert!(matches!(full, AppError::InvalidInput(_)), "{full}");
+    let told = full.to_string();
+    for expected in [
+        "(estimated)",
+        "leaves no room for an answer",
+        "configured context window is 8192",
+    ] {
+        assert!(told.contains(expected), "{told}");
+    }
     assert!(model.seen.lock().is_empty(), "nothing reached the backend");
+}
 
-    // The same prompt with an answer that may take the room left is sent.
-    llm.complete(&request(&prompt, None)).await.unwrap();
-    assert_eq!(model.seen.lock().len(), 1);
+/// The lesson check seen in production: a caller sized its answer to the
+/// room its own count of the prompt left, the gate counts the prompt a few
+/// tokens higher, and the request is sent with its answer cut to the room
+/// left instead of being refused.
+#[tokio::test]
+async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
+    let model = GatedModel::new();
+    model.gate.add_permits(2);
+    let llm = scheduled(model.clone());
+    // "user" and 31 564 characters: 7 892 tokens by the estimate, 300 left.
+    let prompt = "x".repeat(31_564);
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(302),
+        ..request(&prompt, None)
+    })
+    .await
+    .unwrap();
+    // An answer the room holds is sent as asked.
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(256),
+        ..request(&prompt, None)
+    })
+    .await
+    .unwrap();
+    let seen = model.seen.lock();
+    assert_eq!(seen[0].max_output_tokens, Some(300));
+    assert_eq!(seen[1].max_output_tokens, Some(256));
 }
 
 /// The estimate never refuses what the backend's own tokenizer says fits.
@@ -741,11 +753,9 @@ async fn an_exact_count_decides_before_a_request_is_refused() {
     model.gate.add_permits(1);
     let llm = scheduled(model.clone())
         .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
-    llm.complete(&CompletionRequest {
-        max_output_tokens: Some(4_096),
-        ..request(&"x".repeat(24_000), None)
-    })
-    .await
-    .unwrap();
+    // About 10 000 tokens by the estimate; the server counts 3 000.
+    llm.complete(&request(&"x".repeat(40_000), None))
+        .await
+        .unwrap();
     assert_eq!(model.seen.lock().len(), 1);
 }

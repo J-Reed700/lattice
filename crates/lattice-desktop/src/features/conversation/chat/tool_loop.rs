@@ -28,6 +28,7 @@ use super::fetch_memory::FetchMemory;
 use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
+use final_round::LastRound;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -334,23 +335,32 @@ pub(super) async fn run_agentic_tool_loop(
                 window,
                 chars_in_flight(&native_request.input) + tool_schema_chars,
             );
-        let last_round = out_of_rounds || window_full;
+        // Out of rounds is named first: the last round skips condensing, so
+        // its window can look fuller than it would have been.
+        let last_round = if out_of_rounds {
+            Some(LastRound::OutOfRounds)
+        } else if window_full {
+            Some(LastRound::WindowFull)
+        } else {
+            None
+        };
         // The last round is for answering. A model still calling tools here
         // would otherwise end the turn with an error and lose every page and
         // passage it had gathered, so it may call none and is told to answer
         // from what it has.
-        let answer_only = last_round && tools_ref.is_some_and(|tools| !tools.is_empty());
-        if answer_only {
+        let answer_only = last_round.filter(|_| tools_ref.is_some_and(|tools| !tools.is_empty()));
+        if let Some(last_round) = answer_only {
             info!(
                 iteration,
-                window_full, "Last tool round: asking for the answer with calls forbidden"
+                ?last_round,
+                "Last tool round: asking for the answer with calls forbidden"
             );
             if answer_thinking {
                 // Thinking with the tools still in the prompt wrote the call
                 // as text and answered nothing, so this answer has none.
-                final_round::ask_for_answer_without_tools(&mut native_request);
+                final_round::ask_for_answer_without_tools(&mut native_request, last_round);
             } else {
-                final_round::ask_for_answer(&mut native_request);
+                final_round::ask_for_answer(&mut native_request, last_round);
             }
         }
         native_request.thinking = ThinkingMode::for_answer(answer_thinking, &native_request);
@@ -372,10 +382,12 @@ pub(super) async fn run_agentic_tool_loop(
             &turn_cancel,
             &clock,
             generation::thinking_label(iteration),
-            answer_only,
+            answer_only.is_some(),
         )
         .await?;
-        if answer_only && final_round::wrote_only_calls(&round.response) {
+        if let Some(last_round) =
+            answer_only.filter(|_| final_round::wrote_only_calls(&round.response))
+        {
             // Forbidding calls does not stop a model writing them, and with
             // thinking on Qwen 3.5 writes them into its text. Once, with no
             // tools in the prompt at all: this request re-reads the prompt,
@@ -393,7 +405,7 @@ pub(super) async fn run_agentic_tool_loop(
                 None,
                 Some("the model called tools in the last round".into()),
             );
-            final_round::insist_on_answer(&mut native_request);
+            final_round::insist_on_answer(&mut native_request, last_round);
             round = generation::generate(
                 llm.as_ref(),
                 &mut native_request,
@@ -440,7 +452,7 @@ pub(super) async fn run_agentic_tool_loop(
             })
             .collect::<Vec<_>>();
         let response_text = response.text;
-        let tool_calls = if last_round && !tool_calls.is_empty() {
+        let tool_calls = if last_round.is_some() && !tool_calls.is_empty() {
             // Forbidden to call, a model can still call. It is not run: this
             // round's text is the answer.
             warn!(
@@ -454,21 +466,24 @@ pub(super) async fn run_agentic_tool_loop(
         // A call written as text is cut out of the answer, and the answer
         // says why it stops there rather than ending mid-thought for no
         // visible reason.
-        let response_text = match answer_only
-            .then(|| final_round::written_call_start(&response_text))
-            .flatten()
-        {
-            Some(start) => {
+        let response_text = match answer_only.and_then(|last_round| {
+            final_round::written_call_start(&response_text).map(|start| (start, last_round))
+        }) {
+            Some((start, last_round)) => {
                 warn!(
                     conversation_id = conv_id,
                     "Model wrote tool calls as text in the last round; cutting them from the answer"
                 );
                 let kept = response_text[..start].trim_end();
-                emitter.content(OUT_OF_ROUNDS_NOTE)?;
+                let note = match last_round {
+                    LastRound::OutOfRounds => OUT_OF_ROUNDS_NOTE,
+                    LastRound::WindowFull => WINDOW_FULL_NOTE,
+                };
+                emitter.content(note)?;
                 if kept.is_empty() {
-                    OUT_OF_ROUNDS_NOTE.trim_start().to_string()
+                    note.trim_start().to_string()
                 } else {
-                    format!("{kept}{OUT_OF_ROUNDS_NOTE}")
+                    format!("{kept}{note}")
                 }
             }
             None => response_text,
@@ -568,9 +583,16 @@ pub(super) fn max_tool_rounds(deep_research: bool, explorer: bool) -> usize {
 }
 
 /// Appended where the last round's answer stopped to write a tool call it
-/// could not make. One sentence, so the grounding check can know it whole.
+/// could not make, when the rounds ran out. One sentence, so the grounding
+/// check can know it whole.
 pub(in crate::features::conversation::chat) const OUT_OF_ROUNDS_NOTE: &str =
     "\n\n_(Stopped here: the model used every tool round this turn allows before it finished — say \"continue\" to let it keep going.)_";
+
+/// The same, when the window had no room for another result. It points to a
+/// larger window, not "continue": the next turn plans the same window, and
+/// what filled this one may fill it again.
+pub(in crate::features::conversation::chat) const WINDOW_FULL_NOTE: &str =
+    "\n\n_(Stopped here: the context window filled before the model finished — a larger context window in Settings gives it room to read more.)_";
 
 /// Whether another tool result could still fit in the window, at the size
 /// below which a result says too little to be worth a round. A provider that

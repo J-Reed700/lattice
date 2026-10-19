@@ -1,6 +1,11 @@
-import { renderHook } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook as renderBareHook, waitFor } from '@testing-library/react';
+import { beforeEach, expect, it, vi } from 'vitest';
+
+import VaultAPI from '@/lib/api';
+import { deferred } from '@/tests/deferred';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 
 import { collectEntrySources, getSourceOpenUrl, parseMessageSources, useJournalSources } from './useJournalSources';
@@ -8,6 +13,25 @@ import { collectEntrySources, getSourceOpenUrl, parseMessageSources, useJournalS
 function message(sources: unknown[], role: SnapshotMessage['role'] = 'assistant'): SnapshotMessage {
   return { id: crypto.randomUUID(), role, content: 'Reply', createdAt: '2026-10-08T12:00:00Z', metadata: JSON.stringify({ sources }) };
 }
+vi.mock('@/lib/api', () => {
+  const api = { getConversationMessages: vi.fn() };
+  return { default: api, VaultAPI: api };
+});
+type MessagesResult = Awaited<ReturnType<typeof VaultAPI.getConversationMessages>>;
+const read = (messages: SnapshotMessage[]) => ({ ok: true, data: { messages, total: messages.length } } as unknown as MessagesResult);
+const stored: Record<string, SnapshotMessage[]> = {};
+const renderHook = <P, R>(hook: (_props: P) => R, options: { initialProps: P }) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return renderBareHook(hook, { ...options, wrapper });
+};
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  for (const key of Object.keys(stored)) delete stored[key];
+  vi.mocked(VaultAPI.getConversationMessages).mockImplementation(async (id) => read(stored[id] ?? []));
+});
+
 const source = { documentId: 'doc-a', filePath: '/docs/café.md', fileName: 'café.md', excerpt: 'Saved evidence', score: 0.7 };
 
 it.each([null, undefined, '', '{broken', 'null', '42', '[]', '{}', '{"sources":{}}'])('treats malformed or absent metadata %s as having no references', metadata => {
@@ -72,35 +96,33 @@ it('opens web references through safe URLs and keeps local sources local', () =>
 function options() {
   return {
     enabled: true, entries: [{ id: 'a', title: 'First', updatedAt: '2026-10-08', messageCount: 2 }, { id: 'b', title: 'Second', updatedAt: '2026-10-07', messageCount: 1 }],
-    pinnedIds: new Set<string>(), messagesByConversation: {} as Record<string, SnapshotMessage[]>,
-    loadingByConversation: {} as Record<string, boolean>, loadMessages: vi.fn(async () => [] as SnapshotMessage[]),
+    pinnedIds: new Set<string>(),
   };
 }
 
-it('does no work while disabled and only loads uncached, non-pending conversations', () => {
+it('does no work while disabled and reads each scanned entry once', async () => {
   const props = options();
+  const slow = deferred<MessagesResult>();
+  vi.mocked(VaultAPI.getConversationMessages).mockImplementation(async (id) => (id === 'b' ? slow.promise : read([])));
   const { result, rerender } = renderHook(useJournalSources, { initialProps: { ...props, enabled: false } });
-  expect(props.loadMessages).not.toHaveBeenCalled();
+  expect(VaultAPI.getConversationMessages).not.toHaveBeenCalled();
   expect(result.current).toEqual({ summaries: [], isLoading: false, scannedConversationCount: 0 });
-  rerender({ ...props, enabled: true, messagesByConversation: { a: [] } });
-  expect(props.loadMessages).toHaveBeenCalledExactlyOnceWith('b');
+  rerender({ ...props, enabled: true });
   expect(result.current.isLoading).toBe(true);
-  rerender({ ...props, enabled: true, messagesByConversation: { a: [] }, loadingByConversation: { b: true } });
-  expect(props.loadMessages).toHaveBeenCalledOnce();
-  rerender({ ...props, enabled: true, messagesByConversation: { a: [], b: [] } });
-  expect(result.current.isLoading).toBe(false);
+  rerender({ ...props, enabled: true });
+  await act(async () => { slow.resolve({ ok: false, error: 'Database busy' } as MessagesResult); });
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
+  expect(VaultAPI.getConversationMessages).toHaveBeenCalledTimes(2);
+  expect(result.current.summaries).toEqual([]);
 });
 
-it('counts assistant citations but records each conversation once', () => {
-  const props = options();
-  props.messagesByConversation = {
-    a: [message([source], 'user'), message([{ ...source, excerpt: '', score: 0.1 }]), message([source])],
-    b: [message([{ ...source, score: 0.9, mimeType: 'text/markdown' }])],
-  };
-  const { result } = renderHook(useJournalSources, { initialProps: props });
+it('counts assistant citations but records each conversation once', async () => {
+  stored.a = [message([source], 'user'), message([{ ...source, excerpt: '', score: 0.1 }]), message([source])];
+  stored.b = [message([{ ...source, score: 0.9, mimeType: 'text/markdown' }])];
+  const { result } = renderHook(useJournalSources, { initialProps: options() });
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.summaries).toHaveLength(1);
   expect(result.current.summaries[0]).toMatchObject({ referenceCount: 3, conversationIds: ['a', 'b'], conversationTitles: ['First', 'Second'], score: 0.9, excerpt: 'Saved evidence', mimeType: 'text/markdown' });
-  expect(result.current.isLoading).toBe(false);
 });
 
 it('caps scans at 24 while including an older pinned entry', () => {
@@ -109,7 +131,7 @@ it('caps scans at 24 while including an older pinned entry', () => {
   props.pinnedIds.add('c-29');
   const { result } = renderHook(useJournalSources, { initialProps: props });
   expect(result.current.scannedConversationCount).toBe(24);
-  expect(props.loadMessages).toHaveBeenCalledTimes(24);
-  expect(props.loadMessages).toHaveBeenNthCalledWith(1, 'c-29');
-  expect(props.loadMessages).not.toHaveBeenCalledWith('c-28');
+  expect(VaultAPI.getConversationMessages).toHaveBeenCalledTimes(24);
+  expect(VaultAPI.getConversationMessages).toHaveBeenNthCalledWith(1, 'c-29');
+  expect(VaultAPI.getConversationMessages).not.toHaveBeenCalledWith('c-28');
 });

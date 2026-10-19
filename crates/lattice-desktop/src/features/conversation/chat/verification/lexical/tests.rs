@@ -167,20 +167,24 @@ fn the_cut_short_note_is_not_a_claim() {
     assert!(claims[0].supported);
 }
 
+/// Both of the last round's notes, the rounds' and the window's.
 #[test]
 fn the_out_of_rounds_note_is_not_a_claim() {
-    let answer = format!(
-        "Bush beans mature within sixty days in shallow window boxes [1].{}",
-        super::super::super::tool_loop::OUT_OF_ROUNDS_NOTE
-    );
-    let claims = lexical_pass(
-        &answer,
-        &[source(
-            "Bush beans mature within sixty days and grow well in shallow window boxes.",
-        )],
-    );
-    assert_eq!(claims.len(), 1);
-    assert!(claims[0].supported);
+    for note in [
+        super::super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
+        super::super::super::tool_loop::WINDOW_FULL_NOTE,
+    ] {
+        let answer =
+            format!("Bush beans mature within sixty days in shallow window boxes [1].{note}");
+        let claims = lexical_pass(
+            &answer,
+            &[source(
+                "Bush beans mature within sixty days and grow well in shallow window boxes.",
+            )],
+        );
+        assert_eq!(claims.len(), 1, "{note}");
+        assert!(claims[0].supported);
+    }
 }
 
 #[test]

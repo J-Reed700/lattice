@@ -16,7 +16,9 @@ use crate::domain::sourcing::{
 /// The calls a need makes, wave by wave.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
-    /// Resolve the subject's owner before wave 1 (owner-first routing).
+    /// Resolve the subject's owner before wave 1 (owner-first routing): for
+    /// official docs, and for a package named without its registry, whose
+    /// records are then kept only when they sit on the owner's origins.
     pub resolve_owner: bool,
     pub waves: Vec<Wave>,
 }
@@ -226,8 +228,13 @@ pub fn plan(need: &SourceNeed, registry: &[FinderDescriptor], gate: &FinderGate<
         }
     }
 
+    let package_without_registry = kind == NeedKind::Package
+        && need
+            .package()
+            .is_some_and(|package| package.ecosystem.is_none());
     Plan {
-        resolve_owner: kind == NeedKind::OfficialDocs && need.subject.is_some(),
+        resolve_owner: need.subject.is_some()
+            && (kind == NeedKind::OfficialDocs || package_without_registry),
         waves,
     }
 }

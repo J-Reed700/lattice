@@ -15,9 +15,11 @@ enforces this as `composition-root-import`
 bootstrap/
 ├── mod.rs                       # Re-exports + show_error_dialog
 ├── app.rs                       # initialize_app: the startup sequence
-├── startup_reconciliation.rs    # Startup sweeps: stale downloads, orphaned
-│                                # sessions and model files, stuck turns,
-│                                # interrupted verifications
+├── startup_reconciliation.rs    # Startup sweeps: re-exports the three below
+├── startup_reconciliation/
+│   ├── download_sessions.rs     # Stale downloads, orphaned sessions
+│   ├── model_files.rs           # Model directories with no model record
+│   └── turns.rs                 # Stuck turns, interrupted verifications
 ├── background_workers.rs        # Owns worker handles so shutdown can wait on them
 └── shutdown.rs                  # graceful_shutdown, SidecarSweep
 ```

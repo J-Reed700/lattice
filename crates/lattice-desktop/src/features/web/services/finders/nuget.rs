@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, Ecosystem, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
-    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role,
-    SourceNeed, WaveSlot,
+    Identifier, Identity, Lead, LeadKind, NeedKind, Origin, PackageRef, Privacy, RatePolicy, Reach,
+    Role, SourceNeed, WaveSlot,
 };
 use serde::Deserialize;
 use url::Url;
@@ -102,11 +102,16 @@ fn origin_from_url(url: &Url) -> Option<Origin> {
     Some(Origin::new(&host_lower, None))
 }
 
-fn leads_from_items(data: Vec<NugetItem>, page: usize) -> Vec<Lead> {
+/// Leads for each package in `data`; when the need names a package, only its
+/// record (a search also returns packages that merely share words).
+fn leads_from_items(data: Vec<NugetItem>, page: usize, named: Option<PackageRef<'_>>) -> Vec<Lead> {
     let mut leads = Vec::new();
     for item in data {
         let id = item.id.trim();
         if id.is_empty() {
+            continue;
+        }
+        if named.is_some_and(|package| !package.is_record(Ecosystem::NuGet, id)) {
             continue;
         }
 
@@ -160,7 +165,8 @@ impl SourceFinder for Nuget {
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
         let started = Instant::now();
         let offset = rank_of(page, RESULTS_PER_PAGE, 0).saturating_sub(1);
-        let query = urlencoding::encode(need.query.trim());
+        let named = need.package();
+        let query = urlencoding::encode(named.map_or(need.query.trim(), |package| package.name));
         let url = format!(
             "{}/query?q={query}&take={RESULTS_PER_PAGE}&skip={offset}&prerelease=false",
             self.api
@@ -184,7 +190,7 @@ impl SourceFinder for Nuget {
             }
         };
 
-        let leads = leads_from_items(payload.data, page);
+        let leads = leads_from_items(payload.data, page, named);
         answered(&self.descriptor, leads, started)
     }
 }
