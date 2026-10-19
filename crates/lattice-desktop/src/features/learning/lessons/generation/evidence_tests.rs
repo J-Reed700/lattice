@@ -133,7 +133,7 @@ async fn an_uncovered_topic_triggers_one_research_round_before_writing() -> Resu
     let llm = scripted(vec![
         // The saved lottery passage does not cover the topic.
         json!({"topics":[{"id":"t1","covering":[]}]}).to_string(),
-        json!({"queries":["random assignment confounding official guidance"]}).to_string(),
+        json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string(),
         research_tests::selection(&[0]),
         // Only the newly captured passage is judged again, and covers it.
         json!({"topics":[{"id":"t1","covering":["p1"]}]}).to_string(),

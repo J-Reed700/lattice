@@ -323,16 +323,13 @@ impl ExternalLookup<'_> {
         } else {
             tuning.web_search_max_results
         };
-        // Deep research wants Wikipedia in the provider mix, but the wiki branch
-        // runs beside this one whenever it is planned and reaches wikipedia.org
-        // through its own client, which this service's pacer never sees. Asking
-        // for it here too would hit the same host twice at the same moment.
+        // No engine is named, so the source finder routes the search to every
+        // engine the user has on, keyed ones included. Deep research wants
+        // Wikipedia too, but the wiki branch runs beside this one whenever it
+        // is planned and reaches wikipedia.org through its own client, which
+        // this service's pacer never sees. Asking for it here too would hit
+        // the same host twice at the same moment.
         let include_wikipedia = deep_research_enabled && !self.wiki_planned;
-        let providers = if include_wikipedia {
-            serde_json::json!(["duckduckgo", "bing", "wikipedia"])
-        } else {
-            serde_json::json!(["duckduckgo", "bing"])
-        };
 
         let executor = self.container.tools();
         let call = lattice_core::application::contracts::tools::FunctionCall::new(
@@ -343,7 +340,6 @@ impl ExternalLookup<'_> {
                 "max_results": web_max_results,
                 "page": 1,
                 "offset": 0,
-                "providers": providers,
                 "include_wikipedia": include_wikipedia,
                 "depth": web_depth,
                 "branch_queries": web_branch_queries,
