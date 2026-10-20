@@ -20,6 +20,7 @@
 //! does, with thinking on). Then it is asked once more with no tools at all:
 //! that request pays the prefill, but the turn gets its answer.
 
+use super::written_calls::WrittenCalls;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
 };
@@ -203,11 +204,14 @@ fn names_a_call(value: &Value) -> bool {
     named && has_arguments
 }
 
-/// Streams the last round's text up to the first tool call written into it,
-/// and nothing after. A chunk can end partway through a marker, so a tail
-/// that could still become one is held until the next chunk settles it. A
-/// reply that opens like JSON is held whole, because a call written as JSON
-/// can only be told from an answer once it is complete.
+/// Streams a round's text up to the first tool call written into it, and
+/// keeps the call back: the last round cuts it, and a round that may call
+/// runs it or shows it after all. A chunk can end partway through a marker,
+/// so a tail that could still become one is held until the next chunk
+/// settles it. In the last round a reply that opens like JSON is held whole,
+/// because a call written as JSON can only be told from an answer once it is
+/// complete. A round that may call streams one: it runs no JSON-only reply,
+/// and an answer that opens with a code fence would otherwise not stream.
 pub(super) struct LeakedCallFilter {
     active: bool,
     held: String,
@@ -218,12 +222,12 @@ pub(super) struct LeakedCallFilter {
 }
 
 impl LeakedCallFilter {
-    pub(super) fn new(active: bool) -> Self {
+    pub(super) fn new(written_calls: WrittenCalls<'_>) -> Self {
         Self {
-            active,
+            active: !matches!(written_calls, WrittenCalls::Shown),
             held: String::new(),
             stopped: false,
-            opened: false,
+            opened: !matches!(written_calls, WrittenCalls::Cut),
             holding_json: false,
         }
     }
@@ -233,10 +237,10 @@ impl LeakedCallFilter {
         if !self.active {
             return chunk.to_string();
         }
+        self.held.push_str(chunk);
         if self.stopped {
             return String::new();
         }
-        self.held.push_str(chunk);
         if !self.opened {
             match opens_like_json(&self.held) {
                 None => return String::new(),
@@ -251,9 +255,7 @@ impl LeakedCallFilter {
         }
         if let Some(start) = leaked_tool_call_start(&self.held) {
             self.stopped = true;
-            let shown = self.held[..start].to_string();
-            self.held.clear();
-            return shown;
+            return self.held.drain(..start).collect();
         }
         let keep_from = self.held.len() - partial_marker_suffix_len(&self.held);
         let shown = self.held[..keep_from].to_string();
@@ -261,17 +263,18 @@ impl LeakedCallFilter {
         shown
     }
 
-    /// What is still held once the reply is complete and is not a call.
-    pub(super) fn finish(&mut self) -> String {
-        if !self.active || self.stopped {
-            return String::new();
-        }
+    /// Once the reply is complete: what is still held and is not a call, to
+    /// show now, and the call written into the reply, kept back.
+    pub(super) fn finish(&mut self) -> (String, String) {
+        let mut held = std::mem::take(&mut self.held);
+        let start = if self.stopped {
+            Some(0)
+        } else {
+            written_call_start(&held)
+        };
         self.stopped = true;
-        let held = std::mem::take(&mut self.held);
-        match written_call_start(&held) {
-            Some(start) => held[..start].to_string(),
-            None => held,
-        }
+        let call = start.map_or_else(String::new, |start| held.split_off(start));
+        (held, call)
     }
 }
 
@@ -462,7 +465,7 @@ mod tests {
 
     #[test]
     fn the_stream_stops_at_a_call_split_across_chunks() {
-        let mut filter = LeakedCallFilter::new(true);
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Cut);
         let mut shown = String::new();
         for chunk in [
             "Now the engine. <to",
@@ -472,13 +475,15 @@ mod tests {
         ] {
             shown.push_str(&filter.push(chunk));
         }
-        shown.push_str(&filter.finish());
+        let (held, call) = filter.finish();
+        shown.push_str(&held);
         assert_eq!(shown, "Now the engine. ");
+        assert_eq!(call, "<tool_call> <function=list_directory> more");
     }
 
     #[test]
     fn a_lone_angle_bracket_is_released_once_it_is_not_a_call() {
-        let mut filter = LeakedCallFilter::new(true);
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Cut);
         let first = filter.push("if a <");
         let second = filter.push(" b then");
         assert_eq!(format!("{first}{second}"), "if a < b then");
@@ -486,16 +491,16 @@ mod tests {
 
     #[test]
     fn a_tail_that_could_have_been_a_marker_is_shown_at_the_end() {
-        let mut filter = LeakedCallFilter::new(true);
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Cut);
         let shown = filter.push("so a <");
-        assert_eq!(format!("{shown}{}", filter.finish()), "so a <");
+        assert_eq!(format!("{shown}{}", filter.finish().0), "so a <");
     }
 
     /// A call written as JSON reached the bubble before anything could tell
     /// it from an answer.
     #[test]
     fn a_call_written_as_json_never_reaches_the_bubble() {
-        let mut filter = LeakedCallFilter::new(true);
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Cut);
         let mut shown = String::new();
         for chunk in [
             " {\"name\": \"web_",
@@ -503,22 +508,47 @@ mod tests {
         ] {
             shown.push_str(&filter.push(chunk));
         }
-        shown.push_str(&filter.finish());
+        shown.push_str(&filter.finish().0);
         assert_eq!(shown, "");
     }
 
     #[test]
     fn an_answer_that_opens_like_json_is_shown_whole_at_the_end() {
-        let mut filter = LeakedCallFilter::new(true);
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Cut);
         let answer = "[1] is the stronger source: it measured, the other estimated.";
         assert_eq!(filter.push(answer), "");
-        assert_eq!(filter.finish(), answer);
+        assert_eq!(filter.finish().0, answer);
     }
 
     #[test]
-    fn rounds_with_tools_stream_untouched() {
-        let mut filter = LeakedCallFilter::new(false);
+    fn rounds_without_tools_stream_untouched() {
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Shown);
         assert_eq!(filter.push("<tool_call>"), "<tool_call>");
-        assert_eq!(filter.finish(), "");
+        assert_eq!(filter.finish(), (String::new(), String::new()));
+    }
+
+    /// A round that may call keeps a written call out of the bubble, so the
+    /// loop can run it or show it after all.
+    #[test]
+    fn a_round_that_may_call_keeps_the_call_back() {
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Run(&[]));
+        let mut shown = String::new();
+        for chunk in ["Checking. <func", "tion=web_search>\n", "</function>"] {
+            shown.push_str(&filter.push(chunk));
+        }
+        let (held, call) = filter.finish();
+        assert_eq!(format!("{shown}{held}"), "Checking. ");
+        assert_eq!(call, "<function=web_search>\n</function>");
+    }
+
+    /// Only the last round holds a reply that opens like JSON; an answer
+    /// opening with a code fence still streams on a round that may call.
+    #[test]
+    fn a_round_that_may_call_streams_an_answer_that_opens_like_json() {
+        let mut filter = LeakedCallFilter::new(WrittenCalls::Run(&[]));
+        assert_eq!(
+            filter.push("```rust\nfn main() {}"),
+            "```rust\nfn main() {}"
+        );
     }
 }

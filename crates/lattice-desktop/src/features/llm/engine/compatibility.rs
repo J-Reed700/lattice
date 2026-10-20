@@ -19,7 +19,7 @@ const DEFAULT_ALIGNMENT: u64 = 32;
 const MAX_DIMS: u32 = 4;
 
 /// Exact `(type_name, blck_size, type_size)` table from `ggml-org/llama.cpp`
-/// `v0.6.0` (`GGML_TYPE_COUNT = 43`). Deprecated/removed slots have `blck_size = 0`.
+/// `v0.7.0` (`GGML_TYPE_COUNT = 43`). Deprecated/removed slots have `blck_size = 0`.
 const GGML_TYPE_TRAITS: [(&str, u64, u64); 43] = [
     ("f32", 1, 4),                // 0
     ("f16", 1, 2),                // 1
