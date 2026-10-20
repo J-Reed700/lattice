@@ -365,9 +365,10 @@ impl GroundingVerifier {
     }
 
     /// An Explorer answer may explain the folder from general knowledge
-    /// without a citation, as its template allows, so only the sentences that
-    /// cite a passage are claims about the sources. Judged too, every other
-    /// sentence would be marked as having no source.
+    /// without a citation, as its template allows, so only cited sentences
+    /// (by their own marker or their paragraph's) are claims about the
+    /// sources. Judged too, every other sentence would be marked as having no
+    /// source.
     pub(super) fn cited_only(mut self, cited_only: bool) -> Self {
         self.cited_only = cited_only;
         self

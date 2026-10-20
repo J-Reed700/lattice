@@ -584,14 +584,16 @@ fn unverified_claims_count_against_neither_side_of_the_ratio() {
     assert_eq!(metadata["unsupportedClaims"].as_array().unwrap().len(), 1);
 }
 
-/// An Explorer answer explains the folder in sentences that cite nothing; only
-/// what it cites is a claim about the sources.
+/// An Explorer answer explains the folder in paragraphs that cite nothing; only
+/// what it cites is a claim about the sources. (A sentence beside a marker in
+/// its own paragraph takes that marker, see `sentences_with_citations`.)
 #[tokio::test]
 async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
     let sources = vec![source(
         "Reciprocal rank fusion adds one over sixty plus the rank from each list.",
     )];
-    let response = "Reciprocal rank fusion adds one over sixty plus the rank from each list [1]. \
+    let response =
+        "Reciprocal rank fusion adds one over sixty plus the rank from each list [1].\n\n\
                     The loop in this function walks both ranked lists before sorting the scores.";
 
     let every_sentence = GroundingVerifier::new(None)
