@@ -8,6 +8,7 @@ import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings
 import type { JsonValue, LocalModelConfigDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
+import { contextFitWarning } from '@/utils/chatModelSelection';
 
 import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
@@ -41,7 +42,6 @@ function HelpTooltip({ content }: { content: string }) {
 
 const MIN_CONTEXT_LENGTH = 512;
 const DEFAULT_MAX_CONTEXT_LENGTH = 262_144;
-const DEFAULT_CONTEXT_SLIDER_START = 8_192;
 const DEFAULT_CONCURRENT_PREDICTIONS = 4;
 
 function extractQuantizationTag(model: DownloadedModel): string {
@@ -75,10 +75,10 @@ export function LocalModelConfigModal({
   const savedConfig: LocalModelConfigDto | undefined =
     settings?.llm?.localModelConfigs?.[model.model_id];
 
-  const [isAutoContext, setIsAutoContext] = useState<boolean>(true);
-  const [contextLength, setContextLength] = useState<number>(
-    Math.min(DEFAULT_CONTEXT_SLIDER_START, maxSupportedTokens),
-  );
+  // Shows the window in force: saved for this model, else for every local
+  // model, else the model's maximum, which it loads with when none is saved.
+  const [contextLength, setContextLength] = useState<number>(maxSupportedTokens);
+  const [contextEdited, setContextEdited] = useState<boolean>(false);
   const [maxConcurrentPredictions, setMaxConcurrentPredictions] = useState<number>(
     DEFAULT_CONCURRENT_PREDICTIONS,
   );
@@ -91,11 +91,10 @@ export function LocalModelConfigModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    const globalLocalCtx = settings?.llm?.localContextWindow ?? null;
+    setContextEdited(false);
     if (savedConfig) {
-      setIsAutoContext(savedConfig.contextLength === null);
-      setContextLength(
-        savedConfig.contextLength ?? Math.min(DEFAULT_CONTEXT_SLIDER_START, maxSupportedTokens),
-      );
+      setContextLength(savedConfig.contextLength ?? globalLocalCtx ?? maxSupportedTokens);
       setMaxConcurrentPredictions(
         savedConfig.maxConcurrentPredictions ?? DEFAULT_CONCURRENT_PREDICTIONS,
       );
@@ -104,11 +103,7 @@ export function LocalModelConfigModal({
       setKvCacheQuantization(savedConfig.kvCacheQuantization ?? false);
       setRememberSettings(true);
     } else {
-      const globalLocalCtx = settings?.llm?.localContextWindow ?? null;
-      setIsAutoContext(globalLocalCtx === null);
-      setContextLength(
-        globalLocalCtx ?? Math.min(DEFAULT_CONTEXT_SLIDER_START, maxSupportedTokens),
-      );
+      setContextLength(globalLocalCtx ?? maxSupportedTokens);
       setMaxConcurrentPredictions(DEFAULT_CONCURRENT_PREDICTIONS);
       setUseFixedSeed(false);
       setSeed(42);
@@ -118,14 +113,19 @@ export function LocalModelConfigModal({
   }, [isOpen, savedConfig, settings?.llm?.localContextWindow, maxSupportedTokens]);
 
   const quantTag = extractQuantizationTag(model);
+  const fitWarning = contextFitWarning(model, contextLength, kvCacheQuantization);
 
   const handleSaveAndLoad = async () => {
     if (!settings?.llm) return;
     setIsSaving(true);
     try {
-      const resolvedContext = isAutoContext
-        ? null
-        : Math.round(clamp(contextLength, MIN_CONTEXT_LENGTH, maxSupportedTokens));
+      // A window the user did not touch stays as it was saved: none saved
+      // keeps loading the model at its maximum.
+      const editedContext = contextEdited
+        ? Math.round(clamp(contextLength, MIN_CONTEXT_LENGTH, maxSupportedTokens))
+        : null;
+      const modelContext = editedContext ?? savedConfig?.contextLength ?? null;
+      const globalContext = editedContext ?? settings.llm.localContextWindow ?? null;
       const resolvedSlots = Math.round(clamp(maxConcurrentPredictions, 1, 8));
       const resolvedSeed = useFixedSeed ? Math.max(0, Math.round(seed)) : null;
 
@@ -134,7 +134,7 @@ export function LocalModelConfigModal({
         nextConfigs[model.model_id] = {
           // Kept as saved: vision is switched on the model row, not here.
           ...savedConfig,
-          contextLength: resolvedContext,
+          contextLength: modelContext,
           maxConcurrentPredictions:
             resolvedSlots === DEFAULT_CONCURRENT_PREDICTIONS ? null : resolvedSlots,
           seed: resolvedSeed,
@@ -148,7 +148,7 @@ export function LocalModelConfigModal({
         category: 'llm',
         updates: {
           localModelConfigs: nextConfigs,
-          ...(!rememberSettings ? { localContextWindow: resolvedContext } : {}),
+          ...(!rememberSettings ? { localContextWindow: globalContext } : {}),
         } as unknown as Record<string, JsonValue>,
       });
 
@@ -227,10 +227,10 @@ export function LocalModelConfigModal({
                 <div>
                   <div className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
                     <span>Context Length</span>
-                    <HelpTooltip content="Tokens the model keeps in its active context window. Auto dynamically sizes the window up to the model's full trained length based on your machine's available GPU/system memory." />
+                    <HelpTooltip content="Tokens the model keeps in its active context window. The model loads with the window you set here, or with its maximum until you set one. A larger window needs more memory; if it does not fit, the model fails to load and says how much it needed." />
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
-                    <span>Model supports up to</span>
+                    <span>Max</span>
                     <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
                       {maxSupportedTokens.toLocaleString()}
                     </span>
@@ -239,18 +239,6 @@ export function LocalModelConfigModal({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAutoContext((prev) => !prev)}
-                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-                      isAutoContext
-                        ? 'border-accent bg-accent/15 text-accent'
-                        : 'border-border-subtle bg-surface text-text-secondary hover:text-text-primary'
-                    }`}
-                    title="Auto sizes the context window dynamically to your computer's available memory (all the way up to the model's max context on high-memory machines)"
-                  >
-                    Auto
-                  </button>
                   <input
                     aria-label="Context Length"
                     type="number"
@@ -259,7 +247,7 @@ export function LocalModelConfigModal({
                     step={512}
                     value={contextLength}
                     onChange={(event) => {
-                      setIsAutoContext(false);
+                      setContextEdited(true);
                       setContextLength(
                         Math.round(toFinite(event.target.value, contextLength)),
                       );
@@ -278,16 +266,14 @@ export function LocalModelConfigModal({
                   step={512}
                   value={Math.min(Math.max(contextLength, MIN_CONTEXT_LENGTH), maxSupportedTokens)}
                   onChange={(event) => {
-                    setIsAutoContext(false);
+                    setContextEdited(true);
                     setContextLength(Number(event.target.value));
                   }}
                   className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface accent-[hsl(var(--accent))]"
                 />
-                {isAutoContext ? (
-                  <p className="mt-1.5 text-[11px] text-text-muted">
-                    Auto is active: scales dynamically to your hardware (up to{' '}
-                    {maxSupportedTokens.toLocaleString()} tokens if memory permits). Move the
-                    slider to pin a fixed context length.
+                {fitWarning ? (
+                  <p role="status" className="mt-1.5 text-[11px] text-warning-fg">
+                    {fitWarning}
                   </p>
                 ) : null}
               </div>

@@ -48,6 +48,9 @@ pub(super) struct Activity {
     pub phase: Phase,
     /// Active versions new to the index this run.
     pub references: usize,
+    /// Passages the index held embedded when this run began embedding: a
+    /// resumed build's earlier work.
+    pub already: usize,
     /// Passages this run has embedded, of the `total` it found pending.
     pub embedded: usize,
     pub total: usize,
@@ -56,11 +59,21 @@ pub(super) struct Activity {
 }
 
 impl Activity {
+    /// Passages of the whole index embedded: earlier runs' and this one's.
+    pub fn index_embedded(&self) -> usize {
+        self.already.saturating_add(self.embedded)
+    }
+
+    /// Every passage the index holds.
+    pub fn index_total(&self) -> usize {
+        self.already.saturating_add(self.total)
+    }
+
     fn percent(&self) -> u32 {
-        if self.total == 0 {
+        if self.index_total() == 0 {
             return 0;
         }
-        u32::try_from(self.embedded.saturating_mul(100) / self.total).unwrap_or(100)
+        u32::try_from(self.index_embedded().saturating_mul(100) / self.index_total()).unwrap_or(100)
     }
 
     fn message(&self) -> String {
@@ -68,9 +81,11 @@ impl Activity {
             Phase::Starting => "Checking the course's references".into(),
             Phase::Waiting => "Waiting for a lesson that is indexing this course".into(),
             Phase::Indexing => format!("Indexing {} new references", self.references),
-            Phase::Embedding => {
-                format!("Embedding passages: {} of {}", self.embedded, self.total)
-            }
+            Phase::Embedding => format!(
+                "Embedding passages: {} of {}",
+                self.index_embedded(),
+                self.index_total()
+            ),
         }
     }
 }
@@ -91,6 +106,15 @@ impl CourseProgress for Told {
         self.sink.send_modify(|activity| {
             activity.phase = Phase::Indexing;
             activity.references = references;
+        });
+    }
+    fn embedding(&mut self, already: usize, total: usize) {
+        self.sink.send_modify(|activity| {
+            activity.phase = Phase::Embedding;
+            activity.already = already;
+            activity.embedded = 0;
+            activity.total = total;
+            activity.per_second = None;
         });
     }
     fn embedded(&mut self, done: usize, total: usize) {

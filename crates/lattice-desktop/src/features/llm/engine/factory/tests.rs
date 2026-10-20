@@ -145,6 +145,7 @@ async fn test_create_llm_with_invalid_path() {
         generation_config: GenerationConfig::default(),
         app_handle: None,
         server: LocalServerOptions::default(),
+        in_app_model_bytes: 0,
     };
 
     let result = create_llm(

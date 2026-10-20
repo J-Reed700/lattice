@@ -56,6 +56,11 @@ pub struct GPUInfo {
     /// VRAM in GB (if detectable)
     pub vram_gb: Option<f64>,
 
+    /// Memory the device reported free when the sidecar probed it, in GB.
+    /// Only the sidecar's own probe reports it.
+    #[serde(default)]
+    pub free_vram_gb: Option<f64>,
+
     /// Compute capability or architecture version
     pub compute_capability: Option<String>,
 }
@@ -97,6 +102,7 @@ fn gpu_from_devices(devices: &[super::backend_devices::BackendDevice]) -> Option
         // Apple's unified memory reports the whole working set here, which is
         // what llama.cpp budgets against, so it is the right number for both.
         vram_gb: (device.total_mib > 0).then(|| device.total_gb()),
+        free_vram_gb: (device.total_mib > 0).then(|| device.free_mib as f64 / 1024.0),
         compute_capability: Some(device.backend().to_string()),
     })
 }
@@ -119,6 +125,7 @@ fn detect_apple_silicon() -> Option<GPUInfo> {
         vendor: GPUVendor::Apple,
         name: apple_silicon_name(),
         vram_gb: None,
+        free_vram_gb: None,
         compute_capability: None,
     })
 }
@@ -179,6 +186,7 @@ fn detect_gpu_sysinfo() -> Option<GPUInfo> {
         vendor,
         name,
         vram_gb: None,
+        free_vram_gb: None,
         compute_capability: None,
     })
 }

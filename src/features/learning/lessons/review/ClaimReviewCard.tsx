@@ -18,7 +18,6 @@ import {
   type CheckerSide,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { ClaimSufficiency } from '@/features/learning/sources/trust/ClaimSufficiency';
-import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import type {
   ClaimActionKindDto,
   ClaimActionRequestDto,
@@ -109,8 +108,6 @@ export function ClaimReviewCard({
   lessonAnchor?: string | null;
 }) {
   const [form, setForm] = useState<Form>(null);
-  // Attaching evidence checks it through the course's index, so it waits while that indexes.
-  const waitsForIndex = useEvidenceWaitsForIndex(programId);
   const [note, setNote] = useState('');
   const [bound, setBound] = useState<string[]>([]);
   const [after, setAfter] = useState(item.location.quote);
@@ -240,8 +237,7 @@ export function ClaimReviewCard({
           {actions.map((kind) => {
             const label = kind === 'confirm' && needsNote ? 'Confirm anyway (note required)' : ACTION_LABELS[kind];
             const toggles = !DIRECT[kind];
-            const held = kind === 'attach_evidence' ? waitsForIndex : undefined;
-            return <button key={kind} type="button" disabled={busy || Boolean(held)} title={held} onClick={() => choose(kind)}
+            return <button key={kind} type="button" disabled={busy} onClick={() => choose(kind)}
               aria-expanded={toggles ? form === (kind === 'research_with_hint' ? 'research' : kind === 'attach_evidence' ? 'attach' : kind) : undefined}
               className={`min-h-9 rounded-full border px-3 text-xs font-medium disabled:opacity-50 ${kind === 'confirm' ? 'border-accent/50 text-accent' : 'border-border text-text-secondary'}`}>{label}</button>;
           })}
@@ -275,7 +271,7 @@ export function ClaimReviewCard({
           <button type="button" disabled={busy} onClick={submitHint} className="mt-3 min-h-9 rounded-full bg-accent px-4 text-xs font-semibold text-accent-fg disabled:opacity-50">Research</button>
         </div>}
 
-        {form === 'attach' && !waitsForIndex && <ClaimEvidenceAttach programId={programId} onCancel={() => setForm(null)}
+        {form === 'attach' && <ClaimEvidenceAttach programId={programId} onCancel={() => setForm(null)}
           onSubmit={(request) => onAction(item, request, 'attach_evidence')} />}
 
         {(formError || error) && <p role="alert" className="text-xs leading-5 text-rose-700">{formError || error}</p>}

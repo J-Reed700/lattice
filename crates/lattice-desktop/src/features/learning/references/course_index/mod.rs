@@ -45,7 +45,7 @@
 //!   `refresh`, `delete`, `sweep`, `backfill`, `register`, `open` and
 //!   `close` (the course in its workspace goes first), and `status`, the
 //!   cheap read the course workspace shows ([`CourseIndexStatusDto`]): while a
-//!   course indexes, its evidence actions wait and say why
+//!   course indexes, lesson preparation waits for it and says why
 //! - [`CourseSearch`] — one course's index held by a reader, and the
 //!   [`IndexView`] it last brought current
 //! - [`IndexMode`], [`CourseProgress`]

@@ -682,7 +682,7 @@ async searchLearningSourcesSemantically(request: SearchLearningSourcesSemantical
 },
 /**
  * Where the course's evidence index stands: for the course workspace's
- * notice, and the evidence actions it holds back while the course indexes.
+ * notice, and the lesson preparation it holds back while the course indexes.
  * A cheap read that never opens or builds the index; it queues a build when
  * the index is behind its course and none is queued.
  */
@@ -5761,9 +5761,10 @@ export type CourseIndexStatusDto =
 { state: "ready"; mode: string } |
 /**
  * A build is queued or running, or the index is behind its course and
- * one has just been queued. Evidence actions wait for it.
+ * one has just been queued. Lesson preparation waits for it; a search
+ * or attached evidence reads every passage by its words meanwhile.
  */
-{ state: "indexing"; embedded: number; total: number; referencesNew: number; passagesPerSecond: number | null } |
+{ state: "indexing"; embedded: number; total: number; referencesNew: number; passagesPerSecond: number | null; waitingTurn: boolean } |
 /**
  * No embedding model is active: the course is searched by its words.
  */
@@ -6059,9 +6060,21 @@ export type DownloadedModelResponse = { id: string; model_name: string; model_id
  */
 supports_tool_calling?: boolean | null;
 /**
- * The context window saved for this model in Settings; `None` is Auto.
+ * The context window saved for this model in Settings; `None` loads it
+ * at its trained length.
  */
 configured_context_length?: number | null;
+/**
+ * The largest window, up to its trained length, this model fits this
+ * machine's memory at now, beside the other models loaded. Shown as a
+ * warning beside a larger setting, never applied. `None` when the
+ * machine does not report its memory or the header cannot say.
+ */
+fits_context_length?: number | null;
+/**
+ * The same, with the KV cache quantized to q8_0.
+ */
+fits_context_length_with_kv_quantization?: number | null;
 /**
  * The catalog's vision projector for this model, when it has one.
  */
@@ -8206,7 +8219,7 @@ needed_tokens: number;
 window_tokens: number;
 /**
  * Whether that window was the one saved for the model in Settings →
- * Models, rather than what Auto or the model's server gave it.
+ * Models, rather than the one it was trained for or its server reports.
  */
 window_is_saved: boolean }
 /**

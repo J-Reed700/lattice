@@ -27,17 +27,22 @@ pub enum CourseIndexStatusDto {
     /// Every passage is embedded by the active model; `mode` is `hybrid`.
     Ready { mode: String },
     /// A build is queued or running, or the index is behind its course and
-    /// one has just been queued. Evidence actions wait for it.
+    /// one has just been queued. Lesson preparation waits for it; a search
+    /// or attached evidence reads every passage by its words meanwhile.
     #[serde(rename_all = "camelCase")]
     Indexing {
-        /// Passages embedded so far: of this build's own work while it
-        /// embeds, of the whole index before it starts.
+        /// Passages of the whole index embedded so far, of every passage it
+        /// holds: before a build starts, while it embeds, and after a resume,
+        /// so the count only climbs.
         embedded: u32,
         total: u32,
         /// Active versions the index does not hold yet.
         references_new: u32,
         /// The running build's measured pace, once it is embedding.
         passages_per_second: Option<f64>,
+        /// The build has not started: another course's build holds the one
+        /// slot builds take turns in, and this one starts when it finishes.
+        waiting_turn: bool,
     },
     /// No embedding model is active: the course is searched by its words.
     NoEmbeddingModel,
@@ -74,7 +79,14 @@ impl CourseIndexes {
             .map(|inspected| inspected.counts)
             .unwrap_or_default();
         if let Some(live) = builds.iter().find(|job| !job.status.is_finished()) {
-            return Ok(indexing(live, counts, missing(&dir, &versions).await?));
+            let waiting_turn =
+                live.status == JobStatus::Pending && self.another_course_builds(program).await?;
+            return Ok(indexing(
+                live,
+                counts,
+                missing(&dir, &versions).await?,
+                waiting_turn,
+            ));
         }
         let stamp = sync::stamp(&sync::revision(&versions), &identity);
         let recorded = inspected
@@ -100,7 +112,22 @@ impl CourseIndexes {
             total: counts.passages_total,
             references_new: u32::try_from(missing(&dir, &versions).await?).unwrap_or(u32::MAX),
             passages_per_second: None,
+            waiting_turn: self.another_course_builds(program).await?,
         })
+    }
+
+    /// Whether another course's build is running: builds take turns one at
+    /// a time, so a queued build for `program` waits for it.
+    async fn another_course_builds(&self, program: &str) -> Result<bool> {
+        Ok(self
+            .jobs
+            .store()
+            .live(super::super::COURSE_INDEX)
+            .await?
+            .iter()
+            .any(|job| {
+                job.status == JobStatus::Running && job.subject_id.as_deref() != Some(program)
+            }))
     }
 }
 
@@ -117,12 +144,16 @@ async fn missing(dir: &Path, versions: &[ActiveVersion]) -> Result<usize> {
         .count())
 }
 
-/// A live build's status: its own counts once it is embedding, the index's
-/// before.
+/// A live build's status: the whole index's counts, taken from the build's
+/// activity once it is embedding (the index's saved counts move only when
+/// the build saves) and from the index before. The pace is the build's own,
+/// so the time left is its remaining passages at that pace. `waiting_turn`
+/// when it is queued behind another course's build.
 fn indexing(
     build: &JobRecord,
     counts: crate::infrastructure::passage_index::Counts,
     missing: usize,
+    waiting_turn: bool,
 ) -> CourseIndexStatusDto {
     let activity = (build.status == JobStatus::Running)
         .then(|| build.activity.clone())
@@ -131,16 +162,18 @@ fn indexing(
     let as_u32 = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
     match activity {
         Some(activity) if activity.phase == Phase::Embedding => CourseIndexStatusDto::Indexing {
-            embedded: as_u32(activity.embedded),
-            total: as_u32(activity.total),
+            embedded: as_u32(activity.index_embedded()),
+            total: as_u32(activity.index_total()),
             references_new: as_u32(activity.references),
             passages_per_second: activity.per_second,
+            waiting_turn: false,
         },
         _ => CourseIndexStatusDto::Indexing {
             embedded: counts.passages_embedded,
             total: counts.passages_total,
             references_new: as_u32(missing),
             passages_per_second: None,
+            waiting_turn,
         },
     }
 }

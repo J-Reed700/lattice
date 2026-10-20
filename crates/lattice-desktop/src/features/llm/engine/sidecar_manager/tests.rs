@@ -27,29 +27,25 @@ fn reserve_free_port_never_hands_out_a_live_reservation() {
 }
 
 #[test]
-fn sidecar_config_for_model_uses_gpu_defaults() {
+fn sidecar_config_for_model_offloads_everything_at_the_trained_window() {
     let cfg = SidecarConfig::for_model(PathBuf::from("/tmp/model.gguf"));
     assert_eq!(cfg.n_gpu_layers, 99);
-    assert_eq!(cfg.context_size, 8192);
+    assert_eq!(
+        cfg.context_size, 0,
+        "an unreadable header leaves the window to llama-server, which reads it from the model"
+    );
 }
 
 #[test]
-fn without_gpu_offload_disables_gpu_and_caps_context() {
-    let gpu = SidecarConfig::for_model(PathBuf::from("/tmp/model.gguf"));
+fn without_gpu_offload_disables_gpu_and_keeps_the_window() {
+    let gpu = SidecarConfig {
+        context_size: 60_416,
+        ..SidecarConfig::for_model(PathBuf::from("/tmp/model.gguf"))
+    };
     let cpu = gpu.without_gpu_offload();
     assert_eq!(cpu.n_gpu_layers, 0);
-    assert_eq!(cpu.context_size, DEFAULT_CPU_CONTEXT_SIZE);
+    assert_eq!(cpu.context_size, 60_416, "the window is the user's");
     assert_eq!(cpu.model_path, gpu.model_path);
-
-    // A low-RAM window stays low rather than growing to the CPU default.
-    let low_ram = SidecarConfig {
-        context_size: LOW_RAM_CONTEXT_SIZE,
-        ..gpu
-    };
-    assert_eq!(
-        low_ram.without_gpu_offload().context_size,
-        LOW_RAM_CONTEXT_SIZE
-    );
 }
 
 fn make_caps(
@@ -65,6 +61,7 @@ fn make_caps(
             vendor,
             name: format!("{:?} test GPU", vendor),
             vram_gb: None,
+            free_vram_gb: None,
             compute_capability: None,
         }),
         cpu_cores: 8,
@@ -78,81 +75,48 @@ fn make_caps(
 
 /// Sharing is keyed on the whole config, so two roles only reuse one
 /// server if their configs compare equal. That holds because
-/// `from_capabilities` is a pure function of the path and the machine —
-/// if it ever grows a nondeterministic input (a timestamp, a port, a
-/// counter), every role silently gets its own copy of the weights again
+/// `from_capabilities` is a pure function of the path, the machine and the
+/// window — if it ever grows a nondeterministic input (a timestamp, a port,
+/// a counter), every role silently gets its own copy of the weights again
 /// and the only symptom is memory.
 #[test]
 fn the_same_model_on_one_machine_is_one_key() {
     use crate::features::llm::engine::system::GPUVendor;
     let caps = make_caps(Some(GPUVendor::Apple), 16.0);
-    let chat = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    let utility = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
+    let chat = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 32_768);
+    let utility = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 32_768);
     assert_eq!(
         chat, utility,
         "the roles must agree on the key or they will not share"
     );
 
-    let other_model = SidecarConfig::from_capabilities(PathBuf::from("/tmp/other.gguf"), &caps, 0);
+    let other_model =
+        SidecarConfig::from_capabilities(PathBuf::from("/tmp/other.gguf"), &caps, 32_768);
     assert_ne!(chat, other_model, "a different model needs its own server");
 
     // A degraded fallback is a different server, not the same one with a
-    // note on it: it holds a different context window.
+    // note on it: it runs on the CPU.
     assert_ne!(chat, chat.without_gpu_offload());
 }
 
+/// The window is whatever the caller resolved from the user's setting or the
+/// model's header. The machine decides only where the layers go.
 #[test]
-fn from_capabilities_apple_silicon_uses_full_offload() {
+fn from_capabilities_takes_the_window_as_given_on_every_machine() {
     use crate::features::llm::engine::system::GPUVendor;
-    let caps = make_caps(Some(GPUVendor::Apple), 16.0);
-    let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    assert_eq!(cfg.n_gpu_layers, 99);
-    assert_eq!(cfg.context_size, DEFAULT_GPU_CONTEXT_SIZE);
-}
-
-#[test]
-fn from_capabilities_nvidia_uses_full_offload() {
-    use crate::features::llm::engine::system::GPUVendor;
-    let caps = make_caps(Some(GPUVendor::Nvidia), 32.0);
-    let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    assert_eq!(cfg.n_gpu_layers, 99);
-    assert_eq!(cfg.context_size, DEFAULT_GPU_CONTEXT_SIZE);
-}
-
-#[test]
-fn from_capabilities_no_gpu_uses_cpu() {
-    let caps = make_caps(None, 16.0);
-    let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    assert_eq!(cfg.n_gpu_layers, 0);
-    assert_eq!(cfg.context_size, DEFAULT_CPU_CONTEXT_SIZE);
-}
-
-#[test]
-fn from_capabilities_unknown_gpu_treated_as_no_acceleration() {
-    use crate::features::llm::engine::system::GPUVendor;
-    let caps = make_caps(Some(GPUVendor::Unknown), 16.0);
-    let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    // Unknown vendor → is_accelerated() returns false → CPU path
-    assert_eq!(cfg.n_gpu_layers, 0);
-}
-
-#[test]
-fn from_capabilities_low_ram_shrinks_context() {
-    use crate::features::llm::engine::system::GPUVendor;
-    // GPU present + low RAM: still no GPU offload concern, but
-    // context shrinks to keep KV cache manageable.
-    let caps = make_caps(Some(GPUVendor::Apple), 4.0);
-    let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    assert_eq!(cfg.n_gpu_layers, 99);
-    assert_eq!(cfg.context_size, LOW_RAM_CONTEXT_SIZE);
-}
-
-#[test]
-fn from_capabilities_low_ram_no_gpu_squeezes_both() {
-    let caps = make_caps(None, 4.0);
-    let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
-    assert_eq!(cfg.n_gpu_layers, 0);
-    assert_eq!(cfg.context_size, LOW_RAM_CONTEXT_SIZE);
+    for (vendor, ram_gb, offloaded) in [
+        (Some(GPUVendor::Apple), 16.0, 99),
+        (Some(GPUVendor::Nvidia), 32.0, 99),
+        (Some(GPUVendor::Apple), 4.0, 99),
+        (None, 16.0, 0),
+        (None, 4.0, 0),
+        (Some(GPUVendor::Unknown), 16.0, 0),
+    ] {
+        let caps = make_caps(vendor, ram_gb);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 262_144);
+        assert_eq!(cfg.n_gpu_layers, offloaded, "{vendor:?} with {ram_gb} GB");
+        assert_eq!(cfg.context_size, 262_144, "{vendor:?} with {ram_gb} GB");
+    }
 }
 
 fn lines(text: &str) -> Vec<String> {
@@ -1356,270 +1320,238 @@ fn api_tokens_are_unguessable_and_never_repeat() {
     assert_ne!(first, second, "a token is minted per spawn");
 }
 
+use super::config::{footprint_from, hint_for, memory_room};
 use crate::features::llm::engine::gguf_metadata::{GgufModelInfo, PerLayer};
 
-/// A plain model the size of a 9B: 5.6 GB of weights and 32 layers that all
-/// attend to the whole window, 4 KV heads with 256-wide keys, so 128 KiB of
-/// cache per token at any window, and a 262144 trained length it cannot
-/// possibly hold. Qwen 3.5 9B, and Ornith-1.5-9B built on it, were sized
-/// exactly like this before hybrid layers were counted.
-fn plain_9b() -> GgufModelInfo {
+const GIB: u64 = 1024 * 1024 * 1024;
+
+/// Ornith-1.5-9B Q4_K_M as its header reads: Qwen 3.5 9B's 32 layers plus one
+/// multi-token-prediction block, one layer in four attending to the whole
+/// window, and a 248,320-token vocabulary.
+fn ornith_9b() -> GgufModelInfo {
     GgufModelInfo {
+        architecture: Some("qwen35".into()),
         trained_context_length: Some(262_144),
-        block_count: Some(32),
+        block_count: Some(33),
+        nextn_predict_layers: Some(1),
+        full_attention_interval: Some(4),
         head_count_kv: Some(4.into()),
         head_count: Some(16.into()),
         key_length: Some(256),
         value_length: Some(256),
         embedding_length: Some(4096),
+        feed_forward_length: Some(12_288),
+        vocab_size: Some(248_320),
+        ssm_conv_kernel: Some(4),
+        ssm_state_size: Some(128),
+        ssm_group_count: Some(16),
+        ssm_inner_size: Some(4096),
         ..Default::default()
     }
 }
 
-const PLAIN_9B_BYTES: u64 = 5_629_109_248;
+const ORNITH_9B_BYTES: u64 = 5_780_090_816;
 
-const GIB: u64 = 1024 * 1024 * 1024;
+/// What `llama-server --list-devices` reports for an M3 Max with 36 GB:
+/// `MTL0: Apple M3 Max (28753 MiB, 28753 MiB free)`.
+const M3_MAX_WORKING_SET: u64 = 28_753 * 1024 * 1024;
 
-/// A Mac with `available_gb` available now out of `total_gb` installed.
-fn mac(available_gb: u64, total_gb: u64) -> Option<SharedMemory> {
-    Some(SharedMemory {
-        available_bytes: available_gb * GIB,
-        total_bytes: total_gb * GIB,
-    })
+fn caps_with_gpu(
+    vendor: crate::features::llm::engine::system::GPUVendor,
+    vram_gb: Option<f64>,
+    free_vram_gb: Option<f64>,
+) -> SystemCapabilities {
+    let mut caps = make_caps(Some(vendor), 36.0);
+    let gpu = caps.gpu.as_mut().unwrap();
+    gpu.vram_gb = vram_gb;
+    gpu.free_vram_gb = free_vram_gb;
+    caps
 }
 
-/// What the sizing before growth chose for this machine and model.
-fn pre_growth(vram_gb: f64, weights: u64, info: &GgufModelInfo) -> u32 {
-    let ceiling = info.trained_context_length.unwrap_or(32_768).min(32_768);
-    let usable = (vram_gb * VRAM_USABLE_FRACTION * GIB as f64) as u64;
-    let spare = usable - weights;
-    (1..=ceiling / 1024)
-        .rev()
-        .map(|thousands| thousands * 1024)
-        .find(|&tokens| info.kv_cache_bytes(tokens).unwrap() <= spare)
-        .unwrap_or(0)
-        .max(AUTO_MIN_CONTEXT_SIZE.min(ceiling))
-}
-
-/// The M3 Max this was found on: 36 GB, 23 GB of swap still allocated and
-/// little memory available. Subtracting swap in use dropped it to the 4,096
-/// minimum for good, since macOS keeps swap long after the pressure is gone.
-/// It gets what the sizing before growth gave it: the 32,768 its share holds.
 #[test]
-fn a_busy_mac_keeps_what_the_old_sizing_gave_it() {
-    let busy = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), mac(4, 36)).unwrap();
+fn metal_offers_its_whole_working_set_less_what_other_models_hold() {
+    use crate::features::llm::engine::system::GPUVendor;
+    let caps = caps_with_gpu(GPUVendor::Apple, Some(28_753.0 / 1024.0), Some(1.0));
 
-    assert_eq!(busy, pre_growth(28.1, PLAIN_9B_BYTES, &plain_9b()));
-    assert_eq!(busy, 32_768);
+    let room = memory_room(&caps, true, GIB).unwrap();
+
+    assert_eq!(room.source, MemorySource::MetalWorkingSet);
+    assert_eq!(room.reported, M3_MAX_WORKING_SET, "nothing is held back");
+    assert_eq!(room.held, GIB);
+    assert_eq!(room.spare(), M3_MAX_WORKING_SET - GIB);
 }
 
-/// With plenty available the window grows past 32,768, while its cache fits
-/// what is available less the headroom and weights, and within the share.
 #[test]
-fn a_mac_with_memory_available_grows_past_the_old_ceiling() {
-    let roomy = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), mac(30, 36)).unwrap();
-    let share_only = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
+fn a_discrete_gpu_keeps_llama_cpp_s_fit_target_free() {
+    use crate::features::llm::engine::system::GPUVendor;
+    let caps = caps_with_gpu(GPUVendor::Nvidia, Some(24.0), Some(23.0));
 
-    assert!(roomy > 32_768, "{roomy}");
-    assert_eq!(roomy, share_only, "the share is the ceiling here");
-    let usable = (28.1 * VRAM_USABLE_FRACTION * GIB as f64) as u64;
-    assert!(u64::from(roomy) * 131_072 + PLAIN_9B_BYTES <= usable);
+    let room = memory_room(&caps, true, 2 * GIB).unwrap();
 
-    // Less available: it grows only as far as what is available holds.
-    let some = context_size_for(28.1, PLAIN_9B_BYTES, 0, &plain_9b(), mac(16, 36)).unwrap();
-    let spare = 16 * GIB - swap_headroom_bytes(36 * GIB) - PLAIN_9B_BYTES;
-    assert!(some > 32_768 && some < roomy, "{some}");
-    assert!(u64::from(some) * 131_072 <= spare);
-    assert!(u64::from(some + 1024) * 131_072 > spare);
-}
-
-/// However much is available, the trained length is never passed.
-#[test]
-fn growth_never_passes_the_trained_length() {
-    let short = GgufModelInfo {
-        trained_context_length: Some(49_152),
-        ..plain_9b()
-    };
+    assert_eq!(room.source, MemorySource::GpuFree);
     assert_eq!(
-        context_size_for(80.0, PLAIN_9B_BYTES, 0, &short, mac(120, 128)),
-        Some(49_152)
+        room.reported,
+        22 * GIB,
+        "its free memory, less the 1 GiB --fit-target"
+    );
+    assert_eq!(room.spare(), 20 * GIB);
+}
+
+#[test]
+fn a_server_on_the_cpu_is_priced_against_available_ram_less_the_fit_target() {
+    let mut caps = make_caps(None, 16.0);
+    caps.available_memory_bytes = Some(12 * GIB);
+
+    let room = memory_room(&caps, false, 4 * GIB).unwrap();
+
+    assert_eq!(room.source, MemorySource::SystemRam);
+    assert_eq!(room.reported, 11 * GIB);
+    assert_eq!(
+        room.held, 0,
+        "available RAM already leaves out what other models hold"
+    );
+
+    // A GPU machine's server that runs on the CPU is priced the same way.
+    let mut on_cpu = caps_with_gpu(
+        crate::features::llm::engine::system::GPUVendor::Nvidia,
+        Some(24.0),
+        Some(23.0),
+    );
+    on_cpu.available_memory_bytes = Some(12 * GIB);
+    assert_eq!(
+        memory_room(&on_cpu, false, 0).map(|room| room.source),
+        Some(MemorySource::SystemRam)
+    );
+}
+
+#[test]
+fn a_device_that_does_not_report_its_memory_offers_no_room() {
+    use crate::features::llm::engine::system::GPUVendor;
+    assert_eq!(
+        memory_room(&caps_with_gpu(GPUVendor::Apple, None, None), true, 0),
+        None
     );
     assert_eq!(
-        context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b(), mac(120, 128)),
-        Some(262_144)
+        memory_room(&caps_with_gpu(GPUVendor::Nvidia, Some(24.0), None), true, 0),
+        None
     );
+    assert_eq!(memory_room(&make_caps(None, 16.0), false, 0), None);
 }
 
-/// The headroom kept back grows with the machine and never drops under 2 GiB.
-#[test]
-fn the_swap_headroom_is_a_tenth_of_ram_and_at_least_two_gib() {
-    assert_eq!(swap_headroom_bytes(8 * GIB), 2 * GIB);
-    assert_eq!(swap_headroom_bytes(64 * GIB), 64 * GIB / 10);
-}
-
-/// The trained length is the ceiling, never passed however much memory is
-/// free. Below it, memory decides.
-#[test]
-fn the_trained_length_is_the_ceiling() {
-    let roomy = context_size_for(80.0, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
-
-    assert_eq!(roomy, 262_144);
-}
-
-/// A header without its trained length gets what the sizing before growth
-/// gave it, which stopped at 32,768 for want of one, and does not grow.
-#[test]
-fn an_unknown_trained_length_keeps_the_old_sizing_and_does_not_grow() {
-    let info = GgufModelInfo {
-        trained_context_length: None,
-        ..plain_9b()
-    };
-
-    assert_eq!(
-        context_size_for(28.1, PLAIN_9B_BYTES, 0, &info, mac(30, 36)),
-        Some(32_768)
-    );
-}
-
-/// A mid-sized card must come back with a window its memory can hold.
-#[test]
-fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
-    let chosen = context_size_for(12.0, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
-
-    let budget = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
-    let cache = u64::from(chosen) * 131_072;
-    assert!(
-        cache + PLAIN_9B_BYTES <= budget,
-        "{chosen} tokens needs {cache} bytes on top of the weights"
-    );
-    assert!(chosen < 262_144, "and below the trained length");
-}
-
-/// A card that can barely hold the weights still gets a loadable window.
-/// Declining here would hand back the larger flat default — the one size
-/// guaranteed not to fit.
-#[test]
-fn a_cramped_gpu_gets_the_floor_rather_than_the_larger_default() {
-    let chosen = context_size_for(8.0, PLAIN_9B_BYTES, 0, &plain_9b(), None).unwrap();
-
-    assert_eq!(chosen, AUTO_MIN_CONTEXT_SIZE);
-    assert!(chosen < DEFAULT_GPU_CONTEXT_SIZE);
-}
-
-/// A model trained short must not be stretched by the automatic path.
-#[test]
-fn a_short_trained_model_caps_at_what_it_was_trained_for() {
-    let info = GgufModelInfo {
-        trained_context_length: Some(4096),
-        ..plain_9b()
-    };
-
-    assert_eq!(
-        context_size_for(28.1, PLAIN_9B_BYTES, 0, &info, None),
-        Some(4096)
-    );
-}
-
-/// The 9B (5.6 GB) on an 8 GB Mac: the weights alone exceed the usable
-/// share. That used to decline and fall to the 8192 flat default, the one
-/// size guaranteed not to fit; it must get the floor.
-#[test]
-fn weights_past_the_usable_share_get_the_floor_not_the_flat_default() {
-    assert_eq!(
-        context_size_for(5.3, PLAIN_9B_BYTES, 0, &plain_9b(), None),
-        Some(AUTO_MIN_CONTEXT_SIZE)
-    );
-}
-
-/// Chat plus a different utility GGUF on a 16 GB Mac (about 10.7 GB of
-/// working set). The utility is sized against what the chat server leaves,
-/// not against the whole card.
-#[test]
-fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
-    const UTILITY_BYTES: u64 = 1_000_000_000;
-    let vram = 10.7;
-    let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
-
-    let alone = context_size_for(vram, UTILITY_BYTES, 0, &plain_9b(), None).unwrap();
-    assert!(
-        UTILITY_BYTES + u64::from(alone) * 131_072 <= budget,
-        "the whole card to itself, and no more"
-    );
-
-    let small_chat = 3_000_000_000;
-    let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &plain_9b(), None).unwrap();
-    let cache = u64::from(beside) * 131_072;
-    assert!(beside < alone);
-    assert!(
-        small_chat + UTILITY_BYTES + cache <= budget,
-        "both servers fit the working set"
-    );
-
-    let chat_9b_at_8k = PLAIN_9B_BYTES + 8192 * 131_072;
-    assert_eq!(
-        context_size_for(vram, UTILITY_BYTES, chat_9b_at_8k, &plain_9b(), None),
-        Some(AUTO_MIN_CONTEXT_SIZE),
-        "no room left beside the 9B: the floor"
-    );
-}
-
-/// Qwen 3.5 9B as its header reads (`unsloth/Qwen3.5-9B-GGUF`, Q4_K_M):
-/// the plain 9B's shape, but only one layer in four attends to the whole
-/// window, so 32 KiB of cache per token.
-fn qwen35_9b() -> GgufModelInfo {
-    GgufModelInfo {
-        architecture: Some("qwen35".into()),
-        full_attention_interval: Some(4),
-        ..plain_9b()
+fn metal_room(held: u64) -> MemoryRoom {
+    MemoryRoom {
+        source: MemorySource::MetalWorkingSet,
+        reported: M3_MAX_WORKING_SET,
+        held,
     }
 }
 
-const QWEN35_9B_BYTES: u64 = 5_680_522_464;
-
-/// About 0.76 GiB to spare beside the 9B's weights. Counting every layer, as
-/// the sizing used to, bought a 6144 window; a quarter of the cost a token
-/// buys four times the window.
+/// The owner's saved 60,416 tokens for Ornith-1.5-9B, beside the embedding
+/// model's 1.19 GB on the same M3 Max.
 #[test]
-fn a_qwen_hybrid_gets_four_times_the_window_its_full_attention_layers_allow() {
-    let vram = 8.65;
-    let every_layer = GgufModelInfo {
-        full_attention_interval: None,
-        ..qwen35_9b()
-    };
+fn a_hint_prices_weights_cache_recurrent_state_and_compute() {
+    let info = ornith_9b();
 
-    let before = context_size_for(vram, QWEN35_9B_BYTES, 0, &every_layer, None).unwrap();
-    let after = context_size_for(vram, QWEN35_9B_BYTES, 0, &qwen35_9b(), None).unwrap();
-
-    assert_eq!(before, 6144);
-    assert_eq!(after, 24_576);
-
-    let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
-    let cache = u64::from(after) * 32 * 1024;
-    assert!(QWEN35_9B_BYTES + cache <= budget, "and it still fits");
-}
-
-/// An 8 GB-class budget that leaves the 9B a third of a gigabyte: the floor
-/// when every layer was counted, 9216 tokens now.
-#[test]
-fn a_qwen_hybrid_clears_the_floor_where_counting_every_layer_did_not() {
-    let every_layer = GgufModelInfo {
-        full_attention_interval: None,
-        ..qwen35_9b()
-    };
-
-    assert_eq!(
-        context_size_for(8.0, QWEN35_9B_BYTES, 0, &every_layer, None),
-        Some(AUTO_MIN_CONTEXT_SIZE)
+    let hint = hint_for(
+        ORNITH_9B_BYTES,
+        Some(&info),
+        60_416,
+        false,
+        metal_room(1_191_586_416),
     );
+
     assert_eq!(
-        context_size_for(8.0, QWEN35_9B_BYTES, 0, &qwen35_9b(), None),
-        Some(9216)
+        hint.needed,
+        Footprint {
+            weights: ORNITH_9B_BYTES,
+            // Nine layers keep a cache (eight full-attention, one MTP) at
+            // 4 KiB a token each.
+            cache: 60_416 * 9 * 4 * 1024,
+            state: info.recurrent_state_bytes(),
+            compute: info.compute_buffer_bytes(60_416),
+            window: 60_416,
+        }
+    );
+    assert_eq!(hint.needed.total(), 8_726_589_376);
+    assert!(hint.fits());
+    assert_eq!(
+        hint.fits_window,
+        Some(262_144),
+        "the whole trained window fits beside it"
     );
 }
 
-/// Gemma 4 12B's header (`unsloth/gemma-4-12b-it-GGUF`, Q4_K_M): 8 global
-/// layers of 1 KV head at 512 + 512, 40 sliding layers of 8 heads at 256 +
-/// 256 over a 1024-token window.
+#[test]
+fn the_fitting_window_is_the_largest_thousand_that_fits_and_never_past_the_trained_length() {
+    let info = ornith_9b();
+    let spare = 10 * GIB;
+    let room = MemoryRoom {
+        source: MemorySource::GpuFree,
+        reported: spare,
+        held: 0,
+    };
+
+    let hint = hint_for(ORNITH_9B_BYTES, Some(&info), 262_144, false, room);
+
+    assert!(!hint.fits());
+    let fits = hint.fits_window.unwrap();
+    assert_eq!(fits % 1024, 0);
+    let total = |window| footprint_from(ORNITH_9B_BYTES, Some(&info), window, false).total();
+    assert!(total(fits) <= spare, "the window it names fits");
+    assert!(total(fits + 1024) > spare, "and the next thousand does not");
+
+    let quantized = hint_for(ORNITH_9B_BYTES, Some(&info), 262_144, true, room);
+    assert!(
+        quantized.fits_window.unwrap() > fits,
+        "a q8_0 cache fits a larger window in the same memory"
+    );
+}
+
+#[test]
+fn weights_past_the_room_fit_no_window_and_an_unreadable_header_says_nothing() {
+    let room = MemoryRoom {
+        source: MemorySource::GpuFree,
+        reported: 4 * GIB,
+        held: 0,
+    };
+
+    let too_large = hint_for(ORNITH_9B_BYTES, Some(&ornith_9b()), 8_192, false, room);
+    assert_eq!(too_large.fits_window, Some(0));
+    assert!(too_large.describe().contains("Not even its weights fit."));
+
+    let unreadable = hint_for(ORNITH_9B_BYTES, None, 8_192, false, room);
+    assert_eq!(unreadable.fits_window, None);
+    assert_eq!(unreadable.needed.weights, ORNITH_9B_BYTES);
+    assert_eq!(unreadable.needed.total(), ORNITH_9B_BYTES);
+}
+
+#[test]
+fn a_hint_tells_the_user_the_numbers_and_the_fix() {
+    let hint = hint_for(
+        ORNITH_9B_BYTES,
+        Some(&ornith_9b()),
+        262_144,
+        false,
+        MemoryRoom {
+            source: MemorySource::MetalWorkingSet,
+            reported: 16 * GIB,
+            held: GIB,
+        },
+    );
+
+    let text = hint.describe();
+    assert!(
+        text.starts_with("At 262,144 tokens this model needs about 15.4 GB (5.4 GB weights + 9.0 GB context + 0.2 GB recurrent state + 0.8 GB compute); this Mac's GPU working set is 16.0 GB, and other models hold 1.0 GB of it. About "),
+        "{text}"
+    );
+    assert!(
+        text.ends_with(" tokens fit. Lower its context length in Settings → Models."),
+        "{text}"
+    );
+}
+
+/// Gemma 4 12B as its header reads: 8 global layers of 1 KV head at 512 + 512,
+/// 40 sliding layers of 8 heads at 256 + 256 over a 1024-token window.
 fn gemma4_12b() -> GgufModelInfo {
     let pattern: Vec<bool> = (0..48).map(|layer| layer % 6 != 5).collect();
     GgufModelInfo {
@@ -1647,67 +1579,32 @@ fn gemma4_12b() -> GgufModelInfo {
 
 const GEMMA4_12B_BYTES: u64 = 7_121_861_440;
 
-/// 12 GB of accelerator memory leaves Gemma 4 12B about 1.9 GB beside its
-/// weights. The sliding layers take a fixed 1.5 GB (320 KiB for each of 4608
-/// cells) and the global layers 16 KiB a token, so the window is the largest
-/// thousand under (1,897,569,881 - 1,509,949,440) / 16,384 = 23,658. The
-/// reader used to stop at the per-layer head list, fall back to 16 heads 240
-/// wide on all 48 layers (720 KiB a token) and pick the floor.
+/// The sliding layers take a fixed 1.5 GB (320 KiB for each of 4608 cells)
+/// and the global layers 16 KiB a token, so a sliding model fits a window
+/// many times what charging every layer for the whole window would allow.
 #[test]
 fn gemma_4_sliding_layers_are_charged_their_window_not_the_whole_context() {
-    let what_the_reader_used_to_see = GgufModelInfo {
-        architecture: Some("gemma4".into()),
-        trained_context_length: Some(262_144),
-        block_count: Some(48),
-        head_count: Some(16.into()),
-        embedding_length: Some(3840),
-        ..Default::default()
+    let room = MemoryRoom {
+        source: MemorySource::GpuFree,
+        reported: GEMMA4_12B_BYTES + 2 * GIB,
+        held: 0,
+    };
+    let every_layer_global = GgufModelInfo {
+        sliding_window: None,
+        ..gemma4_12b()
     };
 
-    assert_eq!(
-        context_size_for(
-            12.0,
-            GEMMA4_12B_BYTES,
-            0,
-            &what_the_reader_used_to_see,
-            None
-        ),
-        Some(AUTO_MIN_CONTEXT_SIZE)
+    let sliding = hint_for(GEMMA4_12B_BYTES, Some(&gemma4_12b()), 32_768, false, room);
+    let global = hint_for(
+        GEMMA4_12B_BYTES,
+        Some(&every_layer_global),
+        32_768,
+        false,
+        room,
     );
-    let chosen = context_size_for(12.0, GEMMA4_12B_BYTES, 0, &gemma4_12b(), None).unwrap();
-    assert_eq!(chosen, 23_552);
 
-    let spare = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64 - GEMMA4_12B_BYTES;
-    let cost = |tokens: u32| gemma4_12b().kv_cache_bytes(tokens).unwrap();
-    assert!(cost(chosen) <= spare, "the chosen window fits");
-    assert!(
-        cost(chosen + 1024) > spare,
-        "and the next thousand does not"
-    );
-}
-
-/// A header without KV dimensions cannot be sized, and guessing would be
-/// worse than the conservative default.
-#[test]
-fn an_unreadable_model_declines_to_choose() {
-    let info = GgufModelInfo {
-        trained_context_length: Some(32_768),
-        ..Default::default()
-    };
-
-    assert_eq!(context_size_for(28.1, PLAIN_9B_BYTES, 0, &info, None), None);
-}
-
-/// A missing file is the common case in tests and on a broken install; the
-/// flat default has to survive it.
-#[test]
-fn a_missing_model_file_falls_back_to_the_flat_default() {
-    use crate::features::llm::engine::system::GPUVendor;
-    let caps = make_caps(Some(GPUVendor::Apple), 36.0);
-
-    let config = SidecarConfig::from_capabilities(PathBuf::from("/nonexistent/m.gguf"), &caps, 0);
-
-    assert_eq!(config.context_size, DEFAULT_GPU_CONTEXT_SIZE);
+    let (sliding, global) = (sliding.fits_window.unwrap(), global.fits_window.unwrap());
+    assert!(sliding > 4 * global, "{sliding} against {global}");
 }
 
 /// A model file of `bytes` weights whose header cannot be read, so its cache
@@ -1729,14 +1626,13 @@ fn running(path: &std::path::Path, context_size: u32, n_gpu_layers: u32) -> Runn
     }
 }
 
-/// A GPU reporting 10 GB, of which 7 GB is usable.
+/// A Mac whose GPU working set is 10 GB.
 fn gpu_with_ten_gigabytes() -> SystemCapabilities {
-    let mut caps = make_caps(
-        Some(crate::features::llm::engine::system::GPUVendor::Apple),
-        36.0,
-    );
-    caps.gpu.as_mut().unwrap().vram_gb = Some(10.0);
-    caps
+    caps_with_gpu(
+        crate::features::llm::engine::system::GPUVendor::Apple,
+        Some(10.0),
+        Some(10.0),
+    )
 }
 
 #[test]
@@ -1776,43 +1672,52 @@ fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left()
     let dir = tempfile::tempdir().unwrap();
     let resident = weights_file(&dir, "resident.gguf", 4 * GIB);
     let small = weights_file(&dir, "small.gguf", 2 * GIB);
-    let large = weights_file(&dir, "large.gguf", 4 * GIB);
+    let large = weights_file(&dir, "large.gguf", 7 * GIB);
     let servers = [running(&resident, 8_192, 99)];
     let gpu = gpu_with_ten_gigabytes();
     let config = |path: &PathBuf| SidecarConfig::for_model(path.clone());
 
     assert_eq!(
-        admission(&servers, &servers[0].config, 8_192, &gpu),
+        admission(&servers, &servers[0].config, &gpu, 0),
         Admission::Shared
     );
     assert_eq!(
-        admission(&servers, &config(&small), 8_192, &gpu),
+        admission(&servers, &config(&small), &gpu, 0),
         Admission::Fits {
             needed: Footprint {
                 weights: 2 * GIB,
                 cache: 0,
-                window: 8_192
+                state: 0,
+                compute: 0,
+                window: 0,
             },
-            spare: usable_gpu_bytes(10.0) - 4 * GIB,
+            spare: 6 * GIB,
         }
     );
     assert!(matches!(
-        admission(&servers, &config(&large), 8_192, &gpu),
-        Admission::Short { needed, spare } if needed.total() == 4 * GIB && spare < 4 * GIB
+        admission(&servers, &config(&large), &gpu, 0),
+        Admission::Short { needed, spare } if needed.total() == 7 * GIB && spare == 6 * GIB
     ));
+    assert!(
+        matches!(
+            admission(&servers, &config(&small), &gpu, 5 * GIB),
+            Admission::Short { spare, .. } if spare == GIB
+        ),
+        "the app's own models on the same GPU count too"
+    );
     assert_eq!(
-        admission(&servers, &config(&large).without_gpu_offload(), 4_096, &gpu),
+        admission(&servers, &config(&large).without_gpu_offload(), &gpu, 0),
         Admission::NoOffload
     );
     assert_eq!(
         admission(
             &servers,
             &config(&large),
-            8_192,
             &make_caps(
                 Some(crate::features::llm::engine::system::GPUVendor::Apple),
                 36.0
-            )
+            ),
+            0
         ),
         Admission::Unmetered,
         "a GPU that does not report its memory cannot be checked"
@@ -1899,7 +1804,7 @@ fn launch_args(weights: &std::path::Path, vision: Option<bool>) -> (SidecarConfi
     };
     let server = LocalServerOptions::from_settings(&LLMSettingsDto::default())
         .with_model_config(Some(&saved));
-    let config = sidecar_config(weights, -1, server, &make_caps(None, 32.0), 0, None);
+    let config = sidecar_config(weights, -1, 8_192, server, &make_caps(None, 32.0), None);
     let args = build_server_args(&config, 12345);
     (config, args)
 }
