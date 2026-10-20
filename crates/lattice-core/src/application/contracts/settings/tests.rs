@@ -262,3 +262,31 @@ fn the_verifier_model_loads_with_or_without_the_field() {
         chosen
     );
 }
+
+#[test]
+fn the_utility_model_reference_loads_with_or_without_the_field() {
+    use crate::domain::models::model_ref::ModelRef;
+
+    let mut value = serde_json::to_value(SettingsDto::default()).unwrap();
+    let llm = value
+        .pointer_mut("/llm")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("llm settings are serialized under llm");
+    assert_eq!(llm.remove("utilityModel"), Some(serde_json::Value::Null));
+    let loaded: SettingsDto = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(loaded.llm.utility_model, None);
+
+    let chosen = serde_json::json!({"kind": "llama_cpp", "model": "qwen3.8-27b.gguf"});
+    value["llm"]["utilityModel"] = chosen.clone();
+    let loaded: SettingsDto = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        loaded.llm.utility_model,
+        Some(ModelRef::LlamaCpp {
+            model: "qwen3.8-27b.gguf".into()
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap()["llm"]["utilityModel"],
+        chosen
+    );
+}

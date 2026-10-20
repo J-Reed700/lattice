@@ -19,6 +19,18 @@ function row(name: string) {
   return within(screen.getByText(name, { exact: true }).parentElement!.parentElement!);
 }
 
+async function openRowConfig(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(row(name).getByRole('button', { name: 'Configure model' }));
+  return within(await screen.findByRole('dialog'));
+}
+
+async function closeRowConfig(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = screen.queryByRole('dialog');
+  if (dialog) {
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+  }
+}
+
 async function renderModels() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -65,41 +77,99 @@ describe('Downloaded model chat selection', () => {
       models = models.map(model => ({ ...model, is_active_for_chat: model.model_id === id }));
       return { ok: true as const, data: undefined };
     });
+    VaultAPI.clearActiveUtilityModel = vi.fn(async () => {
+      models = models.map(model => ({ ...model, is_active_for_utility: false }));
+      return { ok: true as const, data: undefined };
+    });
   });
 
   it('switches from local to llama.cpp and back through the real provider setting, preserving utility and connections', async () => {
     const user = await renderModels();
     const connection = settings.llm.llamaCpp;
     const ollamaModel = settings.llm.model;
-    expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(row('Local model').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
+    expect(row('Local model').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
 
-    await user.click(row('llama.cpp connection').getByRole('button', { name: 'Chat' }));
+    const llamaDialog = await openRowConfig(user, 'llama.cpp connection');
+    await user.click(llamaDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('llamacpp'));
     expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual({ kind: 'llama_cpp', model: 'remote-model.gguf' });
-    expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
-    expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
-    expect(row('Local model').getByRole('button', { name: 'Utility' })).toHaveAttribute('aria-pressed', 'true');
+    expect(llamaDialog.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    await closeRowConfig(user);
 
-    await user.click(row('Local model').getByRole('button', { name: 'Chat' }));
+    expect(row('llama.cpp connection').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
+    expect(row('Local model').queryByText('Chat')).not.toBeInTheDocument();
+    expect(row('Local model').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+
+    const localDialog = await openRowConfig(user, 'Local model');
+    await user.click(localDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('local'));
+    await closeRowConfig(user);
+
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('local-model');
     expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual({ kind: 'local', model_id: 'local-model' });
-    expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
-    expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
+    expect(row('Local model').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
+    expect(row('llama.cpp connection').queryByText('Chat')).not.toBeInTheDocument();
     expect(settings.llm.llamaCpp).toEqual(connection);
     expect(settings.llm.model).toBe(ollamaModel);
     expect(models[0].is_active_for_utility).toBe(true);
   });
 
+  it('allows assigning llama.cpp connection to Utility and Verifier', async () => {
+    const user = await renderModels();
+    expect(row('Local model').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+
+    const llamaDialog = await openRowConfig(user, 'llama.cpp connection');
+    await user.click(llamaDialog.getByRole('button', { name: 'Utility' }));
+    await waitFor(() => expect(settings.llm.utilityModel).toEqual({ kind: 'llama_cpp', model: 'remote-model.gguf' }));
+    expect(VaultAPI.clearActiveUtilityModel).toHaveBeenCalledOnce();
+
+    await user.click(llamaDialog.getByRole('button', { name: 'Verifier' }));
+    await waitFor(() => expect(settings.llm.verifierModel).toEqual({ kind: 'llama_cpp', model: 'remote-model.gguf' }));
+    await closeRowConfig(user);
+
+    expect(row('llama.cpp connection').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+    expect(row('llama.cpp connection').getByText('Verifier')).toHaveAttribute('data-active-role', 'verifier');
+    expect(row('Local model').queryByText('Utility')).not.toBeInTheDocument();
+  });
+
+  it('clears the llama.cpp Utility reference when a downloaded model takes Utility', async () => {
+    settings.llm.utilityModel = { kind: 'llama_cpp', model: 'remote-model.gguf' };
+    models[0] = { ...models[0], is_active_for_utility: false };
+    VaultAPI.setActiveUtilityModel = vi.fn(async (id) => {
+      models = models.map(model => ({ ...model, is_active_for_utility: model.model_id === id }));
+      return { ok: true as const, data: undefined };
+    });
+    const user = await renderModels();
+    expect(row('llama.cpp connection').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+
+    const localDialog = await openRowConfig(user, 'Local model');
+    await user.click(localDialog.getByRole('button', { name: 'Utility' }));
+    await waitFor(() => expect(settings.llm.utilityModel).toBeNull());
+    await closeRowConfig(user);
+
+    expect(VaultAPI.setActiveUtilityModel).toHaveBeenCalledWith('local-model');
+    expect(row('Local model').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+    expect(row('llama.cpp connection').queryByText('Utility')).not.toBeInTheDocument();
+  });
+
   it('keeps both configured remote connections accessible when Ollama is selected', async () => {
     settings.llm.provider = 'ollama';
     settings.llm.ollamaConfigured = true;
+    models[1].is_active_for_chat = true;
     const user = await renderModels();
-    expect(row('Ollama connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
-    await user.click(row('llama.cpp connection').getByRole('button', { name: 'Chat' }));
+    expect(row('Ollama connection').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
+
+    const llamaDialog = await openRowConfig(user, 'llama.cpp connection');
+    await user.click(llamaDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('llamacpp'));
-    await user.click(row('Ollama connection').getByRole('button', { name: 'Chat' }));
+    await closeRowConfig(user);
+
+    const ollamaDialog = await openRowConfig(user, 'Ollama connection');
+    await user.click(ollamaDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(settings.llm.provider).toBe('ollama'));
+    await closeRowConfig(user);
+
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('__ollama_server__');
     expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual({ kind: 'ollama', model: settings.llm.model });
   });
@@ -145,20 +215,23 @@ describe('Downloaded model chat selection', () => {
   it('keeps an explicitly saved localhost connection accessible with another provider selected', async () => {
     settings.llm.ollamaConfigured = true;
     settings.llm.model = 'llama3.2:latest';
-    await renderModels();
+    const user = await renderModels();
     expect(screen.getByText('Ollama connection')).toBeInTheDocument();
-    expect(row('Ollama connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
+    const ollamaDialog = await openRowConfig(user, 'Ollama connection');
+    expect(ollamaDialog.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('keeps the current selection and reports a failed provider change', async () => {
     vi.spyOn(VaultAPI, 'updateSettings').mockResolvedValue({ ok: false, error: 'Settings could not be saved' });
     const user = await renderModels();
-    await user.click(row('llama.cpp connection').getByRole('button', { name: 'Chat' }));
+    const llamaDialog = await openRowConfig(user, 'llama.cpp connection');
+    await user.click(llamaDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(useToastStore.getState().toasts).toEqual([
       expect.objectContaining({ type: 'error', title: 'Failed to set chat role' }),
     ]));
-    expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
-    expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
+    expect(llamaDialog.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
+    await closeRowConfig(user);
+    expect(row('Local model').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
     expect(settings.llm.provider).toBe('local');
   });
 
@@ -166,11 +239,13 @@ describe('Downloaded model chat selection', () => {
     settings.llm.provider = 'llamacpp';
     vi.spyOn(VaultAPI, 'setActiveChatModel').mockResolvedValue({ ok: false, error: 'Model is not fully downloaded' });
     const user = await renderModels();
-    await user.click(row('Local model').getByRole('button', { name: 'Chat' }));
+    const localDialog = await openRowConfig(user, 'Local model');
+    await user.click(localDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('local-model'));
+    await closeRowConfig(user);
     expect(VaultAPI.updateSettings).not.toHaveBeenCalled();
     expect(settings.llm.provider).toBe('llamacpp');
-    expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(row('llama.cpp connection').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
   });
 
   it('warms only the local utility assignment while llama.cpp is selected for chat', async () => {
@@ -187,14 +262,16 @@ describe('Downloaded model chat selection', () => {
     settings.llm.provider = 'llamacpp';
     vi.spyOn(VaultAPI, 'updateSettings').mockResolvedValue({ ok: false, error: 'Settings could not be saved' });
     const user = await renderModels();
-    await user.click(row('Local model').getByRole('button', { name: 'Chat' }));
+    const localDialog = await openRowConfig(user, 'Local model');
+    await user.click(localDialog.getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(useToastStore.getState().toasts).toEqual([
       expect.objectContaining({ type: 'error', title: 'Failed to set chat role' }),
     ]));
+    await closeRowConfig(user);
     await screen.findByText('Local model', { exact: true });
     expect(VaultAPI.setActiveChatModel).toHaveBeenCalledWith('local-model');
-    expect(row('Local model').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'false');
-    expect(row('llama.cpp connection').getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(row('Local model').queryByText('Chat')).not.toBeInTheDocument();
+    expect(row('llama.cpp connection').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
   });
 
   describe('Vision', () => {
@@ -228,18 +305,19 @@ describe('Downloaded model chat selection', () => {
       await user.click(within(banner).getByRole('button', { name: 'Use Local model (your chat model)' }));
       await waitFor(() => expect(settings.llm.learningModel).toEqual({ kind: 'local', model_id: 'local-model' }));
       expect(screen.queryByText(/Learning: not set/)).not.toBeInTheDocument();
-      expect(row('Local model').getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'true');
+      expect(row('Local model').getByText('Learning')).toHaveAttribute('data-active-role', 'learning');
       // Learning is a setting of its own: the chat model is untouched.
       expect(settings.llm.provider).toBe('local');
       expect(VaultAPI.setActiveChatModel).not.toHaveBeenCalled();
     });
 
-    it('names a Learning model that is not downloaded any more, keeps the setting, and leads to the grid', async () => {
+    it('names a Learning model that is not downloaded any more, keeps the setting, and opens the configuration menu', async () => {
       settings.llm.learningModel = { kind: 'local', model_id: 'ornith-1.5-9b' };
       const user = await renderModels();
       expect(screen.getByText('Learning model ornith-1.5-9b is not downloaded any more')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Choose another' }));
-      expect(row('Local model').getByRole('button', { name: 'Learning' })).toHaveFocus();
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByRole('button', { name: 'Learning' })).toBeInTheDocument();
       expect(settings.llm.learningModel).toEqual({ kind: 'local', model_id: 'ornith-1.5-9b' });
       expect(VaultAPI.updateSettings).not.toHaveBeenCalled();
     });
@@ -255,10 +333,14 @@ describe('Downloaded model chat selection', () => {
       settings.llm.ollamaConfigured = true;
       settings.llm.model = 'qwen3:8b';
       const user = await renderModels();
-      await user.click(row('llama.cpp connection').getByRole('button', { name: 'Learning' }));
+      const llamaDialog = await openRowConfig(user, 'llama.cpp connection');
+      await user.click(llamaDialog.getByRole('button', { name: 'Learning' }));
       await waitFor(() => expect(settings.llm.learningModel).toEqual({ kind: 'llama_cpp', model: 'remote-model.gguf' }));
-      await waitFor(() => expect(row('llama.cpp connection').getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'true'));
-      await user.click(row('Ollama connection').getByRole('button', { name: 'Learning' }));
+      await waitFor(() => expect(llamaDialog.getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'true'));
+      await closeRowConfig(user);
+
+      const ollamaDialog = await openRowConfig(user, 'Ollama connection');
+      await user.click(ollamaDialog.getByRole('button', { name: 'Learning' }));
       await waitFor(() => expect(settings.llm.learningModel).toEqual({ kind: 'ollama', model: 'qwen3:8b' }));
       expect(settings.llm.provider).toBe('local');
     });
