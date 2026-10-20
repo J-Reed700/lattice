@@ -16,6 +16,19 @@ pub fn safe_truncate(input: &str, max_chars: usize) -> String {
     input.chars().take(max_chars).collect()
 }
 
+/// `text` with the Latin combining diacritics (U+0300 to U+036F) taken off
+/// its letters, so `café` reads `cafe`. This is what SQLite FTS5's
+/// `unicode61` tokenizer does by default when it indexes a word, so a word
+/// looked up in such an index's vocabulary has to be folded the same way.
+/// Other scripts recompose as they were: only the Latin marks go.
+pub fn fold_diacritics(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    text.nfd()
+        .filter(|c| !('\u{300}'..='\u{36f}').contains(c))
+        .nfc()
+        .collect()
+}
+
 /// Normalize whitespace by collapsing all runs of whitespace into single spaces.
 pub fn normalize_whitespace(input: &str) -> String {
     input.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -320,6 +333,13 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn folding_takes_latin_marks_off_and_leaves_other_scripts_whole() {
+        assert_eq!(fold_diacritics("Café Ñandú"), "Cafe Nandu");
+        assert_eq!(fold_diacritics("한국어 日本語"), "한국어 日本語");
+        assert_eq!(fold_diacritics("plain_ascii"), "plain_ascii");
+    }
 
     #[test]
     fn test_safe_truncate_ascii() {

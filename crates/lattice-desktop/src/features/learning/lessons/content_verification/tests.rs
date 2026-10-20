@@ -1450,7 +1450,7 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
     .fetch_one(&pool)
     .await
     .map_err(|e| AppError::Database(e.to_string()))?;
-    assert!(report_json.contains("lexical_fallback"));
+    assert!(report_json.contains("\"lexical\""));
     assert!(!serde_json::to_string(&saved)?.contains("checker_model"));
     Ok(())
 }

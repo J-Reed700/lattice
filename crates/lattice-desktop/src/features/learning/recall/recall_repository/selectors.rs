@@ -133,7 +133,7 @@ impl LearningRecallRepository {
     pub async fn search_sources(
         &self,
         req: &SearchLearningSourcesSemanticallyRequestDto,
-        library: Option<&dyn LibraryPassagesPort>,
+        courses: Option<&std::sync::Arc<CourseIndexes>>,
     ) -> Result<Vec<LearningSourceSemanticSearchResultDto>> {
         validate_uuid(&req.program_id, "program")?;
         let query = req.query.trim();
@@ -144,12 +144,20 @@ impl LearningRecallRepository {
         }
         let snapshots = LearningSourceLibraryRepository::new(self.pool.clone());
         let sources = snapshots.verification_sources(&req.program_id).await?;
+        // The course's index with its rows brought up to date, never waiting
+        // for embedding; by words alone when there is none.
+        let course = match courses {
+            Some(courses) => courses
+                .search(&req.program_id, tokio_util::sync::CancellationToken::new())
+                .await
+                .inspect_err(|error| tracing::warn!(%error, "Course index could not be opened"))
+                .ok(),
+            None => None,
+        };
         let collection =
-            crate::features::learning::reference_collection::ReferenceCollection::load(
-                &self.pool,
-                &req.program_id,
+            crate::features::learning::reference_collection::ReferenceCollection::searchable_now(
+                course.as_ref(),
                 &sources,
-                library,
             )
             .await?;
         let passages = collection.retrieve(query, req.limit).await?;

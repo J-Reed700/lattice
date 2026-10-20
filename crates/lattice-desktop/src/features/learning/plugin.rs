@@ -104,6 +104,27 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 std::sync::Arc::new(generation_worker(&container, runtimes)),
                 super::curriculum_repository::lesson_job_config(),
             ))?;
+            // Course index builds the last process left running resume; the
+            // indexes of courses deleted meanwhile are removed, and courses
+            // whose index is not current are queued.
+            if let Some(courses) = container.course_indexes().cloned() {
+                tauri::async_runtime::block_on(courses.register())?;
+                let background = std::sync::Arc::clone(container.core.background());
+                // Spawned from inside the runtime, so the sweep runs on after
+                // setup returns.
+                tauri::async_runtime::block_on(async move {
+                    background.spawn(async move {
+                        if let Err(error) = courses.sweep().await {
+                            tracing::warn!(%error, "Could not sweep the course indexes");
+                        }
+                        // Courses indexed before, or never: their builds run
+                        // one at a time in the background.
+                        if let Err(error) = courses.backfill().await {
+                            tracing::warn!(%error, "Could not queue course index builds");
+                        }
+                    });
+                });
+            }
             let practical = super::practical_repository::LearningPracticalRepository::new(
                 container.db_pool().clone(),
             );
@@ -173,6 +194,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_learning_source_selector,
             match_learning_source_selector,
             search_learning_sources_semantically,
+            course_index_status,
             get_learning_lesson_claim_review,
             resolve_learning_claim,
             resume_learning_lesson_review,

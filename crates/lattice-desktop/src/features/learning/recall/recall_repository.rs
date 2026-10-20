@@ -9,13 +9,11 @@ use crate::features::learning::{
     operations::Operation,
     persistence::{db, encode as json, hash as payload_hash, now},
     portability_dto::*,
+    references::course_index::CourseIndexes,
     source_library::LearningSourceLibraryRepository,
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
-use lattice_core::{
-    application::ports::LibraryPassagesPort,
-    shared::error::{AppError, Result},
-};
+use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashSet;
 

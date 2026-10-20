@@ -187,7 +187,7 @@ impl Selection {
                     retrieval_kind: passage
                         .kind
                         .clone()
-                        .unwrap_or_else(|| references.mode().into()),
+                        .unwrap_or_else(|| references.mode().label().into()),
                     score: 0.0,
                 })
             })
@@ -208,7 +208,7 @@ pub(super) async fn select(
 ) -> Result<Vec<EvidencePassage>> {
     let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
-        "unit":unit, "statement":claim.statement, "retrieval":references.mode(), "embedding":references.embedding_model(),
+        "unit":unit, "statement":claim.statement, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
         "ranking":RANKING,
     }).to_string()));
     let memory = retained
@@ -232,7 +232,7 @@ pub(super) async fn select(
         for (index, old) in claim_reuse::identities(retained, unit, claim) {
             let old_key = format!("claim-evidence-v1:{}", digest(&json!({
                 "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
-                "unit":index, "claim":old, "retrieval":references.mode(), "embedding":references.embedding_model(),
+                "unit":index, "claim":old, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
             }).to_string()));
             let Some(plan) = crate::features::learning::lesson_drafts::checkpoint(&old_key)
                 .await?

@@ -298,7 +298,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   planned before retrieval, and the tool loop grows its request only up to that
   allocation's input budget. The stages reach infrastructure only through the
   narrowed `chat/ports.rs` traits (`ChatRecords` for the conversation's own
-  rows, `LibrarySearchTrait`, `PageReader`, `ChatTools`), so `turn/tests.rs`
+  rows, `HybridSearchTrait`, `PageReader`, `ChatTools`), so `turn/tests.rs`
   drives them with a fake runtime. `turn/research.rs` saves a deep-research
   turn's progress so its `chat.deep_research` job resumes after a restart.
 - `features/conversation/chat/memory_context.rs` assembles one turn's bounded
@@ -410,9 +410,12 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   `search_folder` from the index). Answers point at lines with the
   `path:10-24` grammar parsed in core's `shared/text/line_refs.rs`.
 - `explorer/index` keeps a semantic index per folder under
-  `<data_dir>/folder-index/`: a `chunks.db` and a vectors file keyed by the
-  embedding identity. The index lives outside `lattice.db`, so backups do not
-  carry it; it is rebuilt from the folder. A watcher follows edits while the
+  `<data_dir>/folder-index/`: a passage index
+  (`infrastructure/passage_index`), which is a `passages.db` and a vectors file
+  keyed by the embedding identity. The index lives outside `lattice.db`, so
+  backups do not carry it; it is rebuilt from the folder. Its search is the
+  library's hybrid search (`HybridSearchTrait`), built over the folder's own
+  stores by the `HybridSearchFactory` port the composition root wires. A watcher follows edits while the
   folder is open. Builds are `explorer.folder_index` jobs keyed by the index
   root, run one at a time with the open folder first and resumed after a
   restart if the folder still exists; status (passages, percent, rate and

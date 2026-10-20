@@ -2,6 +2,14 @@ use super::*;
 use lattice_core::application::ports::ReferenceSnapshot;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 
+/// A course's active sources changed: its index is out of date, and a build
+/// is queued (§3.4).
+async fn sources_changed(container: &Container, program_id: &str) {
+    if let Some(courses) = container.course_indexes() {
+        courses.refresh(program_id).await;
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_learning_source_workspace(
@@ -61,13 +69,16 @@ pub async fn add_learning_web_source(
     container: State<'_, Container>,
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
     let web = container.web_service();
-    crate::features::learning::source_workflows::add_web_source(
+    let program_id = request.program_id.clone();
+    let workspace = crate::features::learning::source_workflows::add_web_source(
         &source_library(&container),
         request,
         move |url| async move { web.fetch_reference_page(&url).await },
     )
     .await
-    .map_err(ApiError::from)
+    .map_err(ApiError::from)?;
+    sources_changed(&container, &program_id).await;
+    Ok(workspace)
 }
 
 #[tauri::command]
@@ -133,6 +144,7 @@ pub async fn add_learning_document_source(
     )
     .await
     .map_err(ApiError::from)?;
+    sources_changed(&container, &request.program_id).await;
     repo.workspace(&request.program_id)
         .await
         .map_err(ApiError::from)
@@ -185,6 +197,7 @@ pub async fn add_learning_text_source(
         )
         .await
         .map_err(ApiError::from)?;
+    sources_changed(&container, &request.program_id).await;
     source_library(&container)
         .workspace(&request.program_id)
         .await
@@ -258,6 +271,7 @@ pub async fn adopt_learning_source_version(
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
     let repo = source_library(&container);
     repo.adopt(&request).await.map_err(ApiError::from)?;
+    sources_changed(&container, &request.program_id).await;
     repo.workspace(&request.program_id)
         .await
         .map_err(ApiError::from)
@@ -286,6 +300,7 @@ pub async fn delete_learning_source(
         .delete_source(&request)
         .await
         .map_err(ApiError::from)?;
+    sources_changed(&container, &request.program_id).await;
     source_library(&container)
         .workspace(&request.program_id)
         .await
@@ -302,6 +317,7 @@ pub async fn reimport_learning_source(
         .reimport_source(&request)
         .await
         .map_err(ApiError::from)?;
+    sources_changed(&container, &request.program_id).await;
     source_library(&container)
         .workspace(&request.program_id)
         .await
@@ -357,16 +373,31 @@ pub async fn search_learning_sources_semantically(
     request: SearchLearningSourcesSemanticallyRequestDto,
     container: State<'_, Container>,
 ) -> Result<Vec<LearningSourceSemanticSearchResultDto>, ApiError> {
-    // The library queries with the loaded model; without one, sources are
-    // ranked by keyword.
-    let library = match container.get_or_load_embedding().await {
-        Ok(_) => Some(container.library_passages()),
-        Err(_) => None,
-    };
+    // The course's index searches by meaning once an embedding model is
+    // active, and by words otherwise.
     crate::features::learning::recall_repository::LearningRecallRepository::new(
         container.db_pool().clone(),
     )
-    .search_sources(&request, library.as_deref())
+    .search_sources(&request, container.course_indexes())
     .await
     .map_err(ApiError::from)
+}
+
+/// Where the course's evidence index stands: for the course workspace's
+/// notice, and the evidence actions it holds back while the course indexes.
+/// A cheap read that never opens or builds the index; it queues a build when
+/// the index is behind its course and none is queued.
+#[tauri::command]
+#[specta::specta]
+pub async fn course_index_status(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<crate::features::learning::references::course_index::CourseIndexStatusDto, ApiError> {
+    use crate::features::learning::references::course_index::CourseIndexStatusDto;
+    let Some(courses) = container.course_indexes() else {
+        return Ok(CourseIndexStatusDto::Unavailable {
+            reason: "The course index is not available in this window.".into(),
+        });
+    };
+    Ok(courses.status(&program_id).await)
 }

@@ -10,13 +10,18 @@ ways and reports both, so each can be checked against the other:
   absent, abstention matching what the corpus supports, citation numbers that
   exist, and the expected documents among those cited and among the evidence
   the model was given;
-* a rubric judge: the local model grades each answer three times with a fixed
-  prompt, greedy sampling and thinking off, and a turn passes only when all
-  three grades pass (pass^3).
+* a rubric judge: a model behind `--endpoint` grades each answered turn once
+  with a fixed prompt, greedy sampling and thinking off. Greedy decoding gives
+  the same grade for the same input, so a repeated grade is the same verdict
+  again, not a second trial: the 2026-10-13 runs graded every turn three times
+  and no turn ever split. One call is therefore one verdict.
 
-The judge is the same model that wrote the answers, so its verdict is a
-smoke-level signal, not a calibrated one. Disagreements between the two are
-listed in the report for that reason.
+The judge's endpoint and model are independent of the model that wrote the
+answers, and the scored manifest records which model judged. A judge grading
+its own answers is the weakest setup: its verdict is a smoke-level signal until
+`shipped_path_stats.py calibration-score` has measured it against human labels.
+Disagreements between the judge and the mechanical checks are listed in the
+report for the same reason.
 
 Commands:
   validate QUESTIONS CORPUS        check a question set against its corpus
@@ -40,7 +45,6 @@ from rag_eval import validate_dataset
 
 ROW_SCHEMA = "lattice-shipped-path-answers/1"
 JUDGE_RUBRIC = "lattice-shipped-path-judge/1"
-REPEATS = 3
 
 # Phrases a desktop answer uses to decline that the answer harness's pattern
 # does not list.
@@ -206,20 +210,9 @@ def mechanical(rubric, turn):
     }
 
 
-def judge_messages(item, turn_number, answers):
-    """The fixed judge prompt for one turn; earlier turns are context only."""
-    turns = item["turns"]
-    rubric = turns[turn_number]["rubric"]
+def rubric_lines(rubric):
+    """The rubric as the judge reads it, one requirement per line."""
     lines = []
-    if turn_number:
-        lines.append("Earlier in the conversation (context only, not graded):")
-        for earlier in range(turn_number):
-            lines.append(f"Q{earlier + 1}: {turns[earlier]['ask']}")
-            lines.append(f"A{earlier + 1}: {answers[earlier] or '(no answer)'}")
-        lines.append("")
-    lines.append(f"Question being graded: {turns[turn_number]['ask']}")
-    lines.append("")
-    lines.append("Rubric:")
     if rubric.get("abstain"):
         lines.append("- The documents do not contain this answer. A correct answer says so and "
                      "does not invent one.")
@@ -230,6 +223,23 @@ def judge_messages(item, turn_number, answers):
     for claim in rubric.get("must_not_claim", []):
         lines.append(f"- Must not claim: {json.dumps(claim)}")
     lines.append(f"- What a correct answer says: {rubric['notes']}")
+    return lines
+
+
+def judge_messages(item, turn_number, answers):
+    """The fixed judge prompt for one turn; earlier turns are context only."""
+    turns = item["turns"]
+    lines = []
+    if turn_number:
+        lines.append("Earlier in the conversation (context only, not graded):")
+        for earlier in range(turn_number):
+            lines.append(f"Q{earlier + 1}: {turns[earlier]['ask']}")
+            lines.append(f"A{earlier + 1}: {answers[earlier] or '(no answer)'}")
+        lines.append("")
+    lines.append(f"Question being graded: {turns[turn_number]['ask']}")
+    lines.append("")
+    lines.append("Rubric:")
+    lines.extend(rubric_lines(turns[turn_number]["rubric"]))
     lines.append("")
     lines.append("Answer to grade:")
     lines.append("<<<")
@@ -276,12 +286,33 @@ def http_judge(endpoint, model, timeout=300):
     return call
 
 
-def pass_k(verdicts):
-    """pass^k: every one of the k grades must pass."""
-    return bool(verdicts) and all(passed for passed, _ in verdicts)
+def judge_identity(endpoint, model, answer_model, timeout=30):
+    """Which model judged: the request's model name and what the server lists.
+
+    `/v1/models` is the OpenAI-compatible listing every supported server
+    answers; when it does not, the identity says so rather than guessing. The
+    endpoint URL itself is not recorded, because a remote judge's address is
+    not something a committed result should carry.
+    """
+    served = None
+    try:
+        with urllib.request.urlopen(endpoint.rstrip("/") + "/v1/models", timeout=timeout) as response:
+            listing = json.load(response)
+        served = [{"id": entry.get("id"), "meta": entry.get("meta")}
+                  for entry in listing.get("data") or [] if isinstance(entry, dict)]
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        served = {"unavailable": str(error)}
+    served_ids = {entry["id"] for entry in served} if isinstance(served, list) else set()
+    known = {model} | served_ids
+    return {
+        "requested_model": model,
+        "served_models": served,
+        "answer_model": answer_model,
+        "judges_own_answers": (answer_model in known) if answer_model and served_ids else None,
+    }
 
 
-def score(questions, rows, judge=None, repeats=REPEATS):
+def score(questions, rows, judge=None):
     """Scored rows, one per item, in question-set order."""
     items = unique_records(questions["items"], "id")
     by_id = unique_records([validate_row(row) for row in rows], "query_id")
@@ -300,15 +331,12 @@ def score(questions, rows, judge=None, repeats=REPEATS):
             checks = mechanical(spec["rubric"], turn)
             result = {"turn": number, "mechanical": checks}
             if judge is not None:
-                verdicts = []
-                if turn.get("answer"):
-                    messages = judge_messages(item, number, answers + [None] * len(item["turns"]))
-                    verdicts = [judge(messages) for _ in range(repeats)]
-                result["judge"] = {
-                    "verdicts": [{"pass": passed, "reason": reason} for passed, reason in verdicts],
-                    "pass_k": pass_k(verdicts) and len(verdicts) == repeats,
-                    "unanimous": len({passed for passed, _ in verdicts}) <= 1,
-                }
+                graded = bool(turn.get("answer"))
+                if graded:
+                    passed, reason = judge(judge_messages(item, number, answers + [None] * len(item["turns"])))
+                else:
+                    passed, reason = False, "no answer to grade"
+                result["judge"] = {"pass": passed, "reason": reason, "graded": graded}
             turn_scores.append(result)
         last = row["turns"][-1]
         mechanical_pass = all(t["mechanical"]["passed"] for t in turn_scores)
@@ -338,7 +366,7 @@ def score(questions, rows, judge=None, repeats=REPEATS):
             "last_turn_evidence_docs": [e.get("document_id") for e in last.get("evidence", [])],
         }
         if judge is not None:
-            record["judge_pass_k"] = all(t["judge"]["pass_k"] for t in turn_scores)
+            record["judge_pass"] = all(t["judge"]["pass"] for t in turn_scores)
         scored.append(record)
     return scored
 
@@ -399,7 +427,7 @@ def percentile(values, p):
 
 
 def summarize(scored, questions):
-    judged = all("judge_pass_k" in row for row in scored) and bool(scored)
+    judged = all("judge_pass" in row for row in scored) and bool(scored)
     tags = list(questions.get("tags", {}))
     for row in scored:
         tags += [tag for tag in row["tags"] if tag not in tags]
@@ -408,8 +436,8 @@ def summarize(scored, questions):
         result = {"items": len(rows),
                   "mechanical": rate(sum(r["mechanical_checks_passed"] for r in rows), len(rows))}
         if judged:
-            result["judge_pass3"] = rate(sum(r["judge_pass_k"] for r in rows), len(rows))
-            result["both"] = rate(sum(r["judge_pass_k"] and r["mechanical_checks_passed"]
+            result["judge"] = rate(sum(r["judge_pass"] for r in rows), len(rows))
+            result["both"] = rate(sum(r["judge_pass"] and r["mechanical_checks_passed"]
                                       for r in rows), len(rows))
         return result
 
@@ -438,17 +466,14 @@ def summarize(scored, questions):
     }
     if judged:
         summary["disagreements"] = [
-            {"query_id": r["query_id"], "mechanical": r["mechanical_checks_passed"], "judge": r["judge_pass_k"]}
-            for r in scored if r["mechanical_checks_passed"] != r["judge_pass_k"]]
-        summary["judge_split_turns"] = [
-            f"{r['query_id']}#{t['turn']}" for r in scored for t in r["turn_scores"]
-            if not t["judge"]["unanimous"]]
+            {"query_id": r["query_id"], "mechanical": r["mechanical_checks_passed"], "judge": r["judge_pass"]}
+            for r in scored if r["mechanical_checks_passed"] != r["judge_pass"]]
     return summary
 
 
 def markdown(summary):
-    judged = "judge_pass3" in summary["overall"]
-    head = "| tag | items | mechanical |" + (" judge pass^3 | both |" if judged else "")
+    judged = "judge" in summary["overall"]
+    head = "| tag | items | mechanical |" + (" judge | both |" if judged else "")
     rule = "|---|---:|---:|" + ("---:|---:|" if judged else "")
 
     def cell(r):
@@ -457,7 +482,7 @@ def markdown(summary):
     for name, bucket in [("**overall**", summary["overall"])] + list(summary["by_tag"].items()):
         line = f"| {name} | {bucket['items']} | {cell(bucket['mechanical'])} |"
         if judged:
-            line += f" {cell(bucket['judge_pass3'])} | {cell(bucket['both'])} |"
+            line += f" {cell(bucket['judge'])} | {cell(bucket['both'])} |"
         lines.append(line)
     return "\n".join(lines) + "\n"
 
@@ -524,9 +549,9 @@ def main():
     run.add_argument("questions", type=Path)
     run.add_argument("answers", type=Path)
     run.add_argument("output", type=Path)
-    run.add_argument("--endpoint", help="llama-server base URL; omit to skip the judge")
-    run.add_argument("--model", default="judge")
-    run.add_argument("--repeats", type=int, default=REPEATS)
+    run.add_argument("--endpoint", help="the judge's OpenAI-compatible base URL, independent of the "
+                     "server that wrote the answers; omit to skip the judge")
+    run.add_argument("--model", default="judge", help="the model name the judge request carries")
     labelled = sub.add_parser("score-dataset")
     labelled.add_argument("questions", type=Path, help="the labelled dataset")
     labelled.add_argument("expectations", type=Path)
@@ -564,9 +589,11 @@ def main():
     run_meta_path = Path(str(args.answers) + ".run.json")
     run_meta = json.loads(run_meta_path.read_text()) if run_meta_path.exists() else {}
     judge = http_judge(args.endpoint, args.model) if args.endpoint else None
+    answer_model = run_meta.get("recipe", {}).get("server", {}).get("model")
     judge_settings = (judge_request(args.model, [])
-                      | {"messages": None, "repeats": args.repeats, "rubric": JUDGE_RUBRIC}) if judge else None
-    scored = score(questions, rows, judge, args.repeats)
+                      | {"messages": None, "rubric": JUDGE_RUBRIC,
+                         "identity": judge_identity(args.endpoint, args.model, answer_model)}) if judge else None
+    scored = score(questions, rows, judge)
     identity = manifest(questions, run_meta, judge_settings)
     with args.output.open("x") as out:
         for row in scored:

@@ -1,6 +1,6 @@
 {
  "name": "lattice-desktop-path-v1",
- "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py.",
+ "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py. The four rewrite and cross-turn tags were added on 2026-10-19 with the four items that cover them; runs before that date have the first 34 items only, and scripts/shipped_path_stats.py compare pairs runs on the items both have.",
  "corpus": "evals/retrieval/synthetic-library-v3.json",
  "tags": {
   "multi-hop": "The answer needs facts from two or more documents.",
@@ -15,7 +15,11 @@
   "ocr": "The answer is in an OCR-damaged scan.",
   "multilingual": "The document is not in English.",
   "entity-collision": "Several unrelated things share the name in the question.",
-  "fragment": "A one-line note beats long notes that only mention the topic."
+  "fragment": "A one-line note beats long notes that only mention the topic.",
+  "pronoun-follow-up": "A later turn refers back with a pronoun or 'that'; its search query has to be rewritten with the antecedent, which may sit in an earlier answer rather than an earlier question.",
+  "ellipsis-follow-up": "A later turn is a fragment ('And on the edge ring?') that only becomes a question inside the earlier turn's frame.",
+  "topic-shift": "A later turn changes subject; carrying the earlier topic into its search query (rewrite drift) retrieves the wrong documents. Some return to the first topic past the intervening one.",
+  "cross-turn-evidence": "A later turn's answer needs facts established in two earlier turns, from different documents, put together."
  },
  "items": [
   {
@@ -696,6 +700,7 @@
    "id": "dp-mt-calderwick",
    "tags": [
     "follow-up-memory",
+    "ellipsis-follow-up",
     "numeric-precision"
    ],
    "turns": [
@@ -738,6 +743,7 @@
    "id": "dp-mt-runbook-ticket",
    "tags": [
     "follow-up-memory",
+    "pronoun-follow-up",
     "numeric-precision"
    ],
    "turns": [
@@ -779,6 +785,7 @@
    "id": "dp-mt-garnetline-chain",
    "tags": [
     "follow-up-memory",
+    "pronoun-follow-up",
     "multi-hop",
     "numeric-precision"
    ],
@@ -838,6 +845,7 @@
    "id": "dp-mt-encryption-versions",
    "tags": [
     "follow-up-memory",
+    "pronoun-follow-up",
     "conflict",
     "numeric-precision"
    ],
@@ -903,6 +911,7 @@
    "id": "dp-mt-ring-thresholds",
    "tags": [
     "follow-up-memory",
+    "ellipsis-follow-up",
     "conflict",
     "numeric-precision"
    ],
@@ -947,6 +956,7 @@
    "id": "dp-mt-plant-room-key",
    "tags": [
     "follow-up-memory",
+    "pronoun-follow-up",
     "multilingual"
    ],
    "turns": [
@@ -991,6 +1001,7 @@
    "id": "dp-mt-abstain-followup",
    "tags": [
     "follow-up-memory",
+    "pronoun-follow-up",
     "abstain"
    ],
    "turns": [
@@ -1026,6 +1037,7 @@
    "id": "dp-mt-merridew-reversal",
    "tags": [
     "follow-up-memory",
+    "pronoun-follow-up",
     "conflict",
     "numeric-precision"
    ],
@@ -1066,6 +1078,247 @@
       ],
       "abstain": false,
       "notes": "In week 11 the drift report action was Ilse Brantgard's, due 2031-10-25."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-topic-shift",
+   "tags": [
+    "follow-up-memory",
+    "topic-shift",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "How much notice stops the Aldersgate Print agreement from renewing?",
+     "rubric": {
+      "must_mention": [
+       [
+        "60 hours",
+        "sixty hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-05"
+      ],
+      "abstain": false,
+      "notes": "Either party prevents renewal of the Aldersgate Print master services agreement by giving 60 hours of written notice."
+     }
+    },
+    {
+     "ask": "Unrelated question: after being paged in the small hours, how much paid rest am I owed before my next shift?",
+     "rubric": {
+      "must_mention": [
+       [
+        "85 working days",
+        "eighty-five working days"
+       ]
+      ],
+      "must_not_claim": [
+       "60 hours"
+      ],
+      "expected_citations": [
+       "policy-on-call-rest-v3"
+      ],
+      "abstain": false,
+      "notes": "The current on-call rest entitlement (version 3.0) gives an engineer paged between midnight and six 85 working days of paid rest before the next scheduled shift. The question has nothing to do with the Aldersgate Print agreement, and the answer must not carry its notice period over."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-shift-and-return",
+   "tags": [
+    "follow-up-memory",
+    "topic-shift",
+    "pronoun-follow-up",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Who handles logistics for the Harrowgate relocation?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Renholm Staffing"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "project-brief-06"
+      ],
+      "abstain": false,
+      "notes": "Logistics and on-site handling for the Harrowgate relocation run through Renholm Staffing, under the Pleallworth workstream."
+     }
+    },
+    {
+     "ask": "Different subject: when is the Flerkmere milestone for the Dunlark dish?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2026-09-21"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "collision-dunlark-personal"
+      ],
+      "abstain": false,
+      "notes": "The Flerkmere milestone for Dunlark, the braised dish learned from a market stall, falls on 2026-09-21."
+     }
+    },
+    {
+     "ask": "Back to the relocation: when does that supplier's master agreement next renew?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2031-08-10"
+       ]
+      ],
+      "must_not_claim": [
+       "2026-09-21"
+      ],
+      "expected_citations": [
+       "contract-06"
+      ],
+      "abstain": false,
+      "notes": "The relocation is the Harrowgate relocation and its logistics supplier is Renholm Staffing; the Renholm Staffing master services agreement renews on 2031-08-10 and annually thereafter."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-combine-renewals",
+   "tags": [
+    "follow-up-memory",
+    "cross-turn-evidence",
+    "ellipsis-follow-up",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "When does the Brackleton Facilities master agreement next renew?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2027-02-11"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-03"
+      ],
+      "abstain": false,
+      "notes": "The Brackleton Facilities master services agreement renews on 2027-02-11 and annually thereafter."
+     }
+    },
+    {
+     "ask": "And the Quorvin Metrology one?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2030-01-19"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-04"
+      ],
+      "abstain": false,
+      "notes": "The Quorvin Metrology master services agreement renews on 2030-01-19 and annually thereafter."
+     }
+    },
+    {
+     "ask": "Which of those two renews first, and roughly how far apart are the dates?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Brackleton"
+       ],
+       [
+        "2027-02-11"
+       ],
+       [
+        "2030-01-19"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-03",
+       "contract-04"
+      ],
+      "abstain": false,
+      "notes": "Brackleton Facilities renews first, on 2027-02-11; Quorvin Metrology renews on 2030-01-19, a little under three years later (about two years and eleven months)."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-combine-versions",
+   "tags": [
+    "follow-up-memory",
+    "cross-turn-evidence",
+    "pronoun-follow-up",
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "How quickly do I have to report a lost laptop these days?",
+     "rubric": {
+      "must_mention": [
+       [
+        "74 hours",
+        "seventy-four hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-device-loss-v3"
+      ],
+      "abstain": false,
+      "notes": "Under the current lost device reporting policy (version 3.0), a lost or stolen device is reported within 74 hours of the loss being noticed, at any hour."
+     }
+    },
+    {
+     "ask": "What did the very first version of that rule allow?",
+     "rubric": {
+      "must_mention": [
+       [
+        "47 weeks",
+        "forty-seven weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-device-loss-v1"
+      ],
+      "abstain": false,
+      "notes": "Version 1.0 of the lost device reporting policy, now superseded, allowed 47 weeks from noticing the loss."
+     }
+    },
+    {
+     "ask": "So compared with that first version, is the deadline longer or shorter now?",
+     "rubric": {
+      "must_mention": [
+       [
+        "74 hours",
+        "seventy-four hours"
+       ],
+       [
+        "47 weeks",
+        "forty-seven weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-device-loss-v3",
+       "policy-device-loss-v1"
+      ],
+      "abstain": false,
+      "notes": "Shorter: the current version allows 74 hours, against 47 weeks in version 1.0. An answer that says the deadline is now longer fails."
      }
     }
    ]

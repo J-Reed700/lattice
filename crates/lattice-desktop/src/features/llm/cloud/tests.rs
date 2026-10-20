@@ -470,3 +470,88 @@ fn a_cloud_model_nobody_declared_able_to_see_refuses_pictures() {
         .to_string()
         .contains("gpt-3.5-turbo is not set up to see images"));
 }
+
+/// An OpenAI-compatible llama-server's `timings` object is taken as the
+/// server reports it; a whole answer without one has no edge between
+/// reading and writing and is not timed.
+#[test]
+fn a_reported_timings_object_times_a_cloud_answer() {
+    let response = parse_completion(
+        LLMProvider::Google,
+        json!({"choices":[{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":2060,"completion_tokens":226},
+            "timings":{"cache_n":360,"prompt_n":1700,"prompt_ms":2000.0,"predicted_n":226,"predicted_per_second":11.3}}),
+    )
+    .unwrap();
+    let timing = response.timing.unwrap();
+    assert_eq!((timing.prompt_tokens, timing.output_tokens), (1700, 226));
+    assert!((timing.prompt_seconds - 2.0).abs() < 1e-9);
+    let untimed = parse_completion(
+        LLMProvider::Openai,
+        json!({"status":"completed","output":[],"usage":{"input_tokens":12,"output_tokens":3}}),
+    )
+    .unwrap();
+    assert_eq!(untimed.timing, None);
+}
+
+fn stream_of(events: &[Value]) -> Vec<u8> {
+    events
+        .iter()
+        .map(|event| format!("data: {event}\r\n\r\n"))
+        .collect::<String>()
+        .into_bytes()
+}
+
+/// A streamed answer is timed by the app's own clock on its own request:
+/// until the first delta the backend was reading, after it writing. The
+/// prompt tokens it read leave out those its usage says were cached.
+#[tokio::test]
+async fn a_streamed_answer_is_timed_from_its_first_delta() {
+    let bytes = stream_of(&[
+        json!({"type":"response.output_text.delta","delta":"Hello"}),
+        json!({"type":"response.completed","response":{"status":"completed",
+            "usage":{"input_tokens":2000,"input_tokens_details":{"cached_tokens":300},"output_tokens":226},
+            "output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]}]}}),
+    ]);
+    let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
+    let response = streaming::drain(
+        LLMProvider::Openai,
+        futures::stream::iter([Ok::<_, String>(bytes)]),
+        Duration::from_secs(1),
+        sent,
+        &|_| Ok(()),
+        &|_| Ok(()),
+    )
+    .await
+    .unwrap();
+    let timing = response.timing.unwrap();
+    assert_eq!((timing.prompt_tokens, timing.output_tokens), (1700, 226));
+    assert!(timing.prompt_seconds >= 2.0, "{timing:?}");
+    assert!(timing.output_seconds < timing.prompt_seconds, "{timing:?}");
+}
+
+/// A chat-completions stream whose last chunk carries the server's own
+/// timings is timed by them, not by the app's clock.
+#[tokio::test]
+async fn a_streams_own_timings_win_over_the_clock() {
+    let bytes = stream_of(&[
+        json!({"choices":[{"index":0,"delta":{"content":"Answer"}}],"usage":null}),
+        json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":2060,"completion_tokens":226},
+            "timings":{"prompt_n":1700,"prompt_ms":2000.0,"predicted_n":226,"predicted_per_second":11.3}}),
+    ]);
+    let sent = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+    let response = streaming::drain(
+        LLMProvider::Google,
+        futures::stream::iter([Ok::<_, String>(bytes)]),
+        Duration::from_secs(1),
+        sent,
+        &|_| Ok(()),
+        &|_| Ok(()),
+    )
+    .await
+    .unwrap();
+    let timing = response.timing.unwrap();
+    assert_eq!(timing.prompt_tokens, 1700);
+    assert!((timing.prompt_seconds - 2.0).abs() < 1e-9, "{timing:?}");
+}

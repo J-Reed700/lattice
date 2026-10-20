@@ -9,9 +9,10 @@ import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn() }));
+const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), index: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: api.plan, getLearningLessonClaimReview: api.review, getLearningLessonEvidence: async () => ({ ok: true, data: null }),
+  courseIndexStatus: api.index,
 } }));
 vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   StudyTangentSelection: ({ children }: { children: ReactNode }) => children,
@@ -36,7 +37,10 @@ function show(card: LearningLessonDto) {
 }
 
 describe('Lesson card review state', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    api.index.mockResolvedValue({ ok: true, data: { state: 'ready', mode: 'hybrid' } });
+  });
 
   it('says "Needs your review" with the count, never failed, and opens onto the claim list', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [held] } });
@@ -59,5 +63,26 @@ describe('Lesson card review state', () => {
     await userEvent.click(screen.getByRole('button', { name: /Phase changes/ }));
     expect(await screen.findByRole('button', { name: 'Prepare lesson' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Claim review' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['waits while the course indexes', { state: 'indexing', embedded: 0, total: 0, referencesNew: 4, passagesPerSecond: null }, false],
+    ['is open when the course is ready', { state: 'ready', mode: 'hybrid' }, true],
+    ['is open when references are searched by words only', { state: 'noEmbeddingModel' }, true],
+  ])('Prepare lesson %s', async (_, status, open) => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
+    api.review.mockResolvedValue(noReview);
+    api.index.mockResolvedValue({ ok: true, data: status });
+    show(lesson);
+    await userEvent.click(await screen.findByRole('button', { name: /Phase changes/ }));
+    const prepare = await screen.findByRole('button', { name: 'Prepare lesson' });
+    await vi.waitFor(() => expect(api.index).toHaveBeenCalledWith('program-1'));
+    if (open) {
+      await vi.waitFor(() => expect(prepare).toBeEnabled());
+      expect(prepare).not.toHaveAttribute('title');
+    } else {
+      await vi.waitFor(() => expect(prepare).toBeDisabled());
+      expect(prepare).toHaveAttribute('title', 'Available once this course’s references finish indexing');
+    }
   });
 });

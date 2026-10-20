@@ -1,5 +1,6 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
 use crate::features::llm::scheduler::rejection::{self, RequestSize};
+use lattice_core::application::ports::llm_port::ServedTiming;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -47,7 +48,8 @@ pub(crate) struct ServerTimings {
 }
 
 impl ServerTimings {
-    fn from_value(timings: &Value) -> Option<Self> {
+    /// The server's `timings` object, when it holds the counts this needs.
+    pub(crate) fn from_value(timings: &Value) -> Option<Self> {
         let count = |key: &str| timings.get(key).and_then(Value::as_u64);
         let rate = |key: &str| timings.get(key).and_then(Value::as_f64).unwrap_or_default();
         Some(Self {
@@ -57,6 +59,22 @@ impl ServerTimings {
             generated_tokens: count("predicted_n")?,
             generated_per_second: rate("predicted_per_second"),
         })
+    }
+
+    /// The request's cost in time, for the backend's pace: the prompt tokens
+    /// the server evaluated, its cache hits left out, and the tokens it
+    /// generated, at the speed it reports.
+    pub(crate) fn served(&self) -> ServedTiming {
+        ServedTiming {
+            prompt_tokens: self.evaluated_prompt_tokens,
+            prompt_seconds: self.prompt_ms / 1000.0,
+            output_tokens: self.generated_tokens,
+            output_seconds: if self.generated_per_second > 0.0 {
+                self.generated_tokens as f64 / self.generated_per_second
+            } else {
+                0.0
+            },
+        }
     }
 }
 
@@ -488,6 +506,7 @@ impl Decoder {
         self,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         self.finish()?;
+        let timings = self.timings;
         let mut message = serde_json::Map::from_iter([
             ("role".into(), json!("assistant")),
             ("content".into(), json!(self.content)),
@@ -515,6 +534,7 @@ impl Decoder {
             "usage": self.usage,
         }))?;
         response.first_token_logprobs = public_logprobs;
+        response.timing = timings.map(|timings| timings.served());
         Ok(response)
     }
 }

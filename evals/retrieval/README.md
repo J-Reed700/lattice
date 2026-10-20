@@ -155,6 +155,84 @@ not emit that field yet, and
 [`SYNTHETIC_LIBRARY_V3.md`](SYNTHETIC_LIBRARY_V3.md) records exactly what it
 would take.
 
+## Terse slice of v3 (2026-10-19)
+
+Synthetic queries run longer than real ones and reuse the document's own words;
+tuning on them picked a hybrid retriever whose keyword side helped only the long
+questions (arXiv 2609.14579, CIKM 2026). v3 is synthetic, and the reranker-off and
+fusion-weight decisions rest on it. `synthetic-library-v3-terse.json` restates
+v3's questions the way people type them, so a retrieval change can be checked on
+both.
+
+**Measured lengths.** Josh's own Lattice database (`tech.lattice.app/lattice.db`
+under the app data dir) and its 2026-09-19 backup, opened read-only, distinct user
+messages by content digest, whitespace word counts only; no message text was read
+out. They are not short:
+
+| messages | n | p10 | p25 | median | p75 | p90 | mean |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| all | 30 | 7 | 12 | 20 | 54 | 109 | 35.0 |
+| library chats | 14 | 11 | 17 | 25.5 | 59 | 110 | 45.6 |
+| Explorer chats | 16 | 4 | 9 | 17 | 43 | 67 | 25.8 |
+| v3 answerable English queries | 163 | 8 | 12 | 17 | 21 | 25 | 16.6 |
+
+The literature's gap (15.7 synthetic words against 6.8 real) does not appear here:
+the median real message is longer than v3's, and the long tail is far longer. Thirty
+messages from one developer testing his own app are not a user population, though,
+and the short half of them is the population the paper finds synthetic sets miss.
+The slice therefore matches the **short half** of the measured messages (at or
+below their median: 4 to 19 words), by quantile mapping from v3's own lengths so a
+longer v3 question stays longer.
+
+**Construction.** One terse query per answerable English v3 query (163; the 21
+unanswerable ones have no ranking metric, and the 10 same-language and CJK queries
+have no whitespace word count). Each asks what its v3 query asks and keeps its
+relevance judgements and answer spans. Wording keeps the names and identifiers a
+person has to type (ERR-4070, PO-14767, Calderwick Freight, Quillon Grid) and
+avoids the answering document's other words ("key date" for milestone, "sheet 1"
+for calibration record 01, "write-up" for report action). Result: lengths p10 4,
+p25 8, median 12, p75 17, p90 18, mean 11.9, a mean 0.09 words off target; IDF-weighted
+keyword overlap with the relevant documents falls from 0.525 to 0.312.
+
+```sh
+python3 scripts/terse_slice.py check evals/retrieval/synthetic-library-v3-terse.json
+python3 scripts/terse_slice.py build evals/retrieval/synthetic-library-v3-terse.json /tmp/terse.json
+cd crates/lattice-desktop   # build the evalopt example as in 2026-10-12-RERANKER-FTS-HEADER-FUSION.md
+F="--mode production --top-k 10 --compression none --sparse off"
+$BIN $F ~/.cache/lattice/models/qwen3-embedding-0.6b ../../evals/retrieval/synthetic-library-v3.json > /tmp/v3.jsonl
+$BIN $F ~/.cache/lattice/models/qwen3-embedding-0.6b /tmp/terse.json > /tmp/terse-run.jsonl
+cd ../..
+python3 scripts/terse_slice.py compare evals/retrieval/synthetic-library-v3-terse.json /tmp/v3.jsonl /tmp/terse-run.jsonl
+```
+
+`validate_rag_evals.py` checks the slice in CI: every eligible v3 query covered
+once and none copied verbatim. `compare` scores the same 163 queries both ways with
+`rag_eval.py`'s metrics, adds each branch's own recall, and runs the exact sign test
+on each query's recall@5.
+
+**Result, current defaults** (production mode, Qwen3-Embedding-0.6B, top-k 10, no
+compression, sparse off, no reranker; k = 5). Full v3: recall 0.7784, nDCG 0.6900,
+MRR 0.6971, passage recall 0.7630 over 173 answerable queries. On the 163 sliced
+queries:
+
+| | recall@5 | nDCG@5 | MRR@5 | passage recall@5 | vector branch recall@5 | BM25 branch recall@5 |
+|---|---:|---:|---:|---:|---:|---:|
+| v3 wording | 0.7648 | 0.6710 | 0.6785 | 0.7485 | 0.7321 | 0.7025 |
+| terse wording | 0.7485 | 0.6508 | 0.6691 | 0.6810 | 0.7157 | 0.6207 |
+| gap | −0.016 | −0.020 | −0.009 | −0.068 | −0.016 | −0.082 |
+
+Per query, recall@5 rose on 12, fell on 15 and held on 136: exact two-sided
+p = 0.70, so the fused ranking's loss cannot be told from noise. The keyword branch
+loses five times what the vector branch loses, as the paper predicts, but fusion
+absorbs it: the fused ranking beats the vector branch alone by about 0.03 recall
+with either wording, so the hybrid's keyword side still pays on terse questions
+here and the fusion weights do not look tuned to long ones. The losses gather in
+tables (recall 1.00 → 0.64: "sheet 1" does not name "calibration record 01"),
+exact identifiers (0.75 → 0.65) and passage recall; paraphrase (0.60 → 0.65) and
+topical hard negatives (0.76 → 0.82) improve. Results:
+`results/2026-10-19-v3-TERSE-metrics.json`, `results/2026-10-19-v3-TERSE-v3-run.jsonl`,
+`results/2026-10-19-v3-TERSE-terse-run.jsonl`.
+
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or
@@ -236,8 +314,34 @@ page ranges, so `page_number` is always NULL.
 To measure what a turn adds, use the shipped-path runner
 (`crates/lattice-desktop/examples/shipped_path_eval` plus `scripts/shipped_path_eval.py`). It
 drives the desktop's own turn, from intent through the grounding check, against
-a live llama-server and the 34-item `desktop-path-v1.json` rubric set. See
+a live llama-server and the 38-item `desktop-path-v1.json` rubric set. See
 [`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
+
+The rubric judge runs behind its own `--endpoint` and `--model`, so a stronger
+model can grade a smaller one's answers; the scored manifest records which model
+judged. A judge grading its own answers, as in the 2026-10-13 baseline, is the
+weakest setup: treat its verdicts as a smoke signal until they are calibrated
+against human labels. Compare two runs with an exact paired test, not by their
+pass rates, and calibrate the judge with a stratified labelling sample; both are
+in [Evaluation evidence protocol](EVALUATION_PROTOCOL.md#shipped-path-statistics-comparing-runs-and-calibrating-the-judge).
+
+Multi-turn conversations go through the real chat path: the runner sends each
+turn through `run_headless_turn` with the conversation id the previous turn
+returned, so history, memory and the corpus planner's query rewrite are the
+desktop's own. On 2026-10-19 the set gained four conversations and four tags, one
+conversation per failure that no existing conversation covered (multi-turn RAG
+loses accuracy through query-rewrite drift and through failing to put evidence
+from different turns together, arXiv 2609.36700):
+
+| tag | what it exercises | conversations |
+|---|---|---|
+| `pronoun-follow-up` | "its", "her", "that supplier": the antecedent sits in an earlier question or only in an earlier answer | six existing, plus `dp-mt-shift-and-return`, `dp-mt-combine-versions` |
+| `ellipsis-follow-up` | "And on the edge ring?": a fragment inside the earlier turn's frame | two existing, plus `dp-mt-combine-renewals` |
+| `topic-shift` | a change of subject the rewrite must not drag the old topic into; and a return to the first topic past the intervening one | `dp-mt-topic-shift`, `dp-mt-shift-and-return` |
+| `cross-turn-evidence` | an answer that needs facts from two earlier turns' documents: two entities compared, and two policy versions compared | `dp-mt-combine-renewals`, `dp-mt-combine-versions` |
+
+Runs before 2026-10-19 have the first 34 items only; `shipped_path_stats.py
+compare` pairs runs on the items both have and lists the rest.
 
 ### Embedding strategy
 

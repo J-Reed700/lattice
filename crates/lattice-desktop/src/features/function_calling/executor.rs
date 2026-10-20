@@ -43,7 +43,7 @@ use async_trait::async_trait;
 use jsonschema::JSONSchema;
 use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
-use lattice_core::application::ports::library_search::LibrarySearchTrait;
+use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::application::ports::{
     BM25SearchTrait, ChunkRepositoryPort, DocumentRepository, EmbeddingPort,
     FavoritesRepositoryPort, FileStoragePort, RecentDocumentsRepositoryPort, SearchServiceTrait,
@@ -87,7 +87,7 @@ pub struct FunctionExecutor {
     bm25_service: Arc<dyn BM25SearchTrait>,
 
     /// The library search orchestrator chat runs, for hybrid searches
-    hybrid_search: Arc<dyn LibrarySearchTrait>,
+    hybrid_search: Arc<dyn HybridSearchTrait>,
 
     /// Document repository for document operations (DDD ports)
     document_repository: Arc<dyn DocumentRepository>,
@@ -123,7 +123,7 @@ pub struct FunctionExecutorServices {
     pub embedding_service: Arc<dyn EmbeddingPort>,
     pub search_service: Arc<dyn SearchServiceTrait>,
     pub bm25_service: Arc<dyn BM25SearchTrait>,
-    pub hybrid_search: Arc<dyn LibrarySearchTrait>,
+    pub hybrid_search: Arc<dyn HybridSearchTrait>,
     pub document_repository: Arc<dyn DocumentRepository>,
     pub chunk_repository: Arc<dyn ChunkRepositoryPort>,
     pub tag_service: Arc<dyn TagServiceTrait>,

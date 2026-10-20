@@ -45,6 +45,14 @@ The source-built binary does not change the repository release lock.
 
 - The Rust CI matrix includes `macos-15-intel` for compilation, unit tests,
   credential integration tests and linting.
+- Both Intel jobs (Rust and `desktop-compatibility`) run on pushes to `main`
+  only. GitHub runs five macOS jobs at a time for the account, and running
+  Intel on every pull request queued main's runs for hours. A pull request
+  still runs both checks on Apple Silicon.
+- The `Sidecar binaries` workflow checks the pinned release on the oldest
+  runner images (Ubuntu 22.04, macOS 14, Windows Server 2022). It runs only
+  when the lock or a `*llama*` script changes; every desktop compatibility job
+  still fetches and verifies the pinned binaries for its own platform.
 - The sidecar release matrix builds a self-contained, signed Intel CPU binary
   and executes it after deleting the source/build tree.
 - `desktop-compatibility` builds an instrumented release-mode candidate on each

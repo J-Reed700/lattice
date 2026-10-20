@@ -143,7 +143,7 @@ pub(super) async fn check_evidence(
         executions,
         confirmed_examples: None,
         issues,
-        retrieval_mode: references.mode().into(),
+        retrieval_mode: references.mode().label().into(),
         embedding_model: references.embedding_model(),
         unexecuted_languages: execution::unexecuted_languages(candidate),
     })

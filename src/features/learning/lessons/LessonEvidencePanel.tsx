@@ -216,7 +216,7 @@ export function LessonEvidencePanel({
                 </p>
                 {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'claim lost its source' : 'claims lost their source'} — review {sourceRemovedCount(data) === 1 ? 'it' : 'them'} in the claim review.</p>}
                 <p className="text-xs leading-5 text-text-muted">
-                  {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical_fallback' ? 'Keyword retrieval — embeddings were unavailable' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
+                  {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical' ? 'Keyword retrieval — references were not searched by meaning' : data.retrievalMode === 'partial' ? 'Semantic and keyword retrieval over the embedded references; keyword retrieval for the rest — embedding was not finished' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
                 </p>
                 {data.unexecutedLanguages.length > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
                 {!data.sourcesCurrent && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}

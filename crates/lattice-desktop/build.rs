@@ -526,6 +526,7 @@ fn main() {
                     "get_learning_source_selector",
                     "match_learning_source_selector",
                     "search_learning_sources_semantically",
+                    "course_index_status",
                     "get_learning_lesson_claim_review",
                     "resolve_learning_claim",
                     "resume_learning_lesson_review",

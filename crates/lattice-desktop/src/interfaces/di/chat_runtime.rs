@@ -167,7 +167,7 @@ impl ChatRetrieval for Container {
     }
     fn library_search(
         &self,
-    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait> {
+    ) -> Arc<dyn lattice_core::application::ports::hybrid_search::HybridSearchTrait> {
         Container::hybrid_search_use_case(self)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {

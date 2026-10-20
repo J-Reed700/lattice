@@ -2,7 +2,8 @@
 //!
 //! Every method that reaches the model is admitted first, at the priority its
 //! request carries. The same decorator owns the backend's calibrated token estimate, because it is
-//! the one place that sees both what was sent and the usage reported back.
+//! the one place that sees both what was sent and the usage reported back, and
+//! the backend's pace, measured from the timing it reports on those requests.
 //!
 //! Before admission, a request whose prompt alone fills the port's configured
 //! context window is refused, whichever backend is behind it: nothing that
@@ -16,10 +17,11 @@ use async_trait::async_trait;
 
 use super::rejection::{window_refusal, RequestSize};
 use super::{
-    cancelled_error, AdmissionRequest, InferenceScheduler, Permit, ServerTokenizer, TokenEstimator,
+    cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, Permit, ServerTokenizer,
+    TokenEstimator,
 };
 use lattice_core::application::ports::llm_port::{
-    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse,
+    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse, Pace,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -30,6 +32,7 @@ pub(crate) struct ScheduledLlm {
     inner: Arc<dyn LLMPort>,
     scheduler: Arc<InferenceScheduler>,
     estimator: TokenEstimator,
+    pace: PaceEstimator,
     /// The backend's own output ceiling, which a request without a cap of its
     /// own will reserve.
     output_limit: u32,
@@ -46,6 +49,7 @@ impl ScheduledLlm {
             inner,
             scheduler,
             estimator: TokenEstimator::default(),
+            pace: PaceEstimator::default(),
             output_limit,
             tokenizer: None,
         }
@@ -164,7 +168,12 @@ impl ScheduledLlm {
     /// Calibrate the estimate from what the backend says it read. Opaque
     /// provider state (signed reasoning) and pictures are not text a tokenizer
     /// read character by character, so a request carrying them teaches nothing.
+    /// Pictures are encoded, not read, at a pace of their own, so a request
+    /// carrying them leaves the pace alone too.
     fn observe(&self, request: &CompletionRequest, response: &CompletionResponse) {
+        if let Some(timing) = response.timing.filter(|_| !request.has_images()) {
+            self.pace.observe(&timing);
+        }
         if response.input_tokens == 0
             || request.has_images()
             || request
@@ -304,6 +313,10 @@ impl LLMPort for ScheduledLlm {
 
     fn chars_per_token(&self) -> f64 {
         self.estimator.chars_per_token()
+    }
+
+    fn pace(&self) -> Option<Pace> {
+        self.pace.pace()
     }
 
     async fn count_tokens_exact(&self, text: &str) -> Result<usize> {

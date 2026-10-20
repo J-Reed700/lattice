@@ -36,9 +36,10 @@ pub(super) async fn passages_from(
                 <= room
         })
         .await?;
+    let subject = references.subject_of(statement).await?;
     Ok(page
         .into_iter()
-        .filter(|passage| references.mentions_subject_of(statement, &passage.text))
+        .filter(|passage| subject.mentioned_in(&passage.text))
         .collect())
 }
 
@@ -84,11 +85,11 @@ pub(super) async fn judge(
         .iter()
         .map(|passage| passage.text.clone())
         .collect();
-    let (judgment, shown) = judge_for_publication(llm, statement, &texts, &ranking(passages)).await;
+    let judged = judge_for_publication(llm, statement, &texts, &ranking(passages)).await;
     // A passage cut for the judge's window was never compared with the
     // claim: the check names only those it was shown.
-    let passages = &shown_of(passages, &shown);
-    let (result, reason) = match judgment {
+    let passages = &shown_of(passages, &judged.shown);
+    let (result, reason) = match judged.judgment {
         ClaimJudgment::Judged(outcome) => {
             let reason = outcome.reason.unwrap_or_default();
             let result = match outcome.verdict {

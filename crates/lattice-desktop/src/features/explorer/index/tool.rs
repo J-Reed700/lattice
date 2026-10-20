@@ -8,6 +8,7 @@ use super::dto::FolderIndexState;
 use super::manager::group_digits;
 use super::search::{FolderHit, FolderSearch};
 use crate::features::explorer::tools::{number_line, number_width};
+use crate::infrastructure::passage_index::chunking::lines as chunker;
 use lattice_core::application::contracts::tools::explorer::{
     index_arg_str as arg_str, TOOL_SEARCH_FOLDER,
 };
@@ -19,9 +20,7 @@ use serde_json::Value;
 /// fill it at half the chunker's largest passage. What does not fit is
 /// counted in the result, never dropped without a word.
 pub fn hits_for(room_chars: usize) -> usize {
-    room_chars
-        .div_ceil(super::chunker::MAX_CHUNK_CHARS / 2)
-        .max(1)
+    room_chars.div_ceil(chunker::MAX_CHUNK_CHARS / 2).max(1)
 }
 /// Room kept for the header and the notes after the passages.
 const FRAMING_CHARS: usize = 300;

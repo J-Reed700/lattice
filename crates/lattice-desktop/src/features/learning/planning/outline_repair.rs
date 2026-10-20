@@ -104,9 +104,9 @@ async fn judge(
     passages: &[String],
     ranking: &[usize],
 ) -> Result<(JudgeOutcome, Vec<usize>)> {
-    let (judgment, shown) = judge_for_publication(llm, claim, passages, ranking).await;
-    match judgment {
-        ClaimJudgment::Judged(outcome) => Ok((outcome, shown)),
+    let judged = judge_for_publication(llm, claim, passages, ranking).await;
+    match judged.judgment {
+        ClaimJudgment::Judged(outcome) => Ok((outcome, judged.shown)),
         ClaimJudgment::Failed(error) => Err(error),
         ClaimJudgment::Unusable => Err(AppError::Other(
             "The claim check returned no usable verdict. The finding is kept; Repair can try again."
@@ -304,6 +304,7 @@ async fn resolve_factual(
     };
     let mut shown: Vec<ReferencePassage> = Vec::new();
     let mut decision = None;
+    let subject = collection.subject_of(&claim).await?;
     loop {
         let (passages, base) = if sources.is_empty() {
             (vec![], vec![])
@@ -315,7 +316,7 @@ async fn resolve_factual(
         } else {
             passages
                 .iter()
-                .any(|passage| collection.mentions_subject_of(&claim, &passage.text))
+                .any(|passage| subject.mentioned_in(&passage.text))
         };
         if !more {
             break;

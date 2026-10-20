@@ -44,6 +44,24 @@ fn rejects_malformed_or_truncated_json_and_trailing_text() {
     assert!(parse_json::<serde_json::Value>("{\"modules\":[").is_err());
     assert!(parse_json::<serde_json::Value>("{} trailing").is_err());
     assert!(parse_json::<serde_json::Value>("```json\n{}\n```").is_ok());
+    assert!(parse_json::<serde_json::Value>("Here it is:\n```json\n{}\n```").is_err());
+    assert!(parse_json::<serde_json::Value>("```json\n{}\n```\nDone.").is_err());
+    assert!(parse_json::<serde_json::Value>("```json\n{}").is_err());
+}
+
+#[test]
+fn accepts_fenced_examples_inside_the_material() {
+    // A lesson on tool schemas teaches with fenced JSON. Schema-constrained
+    // output is bare JSON, so the fence is inside a string, not around it.
+    let body = r#"Define the tool:\n\n```json\n{\"name\": \"get_weather\"}\n```\n\nThen call it:\n\n```python\nclient.call()\n```"#;
+    let bare = format!(r#"{{"body":"{body}"}}"#);
+    let parsed: serde_json::Value = parse_json(&bare).expect("bare answer with fenced examples");
+    assert!(parsed["body"]
+        .as_str()
+        .unwrap()
+        .contains("```json\n{\"name\""));
+    let fenced = format!("```json\n{bare}\n```");
+    assert_eq!(parse_json::<serde_json::Value>(&fenced).unwrap(), parsed);
 }
 
 #[test]
