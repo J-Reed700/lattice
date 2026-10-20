@@ -52,7 +52,8 @@ async fn a_course_behind_its_index_queues_one_build_and_never_opens_the_index() 
             embedded: 0,
             total: 0,
             references_new: 3,
-            passages_per_second: None
+            passages_per_second: None,
+            waiting_turn: false,
         }
     );
     // Read only: no directory made, nothing chunked or embedded.
@@ -93,6 +94,7 @@ async fn a_running_build_reports_its_own_progress_and_pace() -> Result<()> {
             Some(&serde_json::json!({
                 "phase": "embedding",
                 "references": 3,
+                "already": 0,
                 "embedded": 12,
                 "total": 30,
                 "perSecond": 6.0,
@@ -106,8 +108,91 @@ async fn a_running_build_reports_its_own_progress_and_pace() -> Result<()> {
             embedded: 12,
             total: 30,
             references_new: 3,
-            passages_per_second: Some(6.0)
+            passages_per_second: Some(6.0),
+            waiting_turn: false,
         }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_resumed_build_counts_the_whole_index_and_its_own_pace() -> Result<()> {
+    let pool = tests::pool().await?;
+    let temp = tempfile::tempdir().unwrap();
+    let courses = indexes(
+        &pool,
+        temp.path(),
+        FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
+    );
+    let (program, _) = course(&pool, &pages(3)).await?;
+    courses.status(&program).await;
+    let build = builds(&pool, &program).await.remove(0);
+    let store = JobStore::new(pool.clone());
+    store.claim(&build.id).await?;
+    let embedding = |embedded: usize| {
+        let per_second = (embedded > 0).then_some(14.0);
+        serde_json::json!({
+            "phase": "embedding",
+            "references": 0,
+            "already": 4_000,
+            "embedded": embedded,
+            "total": 9_457,
+            "perSecond": per_second,
+        })
+    };
+    let at = |embedded: u32, per_second: Option<f64>| CourseIndexStatusDto::Indexing {
+        embedded,
+        total: 13_457,
+        references_new: 0,
+        passages_per_second: per_second,
+        waiting_turn: false,
+    };
+
+    // A resumed run starts from the index's earlier work, never from zero.
+    store
+        .progress(&build.id, 29, "Embedding", Some(&embedding(0)))
+        .await?;
+    assert_eq!(courses.status(&program).await, at(4_000, None));
+    // Then climbs by its own batches; its pace is its own.
+    store
+        .progress(&build.id, 31, "Embedding", Some(&embedding(210)))
+        .await?;
+    assert_eq!(courses.status(&program).await, at(4_210, Some(14.0)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_build_queued_behind_another_courses_build_says_it_waits_its_turn() -> Result<()> {
+    let pool = tests::pool().await?;
+    let temp = tempfile::tempdir().unwrap();
+    let courses = indexes(
+        &pool,
+        temp.path(),
+        FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
+    );
+    let (first, _) = course(&pool, &pages(2)).await?;
+    let (second, _) = course(&pool, &pages(2)).await?;
+    courses.status(&first).await;
+    courses.status(&second).await;
+    let running = builds(&pool, &first).await.remove(0);
+    JobStore::new(pool.clone()).claim(&running.id).await?;
+
+    assert!(matches!(
+        courses.status(&second).await,
+        CourseIndexStatusDto::Indexing {
+            waiting_turn: true,
+            ..
+        }
+    ));
+    assert!(
+        matches!(
+            courses.status(&first).await,
+            CourseIndexStatusDto::Indexing {
+                waiting_turn: false,
+                ..
+            }
+        ),
+        "the running build is not waiting"
     );
     Ok(())
 }

@@ -682,7 +682,7 @@ async searchLearningSourcesSemantically(request: SearchLearningSourcesSemantical
 },
 /**
  * Where the course's evidence index stands: for the course workspace's
- * notice, and the evidence actions it holds back while the course indexes.
+ * notice, and the lesson preparation it holds back while the course indexes.
  * A cheap read that never opens or builds the index; it queues a build when
  * the index is behind its course and none is queued.
  */
@@ -5761,9 +5761,10 @@ export type CourseIndexStatusDto =
 { state: "ready"; mode: string } |
 /**
  * A build is queued or running, or the index is behind its course and
- * one has just been queued. Evidence actions wait for it.
+ * one has just been queued. Lesson preparation waits for it; a search
+ * or attached evidence reads every passage by its words meanwhile.
  */
-{ state: "indexing"; embedded: number; total: number; referencesNew: number; passagesPerSecond: number | null } |
+{ state: "indexing"; embedded: number; total: number; referencesNew: number; passagesPerSecond: number | null; waitingTurn: boolean } |
 /**
  * No embedding model is active: the course is searched by its words.
  */
