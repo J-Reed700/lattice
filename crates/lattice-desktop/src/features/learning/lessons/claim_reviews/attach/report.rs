@@ -79,7 +79,9 @@ pub(super) fn outcome_line(title: &str, outcome: &AttachOutcome) -> String {
             "No passage in {title} mentions this claim's terms. The source is in your references; the claim is unchanged."
         ),
         AttachOutcome::Checked(check) => match &check.result {
-            CheckResult::Supported { .. } => format!("Verified against {title}."),
+            CheckResult::Supported { .. } | CheckResult::SupportedElsewhere { .. } => {
+                format!("Verified against {title}.")
+            }
             CheckResult::Failed { kind } => {
                 let verdict = match kind {
                     VerdictKind::Contradicted => "says otherwise",

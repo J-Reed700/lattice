@@ -2,6 +2,11 @@
 //! evidence collection must not become one enormous, fragile rewrite request,
 //! so a section whose failed claims and evidence do not fit the model is
 //! repaired in several requests, in sequence.
+//!
+//! A claim pass B found support for elsewhere in the course is not a failed
+//! claim: its citation is (course evidence index §5.1). That repair needs no
+//! model: `citation::cite_where_supported` rewrites the section's citation
+//! to the passage found.
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::{
     claim_ids, drop_group, escalated, ledger_targets, rejected, section_examples, withdraw_resolved,
@@ -10,6 +15,11 @@ use super::*;
 use crate::features::learning::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use std::collections::{BTreeSet, VecDeque};
+
+mod citation;
+#[cfg(test)]
+pub(super) use citation::quotation;
+pub(super) use citation::{cite_where_supported, number_sources};
 
 fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
     let blocks = candidate

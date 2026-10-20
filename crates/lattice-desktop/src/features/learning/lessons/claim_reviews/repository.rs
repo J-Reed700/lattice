@@ -93,6 +93,22 @@ impl ClaimReviewRepository {
         Ok(())
     }
 
+    /// What a claim research round cost per claim when one was last timed,
+    /// in milliseconds, across every lesson and program: the newest
+    /// `Researched` event that carries a cost (course evidence index D5).
+    /// `None` before any round was timed.
+    pub async fn research_ms_per_claim(&self) -> Result<Option<u64>> {
+        let latest: Option<i64> = sqlx::query_scalar(
+            "SELECT json_extract(payload_json,'$.event.round_ms_per_claim') FROM learning_lesson_claim_events \
+             WHERE kind='researched' AND json_extract(payload_json,'$.event.round_ms_per_claim') IS NOT NULL \
+             ORDER BY at DESC, rowid DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+        Ok(latest.and_then(|ms| u64::try_from(ms).ok()))
+    }
+
     /// The review row's last write by the job, as Unix milliseconds: what
     /// "changed since the job ended" is measured from (§6.2).
     pub async fn review_written_at(&self, lesson_id: &str) -> Result<Option<i64>> {

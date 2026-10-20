@@ -26,6 +26,17 @@ pub struct RankedBranch {
     pub results: Vec<SearchResultDto>,
 }
 
+/// How a fused list places a document with many passages ranked high.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Spread {
+    /// No document places more than a few passages ahead of the documents
+    /// behind it: an answer drawn from the list hears from several sources.
+    AcrossDocuments,
+    /// Fused order alone: a check that needs the one source holding the
+    /// evidence reads all of that source's passages where they rank.
+    ByRelevance,
+}
+
 /// Every branch that answered one query, not yet fused.
 #[derive(Debug, Default)]
 pub struct QueryBranches {

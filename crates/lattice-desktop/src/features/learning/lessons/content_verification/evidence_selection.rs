@@ -1,17 +1,23 @@
-//! Keep the evidence already compared with a claim stable as research grows.
-//! New sources still participate in retrieval. Ranking changes among unchanged
-//! sources do not replace the passages we have already selected and checked.
-//! A claim research was asked for is the exception: what research found leads
-//! its evidence, so the claim is checked again against it.
+//! Pass B's first page for a claim, kept stable as research grows (course
+//! evidence index §5.6). New sources still participate in retrieval, but a
+//! ranking change among unchanged sources does not replace the passages
+//! already selected and checked: the page is saved before its check and
+//! restored on every later pass while the course's sources are the same.
+//! A claim research was asked for is the exception: what research found
+//! leads its page, searched in the versions it added, so the claim is
+//! checked again against it, and its walk reads nothing else of the course.
+//! Pass A needs none of this: its page is what the section cites.
 use super::*;
+use crate::features::learning::reference_collection::Scope;
 
 /// The retrieval kind of a passage research found for the claim it serves.
 pub(super) const RESEARCHED: &str = "researched";
 
 const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
-/// How a claim's first page is ranked: the lesson's own sources first. A
-/// selection saved under another ranking is retrieved anew.
-const RANKING: &str = "lesson-sources-first";
+/// How pass B's first page is ranked: one hybrid list over the course,
+/// without what pass A shows, sliced by the page budget. A selection saved
+/// under another ranking is retrieved anew, once.
+const RANKING: &str = "two-pass-hybrid-v1";
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page
@@ -36,6 +42,71 @@ struct ResearchTarget {
 pub(super) struct Selection {
     sources: Vec<SourceBinding>,
     passages: Vec<Passage>,
+    /// The reach the page was read from; `None` for a page research led or
+    /// one with nothing on the claim's subject.
+    #[serde(default)]
+    reach: Option<Reach>,
+    /// The versions research saved for the claim that lead the page: the
+    /// claim's walk reads only these.
+    #[serde(default)]
+    researched: Vec<String>,
+}
+
+/// Pass B's first page for a claim, and where its walk goes on from.
+pub(super) struct Selected {
+    pub(super) evidence: Vec<EvidencePassage>,
+    pub(super) reach: Option<Reach>,
+    pub(super) researched: Vec<String>,
+    /// What the page's list said, when it was read now rather than restored.
+    pub(super) note: Option<evidence_checks::PageNote>,
+}
+
+/// The saved form of a first page of `evidence` over `sources`.
+pub(super) fn selection_of(sources: &[SourceBinding], evidence: &[EvidencePassage]) -> Selection {
+    Selection {
+        sources: sources.to_vec(),
+        passages: evidence
+            .iter()
+            .map(|p| Passage {
+                source_id: p.source_id.clone(),
+                start: p.start_byte,
+                end: p.end_byte,
+                sha256: digest(&p.text),
+                kind: [CITED, RESEARCHED]
+                    .contains(&p.retrieval_kind.as_str())
+                    .then(|| p.retrieval_kind.clone()),
+            })
+            .collect(),
+        reach: None,
+        researched: Vec::new(),
+    }
+}
+
+/// The checkpoint key of `statement`'s first page in section `unit`, under
+/// `ranking`.
+fn selection_key(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    (unit, statement): (usize, &str),
+    ranking: &str,
+) -> String {
+    format!("claim-evidence-v2:{}", digest(&json!({
+        "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
+        "unit":unit, "statement":statement, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
+        "ranking":ranking,
+    }).to_string()))
+}
+
+/// The key a first page saved under an earlier `ranking` has, for tests of
+/// the ranking bump.
+#[cfg(test)]
+pub(super) fn selection_key_under(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    claim: (usize, &str),
+    ranking: &str,
+) -> String {
+    selection_key(llm, references, claim, ranking)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -195,165 +266,111 @@ impl Selection {
     }
 }
 
+/// Pass B's first page for `claim` (as written, as checked, in section
+/// `unit`): restored when saved under this ranking and every source it
+/// names is unchanged, read from the walk's first reach otherwise, and led
+/// by what research added when the claim was a research target. Never a
+/// passage overlapping `attribution`, what pass A shows. Saved before any
+/// model work, so an interrupted check compares exactly this page again.
+/// A page that must be read now waits while `sizing` is unmeasured: `None`,
+/// and nothing is saved, until the job's first answers size it.
 pub(super) async fn select(
     llm: &dyn LLMPort,
-    claim: &Claim,
-    unit: usize,
+    (claim, checked, unit): (&Claim, &str, usize),
     references: &ReferenceCollection<'_>,
     current: &[SourceBinding],
-    executions: &[execution::Observation],
     retained: &ClaimChecks,
-    sharing: usize,
-    citations: &Citations,
-) -> Result<Vec<EvidencePassage>> {
-    let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
-        "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
-        "unit":unit, "statement":claim.statement, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
-        "ranking":RANKING,
-    }).to_string()));
+    (citations, attribution, paging, sizing): (
+        &Citations,
+        &[EvidencePassage],
+        Paging,
+        &evidence_checks::Sizing,
+    ),
+) -> Result<Option<Selected>> {
+    let budget = match sizing {
+        evidence_checks::Sizing::Sized(budget) => Some(budget),
+        evidence_checks::Sizing::Unmeasured => None,
+    };
+    let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
     let memory = retained
         .selections
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&selection_key)
         .cloned();
-    let mut saved = match memory {
+    let saved = match memory {
         Some(saved) => Some(saved),
         None => crate::features::learning::lesson_drafts::checkpoint(&selection_key)
             .await?
             .and_then(|value| serde_json::from_value::<Selection>(value).ok()),
     };
-    let migrated = saved.is_none();
-    if migrated {
-        // Prefer a completed comparison over an unfinished fresh retrieval
-        // caused only by relocating the quote. Keep all completed comparisons
-        // and genuinely added source versions, including pending counterevidence.
-        let mut plans = Vec::new();
-        for (index, old) in claim_reuse::identities(retained, unit, claim) {
-            let old_key = format!("claim-evidence-v1:{}", digest(&json!({
-                "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
-                "unit":index, "claim":old, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
-            }).to_string()));
-            let Some(plan) = crate::features::learning::lesson_drafts::checkpoint(&old_key)
-                .await?
-                .and_then(|value| serde_json::from_value::<Selection>(value).ok())
-            else {
-                continue;
-            };
-            let Some(mut evidence) = plan.restore(references, current) else {
-                continue;
-            };
-            canonicalize_evidence(&mut evidence);
-            let complete = crate::features::learning::lesson_drafts::checkpoint(
-                &claim_reuse::legacy_key(llm, index, &old, &evidence),
-            )
-            .await?
-            .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
-            .and_then(|receipt| receipt.finding(index, &old, &evidence))
-            .is_some();
-            plans.push((complete, plan));
-        }
-        plans.sort_by_key(|(complete, _)| !complete);
-        let has_completed = plans.iter().any(|(complete, _)| *complete);
-        for (complete, plan) in plans {
-            if let Some(saved) = &mut saved {
-                let added: HashSet<_> = plan
-                    .sources
-                    .iter()
-                    .filter(|source| !saved.sources.contains(source))
-                    .map(|source| source.id.clone())
-                    .collect();
-                for source in plan.sources {
-                    if !saved.sources.contains(&source) {
-                        saved.sources.push(source);
-                    }
-                }
-                saved.sources.sort_by(|a, b| a.id.cmp(&b.id));
-                for passage in plan.passages {
-                    if has_completed && !complete && !added.contains(&passage.source_id) {
-                        continue;
-                    }
-                    if !saved.passages.iter().any(|old| {
-                        old.source_id == passage.source_id
-                            && old.start == passage.start
-                            && old.end == passage.end
-                            && old.sha256 == passage.sha256
-                    }) {
-                        saved.passages.push(passage);
-                    }
-                }
-            } else {
-                saved = Some(plan);
-            }
-        }
-    }
     let restored = saved
         .as_ref()
         .and_then(|saved| saved.restore(references, current));
     let research_scope = research_scope(current, retained).await?;
-    let (mut evidence, changed) =
-        if let (Some(saved), Some(mut evidence)) = (saved.as_ref(), restored) {
-            let added: HashSet<_> = current
+    let mut note = None;
+    let (mut evidence, mut reach, mut researched, changed) =
+        if let (Some(saved), Some(evidence)) = (saved.as_ref(), restored) {
+            let added: HashSet<String> = current
                 .iter()
                 .filter(|source| !saved.sources.contains(source))
-                .map(|source| source.id.as_str())
+                .map(|source| source.id.clone())
                 .collect();
             let claim_is_research_target = research_scope
                 .as_ref()
                 .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
-            if !added.is_empty() && claim_is_research_target {
-                // Research was asked for because this evidence left the claim
-                // unresolved. Normal retrieval over the current collection
-                // locates the new sources' best passages; they lead the
-                // claim's share of a batch call, and the earlier passages,
-                // in their order, fill the room they leave.
-                let share = claim_share(llm, &claim.statement, sharing);
-                let is_new = |passage: &EvidencePassage| added.contains(passage.source_id.as_str());
-                let (found, _) = references
-                    .verification_page(&claim.statement, &[], |passages| {
-                        within_share(llm, share, passages.iter().filter(|p| is_new(p)))
-                    })
-                    .await?;
-                let mut researched: Vec<_> = found
-                    .into_iter()
-                    .filter(|passage| is_new(passage))
-                    .map(|passage| EvidencePassage {
-                        retrieval_kind: RESEARCHED.into(),
-                        ..passage
-                    })
-                    .collect();
-                if !researched.is_empty() {
-                    canonicalize_evidence(&mut evidence);
-                    for passage in evidence {
-                        if within_share(
-                            llm,
-                            share,
-                            researched.iter().chain(std::iter::once(&passage)),
-                        ) {
-                            researched.push(passage);
-                        }
-                    }
-                    evidence = researched;
+            let led = if !added.is_empty() && claim_is_research_target {
+                let Some(budget) = budget else {
+                    return Ok(None);
+                };
+                research_led(
+                    llm,
+                    (claim, checked),
+                    references,
+                    &added,
+                    attribution,
+                    budget.tokens,
+                    evidence.clone(),
+                )
+                .await?
+            } else {
+                None
+            };
+            match led {
+                Some(page) => {
+                    let mut added: Vec<String> = added.into_iter().collect();
+                    added.sort();
+                    (page, Some(Reach::Researched), added, true)
                 }
+                None => (
+                    evidence,
+                    saved.reach,
+                    saved.researched.clone(),
+                    saved.sources != current,
+                ),
             }
-            (evidence, saved.sources != current)
         } else {
-            // This preserves exact keys for existing durable factual receipts.
-            let evidence = first_page(
+            let Some(budget) = budget else {
+                return Ok(None);
+            };
+            let (page, read) = evidence_checks::page_one(
                 llm,
-                &claim.statement,
-                unit,
                 references,
-                executions,
-                sharing,
+                &claim.statement,
+                checked,
                 citations,
+                attribution,
+                paging.reaches,
+                budget,
             )
-            .await?
-            .into_iter()
-            .filter(|passage| passage.retrieval_kind != "execution")
-            .collect();
-            (evidence, true)
+            .await?;
+            let reach = read.as_ref().map(|note| note.reach);
+            note = read;
+            (page, reach, Vec::new(), true)
         };
+    // Pass B never shows what pass A does, even when the section's citation
+    // moved onto a passage the saved page holds.
+    evidence.retain(|passage| !attribution.iter().any(|shown| overlaps(shown, passage)));
     evidence.sort_by(|a, b| {
         (&a.source_id, a.start_byte, a.end_byte).cmp(&(&b.source_id, b.start_byte, b.end_byte))
     });
@@ -363,22 +380,17 @@ pub(super) async fn select(
             && a.end_byte == b.end_byte
             && a.text == b.text
     });
-    if changed || migrated {
-        let selection = Selection {
-            sources: current.to_vec(),
-            passages: evidence
-                .iter()
-                .map(|p| Passage {
-                    source_id: p.source_id.clone(),
-                    start: p.start_byte,
-                    end: p.end_byte,
-                    sha256: digest(&p.text),
-                    kind: [CITED, RESEARCHED]
-                        .contains(&p.retrieval_kind.as_str())
-                        .then(|| p.retrieval_kind.clone()),
-                })
-                .collect(),
-        };
+    if reach.is_none() && !researched.is_empty() {
+        reach = Some(Reach::Researched);
+    }
+    if researched.is_empty() && reach == Some(Reach::Researched) {
+        reach = None;
+        researched.clear();
+    }
+    if changed || saved.is_none() {
+        let mut selection = selection_of(current, &evidence);
+        selection.reach = reach;
+        selection.researched = researched.clone();
         // Save the plan before model work. An interrupted comparison will use
         // exactly this evidence again, but cannot inherit an older approval.
         crate::features::learning::lesson_drafts::record_checkpoint(
@@ -392,19 +404,53 @@ pub(super) async fn select(
             .unwrap_or_else(|e| e.into_inner())
             .insert(selection_key, selection);
     }
-    evidence.extend(
-        executions
-            .iter()
-            .filter(|o| o.passed() && o.unit == Some(unit))
-            .map(|o| EvidencePassage {
-                source_id: o.id.clone(),
-                text: o.evidence(),
-                start_byte: 0,
-                end_byte: 0,
-                retrieval_kind: "execution".into(),
-                score: 0.0,
-            }),
-    );
     canonicalize_evidence(&mut evidence);
-    Ok(evidence)
+    Ok(Some(Selected {
+        evidence,
+        reach,
+        researched,
+        note,
+    }))
+}
+
+/// The first page of a claim research was asked for, once research saved
+/// `added` versions: the best of what it added, in the claim's list over
+/// those versions, leads the page, and the earlier page's passages, in
+/// their order, fill what the budget and the window leave. `None` when
+/// research added nothing on the claim's subject.
+async fn research_led(
+    llm: &dyn LLMPort,
+    (claim, checked): (&Claim, &str),
+    references: &ReferenceCollection<'_>,
+    added: &HashSet<String>,
+    attribution: &[EvidencePassage],
+    budget: Option<usize>,
+    mut earlier: Vec<EvidencePassage>,
+) -> Result<Option<Vec<EvidencePassage>>> {
+    let list = references
+        .claim_list(&claim.statement, &Scope::Keys(added.clone()), attribution)
+        .await?;
+    let (found, _) = evidence_checks::page_of(llm, checked, &list.passages, attribution, budget);
+    if found.is_empty() {
+        return Ok(None);
+    }
+    let mut page: Vec<EvidencePassage> = found
+        .into_iter()
+        .map(|passage| EvidencePassage {
+            retrieval_kind: RESEARCHED.into(),
+            ..passage
+        })
+        .collect();
+    canonicalize_evidence(&mut earlier);
+    for passage in earlier {
+        if page.iter().any(|shown| overlaps(shown, &passage)) {
+            continue;
+        }
+        let mut grown = page.clone();
+        grown.push(passage);
+        if evidence_checks::within_page(llm, checked, &grown, budget) {
+            page = grown;
+        }
+    }
+    Ok(Some(page))
 }

@@ -8,6 +8,7 @@ use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::http::url_identity::identity;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 #[cfg(test)]
 use web_research::within_search_scope;
 
@@ -171,14 +172,19 @@ impl std::fmt::Display for Exhausted {
     }
 }
 
-/// What a research round searched and saved: the claim ledger records it
-/// for every claim the round researched (§3 `Researched`).
+/// What a research round searched and saved, and what it cost: the claim
+/// ledger records it for every claim the round researched (§3 `Researched`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Searched {
     /// The queries this round sent, the user's hints first.
     pub(super) queries: Vec<String>,
     /// Source version ids this round saved.
     pub(super) sources_added: Vec<String>,
+    /// A claim research round's time from its start to its result over the
+    /// claims it researched: what researching one claim on the web costs,
+    /// which pass B's break-even weighs (course evidence index D5). `None`
+    /// when no round ran.
+    pub(super) per_claim: Option<Duration>,
 }
 
 /// What a research round did for the lesson's gaps.
@@ -186,7 +192,7 @@ pub(super) enum Expansion<'a> {
     /// New references were saved; the gaps are checked again against them.
     Saved(Box<ReferenceCollection<'a>>, Searched),
     /// The planner found nothing public left to search for these gaps.
-    Exhausted(Exhausted),
+    Exhausted(Exhausted, Searched),
     /// No research ran, or its searches saved nothing new.
     Unchanged(Searched),
 }
@@ -196,8 +202,27 @@ impl<'a> Expansion<'a> {
     pub(super) fn saved(self) -> Option<ReferenceCollection<'a>> {
         match self {
             Self::Saved(references, _) => Some(*references),
-            Self::Exhausted(_) | Self::Unchanged(_) => None,
+            Self::Exhausted(..) | Self::Unchanged(_) => None,
         }
+    }
+
+    /// What the round cost per claim it researched, once timed.
+    pub(super) fn per_claim(&self) -> Option<Duration> {
+        match self {
+            Self::Saved(_, searched) | Self::Exhausted(_, searched) | Self::Unchanged(searched) => {
+                searched.per_claim
+            }
+        }
+    }
+
+    /// The round with what it cost per claim it researched.
+    fn timed(mut self, per_claim: Option<Duration>) -> Self {
+        match &mut self {
+            Self::Saved(_, searched) | Self::Exhausted(_, searched) | Self::Unchanged(searched) => {
+                searched.per_claim = per_claim;
+            }
+        }
+        self
     }
 }
 
@@ -214,6 +239,10 @@ pub(super) async fn expand<'a>(
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
         return Ok(Expansion::Unchanged(Searched::default()));
     };
+    // The round times itself from here to its result, whatever it is: the
+    // searches that failed and the pages that could not be read are part of
+    // what researching a claim costs (D5).
+    let started = Instant::now();
     // Claims the gate found insufficiently supported are scrutinised: their
     // gaps name the subject, the kind and where the owner publishes, and the
     // citations their supports carry are followed first (§11).
@@ -238,15 +267,16 @@ pub(super) async fn expand<'a>(
         follow: &scrutiny.follow,
         kind: Gaps::Claims,
     };
+    let claims = u32::try_from(findings.len()).unwrap_or(u32::MAX);
     let (expanded, searched) = match research(llm, references, &context, round).await? {
         Expansion::Saved(expanded, searched) => (*expanded, searched),
-        unresearched => return Ok(unresearched),
+        unresearched => return Ok(unresearched.timed(started.elapsed().checked_div(claims))),
     };
     // Persist the claim-to-source scope before returning. If the app exits
     // between research and rechecking, recovery still reopens only the failed
     // comparisons that requested these automatically captured references.
     evidence_selection::record_research_scope(&expanded, findings, checks).await?;
-    Ok(Expansion::Saved(Box::new(expanded), searched))
+    Ok(Expansion::Saved(Box::new(expanded), searched).timed(started.elapsed().checked_div(claims)))
 }
 
 /// Before a lesson is written, search for references on its topics that no
@@ -406,7 +436,7 @@ async fn research<'a>(
                 "{exhausted}; continuing with the saved references"
             ));
         }
-        return Ok(Expansion::Exhausted(exhausted));
+        return Ok(Expansion::Exhausted(exhausted, Searched::default()));
     }
     let program_repo =
         crate::features::learning::repository::LearningRepository::new(context.pool.clone());

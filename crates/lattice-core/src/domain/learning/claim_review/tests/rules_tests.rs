@@ -310,6 +310,7 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
             queries: vec!["q".into()],
             sources_added: vec!["v2".into()],
             passages_found: 3,
+            round_ms_per_claim: None,
         },
         ClaimEvent::Executed {
             observation_id: "obs-1".into(),

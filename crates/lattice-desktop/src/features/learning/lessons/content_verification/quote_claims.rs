@@ -121,6 +121,7 @@ pub(super) fn settle(
         evidence,
         supporting_quote,
         resolution: None,
+        two_pass: Default::default(),
         trust: None,
     }))
 }

@@ -69,6 +69,17 @@ pub enum ClaimEventPayloadDto {
         passed: bool,
         evidence: String,
     },
+    /// The section's citation moved to the passage that supports the claim,
+    /// found elsewhere in the course; `addedSource` when the lesson had to
+    /// number that source to cite it.
+    CitationRepaired {
+        cited: Vec<String>,
+        #[serde(rename = "sourceVersionId")]
+        source_version_id: String,
+        quote: String,
+        #[serde(rename = "addedSource")]
+        added_source: bool,
+    },
     UserAction {
         action: UserActionDto,
         note: Option<String>,
@@ -117,6 +128,7 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 queries,
                 sources_added,
                 passages_found,
+                ..
             } => Self::Researched {
                 queries: queries.clone(),
                 sources_added: sources_added.clone(),
@@ -143,6 +155,17 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 observation_id: observation_id.clone(),
                 passed: *passed,
                 evidence: evidence.clone(),
+            },
+            ClaimEvent::CitationRepaired {
+                cited,
+                source_version_id,
+                quote,
+                added_source,
+            } => Self::CitationRepaired {
+                cited: cited.clone(),
+                source_version_id: source_version_id.clone(),
+                quote: quote.clone(),
+                added_source: *added_source,
             },
             ClaimEvent::UserAction { action, note } => Self::UserAction {
                 action: action.into(),
@@ -240,6 +263,15 @@ pub enum CheckResultDto {
         #[serde(rename = "supportingQuote")]
         supporting_quote: String,
     },
+    /// Supported by a passage of another course source than the ones its
+    /// section cites; the lesson's citation is repaired to it.
+    SupportedElsewhere {
+        cited: Vec<String>,
+        #[serde(rename = "sourceVersionId")]
+        source_version_id: String,
+        #[serde(rename = "supportingQuote")]
+        supporting_quote: String,
+    },
     Failed {
         kind: VerdictKindDto,
     },
@@ -252,6 +284,15 @@ impl From<&CheckResult> for CheckResultDto {
                 source_version_id,
                 supporting_quote,
             } => Self::Supported {
+                source_version_id: source_version_id.clone(),
+                supporting_quote: supporting_quote.clone(),
+            },
+            CheckResult::SupportedElsewhere {
+                cited,
+                source_version_id,
+                supporting_quote,
+            } => Self::SupportedElsewhere {
+                cited: cited.clone(),
                 source_version_id: source_version_id.clone(),
                 supporting_quote: supporting_quote.clone(),
             },
