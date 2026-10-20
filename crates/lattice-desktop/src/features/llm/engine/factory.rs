@@ -60,6 +60,10 @@ pub enum LLMConfig {
         app_handle: Option<tauri::AppHandle>,
         /// How the user asked the bundled server to run.
         server: LocalServerOptions,
+        /// Memory models running inside the app hold on the device the server
+        /// offloads to (the embedding model, on Metal). Only the memory hint
+        /// counts it.
+        in_app_model_bytes: u64,
     },
     /// Ollama HTTP API
     Ollama {
@@ -78,8 +82,8 @@ pub enum LLMConfig {
 /// runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct LocalServerOptions {
-    /// The user's explicit context window, if they set one. `None` lets the
-    /// sidecar size it from the model and the GPU.
+    /// The context window the user saved, for this model or for every local
+    /// one. `None` launches the model at the window it was trained for.
     pub context_window: Option<u32>,
     /// Speculative decoding the user opted into; it reaches the server only
     /// for a model that can draft.
@@ -182,6 +186,7 @@ pub(crate) async fn create_llm(
             generation_config,
             app_handle,
             server,
+            in_app_model_bytes,
         } => {
             // The Tauri AppHandle is populated through
             // Container::with_app_handle.
@@ -198,6 +203,7 @@ pub(crate) async fn create_llm(
                 n_gpu_layers,
                 generation_config,
                 server,
+                in_app_model_bytes,
                 schedulers,
                 devices,
             )
@@ -239,6 +245,8 @@ pub(crate) struct ServerFacts {
     pub(crate) context_size: u32,
     /// Layers offloaded to the GPU; 0 runs on the CPU.
     pub(crate) n_gpu_layers: u32,
+    /// Whether its KV cache is quantized, which halves what the cache holds.
+    pub(crate) kv_cache_quantization: bool,
     /// How it differs from the configuration asked for, when it does.
     pub(crate) degraded: Option<String>,
 }
@@ -261,10 +269,13 @@ async fn create_local_llm_sidecar(
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
     server: LocalServerOptions,
+    in_app_model_bytes: u64,
     schedulers: &SchedulerRegistry,
     devices: &BackendDevices,
 ) -> std::result::Result<CreatedLlm, LLMError> {
-    use crate::features::llm::engine::sidecar_manager::{SidecarManager, SidecarRegistry};
+    use crate::features::llm::engine::sidecar_manager::{
+        memory_hint, SidecarManager, SidecarRegistry,
+    };
     use crate::features::llm::engine::system::detect_capabilities_with_app;
     use tauri::Manager;
 
@@ -300,14 +311,50 @@ async fn create_local_llm_sidecar(
         .try_state::<SidecarRegistry>()
         .map_or(0, |registry| registry.other_models_gpu_bytes(model_path));
     let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
+    let Some(window) = launch_window(server, gguf_info.as_ref()) else {
+        return Err(LLMError::InvalidConfig(format!(
+            "{} does not say in its header how long a context it was trained for. Set its \
+             context length in Settings → Models.",
+            model_path.display()
+        )));
+    };
+    if let Some(trained) = gguf_info
+        .as_ref()
+        .and_then(|info| info.trained_context_length)
+        .filter(|trained| window > *trained)
+    {
+        tracing::warn!(
+            window,
+            trained,
+            "Configured context window exceeds what this model was trained for; \
+             llama.cpp will extend it by rope scaling, which costs quality"
+        );
+    }
     let config = sidecar_config(
         model_path,
         n_gpu_layers,
+        window,
         server,
         &capabilities,
-        other_models_bytes,
         gguf_info.as_ref(),
     );
+
+    // Said, never acted on: the window is the user's to change.
+    let hint = memory_hint(
+        &config,
+        &capabilities,
+        other_models_bytes.saturating_add(in_app_model_bytes),
+    );
+    if let Some(hint) = hint.filter(|hint| !hint.fits()) {
+        warn!(
+            window = config.context_size,
+            needed_bytes = hint.needed.total(),
+            spare_bytes = hint.room.spare(),
+            fits_window = ?hint.fits_window,
+            "The chosen context window may not fit in this machine's memory; starting it anyway"
+        );
+    }
+    let kv_cache_quantization = config.kv_cache_quantization;
 
     // The server sees only when it was started with the projector.
     let vision = config
@@ -315,16 +362,22 @@ async fn create_local_llm_sidecar(
         .as_ref()
         .and_then(|_| local_vision(model_path, server.vision))
         .map(|(_, geometry)| geometry);
-    let handle = SidecarManager::start_shared(app, config).await?;
+    let handle = SidecarManager::start_shared(app, config)
+        .await
+        .map_err(|error| with_memory_hint(error, hint))?;
     let binary = handle.binary().label();
     let facts = ServerFacts {
         context_size: handle.context_size(),
         n_gpu_layers: handle.n_gpu_layers(),
-        degraded: handle.degraded().map(str::to_owned),
+        kv_cache_quantization,
+        degraded: handle.degraded().map(|degraded| match hint {
+            Some(hint) => format!("{degraded}. {}", hint.describe()),
+            None => degraded.to_owned(),
+        }),
     };
     if let Some(degraded) = &facts.degraded {
-        // The user asked for one configuration and got another — slower, or
-        // with a smaller window. Never silent.
+        // The user asked for one configuration and got another: the CPU
+        // instead of the GPU. Never silent.
         warn!(
             binary,
             n_gpu_layers = facts.n_gpu_layers,
@@ -367,34 +420,37 @@ async fn create_local_llm_sidecar(
     })
 }
 
-/// The server `model_path` is started as: sized from `capabilities` beside
-/// the `other_models_bytes` of GPU memory other models' servers hold, then
-/// shaped by `server`, what the user asked for. A non-negative `n_gpu_layers`
-/// overrides the detected offload; `gguf_info` is the file's header.
+/// The window a bundled server of a model is launched with: the one the user
+/// saved, else the one the model's header, `gguf_info`, says it was trained
+/// for. Lattice never picks one of its own. `None` when neither is known.
+pub(crate) fn launch_window(
+    server: LocalServerOptions,
+    gguf_info: Option<&GgufModelInfo>,
+) -> Option<u32> {
+    server
+        .context_window
+        .filter(|window| *window > 0)
+        .or_else(|| gguf_info.and_then(|info| info.trained_context_length))
+}
+
+/// The server `model_path` is started as: `window` tokens, offloaded as
+/// `capabilities` allow, shaped by `server`, what the user asked for. A
+/// non-negative `n_gpu_layers` overrides the detected offload; `gguf_info` is
+/// the file's header.
 ///
 /// Admission prices a server with this before it is started, so it must
 /// arrive at exactly the configuration the start does.
 pub(crate) fn sidecar_config(
     model_path: &Path,
     n_gpu_layers: i32,
+    window: u32,
     server: LocalServerOptions,
     capabilities: &SystemCapabilities,
-    other_models_bytes: u64,
     gguf_info: Option<&GgufModelInfo>,
 ) -> SidecarConfig {
-    let mut config = SidecarConfig::from_capabilities(
-        model_path.to_path_buf(),
-        capabilities,
-        other_models_bytes,
-    )
-    .with_kv_cache_quantization(
-        server.kv_cache_quantization,
-        capabilities,
-        other_models_bytes,
-    );
-    if let Some(requested) = server.context_window {
-        config = config.with_context_override(requested, capabilities, other_models_bytes);
-    }
+    let mut config =
+        SidecarConfig::from_capabilities(model_path.to_path_buf(), capabilities, window);
+    config.kv_cache_quantization = server.kv_cache_quantization;
     config.parallel_slots = server.parallel_slots;
     config.seed = server.seed;
     // The catalog's projector, once downloaded and unless switched off. MTP
@@ -422,6 +478,24 @@ pub(crate) fn sidecar_config(
         }
     }
     config
+}
+
+/// A start that failed, with what the memory hint knew about it beside
+/// llama-server's own error, so the user can see whether the window they
+/// chose was more than the machine has. An error that names a broken install
+/// or an unreadable file is about neither, and is left as it is.
+fn with_memory_hint(
+    error: LLMError,
+    hint: Option<crate::features::llm::engine::sidecar_manager::MemoryHint>,
+) -> LLMError {
+    let Some(hint) = hint else {
+        return error;
+    };
+    match error {
+        LLMError::SidecarBinaryUnusable(_) | LLMError::ModelUnsupported(_) => error,
+        LLMError::Other(message) => LLMError::Other(format!("{message}\n\n{}", hint.describe())),
+        error => LLMError::Other(format!("{error}\n\n{}", hint.describe())),
+    }
 }
 
 /// Create an Ollama LLM client.

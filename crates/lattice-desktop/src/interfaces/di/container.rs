@@ -212,8 +212,10 @@ impl Container {
         let extraction_workers =
             crate::features::indexing::engine::extraction::ExtractionWorkers::new();
         let backend_devices = Arc::new(crate::features::llm::engine::system::BackendDevices::new());
-        let llm_runtime =
-            crate::features::llm::loading::LlmRuntime::new(Arc::clone(&backend_devices));
+        let llm_runtime = crate::features::llm::loading::LlmRuntime::new(
+            Arc::clone(&backend_devices),
+            embedding_runtime.clone(),
+        );
 
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins

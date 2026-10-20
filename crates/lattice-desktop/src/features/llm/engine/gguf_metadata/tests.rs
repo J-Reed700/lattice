@@ -590,3 +590,78 @@ fn a_real_gguf_on_this_machine_parses() {
     assert!(info.trained_context_length.is_some());
     assert!(info.kv_cache_bytes(8192).is_some());
 }
+
+#[test]
+fn the_header_gives_what_the_compute_buffer_and_recurrent_state_are_priced_from() {
+    let info = qwen35_9b_header().read();
+
+    assert_eq!(info.feed_forward_length, Some(12_288));
+    assert_eq!(
+        info.vocab_size,
+        Some(2),
+        "counted from tokenizer.ggml.tokens"
+    );
+    assert_eq!(info.ssm_conv_kernel, Some(4));
+    assert_eq!(info.ssm_state_size, Some(128));
+    assert_eq!(info.ssm_group_count, Some(16));
+    assert_eq!(info.ssm_inner_size, Some(4096));
+}
+
+#[test]
+fn a_stated_vocabulary_size_wins_over_the_token_count() {
+    let info = qwen35_9b_header()
+        .u32_value("qwen35.vocab_size", 248_320)
+        .read();
+
+    assert_eq!(info.vocab_size, Some(248_320));
+}
+
+/// Qwen 3.5 9B: 24 of its 32 layers are linear attention. Each keeps, for each
+/// of the server's four slots, `3 * (4096 + 2 * 16 * 128)` convolution values
+/// and `128 * 4096` recurrent ones, in f32.
+#[test]
+fn a_qwen_hybrid_s_recurrent_state_is_fixed_per_linear_layer_and_slot() {
+    let info = qwen35_9b_header().read();
+
+    let per_layer_and_slot = (3 * (4096 + 2 * 16 * 128) + 128 * 4096) * 4;
+    assert_eq!(info.recurrent_state_bytes(), 24 * 4 * per_layer_and_slot);
+}
+
+#[test]
+fn a_model_without_linear_attention_keeps_no_recurrent_state() {
+    let hybrid = qwen35_9b_header().read();
+    let plain = GgufModelInfo {
+        full_attention_interval: None,
+        ..hybrid.clone()
+    };
+    let undescribed = GgufModelInfo {
+        ssm_inner_size: None,
+        ..hybrid
+    };
+
+    assert_eq!(plain.recurrent_state_bytes(), 0);
+    assert_eq!(undescribed.recurrent_state_bytes(), 0);
+}
+
+/// The output's logits outweigh a layer's scratch at a short window; the
+/// attention mask over a long window outweighs the logits.
+#[test]
+fn the_compute_buffer_is_the_larger_of_the_output_and_a_layer() {
+    let info = GgufModelInfo {
+        vocab_size: Some(248_320),
+        ..qwen35_9b_header().read()
+    };
+
+    let output = 512 * 248_320 * 4;
+    assert_eq!(info.compute_buffer_bytes(8_192), output);
+    let layer_at_full = 512 * (262_144 * 6 + 12_288 * 2 * 4);
+    assert_eq!(info.compute_buffer_bytes(262_144), layer_at_full);
+    assert!(layer_at_full > output);
+}
+
+#[test]
+fn a_header_without_vocabulary_or_feed_forward_still_prices_the_mask() {
+    let info = GgufModelInfo::default();
+
+    assert_eq!(info.compute_buffer_bytes(1_024), 512 * 1_024 * 6);
+}

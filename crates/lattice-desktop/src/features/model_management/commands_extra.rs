@@ -74,9 +74,19 @@ pub struct DownloadedModelResponse {
     /// Whether the GGUF's chat template declares tool calling.
     #[serde(default)]
     pub supports_tool_calling: Option<bool>,
-    /// The context window saved for this model in Settings; `None` is Auto.
+    /// The context window saved for this model in Settings; `None` loads it
+    /// at its trained length.
     #[serde(default)]
     pub configured_context_length: Option<u32>,
+    /// The largest window, up to its trained length, this model fits this
+    /// machine's memory at now, beside the other models loaded. Shown as a
+    /// warning beside a larger setting, never applied. `None` when the
+    /// machine does not report its memory or the header cannot say.
+    #[serde(default)]
+    pub fits_context_length: Option<u32>,
+    /// The same, with the KV cache quantized to q8_0.
+    #[serde(default)]
+    pub fits_context_length_with_kv_quantization: Option<u32>,
     /// The catalog's vision projector for this model, when it has one.
     #[serde(default)]
     pub vision: Option<DownloadedVisionDto>,
@@ -127,7 +137,7 @@ pub struct LearningWindowShortfallDto {
     /// The window the model had, in tokens.
     pub window_tokens: u32,
     /// Whether that window was the one saved for the model in Settings →
-    /// Models, rather than what Auto or the model's server gave it.
+    /// Models, rather than the one it was trained for or its server reports.
     pub window_is_saved: bool,
 }
 
@@ -199,6 +209,8 @@ impl DownloadedModelResponse {
             trained_context_length,
             supports_tool_calling,
             configured_context_length,
+            fits_context_length: None,
+            fits_context_length_with_kv_quantization: None,
             vision,
             metadata: model.metadata().cloned(),
         }
@@ -223,10 +235,18 @@ pub async fn get_models_with_metadata_impl(container: &Container) -> Result<Stri
     match use_case.execute().await {
         Ok(models) => {
             let facts = ModelFacts::read(container).await;
-            let response: Vec<DownloadedModelResponse> = models
+            let mut response: Vec<DownloadedModelResponse> = models
                 .into_iter()
                 .map(|m| DownloadedModelResponse::from_model(m, &facts))
                 .collect();
+            for model in &mut response {
+                if model.backend != "local" || model.file_path.is_empty() {
+                    continue;
+                }
+                let fit = container.context_fit(Path::new(&model.file_path)).await;
+                model.fits_context_length = fit.tokens;
+                model.fits_context_length_with_kv_quantization = fit.tokens_with_kv_quantization;
+            }
 
             info!(count = response.len(), "Retrieved downloaded models");
 

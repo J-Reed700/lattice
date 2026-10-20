@@ -6,7 +6,6 @@ use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, ModelOrigin, Pace,
 };
 use lattice_core::domain::models::model_ref::CloudProvider;
-use lattice_core::shared::runtime::jobs::JobFailure;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -75,16 +74,11 @@ impl FakeBudget {
 
 #[async_trait::async_trait]
 impl GpuBudget for FakeBudget {
-    async fn admission(
-        &self,
-        _: &std::path::Path,
-        _: LocalServerOptions,
-        _: Option<u32>,
-    ) -> Admission {
+    async fn admission(&self, _: &std::path::Path, _: LocalServerOptions) -> Admission {
         self.asked.fetch_add(1, Ordering::SeqCst);
         (self.answer)(self.watched.load(Ordering::SeqCst))
     }
-    async fn auto_window(&self, _: &std::path::Path, _: LocalServerOptions) -> Option<u32> {
+    async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
         None
     }
     fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
@@ -121,6 +115,7 @@ fn on_gpu(name: &str, unloaded: &Arc<AtomicBool>) -> CreatedLlm {
         server: Some(ServerFacts {
             context_size: 8_704,
             n_gpu_layers: 99,
+            kv_cache_quantization: false,
             degraded: None,
         }),
     }
@@ -145,10 +140,8 @@ async fn acquire_local(
             Acquire {
                 key: local_key(&local.name),
                 epoch: instances.epoch(),
-                role: ModelRole::Chat,
                 holder,
                 local: Some(local),
-                floor: None,
             },
             budget,
             || async { Ok(on_gpu(&local.name, unloaded)) },
@@ -161,6 +154,8 @@ fn short() -> Admission {
         needed: Footprint {
             weights: 5 * GIB,
             cache: GIB,
+            state: 0,
+            compute: 0,
             window: 8_704,
         },
         spare: 3 * GIB,
@@ -172,6 +167,8 @@ fn fits() -> Admission {
         needed: Footprint {
             weights: 5 * GIB,
             cache: GIB,
+            state: 0,
+            compute: 0,
             window: 8_704,
         },
         spare: 7 * GIB,
@@ -245,7 +242,7 @@ async fn an_idle_model_is_evicted_to_make_room_and_the_new_one_loads() {
 }
 
 #[tokio::test]
-async fn no_room_beside_running_work_is_refused_naming_it_and_unloads_nothing() {
+async fn no_room_beside_running_work_still_starts_and_unloads_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let (busy, wanted) = (
         local_model(&dir, "Qwen3.5-27B", 16 * GIB),
@@ -265,15 +262,13 @@ async fn no_room_beside_running_work_is_refused_naming_it_and_unloads_nothing() 
     .into_port();
     let loads = AtomicUsize::new(0);
 
-    let refused = instances
+    let started = instances
         .acquire(
             Acquire {
                 key: local_key("Ornith-1.5-9B"),
                 epoch: instances.epoch(),
-                role: ModelRole::Chat,
                 holder: Some(chat_holder("Other chat")),
                 local: Some(&wanted),
-                floor: None,
             },
             &FakeBudget::always(short()),
             || async {
@@ -281,24 +276,11 @@ async fn no_room_beside_running_work_is_refused_naming_it_and_unloads_nothing() 
                 Ok(on_gpu("Ornith-1.5-9B", &Arc::new(AtomicBool::new(false))))
             },
         )
-        .await;
+        .await
+        .expect("the estimate never refuses a load");
 
-    let Err(error) = refused else {
-        panic!("expected a refusal for memory");
-    };
-    // Memory held by running work is not an outage: a job fails once with
-    // this message rather than retrying in the background.
-    assert!(!JobFailure::is_transient(&error), "{error}");
-    let AppError::ModelLoadFailed(message) = error else {
-        panic!("expected a load failure, got {error:?}");
-    };
-    assert_eq!(
-        message,
-        "Can't load Ornith-1.5-9B for this chat: it needs 6.0 GB (5.0 GB weights + 1.0 GB \
-         context at 8,704 tokens) and 3.0 GB is free. Qwen3.5-27B (16.0 GB) is answering in \
-         'Research notes'. Wait for them to finish, stop them, or use Qwen3.5-27B for this chat."
-    );
-    assert_eq!(loads.load(Ordering::SeqCst), 0, "nothing was started");
+    assert_eq!(started.loaded.name, "Ornith-1.5-9B");
+    assert_eq!(loads.load(Ordering::SeqCst), 1, "it was started anyway");
     assert!(
         !busy_unloaded.load(Ordering::SeqCst),
         "the busy model was not unloaded"
@@ -334,10 +316,8 @@ async fn admission_is_skipped_when_the_gpu_reports_no_memory_and_for_remote_mode
                     tuning: Tuning::Standard,
                 },
                 epoch: instances.epoch(),
-                role: ModelRole::Chat,
                 holder: None,
                 local: None,
-                floor: None,
             },
             &never,
             || async {
@@ -424,10 +404,8 @@ async fn a_degraded_start_is_carried_with_the_model() {
             Acquire {
                 key: local_key("ornith"),
                 epoch: instances.epoch(),
-                role: ModelRole::Chat,
                 holder: None,
                 local: Some(&local),
-                floor: None,
             },
             &FakeBudget::always(fits()),
             || async {
@@ -435,6 +413,7 @@ async fn a_degraded_start_is_carried_with_the_model() {
                     server: Some(ServerFacts {
                         context_size: 4_096,
                         n_gpu_layers: 0,
+                        kv_cache_quantization: false,
                         degraded: Some(reason.to_owned()),
                     }),
                     ..on_gpu("ornith", &Arc::new(AtomicBool::new(false)))
@@ -680,22 +659,10 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
             "Qwen3.5-9B",
             20_480,
             Window::Set(8_704),
-            Some(32_768),
         )),
         "Learning work needs a context window of at least 20,480 tokens. Your Learning model, \
-         Qwen3.5-9B, is set to 8,704 in Settings → Models. Set it to Auto (≈32,768 on this Mac \
-         right now) or 20,480 or more, or choose a larger Learning model."
-    );
-    assert!(
-        !message(window_too_small(
-            ModelRole::Learning,
-            "Qwen3.5-9B",
-            20_480,
-            Window::Set(8_704),
-            Some(16_384),
-        ))
-        .contains("Auto"),
-        "Auto is not offered when it would not be enough"
+         Qwen3.5-9B, is set to 8,704 in Settings → Models. Set it to 20,480 or more, or choose \
+         a larger Learning model."
     );
     assert_eq!(
         message(window_too_small(
@@ -703,11 +670,22 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
             "Ornith-1.5-9B",
             12_000,
             Window::Running(8_192),
-            None,
         )),
         "This chat needs a context window of at least 12,000 tokens. Ornith-1.5-9B is running \
-         with 8,192 on this Mac right now. Set its context window to 12,000 or more in Settings \
-         → Models, or choose a larger model for this chat."
+         with 8,192. Set its context window to 12,000 or more in Settings → Models, or choose a \
+         larger model for this chat."
+    );
+    assert_eq!(
+        message(window_too_small(
+            ModelRole::Learning,
+            "Qwen3.5-9B",
+            300_000,
+            Window::Trained(262_144),
+        )),
+        "Learning work needs a context window of at least 300,000 tokens. Your Learning model, \
+         Qwen3.5-9B, was trained for 262,144 tokens. Set its context window to 300,000 or more \
+         in Settings → Models (a stretched window costs some quality), or choose a larger \
+         Learning model."
     );
     assert_eq!(
         message(no_tools(ModelRole::Chat, "Ornith-1.5-9B")),
@@ -796,6 +774,8 @@ impl MeteredBudget {
         Footprint {
             weights: std::fs::metadata(path).unwrap().len(),
             cache: GIB,
+            state: 0,
+            compute: 0,
             window: 8_704,
         }
     }
@@ -807,12 +787,7 @@ impl MeteredBudget {
 
 #[async_trait::async_trait]
 impl GpuBudget for MeteredBudget {
-    async fn admission(
-        &self,
-        path: &std::path::Path,
-        _: LocalServerOptions,
-        _: Option<u32>,
-    ) -> Admission {
+    async fn admission(&self, path: &std::path::Path, _: LocalServerOptions) -> Admission {
         let needed = Self::footprint(path);
         let spare = self.usable.saturating_sub(*self.running.lock().unwrap());
         if needed.total() <= spare {
@@ -821,7 +796,7 @@ impl GpuBudget for MeteredBudget {
             Admission::Short { needed, spare }
         }
     }
-    async fn auto_window(&self, _: &std::path::Path, _: LocalServerOptions) -> Option<u32> {
+    async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
         None
     }
     fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
@@ -844,10 +819,8 @@ async fn start_metered(
             Acquire {
                 key: local_key(&local.name),
                 epoch: instances.epoch(),
-                role: ModelRole::Chat,
                 holder: Some(chat_holder(title)),
                 local: Some(local),
-                floor: None,
             },
             budget,
             || async {
@@ -884,83 +857,16 @@ async fn two_models_loading_at_once_are_admitted_one_after_the_other() {
     let (first, second) = (first.unwrap(), second.unwrap());
     assert_eq!(large_starts.load(Ordering::SeqCst), 1);
     assert_eq!(first.instance_id, second.instance_id);
-    // The other model was priced after the first had started, not against
-    // the memory both saw free.
-    assert_eq!(
-        small_starts.load(Ordering::SeqCst),
-        0,
-        "nothing was started"
-    );
-    let Err(AppError::ModelLoadFailed(message)) = other else {
-        panic!("expected a refusal for memory");
-    };
-    // The model that won is named with what it holds; whether the second
-    // tab has joined it yet depends on which waiter runs first.
+    // The other model does not fit beside the first, which is in use, so
+    // nothing is unloaded for it; it still starts, and its own load says
+    // whether the memory was there.
+    other.expect("a model that may not fit still starts");
+    assert_eq!(small_starts.load(Ordering::SeqCst), 1);
+    let loaded: Vec<_> = instances.snapshot().into_iter().map(|m| m.model).collect();
     assert!(
-        message.starts_with(
-            "Can't load Ornith-1.5-9B for this chat: it needs 7.0 GB (6.0 GB weights + 1.0 GB \
-             context at 8,704 tokens) and 4.0 GB is free. Qwen3.5-27B (15.0 GB) is answering \
-             in 'Research notes'"
-        ),
-        "{message}"
+        loaded.contains(&local_key("Qwen3.5-27B").model),
+        "{loaded:?}"
     );
-}
-
-#[tokio::test]
-async fn a_server_two_roles_hold_is_named_once_in_a_refusal() {
-    let dir = tempfile::tempdir().unwrap();
-    let (busy, wanted) = (
-        local_model(&dir, "Qwen3.5-27B", 16 * GIB),
-        local_model(&dir, "Ornith-1.5-9B", 1),
-    );
-    let instances = LlmInstances::new();
-    let unloaded = Arc::new(AtomicBool::new(false));
-    let mut held = Vec::new();
-    for (tuning, holder) in [
-        (Tuning::Standard, chat_holder("Research notes")),
-        (
-            Tuning::Utility,
-            Holder {
-                role: ModelRole::Utility,
-                work: String::new(),
-            },
-        ),
-    ] {
-        let acquired = instances
-            .acquire(
-                Acquire {
-                    key: ModelKey {
-                        tuning,
-                        ..local_key(&busy.name)
-                    },
-                    epoch: instances.epoch(),
-                    role: holder.role,
-                    holder: Some(holder),
-                    local: Some(&busy),
-                    floor: None,
-                },
-                &FakeBudget::always(fits()),
-                || async { Ok(on_gpu(&busy.name, &unloaded)) },
-            )
-            .await
-            .unwrap();
-        held.push(acquired.into_port());
-    }
-
-    let refused = acquire_local(
-        &instances,
-        &FakeBudget::always(short()),
-        &wanted,
-        Some(chat_holder("Other chat")),
-        &Arc::new(AtomicBool::new(false)),
-    )
-    .await;
-
-    let Err(AppError::ModelLoadFailed(message)) = refused else {
-        panic!("expected a refusal for memory");
-    };
-    assert_eq!(message.matches("Qwen3.5-27B (").count(), 1, "{message}");
-    assert!(message.contains("Research notes"), "{message}");
 }
 
 /// Whether a projector was on disk when a server started is not a setting:

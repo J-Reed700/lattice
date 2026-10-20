@@ -89,8 +89,8 @@ export function formatModelSize(bytes: number): string | null {
 
 /**
  * The window a downloaded model runs with. A window saved in Settings is the
- * user's instruction and is shown exactly; otherwise the model sizes itself up
- * to its trained length, shown rounded.
+ * user's instruction and is shown exactly; otherwise the model loads at its
+ * trained length, shown rounded.
  */
 export function formatContextLabel(model: Pick<DownloadedModel, 'configured_context_length' | 'trained_context_length'>): string | null {
   const configured = model.configured_context_length;
@@ -98,6 +98,37 @@ export function formatContextLabel(model: Pick<DownloadedModel, 'configured_cont
   const trained = model.trained_context_length;
   if (!trained) return null;
   return trained >= 1024 ? `${Math.round(trained / 1024)}K ctx` : `${trained.toLocaleString('en-US')} ctx`;
+}
+
+type FitHint = Pick<DownloadedModel, 'fits_context_length' | 'fits_context_length_with_kv_quantization'>;
+
+/**
+ * The warning beside a context setting larger than what fits this machine's
+ * memory now, saying how much does. Only a hint: nothing applies it.
+ */
+export function contextFitWarning(
+  model: FitHint,
+  window: number,
+  kvCacheQuantization: boolean,
+): string | null {
+  const fits = tokensThatFit(model, window, kvCacheQuantization);
+  if (fits == null) return null;
+  return `May not fit in this machine's memory — about ${fits.toLocaleString('en-US')} tokens fit`;
+}
+
+/**
+ * The tokens that fit this machine's memory now, when `window` is more than
+ * that; null when it fits or the machine does not say.
+ */
+export function tokensThatFit(
+  model: FitHint,
+  window: number,
+  kvCacheQuantization: boolean,
+): number | null {
+  const fits = kvCacheQuantization
+    ? model.fits_context_length_with_kv_quantization
+    : model.fits_context_length;
+  return fits != null && window > fits ? fits : null;
 }
 
 /**
