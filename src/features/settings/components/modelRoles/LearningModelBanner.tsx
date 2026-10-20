@@ -50,8 +50,15 @@ const ROW_CLASS =
 const ACTION_CLASS =
   'shrink-0 rounded-md border border-border-default bg-surface px-2.5 py-1 text-xs font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60';
 
-/** Puts keyboard focus on the first Learning button in the grid. */
+/** Opens the first model configuration menu if needed and focuses its Learning button. */
 function focusLearningButtons() {
+  const existing = document.querySelector<HTMLButtonElement>('button[data-role="learning"]:not(:disabled)');
+  if (existing) {
+    existing.focus();
+    return;
+  }
+  const configBtn = document.querySelector<HTMLButtonElement>('button[aria-label="Configure model"]:not(:disabled)');
+  configBtn?.click();
   document.querySelector<HTMLButtonElement>('button[data-role="learning"]:not(:disabled)')?.focus();
 }
 

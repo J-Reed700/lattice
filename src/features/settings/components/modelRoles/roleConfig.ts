@@ -81,7 +81,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     assignLabel: 'Set as Utility',
     pendingLabel: 'Setting…',
     activeLabel: 'Active (Utility)',
-    isActive: (model) => model.is_active_for_utility,
+    isActive: (model, settings) => model.is_active_for_utility && !settings?.utilityModel,
     allowedTypes: ['language_model', 'chat'],
     hint: 'Fast small model for query expansion and routing (HyDE).',
   },

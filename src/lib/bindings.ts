@@ -7156,6 +7156,12 @@ learningModel: ModelRef | null;
  */
 verifierModel: ModelRef | null;
 /**
+ * The model that runs background utility tasks (query expansion, routing,
+ * grounding checks, summaries) when assigned to a remote connection such
+ * as llama.cpp instead of a downloaded model row.
+ */
+utilityModel: ModelRef | null;
+/**
  * Additional directories to scan for externally managed local models
  */
 externalModelDirectories: string[];

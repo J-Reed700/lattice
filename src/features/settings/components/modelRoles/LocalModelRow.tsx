@@ -29,8 +29,8 @@ import { LearningWindowNotice } from './LearningWindowNotice';
 import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { LocalVisionControl } from './LocalVisionControl';
 import { useModelRoles } from './ModelRolesContext';
-import { RoleButton } from './RoleButton';
-import { isChatModelSelected, isLearningModel, ROLES } from './roleConfig';
+import { ActiveRoleBadge } from './RoleButton';
+import { canModelFulfillRole, isChatModelSelected, isLearningModel, ROLES } from './roleConfig';
 
 function formatFileSize(bytes: number): string {
   const mb = bytes / (1024 * 1024);
@@ -54,7 +54,11 @@ interface Props {
 export function LocalModelRow({ model }: Props) {
   const { refresh, chatProvider, llmSettings } = useModelRoles();
   const chatActive = isChatModelSelected(model, chatProvider);
+  const utilityActive = model.is_active_for_utility && !llmSettings?.utilityModel;
   const learningActive = isLearningModel(model, llmSettings);
+  const activeRoles = ROLES.filter(
+    (role) => canModelFulfillRole(model, role) && role.isActive(model, llmSettings),
+  );
   const { deleteDownloadedModel, warmUpActiveChatModel, warmUpActiveUtilityModel, warmUpLearningModel } =
     useDownloadedModels();
   const loadedModels = useLoadedModels();
@@ -74,9 +78,9 @@ export function LocalModelRow({ model }: Props) {
   // that failed, not to the next one assigned to the slot.
   useEffect(() => {
     if (chatActive) claimRole('chat', model.id);
-    if (model.is_active_for_utility) claimRole('utility', model.id);
+    if (utilityActive) claimRole('utility', model.id);
     if (learningActive) claimRole('learning', model.id);
-  }, [claimRole, model.id, chatActive, model.is_active_for_utility, learningActive]);
+  }, [claimRole, model.id, chatActive, utilityActive, learningActive]);
 
   // The backend's own reason this model didn't load for a role it holds
   // (boot prewarm or the warm-up button). Chat first: it blocks more.
@@ -86,11 +90,11 @@ export function LocalModelRow({ model }: Props) {
       : null;
   const loadError =
     (chatActive ? failedFor(chatWarmup) : null) ??
-    (model.is_active_for_utility ? failedFor(utilityWarmup) : null) ??
+    (utilityActive ? failedFor(utilityWarmup) : null) ??
     (learningActive ? failedFor(learningWarmup) : null);
   const isReady = [
     chatActive ? chatWarmup : null,
-    model.is_active_for_utility ? utilityWarmup : null,
+    utilityActive ? utilityWarmup : null,
     learningActive ? learningWarmup : null,
   ].some((role) => role?.phase === 'ready' && role.modelId === model.id);
 
@@ -106,7 +110,7 @@ export function LocalModelRow({ model }: Props) {
       if (chatActive) {
         targets.push({ role: 'chat', call: warmUpActiveChatModel });
       }
-      if (model.is_active_for_utility) {
+      if (utilityActive) {
         targets.push({ role: 'utility', call: warmUpActiveUtilityModel });
       }
       if (learningActive) {
@@ -168,8 +172,7 @@ export function LocalModelRow({ model }: Props) {
     .filter(Boolean)
     .join(' · ');
 
-  const canWarmUp = chatActive || model.is_active_for_utility || learningActive;
-  const isLanguageModel = model.model_type !== 'embedding';
+  const canWarmUp = chatActive || utilityActive || learningActive;
 
   return (
     <>
@@ -203,19 +206,17 @@ export function LocalModelRow({ model }: Props) {
         </div>
 
         <div className="downloaded-model-actions flex shrink-0 flex-wrap items-center gap-1.5">
-          {ROLES.map((role) => (
-            <RoleButton key={role.id} model={model} role={role} />
+          {activeRoles.map((role) => (
+            <ActiveRoleBadge key={role.id} roleId={role.id} label={role.label} />
           ))}
 
-          <div className="ml-1 flex items-center gap-0.5 border-l border-border-subtle pl-1.5">
-            {isLanguageModel ? (
-              <IconButton
-                label="Configure model"
-                onClick={() => setShowConfigModal(true)}
-              >
-                <SlidersHorizontal />
-              </IconButton>
-            ) : null}
+          <div className={activeRoles.length > 0 ? 'ml-1 flex items-center gap-0.5 border-l border-border-subtle pl-1.5' : 'flex items-center gap-0.5'}>
+            <IconButton
+              label="Configure model"
+              onClick={() => setShowConfigModal(true)}
+            >
+              <SlidersHorizontal />
+            </IconButton>
             {canWarmUp ? (
               <IconButton
                 label={isWarming ? 'Warming up…' : 'Warm up'}

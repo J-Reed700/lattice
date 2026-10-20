@@ -20,12 +20,24 @@ import { cn } from '@/lib/utils';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { useModelRoles } from './ModelRolesContext';
-import { canModelFulfillRole, isReferenceRole, type RoleDescriptor } from './roleConfig';
+import { canModelFulfillRole, isReferenceRole, type RoleDescriptor, type RoleId } from './roleConfig';
 
 
 interface RoleButtonProps {
   model: DownloadedModel;
   role: RoleDescriptor;
+}
+
+export function ActiveRoleBadge({ label, roleId }: { label: string; roleId: RoleId }) {
+  return (
+    <span
+      data-active-role={roleId}
+      className="inline-flex h-6 items-center gap-1 rounded-md border border-accent/25 bg-accent-muted px-2 text-xs font-medium text-accent"
+    >
+      <Check className="h-3 w-3" aria-hidden="true" />
+      {label}
+    </span>
+  );
 }
 
 export function RoleButton({ model, role }: RoleButtonProps) {

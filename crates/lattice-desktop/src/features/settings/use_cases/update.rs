@@ -121,7 +121,7 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
             // Shape only: whether the model still exists (or, for a cloud
             // Verifier, has a key) is answered when a job asks for it, with
             // the real state.
-            for key in ["learningModel", "verifierModel"] {
+            for key in ["learningModel", "verifierModel", "utilityModel"] {
                 if let Some(value) = request.updates.get(key).filter(|value| !value.is_null()) {
                     serde_json::from_value::<ModelRef>(value.clone()).map_err(|_| {
                         AppError::InvalidInput(format!("{key} is not a model reference"))

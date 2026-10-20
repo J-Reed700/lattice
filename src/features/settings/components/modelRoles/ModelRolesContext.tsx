@@ -38,14 +38,22 @@ interface ModelRolesContextValue {
   assignRole: (modelId: string | null, role: RoleId) => Promise<void>;
 }
 
-const ModelRolesContext = createContext<ModelRolesContextValue | null>(null);
+const DEFAULT_MODEL_ROLES_CONTEXT: ModelRolesContextValue = {
+  models: [],
+  localModels: [],
+  ollamaModels: [],
+  chatProvider: undefined,
+  llmSettings: undefined,
+  isLoading: false,
+  error: null,
+  refresh: async () => {},
+  assignRole: async () => {},
+};
+
+const ModelRolesContext = createContext<ModelRolesContextValue>(DEFAULT_MODEL_ROLES_CONTEXT);
 
 export function useModelRoles(): ModelRolesContextValue {
-  const ctx = useContext(ModelRolesContext);
-  if (!ctx) {
-    throw new Error('useModelRoles must be used inside <ModelRolesProvider>');
-  }
-  return ctx;
+  return useContext(ModelRolesContext);
 }
 
 interface ProviderProps {
@@ -126,6 +134,9 @@ export function ModelRolesProvider({ children }: ProviderProps) {
             await clearActiveUtilityModel();
           } else {
             await setActiveUtilityModel(modelId);
+          }
+          if (llmSettings?.utilityModel) {
+            await updateSettings({ category: 'llm', updates: { utilityModel: null } });
           }
         } else if (role === 'learning' || role === 'verifier') {
           // A reference in Settings, not a row flag: it can name an Ollama
